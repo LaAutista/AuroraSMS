@@ -23,7 +23,10 @@ fi
 
 while IFS= read -r -d '' apk; do
     APKS+=("$apk")
-done < <(find "$ROOT/app/build/outputs/apk" -type f -name '*.apk' -print0 2>/dev/null | sort -z)
+done < <(
+    find "$ROOT/app/build/outputs/apk" -type f -name '*.apk' \
+        ! -path '*/androidTest/*' -print0 2>/dev/null | sort -z
+)
 
 SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 if [[ -z "$SDK_ROOT" && -f "$ROOT/local.properties" ]]; then
