@@ -33,9 +33,11 @@ Status: Phase 1 local evidence, 2026-07-12
 | Low-memory device/emulator | Allocation/decode pressure | Phase 3/4/release |
 | Tablet/foldable/large screen | Adaptive navigation and state parity | Phase 4/release |
 
-Current Phase 1 environment has SDK platforms 36 and 37.0 but no emulator,
-system image, AVD, or connected device. Device-required rows remain pending; no
-device result is implied by this document.
+Current Phase 1 environment has SDK platforms 36 and 37.0 plus a physical
+Google Pixel 8 (`shiba`) running Android 16/API 36 with telephony messaging and
+subscription features. No emulator, system image, or AVD is installed. The
+device evidence below covers only this Pixel/API combination; the remaining
+required API and OEM rows stay pending.
 
 ## Phase 0 documentation gate
 
@@ -61,7 +63,8 @@ device result is implied by this document.
 - [x] Wrapper-only build succeeds on the documented toolchain.
 - [x] `assembleDebug`, `assembleRelease`, host unit tests, and lint pass.
 - [ ] Instrumentation/device tests pass on the required API/device matrix; all
-  current Android-test Kotlin sources compile, but no device is connected.
+  25 current tests pass on a physical Pixel 8/API 36, while the other required
+  API/device rows remain pending.
 - [x] No Android module applies `org.jetbrains.kotlin.android` under AGP 9.
 - [x] Java and Kotlin outputs target 17 even when Gradle runs on host JDK 26.
 - [x] Dependency verification/locks, notices, and resolved allowlist pass.
@@ -74,6 +77,10 @@ device result is implied by this document.
   source artwork, device logs, signing material, or Camera ICON.
 
 ### Local evidence for implementation commit `cf8b789`
+
+This subsection preserves the pre-device evidence captured for that commit.
+The later physical-device subsection supersedes only its device-availability
+statement.
 
 The following offline commands completed successfully on 2026-07-12:
 
@@ -97,6 +104,38 @@ Retained local evidence:
   SHA-256 `00df40fa5359b64a7f16262768cd0a87e7e9faa7221470c84d252d998fd7b221`;
 - `adb devices -l` returned no connected device, so installation, role grant,
   instrumentation, and carrier SMS/MMS rows remain explicitly pending.
+
+### Physical API 36 evidence for commits `30a4049` and `f5e591e`
+
+The following commands completed successfully on 2026-07-12:
+
+```text
+./gradlew :core:notifications:testDebugUnitTest :core:notifications:lintDebug :core:notifications:lintRelease :core:notifications:compileDebugAndroidTestKotlin --offline --no-daemon
+./gradlew connectedDebugAndroidTest --offline --no-daemon
+./gradlew :app:assembleDebug --offline --no-daemon
+./gradlew verifyCleanRoom verifyPrivateAssets verifyPermissions verifyApkContents --offline --no-daemon
+aapt2 dump permissions app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb push app/build/outputs/apk/debug/app-debug.apk /sdcard/Download/AuroraSMS-debug.apk
+```
+
+Retained local and device evidence:
+
+- device: Google Pixel 8 (`shiba`), Android 16/API 36, telephony capable;
+- 25 instrumentation tests, zero failures/errors: 11 app, 3 notifications,
+  and 11 telephony;
+- debug APK: 11,818,622 bytes,
+  SHA-256 `f6207c3497ad5e1807b9f5aba68b77fb552c04af096d77b7ec664430aa85aa3b`;
+- APK permission inspection contains only the ledgered SMS/MMS, phone-state,
+  contacts, notification, vibration, and private dynamic-receiver permissions;
+  it contains neither `INTERNET` nor `ACCESS_NETWORK_STATE`;
+- streamed install succeeded, `pm path` resolved the installed base APK, and a
+  cold launch completed with `MainActivity` resumed and the app process alive;
+- `/sdcard/Download/AuroraSMS-debug.apk` is 11,818,622 bytes and its on-device
+  SHA-256 exactly matches the workstation artifact;
+- AuroraSMS was deliberately left without the default-SMS role and without
+  sensitive runtime permission grants. No role prompt was accepted and no
+  carrier SMS or MMS was sent.
 
 ### Role eligibility and onboarding
 
