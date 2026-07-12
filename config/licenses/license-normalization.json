@@ -1,0 +1,68 @@
+{
+  "bundles": [
+    {
+      "bundleName": "apache2",
+      "licenseName": "Apache License, Version 2.0",
+      "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0"
+    },
+    {
+      "bundleName": "bsd2",
+      "licenseName": "BSD 2-Clause License",
+      "licenseUrl": "https://opensource.org/license/bsd-2-clause"
+    },
+    {
+      "bundleName": "bsd3",
+      "licenseName": "BSD 3-Clause License",
+      "licenseUrl": "https://opensource.org/license/bsd-3-clause"
+    },
+    {
+      "bundleName": "epl1",
+      "licenseName": "Eclipse Public License, Version 1.0",
+      "licenseUrl": "https://www.eclipse.org/legal/epl-v10.html"
+    },
+    {
+      "bundleName": "isc",
+      "licenseName": "ISC License",
+      "licenseUrl": "https://opensource.org/license/isc-license-txt"
+    },
+    {
+      "bundleName": "mit",
+      "licenseName": "MIT License",
+      "licenseUrl": "https://opensource.org/license/mit"
+    }
+  ],
+  "transformationRules": [
+    {
+      "bundleName": "apache2",
+      "licenseNamePattern": ".*(Apache|ASL).*(2[.]0|Version 2).*"
+    },
+    {
+      "bundleName": "apache2",
+      "licenseUrlPattern": "https?://(www[.])?apache[.]org/licenses/LICENSE-2[.]0.*"
+    },
+    {
+      "bundleName": "bsd2",
+      "licenseNamePattern": ".*BSD.*2[- ]Clause.*"
+    },
+    {
+      "bundleName": "bsd3",
+      "licenseNamePattern": ".*BSD.*(3[- ]Clause|New|Revised).*"
+    },
+    {
+      "bundleName": "epl1",
+      "licenseNamePattern": ".*Eclipse Public License.*(1[.]0|v 1).*"
+    },
+    {
+      "bundleName": "epl1",
+      "licenseUrlPattern": "https?://(www[.])?eclipse[.]org/legal/epl-v10[.]html.*"
+    },
+    {
+      "bundleName": "isc",
+      "licenseNamePattern": ".*ISC.*"
+    },
+    {
+      "bundleName": "mit",
+      "licenseNamePattern": ".*MIT.*"
+    }
+  ]
+}

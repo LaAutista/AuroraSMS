@@ -136,6 +136,9 @@ Controls:
 - deterministic timestamp/row keyset ordering;
 - transactional bounded upserts and committed checkpoints;
 - idempotent/coalesced event handling and reconciliation;
+- a bounded private pending/stored/complete delivery journal that fingerprints
+  raw SMS PDUs without retaining them, serializes concurrent delivery, and
+  recovers the provider-insert/notification boundary after process death;
 - separate rebuildable index from durable state;
 - explicit migrations and migration tests from version 1; never destructive
   fallback;
@@ -183,6 +186,12 @@ Controls:
 - notification privacy levels: sender/body, sender only, generic;
 - safe channel/lock-screen defaults and explicit inline-reply authentication
   expectations;
+- immutable notification routing plus one narrowly mutable explicit reply
+  intent; app-private target and consumed-claim journals bind provider token,
+  conversation, recipient, subscription, and expiry across process death;
+- consume a reply claim durably before platform submission, retain it through
+  token expiry, clear targets on role loss, and replace crash-replayed
+  notifications without a second alert;
 - optional secure-recents behavior with honest screenshot/sharing consequences;
 - optional `BiometricPrompt`/device credential gate without encryption claims;
 - no sensitive notification text in logs, analytics, or crash uploads.

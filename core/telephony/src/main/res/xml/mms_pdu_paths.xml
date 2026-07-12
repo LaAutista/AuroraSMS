@@ -1,0 +1,9 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path
+        name="mms_send"
+        path="mms-pdu/send/" />
+    <cache-path
+        name="mms_download"
+        path="mms-pdu/download/" />
+</paths>

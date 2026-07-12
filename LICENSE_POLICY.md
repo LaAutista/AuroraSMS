@@ -1,6 +1,6 @@
 # AuroraSMS source licensing policy
 
-Status: Phase 0 selection pending owner acceptance
+Status: owner accepted for Phase 1 on 2026-07-12
 
 Unless a file clearly states otherwise, original AuroraSMS source code and
 project documentation are offered under the GNU General Public License,
@@ -33,7 +33,6 @@ This policy does not license or redistribute:
 - user messages, contacts, attachments, wallpapers, exports, or other user
   data.
 
-The Phase 0 owner review must accept or replace this selection before Phase 1
-production code begins. A change before that gate is straightforward; a change
-after accepting outside contributions or publishing binaries requires a legal
-and provenance review.
+The Phase 0 owner review accepted this selection before Phase 1 production
+code began. A later change after accepting outside contributions or publishing
+binaries requires a legal and provenance review.

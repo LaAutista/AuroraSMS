@@ -1,11 +1,11 @@
 # Permission and default-SMS role ledger
 
-Status: Phase 0 design, verified against official Android documentation on
-2026-07-12
+Status: Phase 1 source, merged manifests, and APKs locally verified against
+official Android documentation on 2026-07-12; device role checks pending
 
-No manifest exists in Phase 0. This ledger is the allowlist that the Phase 1
-manifest and merged-manifest tests must enforce. A permission not listed here
-is denied until this document and the threat model are reviewed together.
+This ledger is the allowlist enforced against the Phase 1 source manifest,
+merged debug/release manifests, and packaged APKs. A permission not listed
+here is denied until this document and the threat model are reviewed together.
 
 ## Telephony hardware declaration
 
@@ -227,6 +227,12 @@ These exact entries are ledgered and do not grant network or user-data access.
 The permission name must resolve under the AuroraSMS application ID; any other
 AndroidX or transitive manifest addition remains unapproved.
 
+Activity Compose transitively offers AndroidX Startup and ProfileInstaller
+components on some classpaths. AuroraSMS explicitly removes
+`androidx.startup.InitializationProvider` and
+`androidx.profileinstaller.ProfileInstallReceiver` during manifest merge; they
+are absent from both packaged variants and are not approved entry points.
+
 The MMS PDU staging provider is an Aurora-owned `FileProvider` subclass,
 exported `false`, with `grantUriPermissions=true` and cache-only paths limited
 to short-lived MMS PDU operations. A send stages one bounded source PDU and
@@ -235,6 +241,13 @@ dedicated empty target and grants write access only. Each URI is unique to its
 operation; grants go only to the platform telephony operation, are revoked and
 cleaned after result or timeout, and never expose a broad directory or the
 opposite access mode.
+
+Incoming-delivery replay fingerprints and inline-reply target/claim journals
+use bounded app-private shared preferences. They are excluded from OS backup
+and device transfer, contain no message body or raw PDU, and are cleared or
+expired according to role/operation state. Reply routing retains the exact
+conversation, recipient, subscription, provider token, and expiry because a
+notification may legitimately start a fresh app process.
 
 ## Verification gate
 

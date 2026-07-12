@@ -1,6 +1,7 @@
 # Phase 1 file-level plan
 
-Status: proposed at the Phase 0 gate; no production files created
+Status: approved Phase 0 baseline; host foundation implemented, physical
+device/carrier acceptance pending
 
 ## Phase 1 outcome
 
@@ -147,7 +148,6 @@ fuzz strategy, size, and removal plan. The locally cached
 
 ```text
 app/build.gradle.kts
-app/proguard-rules.pro
 app/src/main/AndroidManifest.xml
 app/src/main/kotlin/org/aurorasms/app/AuroraSmsApplication.kt
 app/src/main/kotlin/org/aurorasms/app/AppContainer.kt
@@ -160,6 +160,8 @@ app/src/main/kotlin/org/aurorasms/app/role/RoleOnboardingState.kt
 app/src/main/kotlin/org/aurorasms/app/message/IncomingMessageOrchestrator.kt
 app/src/main/kotlin/org/aurorasms/app/message/InlineReplyOrchestrator.kt
 app/src/main/kotlin/org/aurorasms/app/message/AppNotificationIntentFactory.kt
+app/src/main/kotlin/org/aurorasms/app/message/SharedPreferencesReplyReplayGuard.kt
+app/src/main/kotlin/org/aurorasms/app/message/SharedPreferencesReplyTargetStore.kt
 app/src/main/kotlin/org/aurorasms/app/diagnostics/DiagnosticsLauncher.kt
 app/src/main/res/values/strings.xml
 app/src/main/res/values/themes.xml
@@ -175,6 +177,13 @@ app/src/debug/kotlin/org/aurorasms/app/diagnostics/BuildVariantDiagnosticsLaunch
 app/src/debug/res/values/strings.xml
 app/src/release/kotlin/org/aurorasms/app/diagnostics/BuildVariantDiagnosticsLauncher.kt
 app/src/test/kotlin/org/aurorasms/app/role/DefaultSmsRoleCoordinatorTest.kt
+app/src/test/kotlin/org/aurorasms/app/NotificationRouteTest.kt
+app/src/test/kotlin/org/aurorasms/app/message/IncomingMessageOrchestratorTest.kt
+app/src/test/kotlin/org/aurorasms/app/message/InlineReplyOrchestratorTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/DefaultSmsManifestContractTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/MainActivityNotificationRouteTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/message/SharedPreferencesReplyReplayGuardTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/message/SharedPreferencesReplyTargetStoreTest.kt
 ```
 
 `MainActivity` owns onboarding/navigation host only. `ComposeMessageActivity`
@@ -213,6 +222,7 @@ core/model/src/main/kotlin/org/aurorasms/core/model/AuroraSubscriptionId.kt
 core/model/src/main/kotlin/org/aurorasms/core/model/ProviderKind.kt
 core/model/src/main/kotlin/org/aurorasms/core/model/MessageDirection.kt
 core/model/src/main/kotlin/org/aurorasms/core/model/MessageTransportKind.kt
+core/model/src/main/kotlin/org/aurorasms/core/model/MessageDeliveryFingerprint.kt
 core/model/src/main/kotlin/org/aurorasms/core/model/TransportResult.kt
 core/model/src/test/kotlin/org/aurorasms/core/model/IdContractTest.kt
 ```
@@ -238,9 +248,11 @@ core/telephony/src/main/kotlin/org/aurorasms/core/telephony/TelephonyEntryPoint.
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidSmsProviderDataSource.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidMmsProviderDataSource.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidContactResolver.kt
+core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidDefaultSmsRoleState.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidSubscriptionRepository.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidSmsTransport.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidMmsTransport.kt
+core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/IncomingSmsReplayJournal.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/MmsPduStagingStore.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/MmsPduFileProvider.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/receiver/SmsDeliverReceiver.kt
@@ -255,10 +267,12 @@ core/telephony/src/main/kotlin/org/aurorasms/core/telephony/service/RespondViaMe
 core/telephony/src/main/res/xml/mms_pdu_paths.xml
 core/telephony/src/test/kotlin/org/aurorasms/core/telephony/RecipientSetTest.kt
 core/telephony/src/test/kotlin/org/aurorasms/core/telephony/TransportPolicyTest.kt
+core/telephony/src/test/kotlin/org/aurorasms/core/telephony/IncomingReplayPolicyTest.kt
 core/telephony/src/androidTest/kotlin/org/aurorasms/core/telephony/ContactResolverPermissionTest.kt
 core/telephony/src/androidTest/kotlin/org/aurorasms/core/telephony/MmsPduFileProviderTest.kt
 core/telephony/src/androidTest/kotlin/org/aurorasms/core/telephony/MmsPduStagingStoreTest.kt
 core/telephony/src/androidTest/kotlin/org/aurorasms/core/telephony/MmsResultReceiverTest.kt
+core/telephony/src/androidTest/kotlin/org/aurorasms/core/telephony/IncomingSmsReplayJournalTest.kt
 ```
 
 Public interfaces stay free of screen state and styling. Android implementations

@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+package org.aurorasms.core.notifications
+
+import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageId
+
+/**
+ * One bounded notification update. [senderPersonKey] must be an opaque,
+ * non-sensitive stable key; never pass a raw address or display name as the key.
+ */
+data class IncomingMessageNotification(
+    val messageId: MessageId,
+    val conversationId: ConversationId,
+    val senderDisplayName: String,
+    val senderPersonKey: String,
+    val body: String,
+    val receivedAtEpochMillis: Long,
+    val conversationTitle: String? = null,
+    val isGroupConversation: Boolean = false,
+    val canReply: Boolean = true,
+) {
+    init {
+        require(messageId.kind.isTelephonyProvider) {
+            "Incoming notifications require an SMS or MMS provider message ID"
+        }
+        require(receivedAtEpochMillis >= 0L) { "receivedAtEpochMillis cannot be negative" }
+        require(senderDisplayName.length <= MAXIMUM_INPUT_LABEL_CHARACTERS) {
+            "senderDisplayName is too long"
+        }
+        require(conversationTitle == null || conversationTitle.length <= MAXIMUM_INPUT_LABEL_CHARACTERS) {
+            "conversationTitle is too long"
+        }
+        require(body.length <= MAXIMUM_INPUT_BODY_CHARACTERS) {
+            "notification body is too long"
+        }
+        require(senderPersonKey.isNotBlank()) { "senderPersonKey cannot be blank" }
+        require(senderPersonKey.length <= MAXIMUM_PERSON_KEY_CHARACTERS) {
+            "senderPersonKey is too long"
+        }
+        require(senderPersonKey.none(Char::isISOControl)) {
+            "senderPersonKey contains a control character"
+        }
+    }
+
+    override fun toString(): String =
+        "IncomingMessageNotification(bodyLength=${body.length}, " +
+            "isGroupConversation=$isGroupConversation, canReply=$canReply)"
+
+    companion object {
+        const val MAXIMUM_PERSON_KEY_CHARACTERS: Int = 128
+        const val MAXIMUM_INPUT_LABEL_CHARACTERS: Int = 1_000
+        const val MAXIMUM_INPUT_BODY_CHARACTERS: Int = 100_000
+    }
+}
+
+interface MessageNotifier {
+    fun notifyIncoming(
+        message: IncomingMessageNotification,
+        config: NotificationConfig,
+    ): NotificationPostResult
+
+    fun notifyInlineReplyFailure(conversationId: ConversationId): NotificationPostResult
+
+    fun cancelConversation(conversationId: ConversationId)
+}
+
+sealed interface NotificationPostResult {
+    data class Posted(val notificationId: Int) : NotificationPostResult
+
+    data object NotificationsDisabled : NotificationPostResult
+
+    data class Rejected(val reason: RejectionReason) : NotificationPostResult
+
+    enum class RejectionReason {
+        CONTENT_INTENT_NOT_EXPLICIT,
+        CONTENT_INTENT_OUTSIDE_APPLICATION,
+        PERMISSION_DENIED,
+    }
+}
+
+internal fun notificationIdForConversation(conversationId: ConversationId): Int {
+    val folded = (conversationId.value xor (conversationId.value ushr 32)).toInt() and Int.MAX_VALUE
+    return folded.takeUnless { it == 0 } ?: 1
+}
+
+internal fun replyFailureNotificationId(conversationId: ConversationId): Int =
+    notificationIdForConversation(conversationId) xor 0x4000_0000

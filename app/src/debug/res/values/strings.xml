@@ -1,0 +1,26 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<resources>
+    <string name="diagnostics_title">Local diagnostics</string>
+    <string name="diagnostics_loading">Reading redacted device state…</string>
+    <string name="diagnostics_refresh">Refresh</string>
+    <string name="diagnostics_close">Close</string>
+    <string name="diagnostics_role_label">Default SMS role</string>
+    <string name="diagnostics_telephony_label">Telephony feature</string>
+    <string name="diagnostics_messaging_label">Messaging feature</string>
+    <string name="diagnostics_subscription_feature_label">Subscription feature</string>
+    <string name="diagnostics_permissions_label">Ledgered permissions</string>
+    <string name="diagnostics_active_subscriptions_label">Active subscriptions</string>
+    <string name="diagnostics_sms_rows_label">SMS provider rows</string>
+    <string name="diagnostics_mms_rows_label">MMS provider rows</string>
+    <string name="diagnostics_last_transport_label">Last transport result</string>
+    <string name="diagnostics_unavailable">Unavailable</string>
+    <string name="diagnostics_yes">Yes</string>
+    <string name="diagnostics_no">No</string>
+    <string name="diagnostics_transport_none">Not recorded</string>
+    <string name="diagnostics_transport_submitted">Submitted to the platform</string>
+    <string name="diagnostics_transport_sent">Platform sent callback</string>
+    <string name="diagnostics_transport_delivered">Platform delivered callback</string>
+    <string name="diagnostics_transport_downloaded">Platform MMS download callback</string>
+    <string name="diagnostics_transport_rejected">Rejected before platform submission</string>
+    <string name="diagnostics_transport_failed">Platform operation failed</string>
+</resources>

@@ -1,6 +1,6 @@
 # Dependency policy and allowlist
 
-Status: Phase 0
+Status: Phase 1 resolved and locally verified, 2026-07-12
 
 AuroraSMS prefers small original implementations and Android platform APIs.
 Dependencies are admitted only when they provide a necessary, maintained,
@@ -90,7 +90,6 @@ resolved transitive graph are reviewed before merge.
 | `androidx.test:rules` | 1.7.0 | Android test only | Apache-2.0 | Receiver/service/activity contracts |
 | `androidx.test.ext:junit` / `junit-ktx` | 1.3.0 | Android test only | Apache-2.0 | Android JUnit integration |
 | `androidx.compose.ui:ui-test-junit4` | BOM | Android test only | Apache-2.0 | Diagnostic Compose behavior |
-| `androidx.compose.ui:ui-test-manifest` | BOM | Debug test only | Apache-2.0 | Compose test host manifest |
 
 No icon-pack artifact is approved; AuroraSMS uses small original vector assets.
 No static-analysis plugin beyond Android Lint is approved at this gate. Detekt

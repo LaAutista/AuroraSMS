@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+package org.aurorasms.core.telephony
+
+import org.aurorasms.core.model.AuroraSubscriptionId
+
+data class ActiveSubscription(
+    val id: AuroraSubscriptionId,
+    val slotIndex: Int,
+    val displayLabel: String,
+    val smsCapable: Boolean,
+) {
+    init {
+        require(slotIndex >= 0) { "Active subscriptions need a valid slot index" }
+        require(displayLabel.length <= MAX_DISPLAY_LABEL_CHARACTERS) { "Subscription label is too long" }
+    }
+
+    companion object {
+        const val MAX_DISPLAY_LABEL_CHARACTERS: Int = 100
+    }
+}
+
+sealed interface SubscriptionSnapshot {
+    data class Available(val subscriptions: List<ActiveSubscription>) : SubscriptionSnapshot
+    data object PermissionDenied : SubscriptionSnapshot
+    data object FeatureUnavailable : SubscriptionSnapshot
+    data object PlatformUnavailable : SubscriptionSnapshot
+}
+
+interface SubscriptionRepository {
+    suspend fun activeSubscriptions(): SubscriptionSnapshot
+
+    suspend fun findActive(id: AuroraSubscriptionId): ActiveSubscription? =
+        (activeSubscriptions() as? SubscriptionSnapshot.Available)
+            ?.subscriptions
+            ?.firstOrNull { it.id == id }
+}

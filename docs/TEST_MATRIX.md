@@ -1,6 +1,6 @@
 # AuroraSMS test matrix and phase-gate evidence
 
-Status: Phase 0 plan, 2026-07-12
+Status: Phase 1 local evidence, 2026-07-12
 
 ## Evidence rules
 
@@ -33,7 +33,7 @@ Status: Phase 0 plan, 2026-07-12
 | Low-memory device/emulator | Allocation/decode pressure | Phase 3/4/release |
 | Tablet/foldable/large screen | Adaptive navigation and state parity | Phase 4/release |
 
-Current Phase 0 environment has SDK platforms 36 and 37.0 but no emulator,
+Current Phase 1 environment has SDK platforms 36 and 37.0 but no emulator,
 system image, AVD, or connected device. Device-required rows remain pending; no
 device result is implied by this document.
 
@@ -52,23 +52,25 @@ device result is implied by this document.
 - [x] Dependency admission policy, denylist, and phase allowlist documented.
 - [x] Threat model and artwork integrity/mapping/license gate documented.
 - [x] Full test/smoke matrix and Phase 1 file-level plan documented.
-- [ ] Phase 0 review explicitly authorizes Phase 1 production code.
+- [x] Phase 0 review explicitly authorizes Phase 1 production code.
 
 ## Phase 1 foundation and role matrix
 
 ### Build and static checks
 
-- [ ] Wrapper-only build succeeds on the documented toolchain.
-- [ ] `assembleDebug`, host unit tests, lint, and relevant device tests pass.
-- [ ] No Android module applies `org.jetbrains.kotlin.android` under AGP 9.
-- [ ] Java and Kotlin outputs target 17 even when Gradle runs on host JDK 26.
-- [ ] Dependency verification/locks, notices, and resolved allowlist pass.
-- [ ] Source scan finds no prohibited production/test identifiers or
+- [x] Wrapper-only build succeeds on the documented toolchain.
+- [x] `assembleDebug`, `assembleRelease`, host unit tests, and lint pass.
+- [ ] Instrumentation/device tests pass on the required API/device matrix; all
+  current Android-test Kotlin sources compile, but no device is connected.
+- [x] No Android module applies `org.jetbrains.kotlin.android` under AGP 9.
+- [x] Java and Kotlin outputs target 17 even when Gradle runs on host JDK 26.
+- [x] Dependency verification/locks, notices, and resolved allowlist pass.
+- [x] Source scan finds no prohibited production/test identifiers or
   `org.fossify` coordinate.
-- [ ] Merged manifest contains only ledgered permissions/components.
-- [ ] Every FOSS variant has no `INTERNET` or `ACCESS_NETWORK_STATE`.
-- [ ] `allowBackup=false` and data-extraction exclusions are present.
-- [ ] APK inventory contains no private PDF, screenshot, handoff path, raw
+- [x] Merged manifest contains only ledgered permissions/components.
+- [x] Every FOSS variant has no `INTERNET` or `ACCESS_NETWORK_STATE`.
+- [x] `allowBackup=false` and data-extraction exclusions are present.
+- [x] APK inventory contains no private PDF, screenshot, handoff path, raw
   source artwork, device logs, signing material, or Camera ICON.
 
 ### Role eligibility and onboarding

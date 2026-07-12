@@ -1,0 +1,54 @@
+{
+  "allowedLicenses": [
+    {
+      "moduleLicense": "Apache License, Version 2.0"
+    },
+    {
+      "moduleLicense": "BSD 2-Clause License"
+    },
+    {
+      "moduleLicense": "BSD 3-Clause License"
+    },
+    {
+      "moduleLicense": "Eclipse Public License, Version 1.0"
+    },
+    {
+      "moduleLicense": "ISC License"
+    },
+    {
+      "moduleLicense": "MIT License"
+    },
+    {
+      "moduleLicense": "",
+      "moduleName": "androidx[.].*"
+    },
+    {
+      "moduleLicense": "",
+      "moduleName": "com[.]google[.]code[.]findbugs:jsr305"
+    },
+    {
+      "moduleLicense": "",
+      "moduleName": "javax[.]inject:javax[.]inject"
+    },
+    {
+      "moduleLicense": "",
+      "moduleName": "junit:junit"
+    },
+    {
+      "moduleLicense": "",
+      "moduleName": "org[.]hamcrest:.*"
+    },
+    {
+      "moduleLicense": "",
+      "moduleName": "org[.]jetbrains:annotations"
+    },
+    {
+      "moduleLicense": "",
+      "moduleName": "org[.]jetbrains[.]kotlin:.*"
+    },
+    {
+      "moduleLicense": "",
+      "moduleName": "org[.]jetbrains[.]kotlinx:.*"
+    }
+  ]
+}

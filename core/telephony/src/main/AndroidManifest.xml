@@ -1,0 +1,98 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- AuroraSMS cannot fulfill its core default-SMS purpose without telephony. -->
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="true"
+        tools:ignore="UnnecessaryRequiredFeature" />
+
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_MMS" />
+    <uses-permission android:name="android.permission.RECEIVE_WAP_PUSH" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <queries>
+        <intent>
+            <action android:name="android.provider.Telephony.SMS_DELIVER" />
+        </intent>
+    </queries>
+
+    <application>
+        <provider
+            android:name=".internal.MmsPduFileProvider"
+            android:authorities="${applicationId}.mms-pdu"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/mms_pdu_paths" />
+        </provider>
+
+        <receiver
+            android:name=".receiver.SmsDeliverReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_DELIVER" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".receiver.MmsWapPushReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_WAP_PUSH">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" />
+                <data android:mimeType="application/vnd.wap.mms-message" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".service.RespondViaMessageService"
+            android:exported="true"
+            android:permission="android.permission.SEND_RESPOND_VIA_MESSAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.RESPOND_VIA_MESSAGE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="sms" />
+                <data android:scheme="smsto" />
+                <data android:scheme="mms" />
+                <data android:scheme="mmsto" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".receiver.SmsSentReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".receiver.SmsDeliveredReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".receiver.MmsSendResultReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".receiver.MmsDownloadResultReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".receiver.DefaultSmsRoleChangedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.provider.action.DEFAULT_SMS_PACKAGE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".receiver.ExternalProviderChangedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.provider.action.EXTERNAL_PROVIDER_CHANGE" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

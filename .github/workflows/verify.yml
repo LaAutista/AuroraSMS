@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@7a445ee88d4e23b52c33d4a5dd4b6297c7c87cbc # v4.4.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install pinned Android SDK packages
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+
+      - name: Verify wrapper identity
+        run: |
+          test "$(sha256sum gradle/wrapper/gradle-wrapper.jar | awk '{print $1}')" = \
+            '55243ef57851f12b070ad14f7f5bb8302daceeebc5bce5ece5fa6edb23e1145c'
+          grep -Fq \
+            'distributionSha256Sum=2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb' \
+            gradle/wrapper/gradle-wrapper.properties
+
+      - name: Verify clean room and dependency state
+        run: >-
+          ./gradlew --no-daemon --no-parallel
+          verifyCleanRoom verifyPrivateAssets verifyDependencies
+
+      - name: Test, lint, and assemble both variants
+        run: >-
+          ./gradlew --no-daemon --no-parallel
+          test lintDebug lintRelease assembleDebug assembleRelease
+
+      - name: Verify merged manifests and APK contents
+        run: >-
+          ./gradlew --no-daemon --no-parallel
+          verifyPermissions verifyApkContents
+
+      - name: Generate and check local license inventory
+        run: >-
+          ./gradlew --no-daemon --no-parallel
+          checkLicense generateLicenseReport
+
+      - name: Generate aggregate CycloneDX SBOM
+        run: ./gradlew --no-daemon --no-parallel cyclonedxBom
+
+      - name: Upload governance reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: governance-reports
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/reports/bom.json
+            build/reports/bom.xml
+            build/reports/dependencies/
+            build/reports/dependency-license/
+            **/build/reports/lint-results-*.html
+            **/build/reports/lint-results-*.sarif
+            **/build/reports/lint-results-*.xml
+            **/build/test-results/
