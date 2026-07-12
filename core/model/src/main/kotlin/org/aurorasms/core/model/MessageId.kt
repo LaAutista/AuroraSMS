@@ -15,4 +15,6 @@ data class MessageId(
     init {
         require(value > 0L) { "Message IDs must be positive" }
     }
+
+    override fun toString(): String = "MessageId(kind=$kind, value=REDACTED)"
 }

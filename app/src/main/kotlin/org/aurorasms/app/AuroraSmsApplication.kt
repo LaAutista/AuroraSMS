@@ -22,6 +22,11 @@ class AuroraSmsApplication : Application(), TelephonyEntryPoint, NotificationEnt
         container = AppContainer(this)
     }
 
+    override fun onTerminate() {
+        if (::container.isInitialized) container.close()
+        super.onTerminate()
+    }
+
     override val defaultSmsRoleState: DefaultSmsRoleState
         get() = container.defaultSmsRoleState
 

@@ -21,10 +21,13 @@ import kotlinx.coroutines.withContext
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageDeliveryFingerprint
+import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
+import org.aurorasms.core.model.MessageStatus
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.IncomingSmsRecord
 import org.aurorasms.core.telephony.IncomingDeliveryDisposition
@@ -37,6 +40,7 @@ import org.aurorasms.core.telephony.ProviderStoredMessage
 import org.aurorasms.core.telephony.SmsProviderDataSource
 import org.aurorasms.core.telephony.SmsProviderMessage
 import org.aurorasms.core.telephony.SmsProviderStatus
+import org.aurorasms.core.telephony.buildProviderPageFromRaw
 
 class AndroidSmsProviderDataSource(
     context: Context,
@@ -63,9 +67,12 @@ class AndroidSmsProviderDataSource(
     override suspend fun readPage(
         request: ProviderPageRequest,
     ): ProviderAccessResult<ProviderPage<SmsProviderMessage>> = withReadAccess("read SMS page") {
+        val eligibleRows = "${BaseColumns._ID} > 0 AND ${Telephony.Sms.DATE} >= 0"
         val selection = request.before?.let {
-            "(${Telephony.Sms.DATE} < ?) OR (${Telephony.Sms.DATE} = ? AND ${BaseColumns._ID} < ?)"
-        }
+            "$eligibleRows AND " +
+                "((${Telephony.Sms.DATE} < ?) OR " +
+                "(${Telephony.Sms.DATE} = ? AND ${BaseColumns._ID} < ?))"
+        } ?: eligibleRows
         val selectionArgs = request.before?.let {
             arrayOf(
                 it.timestampMillis.toString(),
@@ -74,7 +81,7 @@ class AndroidSmsProviderDataSource(
             )
         }
         val queryArgs = Bundle().apply {
-            selection?.let { putString(ContentResolver.QUERY_ARG_SQL_SELECTION, it) }
+            putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
             selectionArgs?.let { putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, it) }
             putString(
                 ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
@@ -93,10 +100,13 @@ class AndroidSmsProviderDataSource(
             Telephony.Sms.SUBSCRIPTION_ID,
             Telephony.Sms.READ,
             Telephony.Sms.SEEN,
+            Telephony.Sms.LOCKED,
+            Telephony.Sms.STATUS,
+            Telephony.Sms.ERROR_CODE,
         )
 
         resolver.query(Telephony.Sms.CONTENT_URI, projection, queryArgs, null)?.use { cursor ->
-            val rows = ArrayList<SmsProviderMessage>(request.limit + 1)
+            val rawRows = ArrayList<RawSmsProviderRow>(request.limit + 1)
             val idIndex = cursor.getColumnIndexOrThrow(BaseColumns._ID)
             val threadIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID)
             val addressIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
@@ -107,43 +117,34 @@ class AndroidSmsProviderDataSource(
             val subscriptionIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.SUBSCRIPTION_ID)
             val readIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.READ)
             val seenIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.SEEN)
+            val lockedIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.LOCKED)
+            val statusIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.STATUS)
+            val errorCodeIndex = cursor.getColumnIndexOrThrow(Telephony.Sms.ERROR_CODE)
 
-            while (cursor.moveToNext() && rows.size <= request.limit) {
-                val rawAddress = cursor.getString(addressIndex)?.trim().orEmpty()
-                val address = runCatching { ParticipantAddress(rawAddress) }.getOrNull() ?: continue
-                val id = cursor.getLong(idIndex)
-                if (id <= 0L) continue
-                val timestamp = cursor.getLong(dateIndex).coerceAtLeast(0L)
-                val sent = cursor.nullableLong(sentIndex)?.takeIf { it >= 0L }
-                val rawSubscription = cursor.nullableInt(subscriptionIndex)
-                rows += SmsProviderMessage(
-                    id = ProviderMessageId(ProviderKind.SMS, id),
-                    threadId = cursor.getLong(threadIndex).coerceAtLeast(0L),
-                    address = address,
-                    body = cursor.getString(bodyIndex).orEmpty(),
-                    direction = cursor.getInt(typeIndex).toDirection(),
-                    timestampMillis = timestamp,
-                    sentTimestampMillis = sent,
-                    subscriptionId = rawSubscription
-                        ?.takeIf { it >= 0 }
-                        ?.let(::AuroraSubscriptionId),
+            while (rawRows.size <= request.limit && cursor.moveToNext()) {
+                rawRows += RawSmsProviderRow(
+                    id = cursor.getLong(idIndex),
+                    threadId = cursor.getLong(threadIndex),
+                    address = cursor.getString(addressIndex),
+                    body = cursor.getString(bodyIndex),
+                    type = cursor.getInt(typeIndex),
+                    timestampMillis = cursor.getLong(dateIndex),
+                    sentTimestampMillis = cursor.nullableLong(sentIndex),
+                    subscriptionId = cursor.nullableInt(subscriptionIndex),
                     read = cursor.getInt(readIndex) != 0,
                     seen = cursor.getInt(seenIndex) != 0,
+                    locked = cursor.getInt(lockedIndex) != 0,
+                    rawStatus = cursor.nullableInt(statusIndex),
+                    rawErrorCode = cursor.nullableInt(errorCodeIndex),
                 )
             }
 
-            val hasMore = rows.size > request.limit
-            val pageRows = if (hasMore) rows.take(request.limit) else rows
-            val last = pageRows.lastOrNull()
             ProviderAccessResult.Success(
-                ProviderPage(
-                    items = pageRows,
-                    next = if (hasMore && last != null) {
-                        ProviderPageCursor(last.timestampMillis, last.id.value)
-                    } else {
-                        null
-                    },
-                    exhausted = !hasMore,
+                buildProviderPageFromRaw(
+                    request = request,
+                    rawRows = rawRows,
+                    cursorFor = RawSmsProviderRow::pageCursor,
+                    project = RawSmsProviderRow::toProviderMessageOrNull,
                 ),
             )
         } ?: ProviderAccessResult.Unavailable("read SMS page")
@@ -542,9 +543,111 @@ private fun android.database.Cursor.nullableLong(index: Int): Long? =
 private fun android.database.Cursor.nullableInt(index: Int): Int? =
     if (isNull(index)) null else getInt(index)
 
-private fun Int.toDirection(): MessageDirection =
-    if (this == Telephony.Sms.MESSAGE_TYPE_INBOX) {
-        MessageDirection.INCOMING
-    } else {
-        MessageDirection.OUTGOING
+private data class RawSmsProviderRow(
+    val id: Long,
+    val threadId: Long,
+    val address: String?,
+    val body: String?,
+    val type: Int,
+    val timestampMillis: Long,
+    val sentTimestampMillis: Long?,
+    val subscriptionId: Int?,
+    val read: Boolean,
+    val seen: Boolean,
+    val locked: Boolean,
+    val rawStatus: Int?,
+    val rawErrorCode: Int?,
+) {
+    fun pageCursor(): ProviderPageCursor = ProviderPageCursor(
+        timestampMillis = timestampMillis,
+        providerRowId = id,
+    )
+
+    fun toProviderMessageOrNull(): SmsProviderMessage? {
+        if (id <= 0L || threadId <= 0L || timestampMillis < 0L) return null
+        val providerId = ProviderMessageId(ProviderKind.SMS, id)
+        val providerThreadId = ProviderThreadId(threadId)
+        val sender = address
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.let { raw ->
+                try {
+                    ParticipantAddress(raw)
+                } catch (_: IllegalArgumentException) {
+                    null
+                }
+            }
+        val boundedBody = body.orEmpty().take(SmsProviderMessage.MAX_PROVIDER_BODY_CHARACTERS)
+        val messageBox = type.toSmsMessageBox()
+        val messageStatus = rawStatus.toSmsMessageStatus(messageBox)
+        val normalizedSentTimestamp = sentTimestampMillis?.takeIf { it >= 0L }
+        val normalizedSubscription = subscriptionId
+            ?.takeIf { it >= 0 }
+            ?.let(::AuroraSubscriptionId)
+        val fingerprint = ProviderProjectionFingerprint.sms(
+            providerId = providerId,
+            providerThreadId = providerThreadId,
+            sender = sender,
+            body = boundedBody,
+            box = messageBox,
+            status = messageStatus,
+            rawStatus = rawStatus,
+            rawErrorCode = rawErrorCode,
+            timestampMillis = timestampMillis,
+            sentTimestampMillis = normalizedSentTimestamp,
+            subscriptionId = normalizedSubscription,
+            read = read,
+            seen = seen,
+            locked = locked,
+        )
+        return SmsProviderMessage(
+            id = providerId,
+            providerThreadId = providerThreadId,
+            sender = sender,
+            body = boundedBody,
+            direction = messageBox.toDirection(),
+            box = messageBox,
+            status = messageStatus,
+            rawStatus = rawStatus,
+            rawErrorCode = rawErrorCode,
+            timestampMillis = timestampMillis,
+            sentTimestampMillis = normalizedSentTimestamp,
+            subscriptionId = normalizedSubscription,
+            read = read,
+            seen = seen,
+            locked = locked,
+            syncFingerprint = fingerprint,
+        )
     }
+}
+
+private fun Int.toSmsMessageBox(): MessageBox = when (this) {
+    Telephony.Sms.MESSAGE_TYPE_INBOX -> MessageBox.INBOX
+    Telephony.Sms.MESSAGE_TYPE_SENT -> MessageBox.SENT
+    Telephony.Sms.MESSAGE_TYPE_DRAFT -> MessageBox.DRAFT
+    Telephony.Sms.MESSAGE_TYPE_OUTBOX -> MessageBox.OUTBOX
+    Telephony.Sms.MESSAGE_TYPE_FAILED -> MessageBox.FAILED
+    Telephony.Sms.MESSAGE_TYPE_QUEUED -> MessageBox.QUEUED
+    else -> MessageBox.UNKNOWN
+}
+
+private fun Int?.toSmsMessageStatus(box: MessageBox): MessageStatus = when (this) {
+    Telephony.Sms.STATUS_NONE -> MessageStatus.NONE
+    Telephony.Sms.STATUS_PENDING -> MessageStatus.PENDING
+    Telephony.Sms.STATUS_COMPLETE -> MessageStatus.COMPLETE
+    Telephony.Sms.STATUS_FAILED -> MessageStatus.FAILED
+    else -> when (box) {
+        MessageBox.SENT -> MessageStatus.COMPLETE
+        MessageBox.OUTBOX,
+        MessageBox.QUEUED,
+        -> MessageStatus.PENDING
+        MessageBox.FAILED -> MessageStatus.FAILED
+        MessageBox.DRAFT,
+        MessageBox.INBOX,
+        -> MessageStatus.NONE
+        MessageBox.UNKNOWN -> MessageStatus.UNKNOWN
+    }
+}
+
+private fun MessageBox.toDirection(): MessageDirection =
+    if (this == MessageBox.INBOX) MessageDirection.INCOMING else MessageDirection.OUTGOING

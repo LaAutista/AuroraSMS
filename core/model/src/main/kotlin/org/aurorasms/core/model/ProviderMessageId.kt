@@ -15,4 +15,6 @@ data class ProviderMessageId(
     }
 
     fun asMessageId(): MessageId = MessageId(kind = kind, value = value)
+
+    override fun toString(): String = "ProviderMessageId(kind=$kind, value=REDACTED)"
 }

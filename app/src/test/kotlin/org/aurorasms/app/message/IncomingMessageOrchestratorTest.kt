@@ -30,12 +30,14 @@ class IncomingMessageOrchestratorTest {
         val provider = FakeSmsProviderDataSource()
         val notifier = FakeMessageNotifier()
         val targets = ReplyTargetRegistry(clockMillis = { NOW })
+        var providerInsertSignals = 0
         val orchestrator = IncomingMessageOrchestrator(
             roleState = FakeRoleState(held = true),
             smsProvider = provider,
             contactResolver = contacts,
             messageNotifier = notifier,
             replyTargets = targets,
+            onProviderInsertComplete = { providerInsertSignals += 1 },
         )
 
         val result = orchestrator.persist(incomingSms(address))
@@ -43,6 +45,7 @@ class IncomingMessageOrchestratorTest {
         val persisted = result as IncomingPersistResult.Persisted
         assertEquals(1, provider.insertedIncoming.size)
         assertEquals(1, notifier.incoming.size)
+        assertEquals(1, providerInsertSignals)
         assertEquals("Aster Vale", notifier.incoming.single().message.senderDisplayName)
         assertFalse(notifier.incoming.single().message.senderPersonKey.contains(address.value))
         assertNotNull(targets.resolve(persisted.conversationId, "SMS:1", NOW))

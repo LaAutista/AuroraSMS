@@ -8,4 +8,6 @@ value class ConversationId(val value: Long) {
     init {
         require(value > 0L) { "Conversation IDs must be positive" }
     }
+
+    override fun toString(): String = "ConversationId(REDACTED)"
 }

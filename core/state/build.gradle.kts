@@ -33,6 +33,14 @@ android {
     }
 }
 
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.androidTest?.sources?.assets?.addStaticSourceDirectory(
+            layout.projectDirectory.dir("schemas").asFile.absolutePath,
+        )
+    }
+}
+
 ksp {
     arg("room.schemaLocation", file("schemas").path)
     arg("room.incremental", "true")

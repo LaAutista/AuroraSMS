@@ -18,6 +18,8 @@ value class ParticipantAddress(val value: String) {
         require(value.none(Char::isISOControl)) { "Participant address contains a control character" }
     }
 
+    override fun toString(): String = "ParticipantAddress(REDACTED)"
+
     companion object {
         const val MAX_ADDRESS_CHARACTERS: Int = 320
     }

@@ -33,6 +33,14 @@ android {
     }
 }
 
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.androidTest?.sources?.assets?.addStaticSourceDirectory(
+            layout.projectDirectory.dir("schemas").asFile.absolutePath,
+        )
+    }
+}
+
 ksp {
     arg("room.schemaLocation", file("schemas").path)
     arg("room.incremental", "true")
@@ -51,6 +59,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)
+    testImplementation(project(":core:testing"))
 
     androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(libs.androidx.test.core)
@@ -59,4 +68,5 @@ dependencies {
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.ext.junit.ktx)
+    androidTestImplementation(project(":core:testing"))
 }

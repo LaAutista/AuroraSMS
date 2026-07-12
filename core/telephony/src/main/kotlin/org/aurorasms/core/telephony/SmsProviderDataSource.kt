@@ -6,8 +6,12 @@ import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageDeliveryFingerprint
 import org.aurorasms.core.model.MessageDirection
+import org.aurorasms.core.model.MessageBox
+import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.MessageSyncFingerprint
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.ProviderThreadId
 
 data class ProviderPageRequest(
     val limit: Int,
@@ -20,6 +24,8 @@ data class ProviderPageRequest(
     companion object {
         const val MAX_PROVIDER_PAGE_SIZE: Int = 200
     }
+
+    override fun toString(): String = "ProviderPageRequest(limit=$limit, before=${before != null})"
 }
 
 data class ProviderPageCursor(
@@ -30,16 +36,23 @@ data class ProviderPageCursor(
         require(timestampMillis >= 0L) { "Provider timestamps cannot be negative" }
         require(providerRowId > 0L) { "Provider row IDs must be positive" }
     }
+
+    override fun toString(): String = "ProviderPageCursor(REDACTED)"
 }
 
 data class ProviderPage<out T>(
     val items: List<T>,
     val next: ProviderPageCursor?,
     val exhausted: Boolean,
-)
+) {
+    override fun toString(): String =
+        "ProviderPage(itemCount=${items.size}, hasNext=${next != null}, exhausted=$exhausted)"
+}
 
 sealed interface ProviderAccessResult<out T> {
-    data class Success<T>(val value: T) : ProviderAccessResult<T>
+    data class Success<T>(val value: T) : ProviderAccessResult<T> {
+        override fun toString(): String = "ProviderAccessResult.Success(REDACTED)"
+    }
     data object RoleRequired : ProviderAccessResult<Nothing>
     data object PermissionDenied : ProviderAccessResult<Nothing>
     data class Unsupported(val capability: String) : ProviderAccessResult<Nothing>
@@ -57,6 +70,8 @@ data class ProviderStoredMessage(
 
     val notificationRequired: Boolean
         get() = incomingDisposition != IncomingDeliveryDisposition.COMPLETED_REPLAY
+
+    override fun toString(): String = "ProviderStoredMessage(REDACTED)"
 }
 
 enum class IncomingDeliveryDisposition {
@@ -67,24 +82,91 @@ enum class IncomingDeliveryDisposition {
 
 data class SmsProviderMessage(
     val id: ProviderMessageId,
-    val threadId: Long,
-    val address: ParticipantAddress,
+    val providerThreadId: ProviderThreadId,
+    val sender: ParticipantAddress?,
     val body: String,
     val direction: MessageDirection,
+    val box: MessageBox,
+    val status: MessageStatus,
+    val rawStatus: Int?,
+    val rawErrorCode: Int?,
     val timestampMillis: Long,
     val sentTimestampMillis: Long?,
     val subscriptionId: AuroraSubscriptionId?,
     val read: Boolean,
     val seen: Boolean,
+    val locked: Boolean,
+    val syncFingerprint: MessageSyncFingerprint,
 ) {
     init {
-        require(threadId >= 0L) { "Provider thread IDs cannot be negative" }
+        require(id.kind == org.aurorasms.core.model.ProviderKind.SMS) {
+            "SMS provider messages need an SMS provider ID"
+        }
+        require(body.length <= MAX_PROVIDER_BODY_CHARACTERS) {
+            "SMS body exceeds the bounded provider projection"
+        }
         require(timestampMillis >= 0L) { "Provider timestamps cannot be negative" }
         require(sentTimestampMillis == null || sentTimestampMillis >= 0L) {
             "Provider sent timestamps cannot be negative"
         }
     }
+
+    override fun toString(): String =
+        "SmsProviderMessage(bodyLength=${body.length}, hasSender=${sender != null})"
+
+    companion object {
+        const val MAX_PROVIDER_BODY_CHARACTERS: Int = 100_000
+    }
 }
+
+/**
+ * Builds one logical provider page from a bounded raw page.
+ *
+ * Cursor progress is based on every raw row consumed, including a malformed row
+ * that cannot be projected. This prevents one rejected row from making a full
+ * raw provider window look exhausted or from being queried forever.
+ */
+internal fun <Raw, Projected> buildProviderPageFromRaw(
+    request: ProviderPageRequest,
+    rawRows: List<Raw>,
+    cursorFor: (Raw) -> ProviderPageCursor,
+    project: (Raw) -> Projected?,
+): ProviderPage<Projected> {
+    val rawLimit = request.limit + 1
+    require(rawRows.size <= rawLimit) { "Raw provider page exceeded its bounded query limit" }
+
+    val items = ArrayList<Projected>(request.limit)
+    var consumed = 0
+    var previousCursor = request.before
+    var lastConsumedCursor: ProviderPageCursor? = null
+    while (consumed < rawRows.size && items.size < request.limit) {
+        val raw = rawRows[consumed]
+        val rawCursor = cursorFor(raw)
+        require(previousCursor == null || rawCursor.isStrictlyBefore(previousCursor)) {
+            "Provider page did not make strict cursor progress"
+        }
+        consumed += 1
+        previousCursor = rawCursor
+        lastConsumedCursor = rawCursor
+        project(raw)?.let(items::add)
+    }
+
+    val sourceMayHaveMore = consumed < rawRows.size || rawRows.size == rawLimit
+    val next = if (sourceMayHaveMore && consumed > 0) {
+        lastConsumedCursor
+    } else {
+        null
+    }
+    return ProviderPage(
+        items = items,
+        next = next,
+        exhausted = !sourceMayHaveMore,
+    )
+}
+
+private fun ProviderPageCursor.isStrictlyBefore(other: ProviderPageCursor): Boolean =
+    timestampMillis < other.timestampMillis ||
+        (timestampMillis == other.timestampMillis && providerRowId < other.providerRowId)
 
 data class IncomingSmsRecord(
     val deliveryFingerprint: MessageDeliveryFingerprint,

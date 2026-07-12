@@ -3,9 +3,13 @@
 package org.aurorasms.core.testing
 
 import org.aurorasms.core.model.MessageDirection
+import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.MmsAttachmentSummary
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.DecodedIncomingMmsRecord
 import org.aurorasms.core.telephony.MmsProviderDataSource
 import org.aurorasms.core.telephony.MmsProviderMessage
@@ -23,11 +27,11 @@ class FakeMmsProviderDataSource(
     private var nextProviderId = (messages.maxOfOrNull { it.id.value } ?: 0L) + 1L
     private var nextConversationId = maxOf(
         20_000L,
-        (messages.maxOfOrNull { it.threadId } ?: 0L) + 1L,
+        (messages.maxOfOrNull { it.providerThreadId.value } ?: 0L) + 1L,
     )
     private val conversationIds = linkedMapOf<String, ConversationId>().apply {
-        messages.filter { it.threadId > 0L }.forEach { message ->
-            putIfAbsent(message.participantKey(), ConversationId(message.threadId))
+        messages.forEach { message ->
+            putIfAbsent(message.participantKey(), ConversationId(message.providerThreadId.value))
         }
     }
 
@@ -55,15 +59,33 @@ class FakeMmsProviderDataSource(
             }
             messages += MmsProviderMessage(
                 id = id,
-                threadId = conversationId.value,
+                providerThreadId = ProviderThreadId(conversationId.value),
+                sender = message.participants.firstOrNull(),
                 participants = message.participants,
+                participantsTruncated = false,
+                body = message.text,
                 subject = message.subject,
                 direction = MessageDirection.INCOMING,
+                box = MessageBox.INBOX,
+                status = MessageStatus.COMPLETE,
+                rawStatus = null,
+                rawResponseStatus = null,
+                rawRetrieveStatus = null,
                 timestampMillis = message.receivedTimestampMillis,
                 sentTimestampMillis = message.sentTimestampMillis,
                 subscriptionId = message.subscriptionId,
+                attachments = MmsAttachmentSummary.EMPTY,
                 read = false,
                 seen = false,
+                locked = false,
+                syncFingerprint = fakeSyncFingerprint(
+                    id.value,
+                    conversationId.value,
+                    message.participants.joinToString { it.value },
+                    message.text,
+                    message.subject,
+                    message.receivedTimestampMillis,
+                ),
             )
             ProviderAccessResult.Success(ProviderStoredMessage(id, conversationId))
         }

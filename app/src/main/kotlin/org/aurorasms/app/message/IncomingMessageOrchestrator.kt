@@ -22,6 +22,7 @@ class IncomingMessageOrchestrator(
     private val messageNotifier: MessageNotifier,
     private val replyTargets: ReplyTargetRegistry,
     private val notificationConfig: NotificationConfig = NotificationConfig(),
+    private val onProviderInsertComplete: suspend () -> Unit = {},
 ) : IncomingMessageSink {
     override suspend fun persist(message: IncomingMessage): IncomingPersistResult {
         if (!roleState.isRoleHeld()) {
@@ -48,6 +49,7 @@ class IncomingMessageOrchestrator(
         return when (insert) {
             is ProviderAccessResult.Success -> {
                 val stored = insert.value
+                onProviderInsertComplete()
                 if (!stored.notificationRequired) {
                     IncomingPersistResult.Duplicate(
                         providerId = stored.providerId,

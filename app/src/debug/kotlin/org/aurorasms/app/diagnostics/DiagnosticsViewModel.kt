@@ -24,6 +24,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.aurorasms.app.AuroraSmsApplication
+import org.aurorasms.app.IndexStorageStatus
+import org.aurorasms.app.StateStorageStatus
+import org.aurorasms.core.index.IndexFailureCode
+import org.aurorasms.core.index.IndexRunState
 import org.aurorasms.core.model.TransportResult
 
 data class DiagnosticsSnapshot(
@@ -37,6 +41,13 @@ data class DiagnosticsSnapshot(
     val activeSubscriptions: Int?,
     val smsRows: Int?,
     val mmsRows: Int?,
+    val indexState: IndexRunState?,
+    val indexedRows: Long?,
+    val indexVerifiedComplete: Boolean,
+    val indexPendingChanges: Boolean,
+    val indexFailure: IndexFailureCode?,
+    val indexStorageStatus: IndexStorageStatus,
+    val stateStorageStatus: StateStorageStatus,
     val lastTransportResult: TransportResult?,
 ) {
     companion object {
@@ -51,6 +62,13 @@ data class DiagnosticsSnapshot(
             activeSubscriptions = null,
             smsRows = null,
             mmsRows = null,
+            indexState = null,
+            indexedRows = null,
+            indexVerifiedComplete = false,
+            indexPendingChanges = false,
+            indexFailure = null,
+            indexStorageStatus = IndexStorageStatus.Opening,
+            stateStorageStatus = StateStorageStatus.Opening,
             lastTransportResult = null,
         )
     }
@@ -72,8 +90,14 @@ class DiagnosticsViewModel(
         }
     }
 
-    private fun readSnapshot(): DiagnosticsSnapshot {
+    private suspend fun readSnapshot(): DiagnosticsSnapshot {
         val context = getApplication<Application>()
+        val container = (context as? AuroraSmsApplication)?.container
+        val indexCoverage = try {
+            container?.messageIndex?.coverage()
+        } catch (_: RuntimeException) {
+            null
+        }
         val packageManager = context.packageManager
         val permissions = buildList {
             add(Manifest.permission.READ_SMS)
@@ -99,10 +123,14 @@ class DiagnosticsViewModel(
             activeSubscriptions = activeSubscriptionCount(context),
             smsRows = if (readSmsGranted) providerCount(context, Telephony.Sms.CONTENT_URI) else null,
             mmsRows = if (readSmsGranted) providerCount(context, Telephony.Mms.CONTENT_URI) else null,
-            lastTransportResult = (context as? AuroraSmsApplication)
-                ?.container
-                ?.lastTransportResult
-                ?.value,
+            indexState = indexCoverage?.state,
+            indexedRows = indexCoverage?.indexedMessageCount,
+            indexVerifiedComplete = indexCoverage?.verifiedComplete == true,
+            indexPendingChanges = indexCoverage?.pendingChanges == true,
+            indexFailure = indexCoverage?.failureCode,
+            indexStorageStatus = container?.indexStorageStatus?.value ?: IndexStorageStatus.Opening,
+            stateStorageStatus = container?.stateStorageStatus?.value ?: StateStorageStatus.Opening,
+            lastTransportResult = container?.lastTransportResult?.value,
         )
     }
 

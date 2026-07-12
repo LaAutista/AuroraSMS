@@ -2,12 +2,18 @@
 
 package org.aurorasms.core.testing
 
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageDeliveryFingerprint
+import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.MessageSyncFingerprint
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.IncomingSmsRecord
 import org.aurorasms.core.telephony.IncomingDeliveryDisposition
 import org.aurorasms.core.telephony.OutgoingSmsRecord
@@ -28,11 +34,13 @@ class FakeSmsProviderDataSource(
     private var nextProviderId = (messages.maxOfOrNull { it.id.value } ?: 0L) + 1L
     private var nextConversationId = maxOf(
         10_000L,
-        (messages.maxOfOrNull { it.threadId } ?: 0L) + 1L,
+        (messages.maxOfOrNull { it.providerThreadId.value } ?: 0L) + 1L,
     )
     private val conversationIds = linkedMapOf<String, ConversationId>().apply {
-        messages.filter { it.threadId > 0L }.forEach { message ->
-            putIfAbsent(message.address.value, ConversationId(message.threadId))
+        messages.forEach { message ->
+            message.sender?.let { sender ->
+                putIfAbsent(sender.value, ConversationId(message.providerThreadId.value))
+            }
         }
     }
     private val incomingDeliveries = linkedMapOf<MessageDeliveryFingerprint, FakeIncomingDelivery>()
@@ -71,15 +79,27 @@ class FakeSmsProviderDataSource(
             val conversationId = conversationIdFor(message.sender)
             messages += SmsProviderMessage(
                 id = id,
-                threadId = conversationId.value,
-                address = message.sender,
+                providerThreadId = ProviderThreadId(conversationId.value),
+                sender = message.sender,
                 body = message.body,
                 direction = MessageDirection.INCOMING,
+                box = MessageBox.INBOX,
+                status = MessageStatus.NONE,
+                rawStatus = null,
+                rawErrorCode = null,
                 timestampMillis = message.receivedTimestampMillis,
                 sentTimestampMillis = message.sentTimestampMillis,
                 subscriptionId = message.subscriptionId,
                 read = false,
                 seen = false,
+                locked = false,
+                syncFingerprint = fakeSyncFingerprint(
+                    id.value,
+                    conversationId.value,
+                    message.sender.value,
+                    message.body,
+                    message.receivedTimestampMillis,
+                ),
             )
             val stored = ProviderStoredMessage(
                 providerId = id,
@@ -114,15 +134,27 @@ class FakeSmsProviderDataSource(
             val conversationId = conversationIdFor(message.recipient)
             messages += SmsProviderMessage(
                 id = id,
-                threadId = conversationId.value,
-                address = message.recipient,
+                providerThreadId = ProviderThreadId(conversationId.value),
+                sender = message.recipient,
                 body = message.body,
                 direction = MessageDirection.OUTGOING,
+                box = MessageBox.OUTBOX,
+                status = MessageStatus.PENDING,
+                rawStatus = null,
+                rawErrorCode = null,
                 timestampMillis = message.timestampMillis,
                 sentTimestampMillis = null,
                 subscriptionId = message.subscriptionId,
                 read = true,
                 seen = true,
+                locked = false,
+                syncFingerprint = fakeSyncFingerprint(
+                    id.value,
+                    conversationId.value,
+                    message.recipient.value,
+                    message.body,
+                    message.timestampMillis,
+                ),
             )
             ProviderAccessResult.Success(ProviderStoredMessage(id, conversationId))
         }
@@ -132,8 +164,30 @@ class FakeSmsProviderDataSource(
         id: ProviderMessageId,
         status: SmsProviderStatus,
     ): ProviderAccessResult<Unit> = synchronized(lock) {
-        failure ?: if (messages.any { it.id == id }) {
+        val index = messages.indexOfFirst { it.id == id }
+        failure ?: if (index >= 0) {
             updatedStatuses[id] = status
+            val current = messages[index]
+            val (box, messageStatus, rawStatus) = when (status) {
+                SmsProviderStatus.COMPLETE -> Triple(MessageBox.SENT, MessageStatus.COMPLETE, 0)
+                SmsProviderStatus.FAILED -> Triple(MessageBox.FAILED, MessageStatus.FAILED, 64)
+                SmsProviderStatus.PENDING -> Triple(MessageBox.OUTBOX, MessageStatus.PENDING, 32)
+            }
+            messages[index] = current.copy(
+                box = box,
+                status = messageStatus,
+                rawStatus = rawStatus,
+                syncFingerprint = fakeSyncFingerprint(
+                    current.id.value,
+                    current.providerThreadId.value,
+                    current.sender?.value,
+                    current.body,
+                    current.timestampMillis,
+                    box.toStorageCode(),
+                    messageStatus.toStorageCode(),
+                    rawStatus,
+                ),
+            )
             ProviderAccessResult.Success(Unit)
         } else {
             ProviderAccessResult.InvalidInput("id")
@@ -170,3 +224,14 @@ private data class FakeIncomingDelivery(
 private fun SmsProviderMessage.isBefore(cursor: ProviderPageCursor): Boolean =
     timestampMillis < cursor.timestampMillis ||
         (timestampMillis == cursor.timestampMillis && id.value < cursor.providerRowId)
+
+internal fun fakeSyncFingerprint(vararg values: Any?): MessageSyncFingerprint {
+    val digest = MessageDigest.getInstance("SHA-256")
+    values.forEach { value ->
+        val bytes = value.toString().toByteArray(StandardCharsets.UTF_8)
+        digest.update(bytes.size.toString().toByteArray(StandardCharsets.US_ASCII))
+        digest.update(0.toByte())
+        digest.update(bytes)
+    }
+    return MessageSyncFingerprint.fromSha256(digest.digest())
+}

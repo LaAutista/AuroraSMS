@@ -8,4 +8,6 @@ value class AuroraSubscriptionId(val value: Int) {
     init {
         require(value >= 0) { "Subscription IDs cannot use the platform invalid sentinel" }
     }
+
+    override fun toString(): String = "AuroraSubscriptionId(REDACTED)"
 }

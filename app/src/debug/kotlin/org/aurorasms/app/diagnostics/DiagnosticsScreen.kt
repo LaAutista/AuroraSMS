@@ -2,6 +2,7 @@
 
 package org.aurorasms.app.diagnostics
 
+import java.util.Locale
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.aurorasms.app.R
+import org.aurorasms.app.IndexStorageStatus
+import org.aurorasms.app.StateStorageStatus
 import org.aurorasms.core.model.TransportResult
 
 @Composable
@@ -72,6 +75,37 @@ fun DiagnosticsScreen(
                     snapshot.mmsRows?.toString() ?: stringResource(R.string.diagnostics_unavailable),
                 )
                 DiagnosticRow(
+                    stringResource(R.string.diagnostics_index_state_label),
+                    snapshot.indexState?.name?.asDiagnosticText()
+                        ?: stringResource(R.string.diagnostics_unavailable),
+                )
+                DiagnosticRow(
+                    stringResource(R.string.diagnostics_indexed_rows_label),
+                    snapshot.indexedRows?.toString()
+                        ?: stringResource(R.string.diagnostics_unavailable),
+                )
+                DiagnosticRow(
+                    stringResource(R.string.diagnostics_index_verified_label),
+                    booleanText(snapshot.indexVerifiedComplete),
+                )
+                DiagnosticRow(
+                    stringResource(R.string.diagnostics_index_pending_label),
+                    booleanText(snapshot.indexPendingChanges),
+                )
+                DiagnosticRow(
+                    stringResource(R.string.diagnostics_index_failure_label),
+                    snapshot.indexFailure?.name?.asDiagnosticText()
+                        ?: stringResource(R.string.diagnostics_none),
+                )
+                DiagnosticRow(
+                    stringResource(R.string.diagnostics_index_storage_label),
+                    indexStorageText(snapshot.indexStorageStatus),
+                )
+                DiagnosticRow(
+                    stringResource(R.string.diagnostics_state_storage_label),
+                    stateStorageText(snapshot.stateStorageStatus),
+                )
+                DiagnosticRow(
                     stringResource(R.string.diagnostics_last_transport_label),
                     transportResultText(snapshot.lastTransportResult),
                 )
@@ -90,6 +124,28 @@ fun DiagnosticsScreen(
         }
     }
 }
+
+@Composable
+private fun stateStorageText(status: StateStorageStatus): String = when (status) {
+    StateStorageStatus.Opening -> stringResource(R.string.diagnostics_state_opening)
+    StateStorageStatus.Ready -> stringResource(R.string.diagnostics_state_ready)
+    is StateStorageStatus.Failed -> status.reason.name.asDiagnosticText()
+}
+
+@Composable
+private fun indexStorageText(status: IndexStorageStatus): String = when (status) {
+    IndexStorageStatus.Opening -> stringResource(R.string.diagnostics_state_opening)
+    is IndexStorageStatus.Ready -> stringResource(
+        if (status.recovered) {
+            R.string.diagnostics_index_ready_recovered
+        } else {
+            R.string.diagnostics_state_ready
+        },
+    )
+    is IndexStorageStatus.Failed -> status.reason.name.asDiagnosticText()
+}
+
+private fun String.asDiagnosticText(): String = lowercase(Locale.ROOT).replace('_', ' ')
 
 @Composable
 private fun booleanText(value: Boolean): String = stringResource(

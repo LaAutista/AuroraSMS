@@ -3,25 +3,44 @@
 package org.aurorasms.core.telephony
 
 import org.aurorasms.core.model.AuroraSubscriptionId
+import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
+import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.MessageSyncFingerprint
+import org.aurorasms.core.model.MmsAttachmentSummary
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.ProviderThreadId
 
 data class MmsProviderMessage(
     val id: ProviderMessageId,
-    val threadId: Long,
+    val providerThreadId: ProviderThreadId,
+    val sender: ParticipantAddress?,
     val participants: List<ParticipantAddress>,
+    val participantsTruncated: Boolean,
+    val body: String?,
     val subject: String?,
     val direction: MessageDirection,
+    val box: MessageBox,
+    val status: MessageStatus,
+    val rawStatus: Int?,
+    val rawResponseStatus: Int?,
+    val rawRetrieveStatus: Int?,
     val timestampMillis: Long,
     val sentTimestampMillis: Long?,
     val subscriptionId: AuroraSubscriptionId?,
+    val attachments: MmsAttachmentSummary,
     val read: Boolean,
     val seen: Boolean,
+    val locked: Boolean,
+    val syncFingerprint: MessageSyncFingerprint,
 ) {
     init {
-        require(threadId >= 0L) { "Provider thread IDs cannot be negative" }
+        require(id.kind == org.aurorasms.core.model.ProviderKind.MMS) {
+            "MMS provider messages need an MMS provider ID"
+        }
         require(participants.size <= MAX_MMS_PARTICIPANTS) { "MMS participant list is too large" }
+        require(body == null || body.length <= MAX_MMS_TEXT_CHARACTERS) { "MMS text is too long" }
         require(subject == null || subject.length <= MAX_MMS_SUBJECT_CHARACTERS) { "MMS subject is too long" }
         require(timestampMillis >= 0L) { "Provider timestamps cannot be negative" }
         require(sentTimestampMillis == null || sentTimestampMillis >= 0L) {
@@ -29,9 +48,17 @@ data class MmsProviderMessage(
         }
     }
 
+    override fun toString(): String =
+        "MmsProviderMessage(" +
+            "participantCount=${participants.size}, " +
+            "bodyLength=${body?.length ?: 0}, " +
+            "hasSubject=${subject != null}, " +
+            "attachmentCount=${attachments.attachmentCount})"
+
     companion object {
         const val MAX_MMS_PARTICIPANTS: Int = 100
         const val MAX_MMS_SUBJECT_CHARACTERS: Int = 1_000
+        const val MAX_MMS_TEXT_CHARACTERS: Int = 100_000
     }
 }
 

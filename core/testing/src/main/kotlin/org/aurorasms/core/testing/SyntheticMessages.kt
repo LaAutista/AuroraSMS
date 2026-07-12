@@ -4,11 +4,15 @@ package org.aurorasms.core.testing
 
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageDeliveryFingerprint
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.MmsAttachmentSummary
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.notifications.IncomingMessageNotification
 import org.aurorasms.core.telephony.DecodedIncomingMmsRecord
 import org.aurorasms.core.telephony.IncomingSmsRecord
@@ -50,15 +54,25 @@ object SyntheticMessages {
 
     fun smsProviderMessage(): SmsProviderMessage = SmsProviderMessage(
         id = incomingSmsId,
-        threadId = conversationId.value,
-        address = SyntheticPeople.NOVA.address,
+        providerThreadId = ProviderThreadId(conversationId.value),
+        sender = SyntheticPeople.NOVA.address,
         body = FIRST_BODY,
         direction = MessageDirection.INCOMING,
+        box = MessageBox.INBOX,
+        status = MessageStatus.NONE,
+        rawStatus = null,
+        rawErrorCode = null,
         timestampMillis = FIXED_TIMESTAMP_MILLIS,
         sentTimestampMillis = FIXED_TIMESTAMP_MILLIS - 500,
         subscriptionId = subscriptionId,
         read = false,
         seen = false,
+        locked = false,
+        syncFingerprint = fakeSyncFingerprint(
+            incomingSmsId.value,
+            conversationId.value,
+            FIRST_BODY,
+        ),
     )
 
     fun decodedIncomingMmsRecord(): DecodedIncomingMmsRecord = DecodedIncomingMmsRecord(
@@ -72,15 +86,31 @@ object SyntheticMessages {
 
     fun mmsProviderMessage(): MmsProviderMessage = MmsProviderMessage(
         id = incomingMmsId,
-        threadId = conversationId.value,
+        providerThreadId = ProviderThreadId(conversationId.value),
+        sender = SyntheticPeople.NOVA.address,
         participants = listOf(SyntheticPeople.NOVA.address, SyntheticPeople.MILO.address),
+        participantsTruncated = false,
+        body = SECOND_BODY,
         subject = "Observatory checklist",
         direction = MessageDirection.INCOMING,
+        box = MessageBox.INBOX,
+        status = MessageStatus.COMPLETE,
+        rawStatus = null,
+        rawResponseStatus = null,
+        rawRetrieveStatus = null,
         timestampMillis = FIXED_TIMESTAMP_MILLIS,
         sentTimestampMillis = FIXED_TIMESTAMP_MILLIS - 1_000,
         subscriptionId = subscriptionId,
+        attachments = MmsAttachmentSummary.EMPTY,
         read = false,
         seen = false,
+        locked = false,
+        syncFingerprint = fakeSyncFingerprint(
+            incomingMmsId.value,
+            conversationId.value,
+            SECOND_BODY,
+            "Observatory checklist",
+        ),
     )
 
     fun incomingNotification(): IncomingMessageNotification = IncomingMessageNotification(

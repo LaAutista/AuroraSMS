@@ -10,6 +10,8 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.aurorasms.core.telephony.internal.AndroidMmsProviderDataSource
 import org.aurorasms.core.telephony.internal.AndroidSmsProviderDataSource
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,6 +27,20 @@ class ProviderContractTest {
 
         assertTrue(AndroidSmsProviderDataSource(denied, heldRole).count() is ProviderAccessResult.PermissionDenied)
         assertTrue(AndroidMmsProviderDataSource(denied, heldRole).count() is ProviderAccessResult.PermissionDenied)
+    }
+
+    @Test
+    fun malformedRawProjectionRetainsAForwardProgressCursorOnDeviceRuntime() {
+        val page = buildProviderPageFromRaw(
+            request = ProviderPageRequest(limit = 2),
+            rawRows = listOf(3L, 2L, 1L),
+            cursorFor = { id -> ProviderPageCursor(timestampMillis = id * 1_000L, providerRowId = id) },
+            project = { id -> id.takeIf { it == 1L } },
+        )
+
+        assertEquals(listOf(1L), page.items)
+        assertEquals(ProviderPageCursor(timestampMillis = 1_000L, providerRowId = 1L), page.next)
+        assertFalse(page.exhausted)
     }
 
     private class DeniedSmsContext(base: Context) : ContextWrapper(base) {

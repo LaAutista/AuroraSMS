@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private var roleState by mutableStateOf<RoleOnboardingState>(RoleOnboardingState.ReadyToRequest)
     private var permissionState by mutableStateOf<Map<String, Boolean>>(emptyMap())
     private var notificationPermissionGranted by mutableStateOf(Build.VERSION.SDK_INT < 33)
+    private var lastReportedMessagingEligibility: Boolean? = null
     private var showDiagnostics by mutableStateOf(false)
     internal var openedConversationId by mutableStateOf<ConversationId?>(null)
         private set
@@ -63,6 +64,7 @@ class MainActivity : ComponentActivity() {
         permissionState = requiredMessagingPermissions().associateWith { permission ->
             results[permission] ?: isPermissionGranted(permission)
         }
+        relayMessagingEligibilityIfChanged()
     }
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -168,6 +170,15 @@ class MainActivity : ComponentActivity() {
         permissionState = requiredMessagingPermissions().associateWith(::isPermissionGranted)
         notificationPermissionGranted = Build.VERSION.SDK_INT < 33 ||
             isPermissionGranted(Manifest.permission.POST_NOTIFICATIONS)
+        relayMessagingEligibilityIfChanged()
+    }
+
+    private fun relayMessagingEligibilityIfChanged() {
+        if (!::roleCoordinator.isInitialized) return
+        val eligible = roleState == RoleOnboardingState.Held && isPermissionGranted(Manifest.permission.READ_SMS)
+        if (lastReportedMessagingEligibility == eligible) return
+        lastReportedMessagingEligibility = eligible
+        (application as? AuroraSmsApplication)?.container?.onMessagingEligibilityChanged()
     }
 
     private fun isPermissionGranted(permission: String): Boolean =
