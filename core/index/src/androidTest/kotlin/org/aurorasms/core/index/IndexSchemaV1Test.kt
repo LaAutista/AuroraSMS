@@ -100,6 +100,34 @@ class IndexSchemaV1Test {
     }
 
     @Test
+    fun denseFtsPlanScansMatchOnceAndSortsOnlyCompactRowIds() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val database = IndexDatabaseFactory.createInMemory(context)
+        try {
+            val plan = database.openHelper.writableDatabase.stringColumn(
+                """
+                EXPLAIN QUERY PLAN
+                SELECT indexed_messages.row_id
+                FROM indexed_messages_fts
+                CROSS JOIN indexed_messages
+                  ON indexed_messages.row_id = indexed_messages_fts.rowid
+                WHERE indexed_messages_fts MATCH 'alpha'
+                ORDER BY indexed_messages.timestamp_ms DESC, indexed_messages.row_id DESC
+                LIMIT 51
+                """.trimIndent(),
+                column = 3,
+            ).joinToString(" ")
+            assertTrue(plan.contains("indexed_messages_fts", ignoreCase = true))
+            assertTrue(plan.contains("VIRTUAL TABLE", ignoreCase = true))
+            assertTrue(plan.contains("INTEGER PRIMARY KEY", ignoreCase = true))
+            assertTrue(plan.contains("TEMP B-TREE", ignoreCase = true))
+            assertFalse(plan.contains("CORRELATED", ignoreCase = true))
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun migrationHelperCreatesExportedVersionOneAndCurrentRoomValidatesIt() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.deleteDatabase(MIGRATION_DATABASE_NAME)

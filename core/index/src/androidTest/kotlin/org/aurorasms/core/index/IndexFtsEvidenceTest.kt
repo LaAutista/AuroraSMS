@@ -144,6 +144,78 @@ class IndexFtsEvidenceTest {
         )
     }
 
+    @Test
+    fun denseGlobalSearchFallsBackWhenFtsDocIdsOpposeTimelineOrder() = runBlocking {
+        val dao = database.indexedMessageDao()
+        val rows = (0 until 600).map { ordinal ->
+            entity(
+                kind = ProviderKind.SMS,
+                providerId = ordinal.toLong() + 1L,
+                timestampMillis = ordinal.toLong(),
+                body = "alpha dense result",
+            )
+        }
+        dao.upsertBatchPreservingLocalIds(rows.take(300))
+        dao.upsertBatchPreservingLocalIds(rows.drop(300))
+
+        val index = RoomMessageIndex(database)
+        val first = requirePage(index.search(SearchRequest("alpha", limit = 50)))
+        val second = requirePage(
+            index.search(
+                SearchRequest("alpha", limit = 50, cursor = requireNotNull(first.next)),
+            ),
+        )
+
+        assertEquals((599L downTo 550L).toList(), first.items.map { it.timestampMillis })
+        assertEquals((549L downTo 500L).toList(), second.items.map { it.timestampMillis })
+        assertTrue(
+            first.items.map { it.localRowId }.toSet()
+                .intersect(second.items.map { it.localRowId }.toSet())
+                .isEmpty(),
+        )
+    }
+
+    @Test
+    fun denseGlobalSearchProofPreservesTiedOrderAcrossKeysetPages() = runBlocking {
+        val rows = (0 until 80).map { ordinal ->
+            entity(
+                kind = ProviderKind.SMS,
+                providerId = ordinal.toLong() + 1L,
+                timestampMillis = 1_000L - (ordinal / 2),
+                body = "alpha aligned dense result",
+            )
+        }
+        database.indexedMessageDao().upsertBatchPreservingLocalIds(rows)
+
+        val index = RoomMessageIndex(database)
+        val first = requirePage(index.search(SearchRequest("alpha", limit = 10)))
+        val second = requirePage(
+            index.search(
+                SearchRequest("alpha", limit = 10, cursor = requireNotNull(first.next)),
+            ),
+        )
+
+        assertEquals(listOf(2L, 1L, 4L, 3L, 6L, 5L, 8L, 7L, 10L, 9L), first.items.map { it.localRowId })
+        assertEquals(listOf(12L, 11L, 14L, 13L, 16L, 15L, 18L, 17L, 20L, 19L), second.items.map { it.localRowId })
+    }
+
+    @Test
+    fun denseGlobalSearchRejectsProofWhenOutsideTieHasHigherRowId() = runBlocking {
+        val rows = (1L..70L).map { providerId ->
+            entity(
+                kind = ProviderKind.SMS,
+                providerId = providerId,
+                timestampMillis = 1_000L,
+                body = "alpha tied dense result",
+            )
+        }
+        database.indexedMessageDao().upsertBatchPreservingLocalIds(rows)
+
+        val page = requirePage(RoomMessageIndex(database).search(SearchRequest("alpha", limit = 2)))
+
+        assertEquals(listOf(70L, 69L), page.items.map { it.localRowId })
+    }
+
     private fun ftsMatchCount(expression: String): Long = database.openHelper.writableDatabase.singleLong(
         "SELECT COUNT(*) FROM indexed_messages_fts WHERE indexed_messages_fts MATCH ?",
         arrayOf(expression),

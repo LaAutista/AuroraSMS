@@ -32,6 +32,15 @@ data class StoredSyncState(
         "StoredSyncState(providerId=REDACTED, syncFingerprint=REDACTED, generation=REDACTED)"
 }
 
+data class StoredSearchOrder(
+    @ColumnInfo(name = "row_id")
+    val rowId: Long,
+    @ColumnInfo(name = "timestamp_ms")
+    val timestampMillis: Long,
+) {
+    override fun toString(): String = "StoredSearchOrder(REDACTED)"
+}
+
 data class IndexUpsertSummary(
     val inserted: Int,
     val updated: Int,
@@ -318,11 +327,15 @@ abstract class IndexedMessageDao {
         providerIds: List<Long>,
     ): List<StoredSyncState>
 
+    @Query("SELECT * FROM indexed_messages WHERE row_id IN (:rowIds)")
+    abstract suspend fun messagesByLocalRowIds(rowIds: List<Long>): List<IndexedMessageEntity>
+
     @Query(
         """
         SELECT rowid
         FROM indexed_messages_fts
         WHERE indexed_messages_fts MATCH :matchExpression
+        ORDER BY rowid ASC
         LIMIT :limit
         """,
     )
@@ -331,96 +344,142 @@ abstract class IndexedMessageDao {
         limit: Int,
     ): List<Long>
 
-    @Query("SELECT * FROM indexed_messages WHERE row_id IN (:rowIds)")
-    abstract suspend fun messagesByLocalRowIds(rowIds: List<Long>): List<IndexedMessageEntity>
-
     @Query(
         """
-        SELECT indexed_messages.*
-        FROM indexed_messages INDEXED BY index_indexed_messages_timestamp_ms_row_id
-        WHERE EXISTS (
-            SELECT 1 FROM indexed_messages_fts
-            WHERE indexed_messages_fts.rowid = indexed_messages.row_id
-              AND indexed_messages_fts MATCH :matchExpression
-        )
-        ORDER BY timestamp_ms DESC, row_id DESC
+        SELECT rowid
+        FROM indexed_messages_fts
+        WHERE indexed_messages_fts MATCH :matchExpression
+          AND rowid > :afterRowId
+        ORDER BY rowid ASC
         LIMIT :limit
         """,
     )
-    abstract suspend fun searchGlobalFirst(
+    abstract suspend fun searchCandidateRowIdsAfterLocalRowId(
         matchExpression: String,
+        afterRowId: Long,
         limit: Int,
-    ): List<IndexedMessageEntity>
+    ): List<Long>
 
     @Query(
         """
-        SELECT indexed_messages.*
+        SELECT row_id, timestamp_ms
+        FROM indexed_messages
+        WHERE row_id IN (:rowIds)
+        """,
+    )
+    abstract suspend fun searchOrdersByLocalRowIds(rowIds: List<Long>): List<StoredSearchOrder>
+
+    @Query(
+        """
+        SELECT row_id, timestamp_ms
         FROM indexed_messages INDEXED BY index_indexed_messages_timestamp_ms_row_id
-        WHERE EXISTS (
-            SELECT 1 FROM indexed_messages_fts
-            WHERE indexed_messages_fts.rowid = indexed_messages.row_id
-              AND indexed_messages_fts MATCH :matchExpression
-        )
+        WHERE row_id NOT IN (:excludedRowIds)
+        ORDER BY timestamp_ms DESC, row_id DESC
+        LIMIT 1
+        """,
+    )
+    abstract suspend fun newestGlobalOrderOutside(
+        excludedRowIds: List<Long>,
+    ): StoredSearchOrder?
+
+    @Query(
+        """
+        SELECT row_id, timestamp_ms
+        FROM indexed_messages INDEXED BY index_indexed_messages_timestamp_ms_row_id
+        WHERE row_id NOT IN (:excludedRowIds)
           AND (
             timestamp_ms < :beforeTimestampMillis OR
             (timestamp_ms = :beforeTimestampMillis AND row_id < :beforeRowId)
           )
         ORDER BY timestamp_ms DESC, row_id DESC
-        LIMIT :limit
+        LIMIT 1
         """,
     )
-    abstract suspend fun searchGlobalAfter(
-        matchExpression: String,
+    abstract suspend fun newestGlobalOrderOutsideAfter(
+        excludedRowIds: List<Long>,
         beforeTimestampMillis: Long,
         beforeRowId: Long,
-        limit: Int,
-    ): List<IndexedMessageEntity>
+    ): StoredSearchOrder?
 
     @Query(
         """
-        SELECT indexed_messages.*
-        FROM indexed_messages INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
-        WHERE provider_thread_id = :providerThreadId
-          AND EXISTS (
-            SELECT 1 FROM indexed_messages_fts
-            WHERE indexed_messages_fts.rowid = indexed_messages.row_id
-              AND indexed_messages_fts MATCH :matchExpression
-        )
-        ORDER BY timestamp_ms DESC, row_id DESC
+        SELECT indexed_messages.row_id
+        FROM indexed_messages_fts
+        CROSS JOIN indexed_messages
+          ON indexed_messages.row_id = indexed_messages_fts.rowid
+        WHERE indexed_messages_fts MATCH :matchExpression
+        ORDER BY indexed_messages.timestamp_ms DESC, indexed_messages.row_id DESC
         LIMIT :limit
         """,
     )
-    abstract suspend fun searchThreadFirst(
+    abstract suspend fun searchGlobalFirstRowIds(
         matchExpression: String,
-        providerThreadId: Long,
         limit: Int,
-    ): List<IndexedMessageEntity>
+    ): List<Long>
 
     @Query(
         """
-        SELECT indexed_messages.*
-        FROM indexed_messages INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
-        WHERE provider_thread_id = :providerThreadId
-          AND EXISTS (
-            SELECT 1 FROM indexed_messages_fts
-            WHERE indexed_messages_fts.rowid = indexed_messages.row_id
-              AND indexed_messages_fts MATCH :matchExpression
-        )
+        SELECT indexed_messages.row_id
+        FROM indexed_messages_fts
+        CROSS JOIN indexed_messages
+          ON indexed_messages.row_id = indexed_messages_fts.rowid
+        WHERE indexed_messages_fts MATCH :matchExpression
           AND (
-            timestamp_ms < :beforeTimestampMillis OR
-            (timestamp_ms = :beforeTimestampMillis AND row_id < :beforeRowId)
+            indexed_messages.timestamp_ms < :beforeTimestampMillis OR
+            (indexed_messages.timestamp_ms = :beforeTimestampMillis AND indexed_messages.row_id < :beforeRowId)
           )
-        ORDER BY timestamp_ms DESC, row_id DESC
+        ORDER BY indexed_messages.timestamp_ms DESC, indexed_messages.row_id DESC
         LIMIT :limit
         """,
     )
-    abstract suspend fun searchThreadAfter(
+    abstract suspend fun searchGlobalAfterRowIds(
+        matchExpression: String,
+        beforeTimestampMillis: Long,
+        beforeRowId: Long,
+        limit: Int,
+    ): List<Long>
+
+    @Query(
+        """
+        SELECT indexed_messages.row_id
+        FROM indexed_messages_fts
+        CROSS JOIN indexed_messages
+          ON indexed_messages.row_id = indexed_messages_fts.rowid
+        WHERE indexed_messages_fts MATCH :matchExpression
+          AND indexed_messages.provider_thread_id = :providerThreadId
+        ORDER BY indexed_messages.timestamp_ms DESC, indexed_messages.row_id DESC
+        LIMIT :limit
+        """,
+    )
+    abstract suspend fun searchThreadFirstRowIds(
+        matchExpression: String,
+        providerThreadId: Long,
+        limit: Int,
+    ): List<Long>
+
+    @Query(
+        """
+        SELECT indexed_messages.row_id
+        FROM indexed_messages_fts
+        CROSS JOIN indexed_messages
+          ON indexed_messages.row_id = indexed_messages_fts.rowid
+        WHERE indexed_messages_fts MATCH :matchExpression
+          AND indexed_messages.provider_thread_id = :providerThreadId
+          AND (
+            indexed_messages.timestamp_ms < :beforeTimestampMillis OR
+            (indexed_messages.timestamp_ms = :beforeTimestampMillis AND indexed_messages.row_id < :beforeRowId)
+          )
+        ORDER BY indexed_messages.timestamp_ms DESC, indexed_messages.row_id DESC
+        LIMIT :limit
+        """,
+    )
+    abstract suspend fun searchThreadAfterRowIds(
         matchExpression: String,
         providerThreadId: Long,
         beforeTimestampMillis: Long,
         beforeRowId: Long,
         limit: Int,
-    ): List<IndexedMessageEntity>
+    ): List<Long>
 
     @Query(
         """

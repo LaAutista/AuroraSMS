@@ -18,6 +18,7 @@ import org.aurorasms.core.index.storage.IndexedMessageDao
 import org.aurorasms.core.index.storage.IndexedMessageEntity
 import org.aurorasms.core.index.storage.ProviderKindCode
 import org.aurorasms.core.index.storage.StoredMessageIdentity
+import org.aurorasms.core.index.storage.StoredSearchOrder
 import org.aurorasms.core.index.storage.StoredSyncState
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageBox
@@ -793,40 +794,60 @@ private class FakeIndexedMessageDao : IndexedMessageDao() {
         }
     }
 
+    override suspend fun messagesByLocalRowIds(
+        rowIds: List<Long>,
+    ): List<IndexedMessageEntity> = emptyList()
+
     override suspend fun searchCandidateRowIds(
         matchExpression: String,
         limit: Int,
     ): List<Long> = emptyList()
 
-    override suspend fun messagesByLocalRowIds(
+    override suspend fun searchCandidateRowIdsAfterLocalRowId(
+        matchExpression: String,
+        afterRowId: Long,
+        limit: Int,
+    ): List<Long> = emptyList()
+
+    override suspend fun searchOrdersByLocalRowIds(
         rowIds: List<Long>,
-    ): List<IndexedMessageEntity> = emptyList()
+    ): List<StoredSearchOrder> = emptyList()
 
-    override suspend fun searchGlobalFirst(
+    override suspend fun newestGlobalOrderOutside(
+        excludedRowIds: List<Long>,
+    ): StoredSearchOrder? = null
+
+    override suspend fun newestGlobalOrderOutsideAfter(
+        excludedRowIds: List<Long>,
+        beforeTimestampMillis: Long,
+        beforeRowId: Long,
+    ): StoredSearchOrder? = null
+
+    override suspend fun searchGlobalFirstRowIds(
         matchExpression: String,
         limit: Int,
-    ): List<IndexedMessageEntity> = emptyList()
+    ): List<Long> = emptyList()
 
-    override suspend fun searchGlobalAfter(
+    override suspend fun searchGlobalAfterRowIds(
         matchExpression: String,
         beforeTimestampMillis: Long,
         beforeRowId: Long,
         limit: Int,
-    ): List<IndexedMessageEntity> = emptyList()
+    ): List<Long> = emptyList()
 
-    override suspend fun searchThreadFirst(
+    override suspend fun searchThreadFirstRowIds(
         matchExpression: String,
         providerThreadId: Long,
         limit: Int,
-    ): List<IndexedMessageEntity> = emptyList()
+    ): List<Long> = emptyList()
 
-    override suspend fun searchThreadAfter(
+    override suspend fun searchThreadAfterRowIds(
         matchExpression: String,
         providerThreadId: Long,
         beforeTimestampMillis: Long,
         beforeRowId: Long,
         limit: Int,
-    ): List<IndexedMessageEntity> = emptyList()
+    ): List<Long> = emptyList()
 
     override suspend fun newerThanAnchor(
         providerThreadId: Long,

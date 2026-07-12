@@ -2,6 +2,7 @@
 
 package org.aurorasms.core.index.search
 
+import androidx.room.withTransaction
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import org.aurorasms.core.index.AnchorWindowResult
@@ -21,6 +22,7 @@ import org.aurorasms.core.index.storage.IndexCheckpointEntity
 import org.aurorasms.core.index.storage.IndexGenerationEntity
 import org.aurorasms.core.index.storage.IndexedMessageEntity
 import org.aurorasms.core.index.storage.ProviderKindCode
+import org.aurorasms.core.index.storage.StoredSearchOrder
 import org.aurorasms.core.index.storage.toIndexFailureCode
 import org.aurorasms.core.index.storage.toIndexRunState
 import org.aurorasms.core.index.storage.toIndexStorageCode
@@ -33,7 +35,7 @@ import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 
 class RoomMessageIndex(
-    database: AuroraIndexDatabase,
+    private val database: AuroraIndexDatabase,
 ) : MessageIndex {
     private val messageDao = database.indexedMessageDao()
     private val syncDao = database.indexSyncDao()
@@ -60,44 +62,37 @@ class RoomMessageIndex(
         }
 
         val requestedRows = request.limit + 1
-        val candidateRowIds = messageDao.searchCandidateRowIds(
-            matchExpression = parsed.matchExpression,
-            limit = SPARSE_RESULT_LIMIT + 1,
-        )
-        val entities = if (candidateRowIds.size <= SPARSE_RESULT_LIMIT) {
-            sparseResultPage(
-                entities = if (candidateRowIds.isEmpty()) {
-                    emptyList()
-                } else {
-                    messageDao.messagesByLocalRowIds(candidateRowIds)
-                },
-                threadId = request.threadId,
-                cursor = cursor,
-                limit = requestedRows,
-            )
-        } else when {
-            request.threadId == null && cursor == null -> messageDao.searchGlobalFirst(
-                matchExpression = parsed.matchExpression,
-                limit = requestedRows,
-            )
-            request.threadId == null -> messageDao.searchGlobalAfter(
-                matchExpression = parsed.matchExpression,
-                beforeTimestampMillis = requireNotNull(cursor).timestampMillis,
-                beforeRowId = cursor.localRowId,
-                limit = requestedRows,
-            )
-            cursor == null -> messageDao.searchThreadFirst(
-                matchExpression = parsed.matchExpression,
-                providerThreadId = request.threadId.value,
-                limit = requestedRows,
-            )
-            else -> messageDao.searchThreadAfter(
-                matchExpression = parsed.matchExpression,
-                providerThreadId = request.threadId.value,
-                beforeTimestampMillis = cursor.timestampMillis,
-                beforeRowId = cursor.localRowId,
-                limit = requestedRows,
-            )
+        val entities = database.withTransaction {
+            val orderedRowIds = when {
+                request.threadId == null -> globalRowIds(
+                    matchExpression = parsed.matchExpression,
+                    requestedRows = requestedRows,
+                    cursor = cursor,
+                )
+                cursor == null -> messageDao.searchThreadFirstRowIds(
+                    matchExpression = parsed.matchExpression,
+                    providerThreadId = request.threadId.value,
+                    limit = requestedRows,
+                )
+                else -> messageDao.searchThreadAfterRowIds(
+                    matchExpression = parsed.matchExpression,
+                    providerThreadId = request.threadId.value,
+                    beforeTimestampMillis = cursor.timestampMillis,
+                    beforeRowId = cursor.localRowId,
+                    limit = requestedRows,
+                )
+            }
+            val entitiesByRowId = if (orderedRowIds.isEmpty()) {
+                emptyMap()
+            } else {
+                messageDao.messagesByLocalRowIds(orderedRowIds)
+                    .associateBy(IndexedMessageEntity::rowId)
+            }
+            orderedRowIds.map { rowId ->
+                checkNotNull(entitiesByRowId[rowId]) {
+                    "An FTS result did not resolve to indexed content"
+                }
+            }
         }
         val pageEntities = entities.take(request.limit)
         val next = if (entities.size > request.limit) {
@@ -118,6 +113,79 @@ class RoomMessageIndex(
                 coverage = coverage(),
             ),
         )
+    }
+
+    /**
+     * FTS4 yields a cheap bounded docid prefix but cannot directly order by the message timeline.
+     * A normal-index proof makes that prefix exact when every non-candidate row is older than the
+     * requested boundary. Arbitrary or out-of-order row IDs fail the proof and use the compact,
+     * exact FTS-first row-id sort instead.
+     */
+    private suspend fun globalRowIds(
+        matchExpression: String,
+        requestedRows: Int,
+        cursor: SearchCursor?,
+    ): List<Long> {
+        val candidateLimit = maxOf(MINIMUM_FAST_SEARCH_CANDIDATES, requestedRows)
+        val candidateRowIds = if (cursor == null) {
+            messageDao.searchCandidateRowIds(matchExpression, candidateLimit)
+        } else {
+            messageDao.searchCandidateRowIdsAfterLocalRowId(
+                matchExpression = matchExpression,
+                afterRowId = cursor.localRowId,
+                limit = candidateLimit,
+            )
+        }
+        if (candidateRowIds.isEmpty()) {
+            return if (cursor == null) {
+                emptyList()
+            } else {
+                messageDao.searchGlobalAfterRowIds(
+                    matchExpression = matchExpression,
+                    beforeTimestampMillis = cursor.timestampMillis,
+                    beforeRowId = cursor.localRowId,
+                    limit = requestedRows,
+                )
+            }
+        }
+        val resolvedOrders = messageDao.searchOrdersByLocalRowIds(candidateRowIds)
+        check(resolvedOrders.size == candidateRowIds.size) {
+            "An FTS candidate did not resolve to indexed content"
+        }
+        val candidateOrders = resolvedOrders
+            .asSequence()
+            .filter { order -> cursor == null || order.isOlderThan(cursor) }
+            .sortedWith(SEARCH_ORDER)
+            .toList()
+        if (cursor == null && candidateRowIds.size < candidateLimit) {
+            return candidateOrders.map(StoredSearchOrder::rowId)
+        }
+
+        val boundary = candidateOrders.getOrNull(requestedRows - 1)
+        if (boundary != null) {
+            val newestOutside = if (cursor == null) {
+                messageDao.newestGlobalOrderOutside(candidateRowIds)
+            } else {
+                messageDao.newestGlobalOrderOutsideAfter(
+                    excludedRowIds = candidateRowIds,
+                    beforeTimestampMillis = cursor.timestampMillis,
+                    beforeRowId = cursor.localRowId,
+                )
+            }
+            if (newestOutside == null || !newestOutside.isNewerThan(boundary)) {
+                return candidateOrders.take(requestedRows).map(StoredSearchOrder::rowId)
+            }
+        }
+        return if (cursor == null) {
+            messageDao.searchGlobalFirstRowIds(matchExpression, requestedRows)
+        } else {
+            messageDao.searchGlobalAfterRowIds(
+                matchExpression = matchExpression,
+                beforeTimestampMillis = cursor.timestampMillis,
+                beforeRowId = cursor.localRowId,
+                limit = requestedRows,
+            )
+        }
     }
 
     override suspend fun loadAnchor(
@@ -215,23 +283,15 @@ private object LocaleHolder {
     val ROOT: java.util.Locale = java.util.Locale.ROOT
 }
 
-private fun sparseResultPage(
-    entities: List<IndexedMessageEntity>,
-    threadId: ProviderThreadId?,
-    cursor: SearchCursor?,
-    limit: Int,
-): List<IndexedMessageEntity> = entities.asSequence()
-    .filter { entity -> threadId == null || entity.providerThreadId == threadId.value }
-    .filter { entity ->
-        cursor == null ||
-            entity.timestampMillis < cursor.timestampMillis ||
-            (entity.timestampMillis == cursor.timestampMillis && entity.rowId < cursor.localRowId)
-    }
-    .sortedWith(
-        compareByDescending<IndexedMessageEntity>(IndexedMessageEntity::timestampMillis)
-            .thenByDescending(IndexedMessageEntity::rowId),
-    )
-    .take(limit)
-    .toList()
+private val SEARCH_ORDER = compareByDescending<StoredSearchOrder>(StoredSearchOrder::timestampMillis)
+    .thenByDescending(StoredSearchOrder::rowId)
 
-private const val SPARSE_RESULT_LIMIT: Int = 500
+private fun StoredSearchOrder.isNewerThan(other: StoredSearchOrder): Boolean =
+    timestampMillis > other.timestampMillis ||
+        (timestampMillis == other.timestampMillis && rowId > other.rowId)
+
+private fun StoredSearchOrder.isOlderThan(cursor: SearchCursor): Boolean =
+    timestampMillis < cursor.timestampMillis ||
+        (timestampMillis == cursor.timestampMillis && rowId < cursor.localRowId)
+
+private const val MINIMUM_FAST_SEARCH_CANDIDATES: Int = 64
