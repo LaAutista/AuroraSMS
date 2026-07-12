@@ -60,7 +60,22 @@ class RoomMessageIndex(
         }
 
         val requestedRows = request.limit + 1
-        val entities = when {
+        val candidateRowIds = messageDao.searchCandidateRowIds(
+            matchExpression = parsed.matchExpression,
+            limit = SPARSE_RESULT_LIMIT + 1,
+        )
+        val entities = if (candidateRowIds.size <= SPARSE_RESULT_LIMIT) {
+            sparseResultPage(
+                entities = if (candidateRowIds.isEmpty()) {
+                    emptyList()
+                } else {
+                    messageDao.messagesByLocalRowIds(candidateRowIds)
+                },
+                threadId = request.threadId,
+                cursor = cursor,
+                limit = requestedRows,
+            )
+        } else when {
             request.threadId == null && cursor == null -> messageDao.searchGlobalFirst(
                 matchExpression = parsed.matchExpression,
                 limit = requestedRows,
@@ -199,3 +214,24 @@ private fun queryFingerprint(
 private object LocaleHolder {
     val ROOT: java.util.Locale = java.util.Locale.ROOT
 }
+
+private fun sparseResultPage(
+    entities: List<IndexedMessageEntity>,
+    threadId: ProviderThreadId?,
+    cursor: SearchCursor?,
+    limit: Int,
+): List<IndexedMessageEntity> = entities.asSequence()
+    .filter { entity -> threadId == null || entity.providerThreadId == threadId.value }
+    .filter { entity ->
+        cursor == null ||
+            entity.timestampMillis < cursor.timestampMillis ||
+            (entity.timestampMillis == cursor.timestampMillis && entity.rowId < cursor.localRowId)
+    }
+    .sortedWith(
+        compareByDescending<IndexedMessageEntity>(IndexedMessageEntity::timestampMillis)
+            .thenByDescending(IndexedMessageEntity::rowId),
+    )
+    .take(limit)
+    .toList()
+
+private const val SPARSE_RESULT_LIMIT: Int = 500

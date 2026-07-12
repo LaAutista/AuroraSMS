@@ -320,11 +320,29 @@ abstract class IndexedMessageDao {
 
     @Query(
         """
-        SELECT indexed_messages.*
-        FROM indexed_messages
-        JOIN indexed_messages_fts
-          ON indexed_messages_fts.rowid = indexed_messages.row_id
+        SELECT rowid
+        FROM indexed_messages_fts
         WHERE indexed_messages_fts MATCH :matchExpression
+        LIMIT :limit
+        """,
+    )
+    abstract suspend fun searchCandidateRowIds(
+        matchExpression: String,
+        limit: Int,
+    ): List<Long>
+
+    @Query("SELECT * FROM indexed_messages WHERE row_id IN (:rowIds)")
+    abstract suspend fun messagesByLocalRowIds(rowIds: List<Long>): List<IndexedMessageEntity>
+
+    @Query(
+        """
+        SELECT indexed_messages.*
+        FROM indexed_messages INDEXED BY index_indexed_messages_timestamp_ms_row_id
+        WHERE EXISTS (
+            SELECT 1 FROM indexed_messages_fts
+            WHERE indexed_messages_fts.rowid = indexed_messages.row_id
+              AND indexed_messages_fts MATCH :matchExpression
+        )
         ORDER BY timestamp_ms DESC, row_id DESC
         LIMIT :limit
         """,
@@ -337,10 +355,12 @@ abstract class IndexedMessageDao {
     @Query(
         """
         SELECT indexed_messages.*
-        FROM indexed_messages
-        JOIN indexed_messages_fts
-          ON indexed_messages_fts.rowid = indexed_messages.row_id
-        WHERE indexed_messages_fts MATCH :matchExpression
+        FROM indexed_messages INDEXED BY index_indexed_messages_timestamp_ms_row_id
+        WHERE EXISTS (
+            SELECT 1 FROM indexed_messages_fts
+            WHERE indexed_messages_fts.rowid = indexed_messages.row_id
+              AND indexed_messages_fts MATCH :matchExpression
+        )
           AND (
             timestamp_ms < :beforeTimestampMillis OR
             (timestamp_ms = :beforeTimestampMillis AND row_id < :beforeRowId)
@@ -359,11 +379,13 @@ abstract class IndexedMessageDao {
     @Query(
         """
         SELECT indexed_messages.*
-        FROM indexed_messages
-        JOIN indexed_messages_fts
-          ON indexed_messages_fts.rowid = indexed_messages.row_id
-        WHERE indexed_messages_fts MATCH :matchExpression
-          AND provider_thread_id = :providerThreadId
+        FROM indexed_messages INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
+        WHERE provider_thread_id = :providerThreadId
+          AND EXISTS (
+            SELECT 1 FROM indexed_messages_fts
+            WHERE indexed_messages_fts.rowid = indexed_messages.row_id
+              AND indexed_messages_fts MATCH :matchExpression
+        )
         ORDER BY timestamp_ms DESC, row_id DESC
         LIMIT :limit
         """,
@@ -377,11 +399,13 @@ abstract class IndexedMessageDao {
     @Query(
         """
         SELECT indexed_messages.*
-        FROM indexed_messages
-        JOIN indexed_messages_fts
-          ON indexed_messages_fts.rowid = indexed_messages.row_id
-        WHERE indexed_messages_fts MATCH :matchExpression
-          AND provider_thread_id = :providerThreadId
+        FROM indexed_messages INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
+        WHERE provider_thread_id = :providerThreadId
+          AND EXISTS (
+            SELECT 1 FROM indexed_messages_fts
+            WHERE indexed_messages_fts.rowid = indexed_messages.row_id
+              AND indexed_messages_fts MATCH :matchExpression
+        )
           AND (
             timestamp_ms < :beforeTimestampMillis OR
             (timestamp_ms = :beforeTimestampMillis AND row_id < :beforeRowId)

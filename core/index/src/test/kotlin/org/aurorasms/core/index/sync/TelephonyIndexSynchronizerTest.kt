@@ -793,6 +793,15 @@ private class FakeIndexedMessageDao : IndexedMessageDao() {
         }
     }
 
+    override suspend fun searchCandidateRowIds(
+        matchExpression: String,
+        limit: Int,
+    ): List<Long> = emptyList()
+
+    override suspend fun messagesByLocalRowIds(
+        rowIds: List<Long>,
+    ): List<IndexedMessageEntity> = emptyList()
+
     override suspend fun searchGlobalFirst(
         matchExpression: String,
         limit: Int,
