@@ -19,7 +19,7 @@ import org.junit.Test
 
 class MmsPduFileProviderTest {
     @Test
-    fun providerIsNonExportedAndEnforcesOppositeDirections() = runBlocking {
+    fun providerIsNonExportedAndEnforcesOppositeDirections(): Unit = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val providerInfo = context.packageManager.getProviderInfo(
             ComponentName(context, MmsPduFileProvider::class.java),

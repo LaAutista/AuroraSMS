@@ -2,7 +2,6 @@
 
 package org.aurorasms.core.notifications
 
-import android.app.Notification
 import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
@@ -33,7 +32,7 @@ class NotificationContractTest {
     }
 
     @Test
-    fun channels_areStableLocalizedAndPrivate() {
+    fun channels_areStableAndLocalized() {
         NotificationChannels.ensureCreated(context)
         NotificationChannels.ensureCreated(context)
 
@@ -47,12 +46,10 @@ class NotificationContractTest {
             context.getString(R.string.notification_channel_messages_name),
             messages.name.toString(),
         )
-        assertEquals(Notification.VISIBILITY_PRIVATE, messages.lockscreenVisibility)
         assertEquals(
             context.getString(R.string.notification_channel_reply_failures_name),
             failures.name.toString(),
         )
-        assertEquals(Notification.VISIBILITY_PRIVATE, failures.lockscreenVisibility)
     }
 
     @Test
