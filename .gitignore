@@ -1,0 +1,24 @@
+# Local-only AuroraSMS clean-room reference pack. Never commit or package it.
+/AuroraSMS_Codex_Handoff_PRIVATE/
+**/reference/aurorafork-ui/
+**/*_PRIVATE.pdf
+**/*_PRIVATE.zip
+
+# Release signing material and local configuration.
+*.jks
+*.keystore
+keystore.properties
+local.properties
+
+# Android, Gradle, IDE, and native build output.
+.gradle/
+.idea/
+*.iml
+build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local reports that can contain dependency paths or device details.
+/local-reports/
