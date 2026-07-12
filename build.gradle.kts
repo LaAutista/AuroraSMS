@@ -19,12 +19,13 @@ plugins {
     alias(libs.plugins.android.library) apply false
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.compose) apply false
+    alias(libs.plugins.ksp) apply false
     alias(libs.plugins.license.report)
     alias(libs.plugins.cyclonedx)
 }
 
 group = "org.aurorasms"
-version = "0.1.0-phase1"
+version = "0.2.0-phase2"
 
 allprojects {
     group = "org.aurorasms"
@@ -67,6 +68,10 @@ licenseReport {
         "debugAndroidTestRuntimeClasspath",
         "debugRuntimeClasspath",
         "debugUnitTestRuntimeClasspath",
+        "kspDebugAndroidTestKotlinProcessorClasspath",
+        "kspDebugKotlinProcessorClasspath",
+        "kspDebugUnitTestKotlinProcessorClasspath",
+        "kspReleaseKotlinProcessorClasspath",
         "releaseRuntimeClasspath",
         "runtimeClasspath",
         "testRuntimeClasspath",
@@ -173,6 +178,9 @@ val verifyDependencies by tasks.registering {
                     val isVerificationClasspath =
                         standardAndroidClasspath.matches(configuration.name) ||
                             standardJvmOrToolClasspath ||
+                            configuration.name == "ksp" ||
+                            configuration.name.startsWith("kspDebug") ||
+                            configuration.name.startsWith("kspRelease") ||
                             configuration.name.startsWith("unified-test-platform")
                     if (!isVerificationClasspath) {
                         return@configurationLoop
@@ -210,6 +218,20 @@ val verifyDependencies by tasks.registering {
                             id.projectPath == ":core:testing"
                         ) {
                             violations += ":core:testing leaked into :app release runtime"
+                        }
+                        if (
+                            id is ModuleComponentIdentifier &&
+                            configuration.name == "releaseRuntimeClasspath" &&
+                            (
+                                id.module == "room-compiler" ||
+                                    id.module == "room-testing" ||
+                                    id.group == "com.google.devtools.ksp"
+                            )
+                        ) {
+                            violations +=
+                                "Build/test dependency leaked into " +
+                                "${candidateProject.path} release runtime: " +
+                                "${id.group}:${id.module}:${id.version}"
                         }
                     }
                 }

@@ -39,6 +39,12 @@
             tools:node="remove"
             tools:ignore="MissingClass" />
 
+        <!-- AuroraSMS uses one process and does not enable Room multi-instance invalidation. -->
+        <service
+            android:name="androidx.room.MultiInstanceInvalidationService"
+            tools:node="remove"
+            tools:ignore="MissingClass" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">

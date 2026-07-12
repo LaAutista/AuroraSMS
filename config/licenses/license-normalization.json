@@ -45,6 +45,10 @@
       "licenseNamePattern": ".*BSD.*2[- ]Clause.*"
     },
     {
+      "bundleName": "bsd2",
+      "licenseNamePattern": ".*2[- ]Clause.*BSD.*"
+    },
+    {
       "bundleName": "bsd3",
       "licenseNamePattern": ".*BSD.*(3[- ]Clause|New|Revised).*"
     },

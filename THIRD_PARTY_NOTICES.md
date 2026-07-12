@@ -1,6 +1,6 @@
 # Third-party notices
 
-Status: Phase 1 resolved dependency inventory
+Status: Phase 1 resolved inventory; Phase 2 Room/KSP additions admitted
 
 AuroraSMS uses independently selected, exact-version build, AndroidX, Kotlin,
 Compose, coroutine, and test dependencies admitted by
@@ -28,6 +28,14 @@ Android SDK, AndroidX, Kotlin, Gradle, test tools, and build plugins are not
 approved merely by appearing in a toolchain. Only the exact allowlisted and
 locked graph may resolve. Build/test-only dependencies are inventoried even
 when they are not packaged in the application.
+
+Phase 2 directly adds KSP 2.3.9 and AndroidX Room 2.8.4 runtime, compiler, and
+testing artifacts. KSP and the Room compiler are build-only; Room testing is
+Android-test-only. The packaged Room runtime and its AndroidX/Kotlin transitives
+are Apache-2.0-compatible FOSS, use Android's local SQLite framework, add no
+network permission, and are used only for the separate private Aurora index and
+state databases. Canonical notices and the exact transitive inventory remain in
+the generated reports above.
 
 The private AuroraSMS handoff, private screenshots, and original source
 artwork are not distributed repository content. Artwork ownership

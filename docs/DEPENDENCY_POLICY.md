@@ -1,6 +1,6 @@
 # Dependency policy and allowlist
 
-Status: Phase 1 resolved and locally verified, 2026-07-12
+Status: Phase 1 resolved; Phase 2 Room/KSP admission reviewed, 2026-07-12
 
 AuroraSMS prefers small original implementations and Android platform APIs.
 Dependencies are admitted only when they provide a necessary, maintained,
@@ -103,13 +103,75 @@ Portal for the listed plugins only. Approval does not cover other artifacts in
 the same group, and no unlisted transitive may remain without license,
 permission, startup, network, and necessity review.
 
+## Exact Phase 2 Room/KSP admission
+
+The Phase 2 data-boundary ADR requires generated Room databases and FTS4. The
+following exact additions are approved for that scope only:
+
+| Coordinate or plugin | Version | Scope | License | Approved purpose |
+|---|---:|---|---|---|
+| `com.google.devtools.ksp` | 2.3.9 | Build only | Apache-2.0 | KSP2 code generation compatible with AGP built-in Kotlin; never packaged |
+| `androidx.room:room-runtime` | 2.8.4 | Runtime in `:core:index` and `:core:state` | Apache-2.0 | Separate private SQLite databases, validated DAOs, transactions, and FTS4 |
+| `androidx.room:room-compiler` | 2.8.4 | KSP processor only | Apache-2.0 | Generate Room implementations and deterministic schema JSON; never packaged |
+| `androidx.room:room-testing` | 2.8.4 | Android test only | Apache-2.0 | Version-1 schema identity and future explicit migration tests; never packaged |
+
+Canonical upstreams are the AndroidX Room release/source repositories at
+`developer.android.com/jetpack/androidx/releases/room` and
+`android.googlesource.com/platform/frameworks/support`, and the KSP source at
+`github.com/google/ksp`. Room 2.8.4 is the current stable Room 2 release; Room 3
+is not admitted. KSP 2.3.9 is the current stable KSP2 release and supports the
+project's Kotlin 2.3 language line. Both projects are actively maintained.
+
+Platform/manual SQLite was rejected because it would duplicate Room's schema,
+query, migration, and code-generation validation while retaining the hard sync
+risks. KAPT was rejected because it is incompatible with AGP 9 built-in Kotlin;
+the official migration guidance recommends KSP. `room-ktx`, Room's Gradle
+plugin, `room-paging`, RxJava, Guava, Paging, and WorkManager remain unapproved.
+Schema export uses the KSP compiler option directly, and transactions use
+Room-generated DAO transaction methods.
+
+Reviewed runtime transitives are AndroidX Room common/runtime, SQLite framework,
+SQLite, annotation, collection, arch-core runtime, Kotlin stdlib/coroutines,
+AtomicFU, and JSpecify. They are source-compatible FOSS artifacts from the
+already approved Google/Maven Central repositories. Room uses Android's SQLite
+framework and introduces no packaged native database engine, remote client,
+permission, provider, receiver, or initializer. Its AAR declares
+`MultiInstanceInvalidationService` as non-exported; AuroraSMS does not enable
+multi-process invalidation and removes this unused service during app manifest
+merge.
+
+The Room compiler and KSP graphs are build-only. They include the Room compiler
+processing/ANTLR tools, KotlinPoet/JavaPoet, Auto Common/annotations,
+commons-codec, and a host SQLite JDBC verifier. The host verifier may contain
+build-machine native binaries but no processor or native binary enters an app
+runtime configuration or APK. `room-testing` and its transitives remain in the
+Android-test graph only.
+
+Data behavior is local and app-private: Room accesses only the two AuroraSMS
+database files, performs no network I/O, logs no message/search content, and
+adds no permission. Both databases remain covered by `allowBackup=false` and
+the existing data-extraction exclusions. The index is explicitly rebuildable;
+the state database has no destructive-migration fallback.
+
+Expected size impact is the Room/SQLite-framework Java/Kotlin runtime only and
+must be measured against the Phase 1 release APK. A growth above the existing
+five-percent budget requires explanation before the Phase 2 gate. Removal means
+replacing the generated databases/DAOs with an independently validated local
+SQLite layer plus explicit schema/migration/FTS tests; the on-disk schema and
+exported JSON remain the compatibility contract.
+
+Admission remains conditional on resolved lock/checksum review, license report,
+SBOM, release-runtime leakage checks, merged-manifest inspection, and APK
+permission/content scans. An unexpected transitive or component reopens this
+decision before merge.
+
 ## Deferred and decision-gated dependencies
 
 | Capability | Earliest phase | Decision gate |
 |---|---:|---|
 | MMS PDU compose/parse | 1 | Write an ADR comparing an original implementation, official Android platform/framework PDU material that is not sourced from an end-user messaging app, and a maintained permissive library; audit provenance, license, network/APN assumptions, and transitive graph |
 | Phone-number normalization | 1 | Prefer platform APIs; approve libphonenumber only if measured correctness needs justify its size |
-| Room | 2 | Separate index/state database design, FTS4 support, schema export, explicit migrations |
+| Room | 2 | Approved only as recorded above for separate index/state databases, FTS4, schema export, and explicit migrations |
 | Paging 3 | 2-3 | Confirm bounded keyset/anchor behavior and no deep OFFSET fallback |
 | DataStore | 4 | Versioned profile/preferences only, never message storage |
 | Image/GIF decoding library | 4 | One-visible-decoder lifecycle, bomb limits, no network fetcher, APK size, API 26 behavior |

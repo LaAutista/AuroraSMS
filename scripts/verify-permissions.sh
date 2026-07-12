@@ -168,6 +168,21 @@ def verify_manifest(path: Path) -> None:
     if attr(application, "allowBackup") != "false":
         raise AssertionError(f"{path}: application must set allowBackup=false")
 
+    forbidden_services = {
+        "androidx.room.MultiInstanceInvalidationService",
+    }
+    packaged_services = {
+        attr(service, "name")
+        for service in application.findall("service")
+        if attr(service, "name")
+    }
+    unexpected_services = packaged_services & forbidden_services
+    if unexpected_services:
+        raise AssertionError(
+            f"{path}: unused dependency services were not removed: "
+            f"{sorted(unexpected_services)}"
+        )
+
     schemes = {"sms", "smsto", "mms", "mmsto"}
     require_component(application, "activity", "android.intent.action.SENDTO", schemes=schemes)
     require_component(
