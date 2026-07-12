@@ -73,6 +73,31 @@ device result is implied by this document.
 - [x] APK inventory contains no private PDF, screenshot, handoff path, raw
   source artwork, device logs, signing material, or Camera ICON.
 
+### Local evidence for implementation commit `cf8b789`
+
+The following offline commands completed successfully on 2026-07-12:
+
+```text
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease --offline --no-daemon
+./gradlew verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon
+./gradlew --no-parallel checkLicense generateLicenseReport cyclonedxBom --offline --no-daemon
+./gradlew :app:compileDebugAndroidTestKotlin :core:notifications:compileDebugAndroidTestKotlin :core:telephony:compileDebugAndroidTestKotlin --offline --no-daemon
+```
+
+Retained local evidence:
+
+- 55 host tests, zero failures/errors;
+- 12 Android instrumentation source files compile; execution is pending a
+  connected device;
+- CycloneDX 1.6 aggregate SBOM: 342 components, no random serial number;
+- generated license inventory: 137 dependency records;
+- debug APK: 11,791,173 bytes,
+  SHA-256 `3424701811b194d985b30f42fa7811b5d4b737afae779c3482a29116121e600b`;
+- unsigned release APK: 8,397,302 bytes,
+  SHA-256 `00df40fa5359b64a7f16262768cd0a87e7e9faa7221470c84d252d998fd7b221`;
+- `adb devices -l` returned no connected device, so installation, role grant,
+  instrumentation, and carrier SMS/MMS rows remain explicitly pending.
+
 ### Role eligibility and onboarding
 
 For API 26-28 and API 29+ paths as applicable:
