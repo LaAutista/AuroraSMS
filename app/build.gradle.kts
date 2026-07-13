@@ -72,6 +72,7 @@ dependencies {
     implementation(project(":core:index"))
     implementation(project(":core:state"))
     implementation(project(":core:telephony"))
+    implementation(project(":feature:conversations"))
 
     implementation(libs.kotlin.stdlib)
     implementation(libs.coroutines.android)

@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteException
 import kotlinx.coroutines.CancellationException
 import org.aurorasms.core.state.Draft
 import org.aurorasms.core.state.DraftId
+import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.core.state.DraftRepository
 import org.aurorasms.core.state.DraftRepositoryResult
 import org.aurorasms.core.state.DraftRevision
@@ -45,9 +46,24 @@ class RoomDraftRepository internal constructor(
             DraftRepositoryResult.StorageFailure(DraftStorageOperation.CREATE)
         }
 
-    override suspend fun read(id: DraftId): DraftRepositoryResult<Draft> {
+    override suspend fun read(id: DraftId): DraftRepositoryResult<Draft> =
+        readEntity { dao.findById(id.value) }
+
+    override suspend fun read(identity: DraftIdentity): DraftRepositoryResult<Draft> =
+        readEntity {
+            when (identity) {
+                is DraftIdentity.ProviderThread ->
+                    dao.findByProviderThreadId(identity.providerThreadId.value)
+                is DraftIdentity.ParticipantSet ->
+                    dao.findByParticipantSetKey(identity.key.toStorageValue())
+            }
+        }
+
+    private suspend fun readEntity(
+        query: suspend () -> DraftEntity?,
+    ): DraftRepositoryResult<Draft> {
         val entity = try {
-            dao.findById(id.value)
+            query()
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: SQLiteException) {

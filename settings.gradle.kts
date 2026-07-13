@@ -42,4 +42,5 @@ include(
     ":core:state",
     ":core:telephony",
     ":core:testing",
+    ":feature:conversations",
 )

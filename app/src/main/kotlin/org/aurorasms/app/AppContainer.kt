@@ -18,14 +18,23 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.aurorasms.app.contacts.AppContactCacheController
+import org.aurorasms.app.drafts.DraftEditorContent
+import org.aurorasms.app.drafts.SerializedDraftWriter
+import org.aurorasms.app.preview.AndroidBoundedPreviewLoader
 import org.aurorasms.core.index.AnchorWindowResult
 import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.app.index.AppIndexCoordinator
@@ -36,8 +45,15 @@ import org.aurorasms.app.message.ReplyTargetRegistry
 import org.aurorasms.app.message.SharedPreferencesReplyReplayGuard
 import org.aurorasms.app.message.SharedPreferencesReplyTargetStore
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.index.MessageIndex
+import org.aurorasms.core.index.conversation.ConversationInvalidation
+import org.aurorasms.core.index.conversation.ConversationLookupResult
+import org.aurorasms.core.index.conversation.ConversationPageRequest
+import org.aurorasms.core.index.conversation.ConversationPageResult
+import org.aurorasms.core.index.conversation.ConversationRepository
+import org.aurorasms.core.index.conversation.RoomConversationRepository
 import org.aurorasms.core.index.SearchAnchor
 import org.aurorasms.core.index.SearchRequest
 import org.aurorasms.core.index.SearchResult
@@ -49,10 +65,16 @@ import org.aurorasms.core.index.storage.IndexDatabaseOpenResult
 import org.aurorasms.core.index.sync.IndexSignal
 import org.aurorasms.core.index.sync.IndexSyncOutcome
 import org.aurorasms.core.index.sync.TelephonyIndexSynchronizer
+import org.aurorasms.core.index.timeline.RoomThreadTimelineRepository
+import org.aurorasms.core.index.timeline.ThreadTimelineRepository
+import org.aurorasms.core.index.timeline.TimelinePageRequest
+import org.aurorasms.core.index.timeline.TimelinePageResult
+import org.aurorasms.core.index.timeline.TimelineContentResult
 import org.aurorasms.core.notifications.AndroidMessageNotifier
 import org.aurorasms.core.notifications.InlineReplyHandler
 import org.aurorasms.core.notifications.MessageNotifier
 import org.aurorasms.core.telephony.DefaultSmsRoleState
+import org.aurorasms.core.telephony.ContactCache
 import org.aurorasms.core.telephony.EncodedMmsPdu
 import org.aurorasms.core.telephony.IncomingMessageSink
 import org.aurorasms.core.telephony.MessageTransport
@@ -61,15 +83,25 @@ import org.aurorasms.core.telephony.SmsProviderStatus
 import org.aurorasms.core.telephony.internal.AndroidContactResolver
 import org.aurorasms.core.telephony.internal.AndroidDefaultSmsRoleState
 import org.aurorasms.core.telephony.internal.AndroidMmsProviderDataSource
+import org.aurorasms.core.telephony.internal.AndroidMmsAttachmentRepository
 import org.aurorasms.core.telephony.internal.AndroidMmsTransport
 import org.aurorasms.core.telephony.internal.AndroidSmsProviderDataSource
 import org.aurorasms.core.telephony.internal.AndroidSmsTransport
 import org.aurorasms.core.telephony.internal.AndroidSubscriptionRepository
 import org.aurorasms.core.telephony.internal.MmsPduStagingStore
 import org.aurorasms.core.state.storage.AuroraStateDatabase
+import org.aurorasms.core.state.Draft
+import org.aurorasms.core.state.DraftId
+import org.aurorasms.core.state.DraftIdentity
+import org.aurorasms.core.state.DraftRepository
+import org.aurorasms.core.state.DraftRepositoryResult
+import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.NewDraft
+import org.aurorasms.core.state.storage.RoomDraftRepository
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
 import org.aurorasms.core.state.storage.StateDatabaseOpenResult
+import org.aurorasms.feature.conversations.BoundedPreviewLoader
 
 class AppContainer(
     val application: Application,
@@ -88,15 +120,27 @@ class AppContainer(
     val defaultSmsRoleState: DefaultSmsRoleState = AndroidDefaultSmsRoleState(application)
     val smsProviderDataSource: SmsProviderDataSource =
         AndroidSmsProviderDataSource(application, defaultSmsRoleState)
-    private val subscriptionRepository = AndroidSubscriptionRepository(application)
-    private val contactResolver = AndroidContactResolver(application)
+    val subscriptionRepository = AndroidSubscriptionRepository(application)
+    private val contactCacheController = AppContactCacheController(
+        context = application,
+        resolver = AndroidContactResolver(application),
+        applicationScope = applicationScope,
+    )
+    val contactCache: ContactCache = contactCacheController.cache
     val mmsProviderDataSource = AndroidMmsProviderDataSource(application, defaultSmsRoleState)
+    val mmsAttachmentRepository = AndroidMmsAttachmentRepository(application, defaultSmsRoleState)
+    val previewLoader: BoundedPreviewLoader = AndroidBoundedPreviewLoader(
+        repository = mmsAttachmentRepository,
+        applicationScope = applicationScope,
+    )
     private val indexRuntimeState = MutableStateFlow<IndexRuntimeState>(IndexRuntimeState.Opening)
     private val indexOpenMutex = Mutex()
     private var indexRetryJob: Job? = null
     @Volatile
     private var activeIndexDatabase: AuroraIndexDatabase? = null
     val messageIndex: MessageIndex = DeferredMessageIndex(indexRuntimeState)
+    val conversationRepository: ConversationRepository = DeferredConversationRepository(indexRuntimeState)
+    val threadTimelineRepository: ThreadTimelineRepository = DeferredThreadTimelineRepository(indexRuntimeState)
     val indexCoordinator = AppIndexCoordinator(
         applicationScope = applicationScope,
         synchronize = { reasons ->
@@ -118,6 +162,8 @@ class AppContainer(
 
     private val _stateStorageStatus = MutableStateFlow<StateStorageStatus>(StateStorageStatus.Opening)
     val stateStorageStatus: StateFlow<StateStorageStatus> = _stateStorageStatus.asStateFlow()
+    private val stateRuntimeState = MutableStateFlow<StateRuntimeState>(StateRuntimeState.Opening)
+    val draftRepository: DraftRepository = DeferredDraftRepository(stateRuntimeState)
     @Volatile
     private var stateDatabase: AuroraStateDatabase? = null
 
@@ -156,7 +202,7 @@ class AppContainer(
     val incomingMessageSink: IncomingMessageSink = IncomingMessageOrchestrator(
         roleState = defaultSmsRoleState,
         smsProvider = smsProviderDataSource,
-        contactResolver = contactResolver,
+        contactResolver = contactCache,
         messageNotifier = messageNotifier,
         replyTargets = replyTargets,
         onProviderInsertComplete = { enqueueIndexSignal(IndexSignal.INCOMING_INSERT) },
@@ -191,9 +237,11 @@ class AppContainer(
             when (val result = StateDatabaseFactory.open(application)) {
                 is StateDatabaseOpenResult.Opened -> {
                     stateDatabase = result.database
+                    stateRuntimeState.value = StateRuntimeState.Ready(RoomDraftRepository(result.database))
                     _stateStorageStatus.value = StateStorageStatus.Ready
                 }
                 is StateDatabaseOpenResult.Failed -> {
+                    stateRuntimeState.value = StateRuntimeState.Failed(result.reason)
                     _stateStorageStatus.value = StateStorageStatus.Failed(result.reason)
                 }
             }
@@ -237,6 +285,7 @@ class AppContainer(
     }
 
     suspend fun onDefaultSmsRoleChanged(isDefaultSmsApp: Boolean) {
+        previewLoader.clear()
         if (!isDefaultSmsApp) {
             replyTargets.clear()
             sentPartTracker.clear()
@@ -264,9 +313,35 @@ class AppContainer(
 
     /** Retries observer registration and reconciliation after explicit role/permission UI success. */
     fun onMessagingEligibilityChanged() {
+        applicationScope.launch { previewLoader.clear() }
         ensureProviderObserverRegistered()
         requestIndexOpen()
         enqueueIndexSignal(IndexSignal.ROLE_CHANGED)
+    }
+
+    fun onContactsPermissionChanged() {
+        contactCacheController.onContactsPermissionChanged()
+    }
+
+    fun createDraftWriter(
+        identity: DraftIdentity,
+        restoredUnacknowledged: DraftEditorContent?,
+    ): SerializedDraftWriter = SerializedDraftWriter(
+        repository = draftRepository,
+        identity = identity,
+        scope = applicationScope,
+        restoredUnacknowledged = restoredUnacknowledged,
+    )
+
+    /** Gives the newest accepted edit a bounded acknowledgement window before release. */
+    fun releaseDraftWriter(writer: SerializedDraftWriter) {
+        applicationScope.launch {
+            try {
+                writer.flush()
+            } finally {
+                writer.close()
+            }
+        }
     }
 
     fun close() {
@@ -277,6 +352,7 @@ class AppContainer(
         indexCoordinator.close()
         activeIndexDatabase?.let(IndexDatabaseFactory::close)
         stateDatabase?.let(StateDatabaseFactory::close)
+        contactCacheController.close()
         applicationScope.cancel()
     }
 
@@ -332,6 +408,8 @@ class AppContainer(
                     is IndexDatabaseOpenResult.Opened -> {
                         val runtime = IndexRuntime(
                             messageIndex = RoomMessageIndex(result.database),
+                            conversationRepository = RoomConversationRepository(result.database),
+                            threadTimelineRepository = RoomThreadTimelineRepository(result.database),
                             synchronizer = TelephonyIndexSynchronizer(
                                 database = result.database,
                                 smsSource = smsProviderDataSource,
@@ -404,6 +482,8 @@ sealed interface StateStorageStatus {
 
 private data class IndexRuntime(
     val messageIndex: MessageIndex,
+    val conversationRepository: ConversationRepository,
+    val threadTimelineRepository: ThreadTimelineRepository,
     val synchronizer: TelephonyIndexSynchronizer,
 )
 
@@ -429,7 +509,75 @@ private class DeferredMessageIndex(
     override fun toString(): String = "DeferredMessageIndex(content=REDACTED)"
 }
 
+private class DeferredConversationRepository(
+    private val runtimeState: StateFlow<IndexRuntimeState>,
+) : ConversationRepository {
+    override val invalidations: Flow<ConversationInvalidation> = callbackFlow {
+        val collector = launch {
+            runtimeState.awaitReadyRuntime().conversationRepository.invalidations.collect { signal ->
+                send(signal)
+            }
+        }
+        awaitClose { collector.cancel() }
+    }.conflate()
+
+    override suspend fun loadInbox(request: ConversationPageRequest): ConversationPageResult =
+        runtimeState.awaitReadyRuntime().conversationRepository.loadInbox(request)
+
+    override suspend fun loadConversation(providerThreadId: ProviderThreadId): ConversationLookupResult =
+        runtimeState.awaitReadyRuntime().conversationRepository.loadConversation(providerThreadId)
+
+    override fun toString(): String = "DeferredConversationRepository(content=REDACTED)"
+}
+
+private class DeferredThreadTimelineRepository(
+    private val runtimeState: StateFlow<IndexRuntimeState>,
+) : ThreadTimelineRepository {
+    override suspend fun load(request: TimelinePageRequest): TimelinePageResult =
+        runtimeState.awaitReadyRuntime().threadTimelineRepository.load(request)
+
+    override suspend fun loadContent(
+        providerThreadId: ProviderThreadId,
+        providerMessageId: org.aurorasms.core.model.ProviderMessageId,
+    ): TimelineContentResult = runtimeState.awaitReadyRuntime()
+        .threadTimelineRepository
+        .loadContent(providerThreadId, providerMessageId)
+
+    override fun toString(): String = "DeferredThreadTimelineRepository(content=REDACTED)"
+}
+
 private class IndexStorageUnavailableException : IllegalStateException("Index storage unavailable")
+
+private sealed interface StateRuntimeState {
+    data object Opening : StateRuntimeState
+    data class Ready(val draftRepository: DraftRepository) : StateRuntimeState
+    data class Failed(val reason: StateDatabaseOpenFailureReason) : StateRuntimeState
+}
+
+private class DeferredDraftRepository(
+    private val runtimeState: StateFlow<StateRuntimeState>,
+) : DraftRepository {
+    override suspend fun create(draft: NewDraft): DraftRepositoryResult<Draft> =
+        runtimeState.awaitReadyDraftRepository().create(draft)
+
+    override suspend fun read(id: DraftId): DraftRepositoryResult<Draft> =
+        runtimeState.awaitReadyDraftRepository().read(id)
+
+    override suspend fun read(identity: DraftIdentity): DraftRepositoryResult<Draft> =
+        runtimeState.awaitReadyDraftRepository().read(identity)
+
+    override suspend fun update(
+        draft: Draft,
+        expectedRevision: DraftRevision,
+    ): DraftRepositoryResult<Draft> = runtimeState.awaitReadyDraftRepository().update(draft, expectedRevision)
+
+    override suspend fun delete(id: DraftId): DraftRepositoryResult<Unit> =
+        runtimeState.awaitReadyDraftRepository().delete(id)
+
+    override fun toString(): String = "DeferredDraftRepository(content=REDACTED)"
+}
+
+private class StateStorageUnavailableException : IllegalStateException("State storage unavailable")
 
 private fun IndexSignal.requiresDurableAmbiguousLedger(): Boolean = when (this) {
     IndexSignal.STARTUP,
@@ -451,6 +599,18 @@ private suspend fun StateFlow<IndexRuntimeState>.awaitReadyRuntime(): IndexRunti
         is IndexRuntimeState.Ready -> state.runtime
         is IndexRuntimeState.Failed -> throw IndexStorageUnavailableException()
         IndexRuntimeState.Opening -> error("Index runtime did not leave opening state")
+    }
+}
+
+private suspend fun StateFlow<StateRuntimeState>.awaitReadyDraftRepository(): DraftRepository {
+    val state = when (val current = value) {
+        StateRuntimeState.Opening -> first { it !is StateRuntimeState.Opening }
+        else -> current
+    }
+    return when (state) {
+        is StateRuntimeState.Ready -> state.draftRepository
+        is StateRuntimeState.Failed -> throw StateStorageUnavailableException()
+        StateRuntimeState.Opening -> error("State runtime did not leave opening state")
     }
 }
 

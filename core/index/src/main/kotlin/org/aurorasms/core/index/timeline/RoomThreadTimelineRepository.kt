@@ -10,6 +10,7 @@ import org.aurorasms.core.index.search.toCoverage
 import org.aurorasms.core.index.storage.AuroraIndexDatabase
 import org.aurorasms.core.index.storage.GenerationStateCode
 import org.aurorasms.core.index.storage.StoredTimelineMessage
+import org.aurorasms.core.index.storage.toIndexStorageCode
 import org.aurorasms.core.index.storage.toIndexedMessageDirection
 import org.aurorasms.core.index.storage.toIndexedProviderKind
 import org.aurorasms.core.model.AuroraSubscriptionId
@@ -98,6 +99,45 @@ class RoomThreadTimelineRepository(
         throw cancelled
     } catch (_: SQLiteException) {
         TimelinePageResult.StorageUnavailable(safeCoverage())
+    }
+
+    override suspend fun loadContent(
+        providerThreadId: ProviderThreadId,
+        providerMessageId: ProviderMessageId,
+    ): TimelineContentResult = try {
+        database.withTransaction {
+            val generation = syncDao.latestGeneration()
+                ?: return@withTransaction TimelineContentResult.Missing(
+                    IndexCoverage.NOT_STARTED.copy(indexedMessageCount = messageDao.count()),
+                )
+            val coverage = generation.toCoverage(
+                checkpoints = syncDao.checkpoints(generation.generationId),
+                indexedMessageCount = if (generation.state == GenerationStateCode.COMPLETE) {
+                    generation.committedCount
+                } else {
+                    messageDao.count()
+                },
+            )
+            val stored = conversationDao.timelineContent(
+                providerKind = providerMessageId.kind.toIndexStorageCode(),
+                providerId = providerMessageId.value,
+                providerThreadId = providerThreadId.value,
+                generationId = generation.generationId,
+            ) ?: return@withTransaction TimelineContentResult.Missing(coverage)
+            TimelineContentResult.Found(
+                content = TimelineMessageContent(
+                    providerMessageId = providerMessageId,
+                    body = stored.body,
+                    subject = stored.subject,
+                    sourceTruncated = stored.sourceTruncated,
+                ),
+                coverage = coverage,
+            )
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: SQLiteException) {
+        TimelineContentResult.StorageUnavailable(safeCoverage())
     }
 
     private suspend fun safeCoverage(): IndexCoverage = try {

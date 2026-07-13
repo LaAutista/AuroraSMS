@@ -9,6 +9,8 @@ import androidx.room.Transaction
 import org.aurorasms.core.index.MAXIMUM_ANCHOR_HALF_WINDOW
 import org.aurorasms.core.index.conversation.MAXIMUM_CONVERSATION_PAGE_SIZE
 import org.aurorasms.core.index.timeline.MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS
+import org.aurorasms.core.index.timeline.MAXIMUM_TIMELINE_FULL_BODY_CHARACTERS
+import org.aurorasms.core.index.timeline.MAXIMUM_TIMELINE_FULL_SUBJECT_CHARACTERS
 import org.aurorasms.core.index.timeline.MAXIMUM_TIMELINE_PAGE_SIZE
 
 data class StoredTimelineMessage(
@@ -33,6 +35,14 @@ data class StoredTimelineMessage(
     @ColumnInfo(name = "is_locked") val isLocked: Boolean,
 ) {
     override fun toString(): String = "StoredTimelineMessage(REDACTED)"
+}
+
+data class StoredTimelineContent(
+    val body: String?,
+    val subject: String?,
+    @ColumnInfo(name = "source_truncated") val sourceTruncated: Boolean,
+) {
+    override fun toString(): String = "StoredTimelineContent(sourceTruncated=$sourceTruncated, REDACTED)"
 }
 
 @Dao
@@ -285,6 +295,49 @@ abstract class ConversationDao {
             rowId,
             limit,
             MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS,
+        )
+    }
+
+    @Query(
+        """
+        SELECT substr(body, 1, :bodyLimit) AS body,
+               substr(subject, 1, :subjectLimit) AS subject,
+               CASE
+                 WHEN (body IS NOT NULL AND length(body) > :bodyLimit)
+                   OR (subject IS NOT NULL AND length(subject) > :subjectLimit)
+                 THEN 1 ELSE 0
+               END AS source_truncated
+        FROM indexed_messages
+        WHERE provider_kind = :providerKind
+          AND provider_id = :providerId
+          AND provider_thread_id = :providerThreadId
+          AND last_seen_generation = :generationId
+        LIMIT 1
+        """,
+    )
+    protected abstract suspend fun timelineContentQuery(
+        providerKind: Int,
+        providerId: Long,
+        providerThreadId: Long,
+        generationId: Long,
+        bodyLimit: Int,
+        subjectLimit: Int,
+    ): StoredTimelineContent?
+
+    suspend fun timelineContent(
+        providerKind: Int,
+        providerId: Long,
+        providerThreadId: Long,
+        generationId: Long,
+    ): StoredTimelineContent? {
+        require(providerKind in 1..2 && providerId > 0L && providerThreadId > 0L && generationId > 0L)
+        return timelineContentQuery(
+            providerKind = providerKind,
+            providerId = providerId,
+            providerThreadId = providerThreadId,
+            generationId = generationId,
+            bodyLimit = MAXIMUM_TIMELINE_FULL_BODY_CHARACTERS,
+            subjectLimit = MAXIMUM_TIMELINE_FULL_SUBJECT_CHARACTERS,
         )
     }
 }

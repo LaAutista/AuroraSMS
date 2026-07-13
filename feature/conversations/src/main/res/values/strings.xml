@@ -1,0 +1,58 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<resources>
+    <string name="inbox_title">AuroraSMS</string>
+    <string name="search">Search</string>
+    <string name="diagnostics">Diagnostics</string>
+    <string name="loading_messages">Loading messages…</string>
+    <string name="no_conversations">No conversations are indexed yet.</string>
+    <string name="load_failed">Messages are temporarily unavailable.</string>
+    <string name="retry">Retry</string>
+    <string name="new_messages">New messages</string>
+    <string name="index_incomplete">Showing the locally indexed portion while synchronization continues.</string>
+    <plurals name="attachment_summary">
+        <item quantity="one">%1$d attachment: %2$s</item>
+        <item quantity="other">%1$d attachments: %2$s</item>
+    </plurals>
+    <string name="unknown_conversation">Unknown conversation</string>
+    <string name="back">Back</string>
+    <string name="conversation">Conversation</string>
+    <string name="message_draft">Message draft</string>
+    <string name="send_unavailable">Send unavailable</string>
+    <string name="saving_draft">Saving draft…</string>
+    <string name="draft_saved">Draft saved locally</string>
+    <string name="draft_failed">Draft storage failed. Your text remains visible, but editing is disabled.</string>
+    <string name="message_truncated">Long message preview truncated</string>
+    <string name="show_full_message">Show full message</string>
+    <string name="show_less">Show less</string>
+    <string name="loading_full_message">Loading full message…</string>
+    <string name="full_message_unavailable">Full message is temporarily unavailable.</string>
+    <string name="image_attachment">Image attachment</string>
+    <string name="attachment_loading">Loading image preview…</string>
+    <string name="attachment_unavailable">Image preview unavailable</string>
+    <string name="search_messages">Search messages</string>
+    <string name="search_hint">Words or “exact phrase”</string>
+    <string name="search_empty">Enter a local search. Nothing leaves this device.</string>
+    <string name="search_no_results">No matching indexed messages.</string>
+    <string name="search_invalid">That query is not valid.</string>
+    <string name="searching">Searching…</string>
+    <string name="conversations_in_results">Conversations in this message page</string>
+    <string name="matching_messages">Matching messages</string>
+    <string name="load_more">Load more</string>
+    <string name="incoming_message">Incoming message</string>
+    <string name="outgoing_message">Outgoing message</string>
+    <string name="use_contacts">Use contacts</string>
+    <string name="no_messages">No indexed messages are available in this conversation.</string>
+    <string name="call">Call</string>
+    <string name="sim_number">SIM %1$d</string>
+    <string name="sim_number_with_label">SIM %1$d · %2$s</string>
+    <string name="participant_overflow">%1$s, +%2$d</string>
+    <string name="delivery_sent">Sent</string>
+    <string name="delivery_pending">Sending</string>
+    <string name="delivery_failed">Failed to send</string>
+    <string name="delivery_unknown">Status unavailable</string>
+    <plurals name="more_attachments">
+        <item quantity="one">+%1$d more image</item>
+        <item quantity="other">+%1$d more images</item>
+    </plurals>
+    <string name="more_attachments_truncated">More image attachments available</string>
+</resources>

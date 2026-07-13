@@ -103,6 +103,58 @@ class DraftRepositoryInstrumentedTest {
     }
 
     @Test
+    fun identityReads_useExactProviderThreadAndCanonicalParticipantKeys() = runBlocking {
+        val database = openStateDatabase()
+        val repository = RoomDraftRepository(database)
+        try {
+            val providerIdentity = DraftIdentity.ProviderThread(ProviderThreadId(77L))
+            val providerDraft = repository.create(
+                NewDraft(
+                    identity = providerIdentity,
+                    body = "Synthetic provider draft",
+                    subject = null,
+                    createdTimestampMillis = 10L,
+                    updatedTimestampMillis = 10L,
+                ),
+            ).successValue()
+            val participantIdentity = DraftIdentity.ParticipantSet(
+                DraftParticipantSetKey.fromParticipants(
+                    listOf(
+                        ParticipantAddress("+15550000002"),
+                        ParticipantAddress("+15550000001"),
+                    ),
+                ),
+            )
+            val participantDraft = repository.create(
+                NewDraft(
+                    identity = participantIdentity,
+                    body = "Synthetic participant draft",
+                    subject = "Synthetic subject",
+                    createdTimestampMillis = 20L,
+                    updatedTimestampMillis = 20L,
+                ),
+            ).successValue()
+            val reorderedParticipantIdentity = DraftIdentity.ParticipantSet(
+                DraftParticipantSetKey.fromParticipants(
+                    listOf(
+                        ParticipantAddress("+15550000001"),
+                        ParticipantAddress("+15550000002"),
+                    ),
+                ),
+            )
+
+            assertEquals(providerDraft, repository.read(providerIdentity).successValue())
+            assertEquals(participantDraft, repository.read(reorderedParticipantIdentity).successValue())
+            assertEquals(
+                DraftRepositoryResult.NotFound,
+                repository.read(DraftIdentity.ProviderThread(ProviderThreadId(78L))),
+            )
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun closedDatabase_propagatesRoomCancellation() {
         val database = openStateDatabase()
         val repository = RoomDraftRepository(database)

@@ -36,6 +36,8 @@ interface DraftRepository {
 
     suspend fun read(id: DraftId): DraftRepositoryResult<Draft>
 
+    suspend fun read(identity: DraftIdentity): DraftRepositoryResult<Draft>
+
     suspend fun update(
         draft: Draft,
         expectedRevision: DraftRevision,

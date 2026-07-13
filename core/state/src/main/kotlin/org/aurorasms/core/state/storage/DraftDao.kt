@@ -15,6 +15,12 @@ internal interface DraftDao {
     @Query("SELECT * FROM drafts WHERE draft_id = :draftId LIMIT 1")
     suspend fun findById(draftId: Long): DraftEntity?
 
+    @Query("SELECT * FROM drafts WHERE provider_thread_id = :providerThreadId LIMIT 1")
+    suspend fun findByProviderThreadId(providerThreadId: Long): DraftEntity?
+
+    @Query("SELECT * FROM drafts WHERE participant_set_key = :participantSetKey LIMIT 1")
+    suspend fun findByParticipantSetKey(participantSetKey: String): DraftEntity?
+
     @Query(
         """
         UPDATE drafts

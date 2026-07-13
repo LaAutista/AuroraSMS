@@ -3,6 +3,7 @@
 package org.aurorasms.app
 
 import android.app.Application
+import org.aurorasms.app.strictmode.BuildVariantStrictMode
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.notifications.InlineReplyHandler
@@ -19,6 +20,7 @@ class AuroraSmsApplication : Application(), TelephonyEntryPoint, NotificationEnt
 
     override fun onCreate() {
         super.onCreate()
+        BuildVariantStrictMode.install()
         container = AppContainer(this)
     }
 

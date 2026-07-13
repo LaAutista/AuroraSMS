@@ -25,6 +25,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -45,9 +46,13 @@ class MainActivity : ComponentActivity() {
     private lateinit var diagnosticsLauncher: DiagnosticsLauncher
     private var roleState by mutableStateOf<RoleOnboardingState>(RoleOnboardingState.ReadyToRequest)
     private var permissionState by mutableStateOf<Map<String, Boolean>>(emptyMap())
+    private var contactsPermissionGranted by mutableStateOf(false)
     private var notificationPermissionGranted by mutableStateOf(Build.VERSION.SDK_INT < 33)
     private var lastReportedMessagingEligibility: Boolean? = null
+    private var lastReportedContactsPermission: Boolean? = null
+    private var fullyDrawnReported = false
     private var showDiagnostics by mutableStateOf(false)
+    private var pendingConversationId by mutableStateOf<ConversationId?>(null)
     internal var openedConversationId by mutableStateOf<ConversationId?>(null)
         private set
 
@@ -60,11 +65,15 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { results ->
-        permissionState = requiredMessagingPermissions().associateWith { permission ->
-            results[permission] ?: isPermissionGranted(permission)
-        }
-        relayMessagingEligibilityIfChanged()
+    ) {
+        refreshPermissionState()
+    }
+
+    private val contactsPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        contactsPermissionGranted = granted || isPermissionGranted(Manifest.permission.READ_CONTACTS)
+        relayContactsPermissionIfChanged()
     }
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -81,7 +90,7 @@ class MainActivity : ComponentActivity() {
         diagnosticsLauncher = BuildVariantDiagnosticsLauncher(application)
         roleState = roleCoordinator.refresh()
         refreshPermissionState()
-        openedConversationId = initialConversationId(
+        val initialConversation = initialConversationId(
             action = intent.action,
             rawConversationId = intent.getLongExtra(
                 AppNotificationIntentFactory.EXTRA_CONVERSATION_ID,
@@ -91,22 +100,46 @@ class MainActivity : ComponentActivity() {
                 ?.takeIf { it.containsKey(STATE_OPEN_CONVERSATION) }
                 ?.getLong(STATE_OPEN_CONVERSATION),
         )
+        openedConversationId = initialConversation
+        pendingConversationId = initialConversation
 
         setContent {
             AuroraSmsTheme {
-                val conversationId = openedConversationId
-                if (conversationId != null) {
-                    ConversationRouteScreen(
-                        conversationId = conversationId,
-                        onClose = {
-                            openedConversationId = null
-                            setIntent(
-                                Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN),
-                            )
-                        },
-                    )
-                } else if (showDiagnostics && diagnosticsLauncher.available) {
+                val savedBranches = rememberSaveableStateHolder()
+                val messagingEligible = roleState == RoleOnboardingState.Held &&
+                    permissionState[Manifest.permission.READ_SMS] == true
+                if (showDiagnostics && diagnosticsLauncher.available) {
                     diagnosticsLauncher.Content { showDiagnostics = false }
+                } else if (messagingEligible) {
+                    savedBranches.SaveableStateProvider(ROOT_STATE_KEY) {
+                        AuroraSmsRoot(
+                            container = (application as AuroraSmsApplication).container,
+                            pendingConversationId = pendingConversationId,
+                            diagnosticsAvailable = diagnosticsLauncher.available,
+                            contactsPermissionGranted = contactsPermissionGranted,
+                            onOpenDiagnostics = { showDiagnostics = true },
+                            onRequestContactsPermission = {
+                                if (roleCoordinator.refresh() == RoleOnboardingState.Held) {
+                                    contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+                                } else {
+                                    roleState = roleCoordinator.state
+                                }
+                            },
+                            onPendingConversationConsumed = {
+                                pendingConversationId = null
+                                setIntent(
+                                    Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN),
+                                )
+                            },
+                            onOpenedConversationChanged = { openedConversationId = it },
+                            onInboxReady = {
+                                if (!fullyDrawnReported) {
+                                    fullyDrawnReported = true
+                                    reportFullyDrawn()
+                                }
+                            },
+                        )
+                    }
                 } else {
                     OnboardingScreen(
                         roleState = roleState,
@@ -141,13 +174,15 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         showDiagnostics = false
-        openedConversationId = notificationConversationId(
+        val conversation = notificationConversationId(
             action = intent.action,
             rawConversationId = intent.getLongExtra(
                 AppNotificationIntentFactory.EXTRA_CONVERSATION_ID,
                 INVALID_CONVERSATION_ID,
             ).takeIf { it != INVALID_CONVERSATION_ID },
         )
+        openedConversationId = conversation
+        pendingConversationId = conversation
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -168,9 +203,11 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshPermissionState() {
         permissionState = requiredMessagingPermissions().associateWith(::isPermissionGranted)
+        contactsPermissionGranted = isPermissionGranted(Manifest.permission.READ_CONTACTS)
         notificationPermissionGranted = Build.VERSION.SDK_INT < 33 ||
             isPermissionGranted(Manifest.permission.POST_NOTIFICATIONS)
         relayMessagingEligibilityIfChanged()
+        relayContactsPermissionIfChanged()
     }
 
     private fun relayMessagingEligibilityIfChanged() {
@@ -179,6 +216,13 @@ class MainActivity : ComponentActivity() {
         if (lastReportedMessagingEligibility == eligible) return
         lastReportedMessagingEligibility = eligible
         (application as? AuroraSmsApplication)?.container?.onMessagingEligibilityChanged()
+    }
+
+    private fun relayContactsPermissionIfChanged() {
+        val granted = contactsPermissionGranted
+        if (lastReportedContactsPermission == granted) return
+        lastReportedContactsPermission = granted
+        (application as? AuroraSmsApplication)?.container?.onContactsPermissionChanged()
     }
 
     private fun isPermissionGranted(permission: String): Boolean =
@@ -195,6 +239,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
+        const val ROOT_STATE_KEY = "aurora.root"
         const val STATE_OPEN_CONVERSATION = "aurora.state.OPEN_CONVERSATION"
         const val INVALID_CONVERSATION_ID = -1L
     }
@@ -292,33 +337,6 @@ private fun OnboardingScreen(
                 ) {
                     Text(stringResource(R.string.open_diagnostics))
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ConversationRouteScreen(
-    conversationId: ConversationId,
-    onClose: () -> Unit,
-) {
-    Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier.padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = stringResource(R.string.conversation_route_title, conversationId.value),
-                style = MaterialTheme.typography.headlineMedium,
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(stringResource(R.string.conversation_route_foundation_message))
-            Spacer(Modifier.height(24.dp))
-            OutlinedButton(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onClose,
-            ) {
-                Text(stringResource(R.string.back_to_onboarding))
             }
         }
     }

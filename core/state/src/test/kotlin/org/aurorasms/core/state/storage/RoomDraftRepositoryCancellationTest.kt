@@ -42,6 +42,9 @@ class RoomDraftRepositoryCancellationTest {
             runBlocking { repository.read(draft.id) }
         }
         assertThrows(CancellationException::class.java) {
+            runBlocking { repository.read(draft.identity) }
+        }
+        assertThrows(CancellationException::class.java) {
             runBlocking { repository.update(draft, DraftRevision(10L)) }
         }
         assertThrows(CancellationException::class.java) {
@@ -69,6 +72,10 @@ private object CancellingDraftDao : DraftDao {
     override suspend fun insert(entity: DraftEntity): Long = throwCancellation()
 
     override suspend fun findById(draftId: Long): DraftEntity? = throwCancellation()
+
+    override suspend fun findByProviderThreadId(providerThreadId: Long): DraftEntity? = throwCancellation()
+
+    override suspend fun findByParticipantSetKey(participantSetKey: String): DraftEntity? = throwCancellation()
 
     override suspend fun updateIfUnchanged(
         draftId: Long,

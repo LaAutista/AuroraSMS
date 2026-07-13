@@ -19,7 +19,4 @@
     <string name="recipient">Recipient</string>
     <string name="message_body">Message</string>
     <string name="send_requires_completed_transport">Send unavailable in this foundation build</string>
-    <string name="conversation_route_title">Conversation %1$d</string>
-    <string name="conversation_route_foundation_message">This notification reached the exact local conversation. Full history presentation arrives with the bounded conversation UI phase.</string>
-    <string name="back_to_onboarding">Back</string>
 </resources>

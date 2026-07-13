@@ -15,6 +15,9 @@ data class ActiveSubscription(
         require(displayLabel.length <= MAX_DISPLAY_LABEL_CHARACTERS) { "Subscription label is too long" }
     }
 
+    override fun toString(): String =
+        "ActiveSubscription(slotIndex=$slotIndex, smsCapable=$smsCapable, displayLabel=REDACTED)"
+
     companion object {
         const val MAX_DISPLAY_LABEL_CHARACTERS: Int = 100
     }

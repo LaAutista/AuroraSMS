@@ -129,6 +129,37 @@ class RoomConversationRepository(
         ConversationPageResult.StorageUnavailable(safeCoverage())
     }
 
+    override suspend fun loadConversation(
+        providerThreadId: ProviderThreadId,
+    ): ConversationLookupResult = try {
+        database.withTransaction {
+            val generation = syncDao.latestGeneration()
+                ?: return@withTransaction ConversationLookupResult.Missing(
+                    IndexCoverage.NOT_STARTED.copy(indexedMessageCount = messageDao.count()),
+                )
+            val coverage = generation.toCoverage(
+                checkpoints = syncDao.checkpoints(generation.generationId),
+                indexedMessageCount = if (generation.state == GenerationStateCode.COMPLETE) {
+                    generation.committedCount
+                } else {
+                    messageDao.count()
+                },
+            )
+            val entity = conversationDao.conversation(providerThreadId.value, generation.generationId)
+                ?: return@withTransaction ConversationLookupResult.Missing(coverage)
+            val participants = conversationDao.participantPreviews(
+                generationId = generation.generationId,
+                providerThreadIds = listOf(providerThreadId.value),
+                perThreadLimit = MAXIMUM_PARTICIPANT_PREVIEW,
+            ).map { ParticipantAddress(it.address) }
+            ConversationLookupResult.Found(entity.toSummary(participants), coverage)
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: SQLiteException) {
+        ConversationLookupResult.StorageUnavailable(safeCoverage())
+    }
+
     private suspend fun safeCoverage(): IndexCoverage = try {
         val generation = syncDao.latestGeneration() ?: return IndexCoverage.NOT_STARTED
         generation.toCoverage(syncDao.checkpoints(generation.generationId), messageDao.count())

@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
 import org.aurorasms.core.index.conversation.ConversationPageDirection
+import org.aurorasms.core.index.conversation.ConversationLookupResult
 import org.aurorasms.core.index.conversation.ConversationPageRequest
 import org.aurorasms.core.index.conversation.ConversationPageResult
 import org.aurorasms.core.index.conversation.RoomConversationRepository
@@ -15,12 +16,14 @@ import org.aurorasms.core.index.storage.IndexDatabaseFactory
 import org.aurorasms.core.index.sync.IndexedProviderProjection
 import org.aurorasms.core.index.timeline.RoomThreadTimelineRepository
 import org.aurorasms.core.index.timeline.TimelinePageDirection
+import org.aurorasms.core.index.timeline.TimelineContentResult
 import org.aurorasms.core.index.timeline.TimelinePageRequest
 import org.aurorasms.core.index.timeline.TimelinePageResult
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderThreadId
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -103,6 +106,15 @@ class ConversationProjectionTest {
         assertNotNull(first.next)
         assertEquals(IndexRunState.SCANNING, first.coverage.state)
 
+        val exact = inbox.loadConversation(ProviderThreadId(100L)) as ConversationLookupResult.Found
+        assertEquals(100L, exact.summary.providerThreadId.value)
+        assertEquals(3, exact.summary.indexedParticipantCount)
+        assertEquals(3, exact.summary.participants.size)
+        assertEquals(IndexRunState.SCANNING, exact.coverage.state)
+        assertTrue(
+            inbox.loadConversation(ProviderThreadId(999L)) is ConversationLookupResult.Missing,
+        )
+
         val older = (
             inbox.loadInbox(
                 ConversationPageRequest(
@@ -135,6 +147,19 @@ class ConversationProjectionTest {
         assertEquals(16_384, latest.items.first().bodyPreview?.length)
         assertTrue(latest.items.first().bodyTruncated)
         assertNotNull(latest.next)
+
+        val fullContent = timeline.loadContent(
+            providerThreadId = ProviderThreadId(100L),
+            providerMessageId = latest.items.first().providerMessageId,
+        ) as TimelineContentResult.Found
+        assertEquals(20_000, fullContent.content.body?.length)
+        assertFalse(fullContent.content.sourceTruncated)
+        assertTrue(
+            timeline.loadContent(
+                providerThreadId = ProviderThreadId(200L),
+                providerMessageId = latest.items.first().providerMessageId,
+            ) is TimelineContentResult.Missing,
+        )
 
         val olderTimeline = (
             timeline.load(

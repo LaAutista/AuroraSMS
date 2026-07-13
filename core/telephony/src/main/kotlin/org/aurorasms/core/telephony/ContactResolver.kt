@@ -11,6 +11,8 @@ data class ResolvedContact(
 ) {
     val displayNameOrAddress: String
         get() = displayName?.takeIf(String::isNotBlank) ?: address.value
+
+    override fun toString(): String = "ResolvedContact(REDACTED)"
 }
 
 interface ContactResolver {
