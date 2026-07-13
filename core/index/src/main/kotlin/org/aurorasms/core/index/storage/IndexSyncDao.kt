@@ -170,8 +170,59 @@ abstract class IndexSyncDao {
     @Query("DELETE FROM indexed_messages WHERE last_seen_generation != :generationId")
     protected abstract suspend fun deleteRowsOutsideGeneration(generationId: Long): Int
 
+    @Query("DELETE FROM indexed_conversations WHERE last_seen_generation != :generationId")
+    protected abstract suspend fun deleteConversationsOutsideGeneration(generationId: Long): Int
+
+    @Query("DELETE FROM indexed_conversation_participants WHERE last_seen_generation != :generationId")
+    protected abstract suspend fun deleteParticipantsOutsideGeneration(generationId: Long): Int
+
     @Query("SELECT COUNT(*) FROM indexed_messages")
     protected abstract suspend fun indexedMessageCount(): Long
+
+    @Query("SELECT COUNT(DISTINCT provider_thread_id) FROM indexed_messages WHERE last_seen_generation = :generationId")
+    protected abstract suspend fun indexedThreadCount(generationId: Long): Long
+
+    @Query("SELECT COUNT(*) FROM indexed_conversations WHERE last_seen_generation = :generationId")
+    protected abstract suspend fun indexedConversationCount(generationId: Long): Long
+
+    @Query("SELECT COALESCE(SUM(indexed_message_count), 0) FROM indexed_conversations WHERE last_seen_generation = :generationId")
+    protected abstract suspend fun summarizedMessageCount(generationId: Long): Long
+
+    @Query("SELECT COUNT(*) FROM indexed_messages WHERE last_seen_generation = :generationId AND is_read = 0")
+    protected abstract suspend fun indexedUnreadCount(generationId: Long): Long
+
+    @Query("SELECT COALESCE(SUM(indexed_unread_count), 0) FROM indexed_conversations WHERE last_seen_generation = :generationId")
+    protected abstract suspend fun summarizedUnreadCount(generationId: Long): Long
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM indexed_conversations AS c
+        LEFT JOIN indexed_messages AS m ON m.row_id = c.latest_row_id
+        WHERE c.last_seen_generation = :generationId
+          AND (
+            m.row_id IS NULL OR
+            m.last_seen_generation != :generationId OR
+            m.provider_thread_id != c.provider_thread_id OR
+            m.provider_kind != c.latest_provider_kind OR
+            m.provider_id != c.latest_provider_id OR
+            m.timestamp_ms != c.latest_timestamp_ms
+          )
+        """,
+    )
+    protected abstract suspend fun invalidLatestConversationCount(generationId: Long): Long
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM indexed_conversations AS c
+        WHERE c.last_seen_generation = :generationId
+          AND c.indexed_participant_count != (
+            SELECT COUNT(*) FROM indexed_conversation_participants AS p
+            WHERE p.provider_thread_id = c.provider_thread_id
+              AND p.last_seen_generation = :generationId
+          )
+        """,
+    )
+    protected abstract suspend fun invalidParticipantCount(generationId: Long): Long
 
     @Query(
         """
@@ -235,7 +286,24 @@ abstract class IndexSyncDao {
             ),
         )
         val deleted = deleteRowsOutsideGeneration(generationId)
+        deleteConversationsOutsideGeneration(generationId)
+        deleteParticipantsOutsideGeneration(generationId)
         val retained = indexedMessageCount()
+        check(indexedConversationCount(generationId) == indexedThreadCount(generationId)) {
+            "Verified conversation projection did not cover every indexed thread"
+        }
+        check(summarizedMessageCount(generationId) == retained) {
+            "Verified conversation counts did not match indexed messages"
+        }
+        check(summarizedUnreadCount(generationId) == indexedUnreadCount(generationId)) {
+            "Verified unread counts did not match indexed messages"
+        }
+        check(invalidLatestConversationCount(generationId) == 0L) {
+            "Verified conversation latest identities were inconsistent"
+        }
+        check(invalidParticipantCount(generationId) == 0L) {
+            "Verified conversation participant counts were inconsistent"
+        }
         check(markComplete(generationId, nowMillis, retained) == 1) {
             "Verified generation changed during completion"
         }

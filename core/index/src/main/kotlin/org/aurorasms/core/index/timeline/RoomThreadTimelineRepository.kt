@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+package org.aurorasms.core.index.timeline
+
+import android.database.sqlite.SQLiteException
+import androidx.room.withTransaction
+import kotlin.coroutines.cancellation.CancellationException
+import org.aurorasms.core.index.IndexCoverage
+import org.aurorasms.core.index.search.toCoverage
+import org.aurorasms.core.index.storage.AuroraIndexDatabase
+import org.aurorasms.core.index.storage.GenerationStateCode
+import org.aurorasms.core.index.storage.StoredTimelineMessage
+import org.aurorasms.core.index.storage.toIndexedMessageDirection
+import org.aurorasms.core.index.storage.toIndexedProviderKind
+import org.aurorasms.core.model.AuroraSubscriptionId
+import org.aurorasms.core.model.MessageBox
+import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.ParticipantAddress
+import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.ProviderThreadId
+
+class RoomThreadTimelineRepository(
+    private val database: AuroraIndexDatabase,
+) : ThreadTimelineRepository {
+    private val conversationDao = database.conversationDao()
+    private val messageDao = database.indexedMessageDao()
+    private val syncDao = database.indexSyncDao()
+
+    override suspend fun load(request: TimelinePageRequest): TimelinePageResult = try {
+        database.withTransaction {
+            val generation = syncDao.latestGeneration()
+            if (generation == null) {
+                return@withTransaction TimelinePageResult.MissingThread(
+                    IndexCoverage.NOT_STARTED.copy(indexedMessageCount = messageDao.count()),
+                )
+            }
+            val coverage = generation.toCoverage(
+                checkpoints = syncDao.checkpoints(generation.generationId),
+                indexedMessageCount = if (generation.state == GenerationStateCode.COMPLETE) {
+                    generation.committedCount
+                } else {
+                    messageDao.count()
+                },
+            )
+            if (request.cursor != null && request.cursor.generationId != generation.generationId) {
+                return@withTransaction TimelinePageResult.StaleGeneration(coverage)
+            }
+            val requestedRows = request.limit + 1
+            val stored = when (request.direction) {
+                TimelinePageDirection.LATEST -> conversationDao.timelineLatest(
+                    request.providerThreadId.value,
+                    generation.generationId,
+                    requestedRows,
+                )
+                TimelinePageDirection.OLDER -> conversationDao.timelineOlder(
+                    providerThreadId = request.providerThreadId.value,
+                    generationId = generation.generationId,
+                    timestampMillis = requireNotNull(request.cursor).timestampMillis,
+                    rowId = request.cursor.localRowId,
+                    limit = requestedRows,
+                )
+                TimelinePageDirection.NEWER -> conversationDao.timelineNewer(
+                    providerThreadId = request.providerThreadId.value,
+                    generationId = generation.generationId,
+                    timestampMillis = requireNotNull(request.cursor).timestampMillis,
+                    rowId = request.cursor.localRowId,
+                    limit = requestedRows,
+                )
+            }
+            if (
+                stored.isEmpty() &&
+                request.direction == TimelinePageDirection.LATEST &&
+                conversationDao.conversation(request.providerThreadId.value, generation.generationId) == null
+            ) {
+                return@withTransaction TimelinePageResult.MissingThread(coverage)
+            }
+            val queryOrderedPage = stored.take(request.limit)
+            val canonicalPage = if (request.direction == TimelinePageDirection.NEWER) {
+                queryOrderedPage
+            } else {
+                queryOrderedPage.asReversed()
+            }
+            val next = if (stored.size > request.limit) {
+                queryOrderedPage.last().toCursor(generation.generationId)
+            } else {
+                null
+            }
+            TimelinePageResult.Page(
+                TimelinePage(
+                    items = canonicalPage.map(StoredTimelineMessage::toTimelineMessage),
+                    next = next,
+                    direction = request.direction,
+                    coverage = coverage,
+                ),
+            )
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: SQLiteException) {
+        TimelinePageResult.StorageUnavailable(safeCoverage())
+    }
+
+    private suspend fun safeCoverage(): IndexCoverage = try {
+        val generation = syncDao.latestGeneration() ?: return IndexCoverage.NOT_STARTED
+        generation.toCoverage(syncDao.checkpoints(generation.generationId), messageDao.count())
+    } catch (_: SQLiteException) {
+        IndexCoverage.NOT_STARTED
+    }
+}
+
+private fun StoredTimelineMessage.toCursor(generationId: Long): TimelineCursor = TimelineCursor(
+    generationId = generationId,
+    providerThreadId = ProviderThreadId(providerThreadId),
+    timestampMillis = timestampMillis,
+    localRowId = rowId,
+)
+
+private fun StoredTimelineMessage.toTimelineMessage(): TimelineMessage = TimelineMessage(
+    localRowId = rowId,
+    providerMessageId = ProviderMessageId(providerKind.toIndexedProviderKind(), providerId),
+    providerThreadId = ProviderThreadId(providerThreadId),
+    timestampMillis = timestampMillis,
+    sentTimestampMillis = sentTimestampMillis,
+    direction = direction.toIndexedMessageDirection(),
+    box = MessageBox.fromStorageCode(messageBox),
+    status = MessageStatus.fromStorageCode(messageStatus),
+    subscriptionId = subscriptionId?.let(::AuroraSubscriptionId),
+    senderAddress = senderAddress?.let(::ParticipantAddress),
+    bodyPreview = bodyPreview,
+    bodyTruncated = bodyTruncated,
+    subject = subject,
+    attachmentCount = attachmentCount,
+    attachmentTypeSummary = attachmentTypeSummary,
+    read = isRead,
+    seen = isSeen,
+    locked = isLocked,
+)

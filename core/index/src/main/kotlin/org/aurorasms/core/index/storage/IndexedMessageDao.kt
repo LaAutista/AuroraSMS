@@ -10,6 +10,9 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import org.aurorasms.core.index.MAXIMUM_ANCHOR_HALF_WINDOW
+import org.aurorasms.core.index.conversation.MAXIMUM_CONVERSATION_SNIPPET_CHARACTERS
+import org.aurorasms.core.index.sync.IndexedProviderProjection
+import org.aurorasms.core.index.sync.MAXIMUM_INDEXED_CONVERSATION_PARTICIPANTS
 
 data class StoredMessageIdentity(
     @ColumnInfo(name = "row_id")
@@ -55,6 +58,22 @@ data class IndexUpsertSummary(
     val total: Int
         get() = inserted + updated + unchanged
 }
+
+private enum class UpsertDisposition {
+    INSERTED,
+    UPDATED,
+    UNCHANGED,
+}
+
+private data class PersistedUpsert(
+    val entity: IndexedMessageEntity,
+    val disposition: UpsertDisposition,
+)
+
+private data class UpsertBatchResult(
+    val summary: IndexUpsertSummary,
+    val rows: List<PersistedUpsert>,
+)
 
 data class StoredAnchorWindow(
     val anchor: IndexedMessageEntity,
@@ -105,7 +124,43 @@ abstract class IndexedMessageDao {
     @Transaction
     internal open suspend fun upsertBatchPreservingLocalIds(
         entities: List<IndexedMessageEntity>,
-    ): IndexUpsertSummary = upsertBatchInternal(entities)
+    ): IndexUpsertSummary = upsertBatchInternal(entities).summary
+
+    @Query("SELECT * FROM indexed_conversations WHERE provider_thread_id = :providerThreadId LIMIT 1")
+    protected abstract suspend fun storedConversation(providerThreadId: Long): IndexedConversationEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    protected abstract suspend fun putConversation(entity: IndexedConversationEntity)
+
+    @Query("DELETE FROM indexed_conversation_participants WHERE provider_thread_id = :providerThreadId")
+    protected abstract suspend fun deleteConversationParticipants(providerThreadId: Long): Int
+
+    @Query(
+        """
+        SELECT address FROM indexed_conversation_participants
+        WHERE provider_thread_id = :providerThreadId AND last_seen_generation = :generationId
+        ORDER BY address ASC
+        LIMIT :limit
+        """,
+    )
+    protected abstract suspend fun storedParticipantAddresses(
+        providerThreadId: Long,
+        generationId: Long,
+        limit: Int,
+    ): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    protected abstract suspend fun insertParticipantIgnoringConflict(
+        entity: IndexedConversationParticipantEntity,
+    ): Long
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM indexed_conversation_participants
+        WHERE provider_thread_id = :providerThreadId AND last_seen_generation = :generationId
+        """,
+    )
+    protected abstract suspend fun participantCount(providerThreadId: Long, generationId: Long): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     protected abstract suspend fun replaceCheckpoints(entities: List<IndexCheckpointEntity>)
@@ -155,10 +210,28 @@ abstract class IndexedMessageDao {
         mmsCheckpoint: IndexCheckpointEntity,
         nowMillis: Long,
         targetBatchSize: Int,
+    ): IndexUpsertSummary = commitScanningProjectionBatch(
+        generationId = generationId,
+        projections = entities.map(IndexedProviderProjection::fromMessageOnly),
+        smsCheckpoint = smsCheckpoint,
+        mmsCheckpoint = mmsCheckpoint,
+        nowMillis = nowMillis,
+        targetBatchSize = targetBatchSize,
+    )
+
+    /** Adds the v2 projections to the same transaction as messages and provider cursors. */
+    @Transaction
+    open suspend fun commitScanningProjectionBatch(
+        generationId: Long,
+        projections: List<IndexedProviderProjection>,
+        smsCheckpoint: IndexCheckpointEntity,
+        mmsCheckpoint: IndexCheckpointEntity,
+        nowMillis: Long,
+        targetBatchSize: Int,
     ): IndexUpsertSummary {
         require(generationId > 0L) { "Index generations must be positive" }
-        require(entities.size <= MAXIMUM_INDEX_BATCH_SIZE) { "Index batches must remain bounded" }
-        require(entities.all { it.lastSeenGeneration == generationId }) {
+        require(projections.size <= MAXIMUM_INDEX_BATCH_SIZE) { "Index batches must remain bounded" }
+        require(projections.all { it.message.lastSeenGeneration == generationId }) {
             "Every batch row must belong to the committed generation"
         }
         require(smsCheckpoint.generationId == generationId && mmsCheckpoint.generationId == generationId) {
@@ -171,17 +244,23 @@ abstract class IndexedMessageDao {
             "Index batch size is outside the reviewed bound"
         }
 
-        val summary = upsertBatchInternal(entities)
+        val upserts = upsertBatchInternal(projections.map(IndexedProviderProjection::message))
+        accumulateConversationProjections(
+            generationId = generationId,
+            projections = projections,
+            persistedRows = upserts.rows,
+            onlyInserted = false,
+        )
         replaceCheckpoints(listOf(smsCheckpoint, mmsCheckpoint))
         check(
             advanceScanningGeneration(
                 generationId = generationId,
                 nowMillis = nowMillis,
-                processedCount = entities.size,
+                processedCount = projections.size,
                 targetBatchSize = targetBatchSize,
             ) == 1,
         ) { "The scanning generation was not active during commit" }
-        return summary
+        return upserts.summary
     }
 
     /** Applies one bounded verified head insert without starting a full generation. */
@@ -193,17 +272,41 @@ abstract class IndexedMessageDao {
         smsCheckpoint: IndexCheckpointEntity,
         mmsCheckpoint: IndexCheckpointEntity,
         nowMillis: Long,
+    ): IndexUpsertSummary = commitSteadyStateProjectionBatch(
+        generationId = generationId,
+        expectedSignalSequence = expectedSignalSequence,
+        projections = entities.map(IndexedProviderProjection::fromMessageOnly),
+        smsCheckpoint = smsCheckpoint,
+        mmsCheckpoint = mmsCheckpoint,
+        nowMillis = nowMillis,
+    )
+
+    /** Applies a verified owned head projection without rescanning its thread. */
+    @Transaction
+    open suspend fun commitSteadyStateProjectionBatch(
+        generationId: Long,
+        expectedSignalSequence: Long,
+        projections: List<IndexedProviderProjection>,
+        smsCheckpoint: IndexCheckpointEntity,
+        mmsCheckpoint: IndexCheckpointEntity,
+        nowMillis: Long,
     ): IndexUpsertSummary {
         require(generationId > 0L) { "Index generations must be positive" }
         require(expectedSignalSequence >= 0L) { "Signal sequences cannot be negative" }
-        require(entities.size <= MAXIMUM_INDEX_BATCH_SIZE) { "Steady-state batches must remain bounded" }
-        require(entities.all { it.lastSeenGeneration == generationId }) {
+        require(projections.size <= MAXIMUM_INDEX_BATCH_SIZE) { "Steady-state batches must remain bounded" }
+        require(projections.all { it.message.lastSeenGeneration == generationId }) {
             "Steady-state rows must retain the complete generation"
         }
         require(smsCheckpoint.generationId == generationId && mmsCheckpoint.generationId == generationId) {
             "Steady-state checkpoints must belong to the complete generation"
         }
-        val summary = upsertBatchInternal(entities)
+        val upserts = upsertBatchInternal(projections.map(IndexedProviderProjection::message))
+        accumulateConversationProjections(
+            generationId = generationId,
+            projections = projections,
+            persistedRows = upserts.rows,
+            onlyInserted = true,
+        )
         replaceCheckpoints(listOf(smsCheckpoint, mmsCheckpoint))
         val indexedCount = count()
         check(
@@ -214,35 +317,101 @@ abstract class IndexedMessageDao {
                 indexedCount = indexedCount,
             ) == 1,
         ) { "A newer provider signal superseded the steady-state commit" }
-        return summary
+        return upserts.summary
     }
 
     private suspend fun upsertBatchInternal(
         entities: List<IndexedMessageEntity>,
-    ): IndexUpsertSummary {
+    ): UpsertBatchResult {
         var inserted = 0
         var updated = 0
         var unchanged = 0
+        val persisted = ArrayList<PersistedUpsert>(entities.size)
         entities.forEach { candidate ->
             val existing = storedIdentity(candidate.providerKind, candidate.providerId)
             if (existing == null) {
                 val insertedRowId = insertIgnoringConflict(candidate.copy(rowId = 0L))
                 if (insertedRowId > 0L) {
                     inserted += 1
+                    persisted += PersistedUpsert(candidate.copy(rowId = insertedRowId), UpsertDisposition.INSERTED)
                 } else {
                     val raced = requireNotNull(storedIdentity(candidate.providerKind, candidate.providerId))
-                    check(updateByRowId(candidate.copy(rowId = raced.rowId)) == 1)
+                    val persistedEntity = candidate.copy(rowId = raced.rowId)
+                    check(updateByRowId(persistedEntity) == 1)
                     updated += 1
+                    persisted += PersistedUpsert(persistedEntity, UpsertDisposition.UPDATED)
                 }
             } else if (existing.syncFingerprint == candidate.syncFingerprint) {
                 check(markSeen(existing.rowId, candidate.lastSeenGeneration) == 1)
                 unchanged += 1
+                persisted += PersistedUpsert(
+                    candidate.copy(rowId = existing.rowId),
+                    UpsertDisposition.UNCHANGED,
+                )
             } else {
-                check(updateByRowId(candidate.copy(rowId = existing.rowId)) == 1)
+                val persistedEntity = candidate.copy(rowId = existing.rowId)
+                check(updateByRowId(persistedEntity) == 1)
                 updated += 1
+                persisted += PersistedUpsert(persistedEntity, UpsertDisposition.UPDATED)
             }
         }
-        return IndexUpsertSummary(inserted, updated, unchanged)
+        return UpsertBatchResult(IndexUpsertSummary(inserted, updated, unchanged), persisted)
+    }
+
+    private suspend fun accumulateConversationProjections(
+        generationId: Long,
+        projections: List<IndexedProviderProjection>,
+        persistedRows: List<PersistedUpsert>,
+        onlyInserted: Boolean,
+    ) {
+        check(projections.size == persistedRows.size) { "Every projection must resolve to one persisted message" }
+        projections.zip(persistedRows)
+            .asSequence()
+            .filter { (_, persisted) -> !onlyInserted || persisted.disposition == UpsertDisposition.INSERTED }
+            .groupBy { (_, persisted) -> persisted.entity.providerThreadId }
+            .forEach { (providerThreadId, rows) ->
+                val stored = storedConversation(providerThreadId)
+                val startsGeneration = stored?.lastSeenGeneration != generationId
+                if (startsGeneration) deleteConversationParticipants(providerThreadId)
+
+                var summary: IndexedConversationEntity? = if (startsGeneration) null else stored
+                var participantsTruncated = summary?.participantsTruncated == true
+                val participants = LinkedHashSet<String>()
+                if (!startsGeneration) {
+                    participants += storedParticipantAddresses(
+                        providerThreadId,
+                        generationId,
+                        MAXIMUM_INDEXED_CONVERSATION_PARTICIPANTS,
+                    )
+                }
+                rows.forEach { (projection, persisted) ->
+                    summary = summary.accumulate(persisted.entity, generationId)
+                    participantsTruncated = participantsTruncated || projection.participantsTruncated
+                    projection.participantAddresses.forEach { address ->
+                        if (participants.size < MAXIMUM_INDEXED_CONVERSATION_PARTICIPANTS) {
+                            participants += address
+                        } else if (address !in participants) {
+                            participantsTruncated = true
+                        }
+                    }
+                }
+                participants.forEach { address ->
+                    insertParticipantIgnoringConflict(
+                        IndexedConversationParticipantEntity(
+                            providerThreadId = providerThreadId,
+                            address = address,
+                            lastSeenGeneration = generationId,
+                        ),
+                    )
+                }
+                val participantCount = participantCount(providerThreadId, generationId)
+                putConversation(
+                    requireNotNull(summary).copy(
+                        indexedParticipantCount = participantCount,
+                        participantsTruncated = participantsTruncated,
+                    ),
+                )
+            }
     }
 
     @Query("SELECT COUNT(*) FROM indexed_messages")
@@ -528,4 +697,63 @@ abstract class IndexedMessageDao {
 
     @Query("DELETE FROM indexed_messages")
     internal abstract suspend fun deleteAll(): Int
+}
+
+private fun IndexedConversationEntity?.accumulate(
+    message: IndexedMessageEntity,
+    generationId: Long,
+): IndexedConversationEntity {
+    val snippet = (message.body?.takeIf(String::isNotBlank) ?: message.subject?.takeIf(String::isNotBlank))
+        ?.take(MAXIMUM_CONVERSATION_SNIPPET_CHARACTERS)
+    if (this == null) {
+        return IndexedConversationEntity(
+            providerThreadId = message.providerThreadId,
+            latestRowId = message.rowId,
+            latestProviderKind = message.providerKind,
+            latestProviderId = message.providerId,
+            latestTimestampMillis = message.timestampMillis,
+            latestSentTimestampMillis = message.sentTimestampMillis,
+            latestDirection = message.direction,
+            latestMessageBox = message.messageBox,
+            latestMessageStatus = message.messageStatus,
+            latestSubscriptionId = message.subscriptionId,
+            latestSenderAddress = message.senderAddress,
+            latestSnippet = snippet,
+            latestAttachmentCount = message.attachmentCount,
+            latestAttachmentTypeSummary = message.attachmentTypeSummary,
+            latestIsRead = message.isRead,
+            indexedMessageCount = 1L,
+            indexedUnreadCount = if (message.isRead) 0L else 1L,
+            indexedParticipantCount = 0,
+            participantsTruncated = false,
+            lastSeenGeneration = generationId,
+        )
+    }
+    val candidateIsLatest = message.timestampMillis > latestTimestampMillis ||
+        (message.timestampMillis == latestTimestampMillis && message.rowId > latestRowId)
+    return if (candidateIsLatest) {
+        copy(
+            latestRowId = message.rowId,
+            latestProviderKind = message.providerKind,
+            latestProviderId = message.providerId,
+            latestTimestampMillis = message.timestampMillis,
+            latestSentTimestampMillis = message.sentTimestampMillis,
+            latestDirection = message.direction,
+            latestMessageBox = message.messageBox,
+            latestMessageStatus = message.messageStatus,
+            latestSubscriptionId = message.subscriptionId,
+            latestSenderAddress = message.senderAddress,
+            latestSnippet = snippet,
+            latestAttachmentCount = message.attachmentCount,
+            latestAttachmentTypeSummary = message.attachmentTypeSummary,
+            latestIsRead = message.isRead,
+            indexedMessageCount = indexedMessageCount + 1L,
+            indexedUnreadCount = indexedUnreadCount + if (message.isRead) 0L else 1L,
+        )
+    } else {
+        copy(
+            indexedMessageCount = indexedMessageCount + 1L,
+            indexedUnreadCount = indexedUnreadCount + if (message.isRead) 0L else 1L,
+        )
+    }
 }

@@ -9,14 +9,18 @@ import androidx.room.RoomDatabase
     entities = [
         IndexedMessageEntity::class,
         IndexedMessageFtsEntity::class,
+        IndexedConversationEntity::class,
+        IndexedConversationParticipantEntity::class,
         IndexGenerationEntity::class,
         IndexCheckpointEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class AuroraIndexDatabase : RoomDatabase() {
     abstract fun indexedMessageDao(): IndexedMessageDao
+
+    abstract fun conversationDao(): ConversationDao
 
     abstract fun indexSyncDao(): IndexSyncDao
 }

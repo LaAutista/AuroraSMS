@@ -190,13 +190,13 @@ class TelephonyIndexSynchronizer(
                     return GenerationResult.Failed(IndexFailureCode.NON_ADVANCING_CURSOR)
                 }
 
-                val entities = staged.messages.map { item ->
+                val projections = staged.messages.map { item ->
                     when (item) {
-                        is ProviderMergeItem.Sms -> IndexProjectionMapper.fromSms(
+                        is ProviderMergeItem.Sms -> IndexProjectionMapper.projectionFromSms(
                             item.message,
                             generation.generationId,
                         )
-                        is ProviderMergeItem.Mms -> IndexProjectionMapper.fromMms(
+                        is ProviderMergeItem.Mms -> IndexProjectionMapper.projectionFromMms(
                             item.message,
                             generation.generationId,
                         )
@@ -217,9 +217,9 @@ class TelephonyIndexSynchronizer(
                 )
                 val startedAt = monotonicMillis()
                 try {
-                    messageDao.commitScanningBatch(
+                    messageDao.commitScanningProjectionBatch(
                         generationId = generation.generationId,
-                        entities = entities,
+                        projections = projections,
                         smsCheckpoint = smsNext,
                         mmsCheckpoint = mmsNext,
                         nowMillis = nowMillis,

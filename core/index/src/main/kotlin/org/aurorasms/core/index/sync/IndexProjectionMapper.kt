@@ -11,6 +11,15 @@ import org.aurorasms.core.telephony.SmsProviderMessage
 
 /** Maps bounded Telephony projections into the private, metadata-only index schema. */
 object IndexProjectionMapper {
+    fun projectionFromSms(
+        message: SmsProviderMessage,
+        generationId: Long,
+    ): IndexedProviderProjection = IndexedProviderProjection(
+        message = fromSms(message, generationId),
+        participantAddresses = listOfNotNull(message.sender?.value),
+        participantsTruncated = false,
+    )
+
     fun fromSms(
         message: SmsProviderMessage,
         generationId: Long,
@@ -80,6 +89,22 @@ object IndexProjectionMapper {
                 },
             ),
             lastSeenGeneration = generationId,
+        )
+    }
+
+    fun projectionFromMms(
+        message: MmsProviderMessage,
+        generationId: Long,
+    ): IndexedProviderProjection {
+        val allParticipants = buildList {
+            message.sender?.value?.let(::add)
+            message.participants.forEach { add(it.value) }
+        }.distinct()
+        return IndexedProviderProjection(
+            message = fromMms(message, generationId),
+            participantAddresses = allParticipants.take(MAXIMUM_INDEXED_CONVERSATION_PARTICIPANTS),
+            participantsTruncated = message.participantsTruncated ||
+                allParticipants.size > MAXIMUM_INDEXED_CONVERSATION_PARTICIPANTS,
         )
     }
 

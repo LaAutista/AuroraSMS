@@ -9,11 +9,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.aurorasms.core.index.IndexFailureCode
 import org.aurorasms.core.index.storage.AuroraIndexDatabase
+import org.aurorasms.core.index.storage.ConversationDao
 import org.aurorasms.core.index.storage.GenerationStateCode
 import org.aurorasms.core.index.storage.IndexCheckpointEntity
 import org.aurorasms.core.index.storage.IndexGenerationEntity
 import org.aurorasms.core.index.storage.IndexSyncDao
 import org.aurorasms.core.index.storage.IndexUpsertSummary
+import org.aurorasms.core.index.storage.IndexedConversationEntity
+import org.aurorasms.core.index.storage.IndexedConversationParticipantEntity
 import org.aurorasms.core.index.storage.IndexedMessageDao
 import org.aurorasms.core.index.storage.IndexedMessageEntity
 import org.aurorasms.core.index.storage.ProviderKindCode
@@ -508,6 +511,8 @@ private class FakeIndexDatabase : AuroraIndexDatabase() {
 
     override fun indexedMessageDao(): IndexedMessageDao = messages
 
+    override fun conversationDao(): ConversationDao = error("The synchronizer fake has no presentation reader")
+
     override fun indexSyncDao(): IndexSyncDao = sync
 
     protected override fun createInvalidationTracker(): InvalidationTracker =
@@ -625,7 +630,34 @@ private class FakeIndexSyncDao(
         return messages.deleteNotSeenInGeneration(generationId)
     }
 
+    protected override suspend fun deleteConversationsOutsideGeneration(generationId: Long): Int =
+        messages.deleteConversationsOutside(generationId)
+
+    protected override suspend fun deleteParticipantsOutsideGeneration(generationId: Long): Int =
+        messages.deleteParticipantsOutside(generationId)
+
     protected override suspend fun indexedMessageCount(): Long = messages.count()
+
+    protected override suspend fun indexedThreadCount(generationId: Long): Long =
+        messages.indexedThreadCount(generationId)
+
+    protected override suspend fun indexedConversationCount(generationId: Long): Long =
+        messages.indexedConversationCount(generationId)
+
+    protected override suspend fun summarizedMessageCount(generationId: Long): Long =
+        messages.summarizedMessageCount(generationId)
+
+    protected override suspend fun indexedUnreadCount(generationId: Long): Long =
+        messages.indexedUnreadCount(generationId)
+
+    protected override suspend fun summarizedUnreadCount(generationId: Long): Long =
+        messages.summarizedUnreadCount(generationId)
+
+    protected override suspend fun invalidLatestConversationCount(generationId: Long): Long =
+        messages.invalidLatestConversationCount(generationId)
+
+    protected override suspend fun invalidParticipantCount(generationId: Long): Long =
+        messages.invalidParticipantCount(generationId)
 
     protected override suspend fun markComplete(
         generationId: Long,
@@ -670,15 +702,17 @@ private class FakeIndexSyncDao(
 
 private class FakeIndexedMessageDao : IndexedMessageDao() {
     private val rows = linkedMapOf<Pair<Int, Long>, IndexedMessageEntity>()
+    private val conversations = linkedMapOf<Long, IndexedConversationEntity>()
+    private val participants = linkedMapOf<Pair<Long, String>, IndexedConversationParticipantEntity>()
     private var nextRowId = 1L
     lateinit var sync: FakeIndexSyncDao
     var failNextCommit: Boolean = false
     var afterCommit: (suspend (Long) -> Unit)? = null
     val committedBatchTargets = mutableListOf<Int>()
 
-    override suspend fun commitScanningBatch(
+    override suspend fun commitScanningProjectionBatch(
         generationId: Long,
-        entities: List<IndexedMessageEntity>,
+        projections: List<IndexedProviderProjection>,
         smsCheckpoint: IndexCheckpointEntity,
         mmsCheckpoint: IndexCheckpointEntity,
         nowMillis: Long,
@@ -688,9 +722,9 @@ private class FakeIndexedMessageDao : IndexedMessageDao() {
             failNextCommit = false
             throw SQLiteException("synthetic transaction failure")
         }
-        val result = super.commitScanningBatch(
+        val result = super.commitScanningProjectionBatch(
             generationId,
-            entities,
+            projections,
             smsCheckpoint,
             mmsCheckpoint,
             nowMillis,
@@ -700,6 +734,45 @@ private class FakeIndexedMessageDao : IndexedMessageDao() {
         afterCommit?.invoke(generationId)
         return result
     }
+
+    protected override suspend fun storedConversation(providerThreadId: Long): IndexedConversationEntity? =
+        conversations[providerThreadId]
+
+    protected override suspend fun putConversation(entity: IndexedConversationEntity) {
+        conversations[entity.providerThreadId] = entity
+    }
+
+    protected override suspend fun deleteConversationParticipants(providerThreadId: Long): Int {
+        val before = participants.size
+        participants.keys.removeAll { it.first == providerThreadId }
+        return before - participants.size
+    }
+
+    protected override suspend fun storedParticipantAddresses(
+        providerThreadId: Long,
+        generationId: Long,
+        limit: Int,
+    ): List<String> = participants.values
+        .asSequence()
+        .filter { it.providerThreadId == providerThreadId && it.lastSeenGeneration == generationId }
+        .map(IndexedConversationParticipantEntity::address)
+        .sorted()
+        .take(limit)
+        .toList()
+
+    protected override suspend fun insertParticipantIgnoringConflict(
+        entity: IndexedConversationParticipantEntity,
+    ): Long {
+        val key = entity.providerThreadId to entity.address
+        if (key in participants) return -1L
+        participants[key] = entity
+        return participants.size.toLong()
+    }
+
+    protected override suspend fun participantCount(providerThreadId: Long, generationId: Long): Int =
+        participants.values.count {
+            it.providerThreadId == providerThreadId && it.lastSeenGeneration == generationId
+        }
 
     protected override suspend fun storedIdentity(
         providerKind: Int,
@@ -883,8 +956,66 @@ private class FakeIndexedMessageDao : IndexedMessageDao() {
 
     fun contains(providerKind: Int, providerId: Long): Boolean = providerKind to providerId in rows
 
+    fun deleteConversationsOutside(generationId: Long): Int {
+        val before = conversations.size
+        conversations.entries.removeAll { it.value.lastSeenGeneration != generationId }
+        return before - conversations.size
+    }
+
+    fun deleteParticipantsOutside(generationId: Long): Int {
+        val before = participants.size
+        participants.entries.removeAll { it.value.lastSeenGeneration != generationId }
+        return before - participants.size
+    }
+
+    fun indexedThreadCount(generationId: Long): Long = rows.values
+        .filter { it.lastSeenGeneration == generationId }
+        .map(IndexedMessageEntity::providerThreadId)
+        .distinct()
+        .size
+        .toLong()
+
+    fun indexedConversationCount(generationId: Long): Long = conversations.values
+        .count { it.lastSeenGeneration == generationId }
+        .toLong()
+
+    fun summarizedMessageCount(generationId: Long): Long = conversations.values
+        .filter { it.lastSeenGeneration == generationId }
+        .sumOf(IndexedConversationEntity::indexedMessageCount)
+
+    fun indexedUnreadCount(generationId: Long): Long = rows.values
+        .count { it.lastSeenGeneration == generationId && !it.isRead }
+        .toLong()
+
+    fun summarizedUnreadCount(generationId: Long): Long = conversations.values
+        .filter { it.lastSeenGeneration == generationId }
+        .sumOf(IndexedConversationEntity::indexedUnreadCount)
+
+    fun invalidLatestConversationCount(generationId: Long): Long = conversations.values
+        .count { conversation ->
+            if (conversation.lastSeenGeneration != generationId) return@count false
+            val message = rows.values.firstOrNull { it.rowId == conversation.latestRowId }
+            message == null ||
+                message.lastSeenGeneration != generationId ||
+                message.providerThreadId != conversation.providerThreadId ||
+                message.providerKind != conversation.latestProviderKind ||
+                message.providerId != conversation.latestProviderId ||
+                message.timestampMillis != conversation.latestTimestampMillis
+        }.toLong()
+
+    fun invalidParticipantCount(generationId: Long): Long = conversations.values
+        .count { conversation ->
+            conversation.lastSeenGeneration == generationId &&
+                conversation.indexedParticipantCount != participants.values.count {
+                    it.providerThreadId == conversation.providerThreadId &&
+                        it.lastSeenGeneration == generationId
+                }
+        }.toLong()
+
     fun clear() {
         rows.clear()
+        conversations.clear()
+        participants.clear()
         committedBatchTargets.clear()
         nextRowId = 1L
     }

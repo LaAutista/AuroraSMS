@@ -174,19 +174,19 @@ internal class IndexReconciler(
             return SteadyStateResult.Ambiguous
         }
 
-        val entities = buildList {
+        val projections = buildList {
             smsPlan.insertedItems.forEach { message ->
-                add(IndexProjectionMapper.fromSms(message, generation.generationId))
+                add(IndexProjectionMapper.projectionFromSms(message, generation.generationId))
             }
             mmsPlan.insertedItems.forEach { message ->
-                add(IndexProjectionMapper.fromMms(message, generation.generationId))
+                add(IndexProjectionMapper.projectionFromMms(message, generation.generationId))
             }
         }
         return try {
-            messageDao.commitSteadyStateBatch(
+            messageDao.commitSteadyStateProjectionBatch(
                 generationId = generation.generationId,
                 expectedSignalSequence = generation.signalSequence,
-                entities = entities,
+                projections = projections,
                 smsCheckpoint = smsCheckpoint.copy(
                     committedCount = smsCheckpoint.committedCount + smsPlan.insertedItems.size,
                     updatedAtMillis = nowMillis,
@@ -199,7 +199,7 @@ internal class IndexReconciler(
                 ),
                 nowMillis = nowMillis,
             )
-            SteadyStateResult.Complete(insertedRows = entities.size)
+            SteadyStateResult.Complete(insertedRows = projections.size)
         } catch (_: IllegalStateException) {
             SteadyStateResult.Superseded
         }

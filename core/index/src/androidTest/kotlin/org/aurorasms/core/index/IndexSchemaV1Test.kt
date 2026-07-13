@@ -11,6 +11,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.aurorasms.core.index.storage.AuroraIndexDatabase
 import org.aurorasms.core.index.storage.IndexDatabaseFactory
+import org.aurorasms.core.index.storage.INDEX_MIGRATION_1_2
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -32,7 +33,7 @@ class IndexSchemaV1Test {
         val database = IndexDatabaseFactory.createInMemory(context)
         try {
             val sqlite = database.openHelper.writableDatabase
-            assertEquals(1, sqlite.version)
+            assertEquals(2, sqlite.version)
             val tables = sqlite.stringColumn(
                 "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')",
             ).toSet()
@@ -40,6 +41,8 @@ class IndexSchemaV1Test {
             assertTrue("indexed_messages_fts" in tables)
             assertTrue("index_generations" in tables)
             assertTrue("index_checkpoints" in tables)
+            assertTrue("indexed_conversations" in tables)
+            assertTrue("indexed_conversation_participants" in tables)
 
             val indexedColumns = sqlite.stringColumn("PRAGMA table_info(indexed_messages)").toSet()
             // PRAGMA table_info's first column is cid; inspect names explicitly below.
@@ -100,6 +103,49 @@ class IndexSchemaV1Test {
     }
 
     @Test
+    fun conversationAndTimelinePlansUseReviewedKeysetsWithoutOffsetOrTemporarySort() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val database = IndexDatabaseFactory.createInMemory(context)
+        try {
+            val sqlite = database.openHelper.writableDatabase
+            val inboxPlan = sqlite.stringColumn(
+                """
+                EXPLAIN QUERY PLAN
+                SELECT * FROM indexed_conversations
+                INDEXED BY index_indexed_conversations_last_seen_generation_latest_timestamp_ms_latest_row_id
+                WHERE last_seen_generation = 7
+                  AND (latest_timestamp_ms < 1000 OR (latest_timestamp_ms = 1000 AND latest_row_id < 99))
+                ORDER BY latest_timestamp_ms DESC, latest_row_id DESC
+                LIMIT 51
+                """.trimIndent(),
+                column = 3,
+            ).joinToString(" ")
+            assertTrue(inboxPlan.contains("last_seen_generation_latest_timestamp_ms_latest_row_id"))
+            assertFalse(inboxPlan.contains("TEMP B-TREE", ignoreCase = true))
+            assertFalse(inboxPlan.contains("OFFSET", ignoreCase = true))
+
+            val timelinePlan = sqlite.stringColumn(
+                """
+                EXPLAIN QUERY PLAN
+                SELECT row_id, timestamp_ms FROM indexed_messages
+                INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
+                WHERE provider_thread_id = 42
+                  AND last_seen_generation = 7
+                  AND (timestamp_ms < 1000 OR (timestamp_ms = 1000 AND row_id < 99))
+                ORDER BY timestamp_ms DESC, row_id DESC
+                LIMIT 51
+                """.trimIndent(),
+                column = 3,
+            ).joinToString(" ")
+            assertTrue(timelinePlan.contains("provider_thread_id_timestamp_ms_row_id"))
+            assertFalse(timelinePlan.contains("TEMP B-TREE", ignoreCase = true))
+            assertFalse(timelinePlan.contains("OFFSET", ignoreCase = true))
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun denseFtsPlanScansMatchOnceAndSortsOnlyCompactRowIds() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val database = IndexDatabaseFactory.createInMemory(context)
@@ -128,7 +174,7 @@ class IndexSchemaV1Test {
     }
 
     @Test
-    fun migrationHelperCreatesExportedVersionOneAndCurrentRoomValidatesIt() {
+    fun migrationHelperCreatesExportedVersionOneAndCurrentRoomMigratesIt() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.deleteDatabase(MIGRATION_DATABASE_NAME)
         try {
@@ -144,9 +190,9 @@ class IndexSchemaV1Test {
                 context,
                 AuroraIndexDatabase::class.java,
                 MIGRATION_DATABASE_NAME,
-            ).build()
+            ).addMigrations(INDEX_MIGRATION_1_2).build()
             try {
-                assertEquals(1, database.openHelper.writableDatabase.version)
+                assertEquals(2, database.openHelper.writableDatabase.version)
             } finally {
                 database.close()
             }

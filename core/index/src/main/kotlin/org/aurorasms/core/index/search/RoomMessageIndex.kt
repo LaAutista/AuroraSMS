@@ -224,7 +224,7 @@ class RoomMessageIndex(
     }
 }
 
-private fun IndexGenerationEntity.toCoverage(
+internal fun IndexGenerationEntity.toCoverage(
     checkpoints: List<IndexCheckpointEntity>,
     indexedMessageCount: Long,
 ): IndexCoverage {
