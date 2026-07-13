@@ -99,6 +99,26 @@ class IndexFtsEvidenceTest {
     }
 
     @Test
+    fun ftsSegmentOptimizationPreservesContentAndMatches() = runBlocking {
+        val dao = database.indexedMessageDao()
+        dao.upsertBatchPreservingLocalIds(
+            (1L..40L).map { providerId ->
+                entity(
+                    kind = ProviderKind.SMS,
+                    providerId = providerId,
+                    body = "optimized searchable content",
+                )
+            },
+        )
+
+        dao.optimizeFullTextIndex()
+
+        assertEquals(40L, dao.count())
+        assertEquals(40L, ftsRowCount())
+        assertEquals(40L, ftsMatchCount("optimized"))
+    }
+
+    @Test
     fun threadScopedFtsKeysetRejectsCrossQueryAndCrossThreadCursors() = runBlocking {
         val generation = database.indexSyncDao().startGeneration(nowMillis = 10L)
         database.indexedMessageDao().commitScanningBatch(

@@ -18,6 +18,7 @@ import org.aurorasms.core.index.SearchRequest
 import org.aurorasms.core.index.SearchResult
 import org.aurorasms.core.index.SearchValidationFailure
 import org.aurorasms.core.index.storage.AuroraIndexDatabase
+import org.aurorasms.core.index.storage.GenerationStateCode
 import org.aurorasms.core.index.storage.IndexCheckpointEntity
 import org.aurorasms.core.index.storage.IndexGenerationEntity
 import org.aurorasms.core.index.storage.IndexedMessageEntity
@@ -43,9 +44,16 @@ class RoomMessageIndex(
     override suspend fun coverage(): IndexCoverage {
         val generation = syncDao.latestGeneration()
             ?: return IndexCoverage.NOT_STARTED.copy(indexedMessageCount = messageDao.count())
+        val indexedMessageCount = if (generation.state == GenerationStateCode.COMPLETE) {
+            // Completion and every steady-state content mutation persist a physical COUNT(*) in
+            // the same transaction, so a complete generation already owns an exact row count.
+            generation.committedCount
+        } else {
+            messageDao.count()
+        }
         return generation.toCoverage(
             checkpoints = syncDao.checkpoints(generation.generationId),
-            indexedMessageCount = messageDao.count(),
+            indexedMessageCount = indexedMessageCount,
         )
     }
 

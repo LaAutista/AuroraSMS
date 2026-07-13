@@ -103,7 +103,7 @@ abstract class IndexedMessageDao {
     protected abstract suspend fun markSeen(rowId: Long, generation: Long): Int
 
     @Transaction
-    open suspend fun upsertBatchPreservingLocalIds(
+    internal open suspend fun upsertBatchPreservingLocalIds(
         entities: List<IndexedMessageEntity>,
     ): IndexUpsertSummary = upsertBatchInternal(entities)
 
@@ -401,6 +401,10 @@ abstract class IndexedMessageDao {
         beforeRowId: Long,
     ): StoredSearchOrder?
 
+    /** Merges FTS4 segment trees after a verified generation; content and row IDs are unchanged. */
+    @Query("INSERT INTO indexed_messages_fts(indexed_messages_fts) VALUES('optimize')")
+    abstract suspend fun optimizeFullTextIndex()
+
     @Query(
         """
         SELECT indexed_messages.row_id
@@ -520,8 +524,8 @@ abstract class IndexedMessageDao {
     ): List<IndexedMessageEntity>
 
     @Query("DELETE FROM indexed_messages WHERE last_seen_generation != :generationId")
-    abstract suspend fun deleteNotSeenInGeneration(generationId: Long): Int
+    internal abstract suspend fun deleteNotSeenInGeneration(generationId: Long): Int
 
     @Query("DELETE FROM indexed_messages")
-    abstract suspend fun deleteAll(): Int
+    internal abstract suspend fun deleteAll(): Int
 }

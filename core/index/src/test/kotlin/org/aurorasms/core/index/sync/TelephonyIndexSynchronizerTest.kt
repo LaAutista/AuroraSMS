@@ -823,6 +823,8 @@ private class FakeIndexedMessageDao : IndexedMessageDao() {
         beforeRowId: Long,
     ): StoredSearchOrder? = null
 
+    override suspend fun optimizeFullTextIndex() = Unit
+
     override suspend fun searchGlobalFirstRowIds(
         matchExpression: String,
         limit: Int,

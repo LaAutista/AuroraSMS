@@ -201,6 +201,7 @@ class IndexDatabaseScaleBenchmark {
                     mmsProviderCount = 0L,
                 ),
             )
+            database.indexedMessageDao().optimizeFullTextIndex()
             return LongArray(0)
         }
 
@@ -235,6 +236,7 @@ class IndexDatabaseScaleBenchmark {
                 mmsProviderCount = state.mmsCount,
             ),
         )
+        database.indexedMessageDao().optimizeFullTextIndex()
         assertEquals(shape.messageCount.toLong(), database.indexedMessageDao().count())
         return batchDurations.toLongArray()
     }
@@ -380,6 +382,7 @@ class IndexDatabaseScaleBenchmark {
                     mmsProviderCount = state.mmsCount,
                 ),
             )
+            database.indexedMessageDao().optimizeFullTextIndex()
         }
         report(shape, BenchmarkOperation.RECONCILE_DELETIONS, timing, database)
         assertEquals(expectedRetained, database.indexedMessageDao().count())

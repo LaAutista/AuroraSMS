@@ -2,6 +2,7 @@
 
 package org.aurorasms.core.index.sync
 
+import android.database.sqlite.SQLiteFullException
 import java.util.concurrent.CancellationException
 import org.aurorasms.core.index.storage.AuroraIndexDatabase
 import org.aurorasms.core.index.storage.GenerationStateCode
@@ -84,6 +85,15 @@ internal class IndexReconciler(
             mmsProviderCount = mmsCount,
         )
             ?: return IndexReconcileResult.Dirty
+        try {
+            messageDao.optimizeFullTextIndex()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: SQLiteFullException) {
+            // Segment merging is performance maintenance after durable completion. The verified
+            // index remains correct and searchable if storage pressure defers this optional pass.
+            // Corruption and other SQLite failures propagate to the typed storage-unavailable path.
+        }
         return IndexReconcileResult.Verified(summary)
     }
 
