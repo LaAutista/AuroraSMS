@@ -1,6 +1,8 @@
 # AuroraSMS test matrix and phase-gate evidence
 
-Status: Phase 1 local evidence, 2026-07-12
+Status: Phase 2 implementation and Pixel 8/API 36 synthetic database gate
+complete, 2026-07-12; real provider-history synchronization, remaining API/OEM
+coverage, and carrier transport rows pending.
 
 ## Evidence rules
 
@@ -33,7 +35,7 @@ Status: Phase 1 local evidence, 2026-07-12
 | Low-memory device/emulator | Allocation/decode pressure | Phase 3/4/release |
 | Tablet/foldable/large screen | Adaptive navigation and state parity | Phase 4/release |
 
-Current Phase 1 environment has SDK platforms 36 and 37.0 plus a physical
+The current environment has SDK platforms 36 and 37.0 plus a physical
 Google Pixel 8 (`shiba`) running Android 16/API 36 with telephony messaging and
 subscription features. No emulator, system image, or AVD is installed. The
 device evidence below covers only this Pixel/API combination; the remaining
@@ -63,8 +65,8 @@ required API and OEM rows stay pending.
 - [x] Wrapper-only build succeeds on the documented toolchain.
 - [x] `assembleDebug`, `assembleRelease`, host unit tests, and lint pass.
 - [ ] Instrumentation/device tests pass on the required API/device matrix; all
-  25 current tests pass on a physical Pixel 8/API 36, while the other required
-  API/device rows remain pending.
+  26 current app/notification/telephony tests pass on a physical Pixel 8/API
+  36, while the other required API/device rows remain pending.
 - [x] No Android module applies `org.jetbrains.kotlin.android` under AGP 9.
 - [x] Java and Kotlin outputs target 17 even when Gradle runs on host JDK 26.
 - [x] Dependency verification/locks, notices, and resolved allowlist pass.
@@ -285,25 +287,152 @@ same-millisecond timestamps, missing contacts, deleted provider rows, dual-SIM
 records, GSM/Unicode/emoji/combining/RTL, long bodies, null subjects, and
 attachment-heavy MMS metadata.
 
-- [ ] Initial sync indexes newest first while UI remains usable.
-- [ ] Checkpoint resume after process death never restarts from zero.
-- [ ] A completed sync runs and persists a lightweight consistency pass and
+- [x] Initial sync indexes newest first in bounded provider pages and
+  application-lifetime coroutine work.
+- [ ] Real provider-backed initial-sync UI responsiveness is deferred to Phase
+  3 presentation and explicit owner role/permission acceptance.
+- [x] Checkpoint resume after process death never restarts from zero.
+- [x] A completed sync runs and persists a lightweight consistency pass and
   completion generation; restart/reconcile does not mistake partial coverage
   for complete.
-- [ ] Batch commit makes partial search coverage available and honestly labeled.
-- [ ] Observer/receiver duplicate events coalesce.
-- [ ] Deletions/external changes reconcile.
-- [ ] Unique compound identity and deterministic tie ordering hold.
-- [ ] FTS query parser handles empty, punctuation, quotes, prefix limits,
+- [x] Batch commit makes partial search coverage available and honestly labeled.
+- [x] Observer/receiver duplicate events coalesce.
+- [x] Deletions/external changes reconcile.
+- [x] Unique compound identity and deterministic tie ordering hold.
+- [x] FTS query parser handles empty, punctuation, quotes, prefix limits,
   Unicode normalization, malformed syntax, and hostile input.
-- [ ] Result that was never manually scrolled into view is found.
-- [ ] Global and in-thread results are paged/bounded.
-- [ ] Exact old-result jump uses a bounded before/after anchor load.
-- [ ] No deep `OFFSET`, `LIKE '%query%'`, unbounded list, or repeated 50-row
+- [x] Result that was never manually scrolled into view is found.
+- [x] Global and in-thread results are paged/bounded.
+- [x] Exact old-result jump uses a bounded before/after anchor load.
+- [x] No deep `OFFSET`, `LIKE '%query%'`, unbounded list, or repeated 50-row
   jump loop exists.
-- [ ] Every Room schema version has exported schema and explicit migration test.
-- [ ] Dedicated 500k-row and 1m-row database benchmarks record index build,
+- [x] Every Room schema version has exported schema and explicit migration test.
+- [x] Dedicated 500k-row and 1m-row database benchmarks record index build,
   search, paging, and exact-anchor costs with repeatable fixture seeds.
+
+### Phase 2 local and Pixel/API 36 evidence
+
+Implementation commits `b0a7fac`, `bfce1dd`, `43cb64d`, and `d13ed8a` were
+verified on 2026-07-12. The final candidate uses a bounded FTS candidate set
+plus a same-transaction timeline proof; arbitrary row-ID/timestamp order falls
+back to an exact FTS-first compact row-ID sort before the bounded page is
+hydrated. Verified generations merge FTS4 segments, and complete-generation
+coverage uses the exact physical row count persisted by the completion or
+steady-state content transaction.
+
+The following offline commands completed successfully:
+
+```text
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon --no-parallel
+./gradlew --no-parallel checkLicense generateLicenseReport cyclonedxBom --offline --no-daemon
+./gradlew connectedDebugAndroidTest --offline --no-daemon --no-parallel
+./gradlew :core:index:testDebugUnitTest :core:index:lintDebug :core:index:lintRelease :core:index:compileDebugAndroidTestKotlin :benchmark:compileDebugAndroidTestKotlin --offline --no-daemon --no-parallel
+./gradlew :core:index:connectedDebugAndroidTest --offline --no-daemon --no-parallel -Pandroid.testInstrumentationRunnerArguments.class=org.aurorasms.core.index.IndexFtsEvidenceTest,org.aurorasms.core.index.IndexSchemaV1Test,org.aurorasms.core.index.TelephonyIndexSynchronizerInstrumentedTest
+./gradlew :benchmark:connectedDebugAndroidTest --offline --no-daemon --no-parallel -Pandroid.testInstrumentationRunnerArguments.class=org.aurorasms.benchmark.IndexDatabaseScaleBenchmark#configuredScaleBenchmark_requiresExplicitOptIn -Pandroid.testInstrumentationRunnerArguments.auroraBenchmarkFull=true -Pandroid.testInstrumentationRunnerArguments.auroraBenchmarkShape=500000 -Pandroid.testInstrumentationRunnerArguments.auroraBenchmarkCommit=d13ed8a
+./gradlew :benchmark:connectedDebugAndroidTest --offline --no-daemon --no-parallel -Pandroid.testInstrumentationRunnerArguments.class=org.aurorasms.benchmark.IndexDatabaseScaleBenchmark#configuredScaleBenchmark_requiresExplicitOptIn -Pandroid.testInstrumentationRunnerArguments.auroraBenchmarkFull=true -Pandroid.testInstrumentationRunnerArguments.auroraBenchmarkShape=1000000 -Pandroid.testInstrumentationRunnerArguments.auroraBenchmarkCommit=d13ed8a
+```
+
+Retained non-sensitive evidence:
+
+- aggregate host tests, debug/release lint, debug/release assembly, clean-room,
+  private-asset, dependency, permission, and APK-content gates passed;
+- aggregate Pixel 8/API 36 instrumentation passed 11 app, 26 index, 3
+  notification, 11 state, and 12 telephony tests; the benchmark module passed
+  2 contract/smoke tests and skipped the explicit large-scale entry point by
+  design;
+- the final focused search/schema/synchronizer run passed 15 tests, including
+  transactional FTS insert/update/delete, no-churn generation marks, cursor
+  binding, inverted row-ID/timeline fallback, aligned proof/keyset pages,
+  equal-timestamp proof rejection, FTS segment maintenance, exported schema
+  validation,
+  migration-helper reopen, verified synchronization, and the non-correlated
+  compact FTS query plan;
+- exact SQLite-full rollback, both-provider-cursor reopen/resume, controlled
+  index-file corruption rebuild, and durable state-database preservation passed
+  their focused physical-device tests;
+- generated license inventory contains 182 dependency records with zero
+  disallowed records; the CycloneDX 1.6 aggregate SBOM contains 386 components,
+  387 dependency graph nodes, and no random serial number;
+- the exact 12,419,067-byte debug APK installed successfully, launched cold
+  with Android activity status `ok`, and was copied to
+  `/sdcard/Download/AuroraSMS-debug.apk`; local and device SHA-256 both equal
+  `49bdf7b054356a8e3c1f339f61ddf7325f3b3b88f23ec5e387f0f1b5301b172d`,
+  while the existing default-SMS role and runtime-permission state were left
+  unchanged;
+- the full 500k run for `d13ed8a` passed in 30m43s using fixed seed
+  `18389685492662578`, 500,000 synthetic messages, and 25,000 threads; and
+- the full 1m run for the same commit passed in 1h2m51s with the same fixed
+  seed, 1,000,000 synthetic messages, and 50,000 threads.
+
+The controlled 500k debug regression metrics were:
+
+| Operation | P50 | P95 |
+|---|---:|---:|
+| Fresh build including FTS merge | 630.092 s | 630.092 s |
+| Clean rebuild including FTS merge | 649.249 s | 649.249 s |
+| Committed 500-row batch, build | 420.101 ms | 505.055 ms |
+| Committed 500-row batch, rebuild | 425.649 ms | 500.394 ms |
+| Global common-token search | 63.046 ms | 71.455 ms |
+| Global no-hit search | 20.076 ms | 27.244 ms |
+| Thread common-token search | 244.209 ms | 316.756 ms |
+| Forward keyset page | 315.309 ms | 357.900 ms |
+| Backward timeline keyset | 7.352 ms | 8.096 ms |
+| Anchor newest | 20.648 ms | 23.159 ms |
+| Anchor middle | 22.366 ms | 24.310 ms |
+| Anchor oldest | 22.826 ms | 25.601 ms |
+| Verified deletion reconciliation and FTS merge | 11.745 s | 11.745 s |
+| Database reopen and checkpoint read | 4.234 s | 5.354 s |
+
+The controlled 1m debug regression metrics were:
+
+| Operation | P50 | P95 |
+|---|---:|---:|
+| Fresh build including FTS merge | 1,305.130 s | 1,305.130 s |
+| Clean rebuild including FTS merge | 1,312.074 s | 1,312.074 s |
+| Committed 500-row batch, build | 425.107 ms | 502.986 ms |
+| Committed 500-row batch, rebuild | 428.545 ms | 509.157 ms |
+| Global common-token search | 60.630 ms | 77.804 ms |
+| Global no-hit search | 36.319 ms | 50.804 ms |
+| Thread common-token search | 462.316 ms | 496.579 ms |
+| Forward keyset page | 446.748 ms | 573.079 ms |
+| Backward timeline keyset | 7.133 ms | 12.095 ms |
+| Anchor newest | 20.630 ms | 50.636 ms |
+| Anchor middle | 21.367 ms | 25.102 ms |
+| Anchor oldest | 22.064 ms | 25.431 ms |
+| Verified deletion reconciliation and FTS merge | 46.101 s | 46.101 s |
+| Database reopen and checkpoint read | 8.658 s | 9.149 s |
+
+The warm 500k and 1m databases occupied 521,392,352 and 1,043,079,392 bytes,
+respectively. Global common search passed the 120/220 ms controlled-regression
+threshold at both scales, and every exact anchor passed the 350/650 ms
+threshold. These debug runs are not a release/profileable product-performance
+claim; that confirmation remains pending under the evidence rules. Earlier
+full runs were retained as failed gates rather than hidden:
+`b0a7fac` missed global search at 351.046/379.099 ms, and `bfce1dd` improved the
+median but still missed at 238.921/641.798 ms. Commit `43cb64d` passed 500k at
+104.775/111.857 ms, then its full 1m run correctly failed at
+133.074/148.230 ms after 1h56m. Neither target nor fixture was changed while
+correcting those defects.
+
+All database/benchmark rows above use generated synthetic content. No carrier
+SMS or MMS was sent, no default-role/runtime-permission choice was bypassed, and
+no real provider content, address, query text, provider ID, fingerprint, SIM
+identifier, database, screenshot, or broad log was retained as evidence.
+
+### As-built file-plan deviations
+
+The file lists in `PHASE_2_FILE_PLAN.md` remain the pre-implementation review
+baseline. Responsibilities planned for `IndexMessageId.kt`,
+`SyncFingerprintFactory.kt`, and `MmsMetadataReader.kt` landed in the existing
+provider ID model, `ProviderProjectionFingerprint.kt` plus
+`IndexProjectionMapper.kt`, and `AndroidMmsProviderDataSource.kt`. Planned fake
+repositories were unnecessary because tests use deterministic fixtures, fake
+provider data sources, and the real isolated Room repositories. Planned
+`DraftRepositoryTest.kt`, `ProviderProjectionTest.kt`, and
+`ProviderPagingPolicyTest.kt` became focused contract/instrumentation tests.
+The as-built tree additionally separates `SearchPipeline.kt`,
+`IndexStorageCodes.kt`, `DraftIdentityEnforcement.kt`, the state schema trigger
+baseline, and physical-device durability/FTS/synchronization evidence tests.
 
 ## Phase 3 inbox/thread performance matrix
 

@@ -9,7 +9,7 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
-Phase 1 establishes the independently implemented default-SMS foundation:
+Phase 1 established the independently implemented default-SMS foundation:
 
 - role eligibility and role-before-permission onboarding;
 - the complete Android SMS-role manifest surface;
@@ -19,6 +19,22 @@ Phase 1 establishes the independently implemented default-SMS foundation:
 - debug-only, redacted local diagnostics;
 - strict dependency locks, checksums, license inventory, SBOM, and clean-room,
   permission, and APK-content gates.
+
+Phase 2 added the complete-history local data and search foundation:
+
+- separate private Room v1 databases for the rebuildable message index and
+  durable Aurora-owned draft state;
+- bounded, newest-first SMS/MMS metadata projection with durable checkpoints,
+  verified reconciliation, and truthful partial coverage;
+- safe FTS4 global and in-thread keyset search plus bounded exact-result
+  anchors; and
+- controlled index-only corruption recovery, typed storage failures, redacted
+  diagnostics, and deterministic synthetic scale benchmarks.
+
+Phase 2 does not add the final inbox, thread, search, or composer presentation
+and does not change the existing carrier MMS limitations. Physical evidence
+currently covers a Pixel 8 on Android 16/API 36; the remaining API/OEM and
+carrier rows stay pending.
 
 End-to-end MMS is not yet claimed. Platform MMS staging and result handling are
 present, but encoding/decoding remains disabled until an independently audited
@@ -45,6 +61,7 @@ The debug APK is produced at
 
 ```bash
 ./gradlew test lintDebug lintRelease assembleDebug assembleRelease --offline
+./gradlew connectedDebugAndroidTest --offline
 ./gradlew verifyGovernance --offline
 ./gradlew --no-parallel checkLicense generateLicenseReport cyclonedxBom --offline
 ```

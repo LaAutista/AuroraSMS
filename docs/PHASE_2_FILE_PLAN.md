@@ -1,7 +1,7 @@
 # Phase 2 file-level plan
 
-Status: approved Phase 2 planning baseline, 2026-07-12; production edits have
-not started
+Status: Phase 2 implementation and Pixel 8/API 36 synthetic database gates
+complete, 2026-07-12; exact debug APK handoff verified.
 
 ## Phase 2 outcome
 
@@ -53,9 +53,12 @@ inbox/thread UI, AuroraMaterial, a transport rewrite, or an MMS codec phase.
   syntax.
 - Empty, punctuation-only, quoted, prefixed, Unicode, malformed, and hostile
   queries have deterministic bounded results or a typed validation result.
-- Global and in-thread searches use keyset pages. The initial tuning is 50 rows
-  with 50-row prefetch; there is no deep `OFFSET`, `LIKE '%query%'`, unbounded
-  list, provider-page jump loop, or repeated 50-row exact-jump loop.
+- Global and in-thread searches use keyset pages. The default page is 50 rows
+  (maximum 100) with one bounded sentinel row. Dense global search considers
+  at least 64 FTS candidates and proves that bounded prefix in the same
+  transaction or uses the exact fallback. There is no deep `OFFSET`,
+  `LIKE '%query%'`, unbounded list, provider-page jump loop, or repeated 50-row
+  exact-jump loop.
 - Selecting a hit resolves its stable local row, loads one bounded window before
   and after the anchor, and returns explicit temporary-highlight metadata.
 - Deterministic fixtures cover 0, 1, 10,000, 100,000, 500,000, and 1,000,000
@@ -673,33 +676,29 @@ history on the connected device requires the owner to accept the default-SMS
 role and runtime permission UI; tests never bypass or silently grant that
 choice.
 
-## Known Phase 2 blockers and risks
+## Original blockers and current disposition
 
-- Room 2.8.4 and KSP 2.3.9 are planned but not admitted merely by this document.
-  Their exact artifacts/transitives, checksums, licenses, build behavior, and
-  release leakage must pass the dependency gate before production use.
-- The current Phase 1 MMS projection intentionally omits participant/text/part
-  detail because no codec was admitted. Phase 2 must implement bounded
-  provider-metadata reads without parsing raw PDU bytes or claiming MMS codec
-  support.
+- Resolved: Room 2.8.4 and KSP 2.3.9 were admitted with exact dependency,
+  checksum, license, build, and release-leakage gates.
+- Resolved: the MMS projection now reads bounded provider metadata without
+  parsing raw PDU bytes or claiming MMS codec support.
 - Real provider-history synchronization cannot be physically evidenced until
   the owner explicitly accepts the Android default-SMS role and required read
   permission. Synthetic and isolated database tests proceed without that grant.
 - Only the Pixel 8/API 36 physical target is currently available. Other required
   API/OEM rows remain pending for their release gates and are not silently
   claimed by Phase 2.
-- 500,000/1,000,000-row runs require substantial device time and private app
-  storage. Fixture generation must check available space, clean only its own
-  synthetic benchmark database, and never inspect or export real Telephony
-  content.
-- The original timing harness records useful controlled evidence but is not an
-  AndroidX Benchmark claim. If scheduler noise prevents repeatable evidence,
-  stop and separately admit a benchmark dependency rather than overstating
-  precision.
+- Resolved for the controlled debug regression gate: the 500,000- and
+  1,000,000-row runs completed on the Pixel 8 using synthetic private app
+  storage, cleaning only their own databases and never inspecting or exporting
+  real Telephony content.
+- Accepted provisional limitation: the timing harness records controlled debug
+  regression evidence, not an AndroidX Benchmark or release/profileable product
+  performance claim. Product-performance confirmation remains a later gate.
 - Phase 1 carrier MMS and complete transport rows remain pending. They do not
   authorize Phase 2 scope reduction and Phase 2 does not convert them into
   passing claims.
 
-These blockers do not authorize a destructive state migration, a fake completed
-generation, a smaller mislabeled fixture, a deep-offset fallback, an unbounded
-provider scan, or an unreviewed dependency.
+The pending rows do not authorize a destructive state migration, a fake
+completed generation, a smaller mislabeled fixture, a deep-offset fallback, an
+unbounded provider scan, or an unreviewed dependency.
