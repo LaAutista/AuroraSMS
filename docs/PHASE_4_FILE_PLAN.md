@@ -5,12 +5,12 @@ hardening, and the bounded durable active named-profile/Theme Studio slice
 implemented and verified on 2026-07-14; the durable scoped-profile-reference
 foundation specified by ADR 0006 passed host, governance, emulator, and physical
 install/package/role/permission gates plus real-root/modal acceptance on
-2026-07-14; the final frozen APK's deliberately Inbox-only physical focus,
-copy/hash, and cold-launch rerun remains open after a secure-lockscreen non-run;
-full process-death end-to-end and physical eligible-Thread modal coverage are
-not claimed; assignment-local focal/dim values, media/artwork, import/export,
-navigation variants, and the full accessibility/performance matrix remain gated
-follow-on work
+2026-07-14; the final frozen APK also passed its deliberately Inbox-only physical
+focus, exact copy/hash, and cold-launch gates on 2026-07-14; full process-death
+end-to-end and physical eligible-Thread modal coverage are not claimed;
+assignment-local focal/dim values, media/artwork, import/export, navigation
+variants, and the full accessibility/performance matrix remain gated follow-on
+work
 
 ## Outcome
 
@@ -265,9 +265,9 @@ adds no production Activity or navigation component.
 ## Implemented durable scoped-profile-reference foundation
 
 ADR 0006 is the controlling decision for this bounded slice. Focused storage,
-resolver, modal, host, governance, emulator, and physical install/copy evidence
-is recorded in `docs/TEST_MATRIX.md`; the explicitly unchecked real-app
-route-state and physical modal-focus rows remain release follow-ups.
+resolver, modal, host, governance, emulator, and physical install/copy/focus/
+cold-launch evidence is recorded in `docs/TEST_MATRIX.md`; all acceptance rows
+for this bounded slice are complete.
 
 Acceptance criteria:
 
@@ -532,15 +532,23 @@ At the device gate, install the exact debug APK in place, copy the same bytes to
 `/sdcard/Download/AuroraSMS-debug.apk`, compare SHA-256, verify package/role
 state, and exercise only privacy-safe UI/resource-ID and redacted diagnostic
 checks. The frozen `0.4.2-phase4` APK passed install/package/role/permission
-inspection. Its final copy/hash, cold launch, and deliberately Inbox-only focus
-rerun remain open: the first gated attempt reached no app resource ID behind the
-secure lockscreen and is not acceptance evidence. Real-root synthetic-service
-instrumentation separately proved live route/visible-state preservation with
-zero modal provider/index reload, exact-anchor restoration with one allowed
-recreation query, and unique state for fresh same-thread re-entry.
-Popped/evicted route state is removed and retention remains bounded to
-`MAXIMUM_RETAINED_ROUTES`. Full process-death end-to-end and physical eligible-
-Thread modal coverage are not claimed. No carrier message is sent by this slice.
+inspection on an awake, unlocked Pixel 8. Its gated real-`MainActivity` smoke
+used only package/view IDs and accessibility window metadata, passed one test in
+2.098 seconds, proved a distinct focused Inbox scoped dialog, and proved that
+Cancel returned to the same MainActivity/Inbox window without opening a Thread
+or applying an assignment. Aggregate appearance state remained `0|0|0`. The
+host and Download copies were both 13,396,196 bytes with SHA-256
+`d26a6a1c515d941ac38bb6b8ea1649d27f2ee3f9efc7f815ff74dfcebf164c03`.
+A cold MainActivity launch completed with `Status: ok`, `LaunchState: COLD`,
+`TotalTime: 1081`, `WaitTime: 1083`, the expected resumed Activity, and a live
+PID; its PID-only error log contained only Android's ashmem-pinning deprecation
+and no app crash. Real-root synthetic-service instrumentation separately proved
+live route/visible-state preservation with zero modal provider/index reload,
+exact-anchor restoration with one allowed recreation query, and unique state for
+fresh same-thread re-entry. Popped/evicted route state is removed and retention
+remains bounded to `MAXIMUM_RETAINED_ROUTES`. Full process-death end-to-end and
+physical eligible-Thread modal coverage are not claimed. No carrier message is
+sent by this slice.
 
 ## Stop conditions
 

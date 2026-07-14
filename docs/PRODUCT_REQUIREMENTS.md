@@ -249,9 +249,11 @@ allowed anchor query, and restores the exact target/selection, stable visible
 same-thread re-entry receives a unique route-state entry and exact jump;
 popped/evicted entries remove their SavedState and retention is bounded to
 `MAXIMUM_RETAINED_ROUTES`. The physical real-app evidence is intentionally
-limited to the Inbox modal. The final frozen artifact still requires that
-unlocked focus rerun, so this does not yet claim its physical modal acceptance,
-full process-death end-to-end, or physical eligible-Thread modal coverage.
+limited to the Inbox modal. The final frozen artifact passed that unlocked
+physical acceptance: a distinct focused scoped dialog opened over the same
+MainActivity/Inbox window and Cancel returned to it without opening a Thread or
+applying an assignment. This does not claim full process-death end-to-end or
+physical eligible-Thread modal coverage.
 
 Assignment-local focal points/dim values and every wallpaper/media reference,
 picker, renderer, decoder, canonical artwork mapping, and GIF lifecycle remain

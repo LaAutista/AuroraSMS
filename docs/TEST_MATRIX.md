@@ -8,8 +8,8 @@ real-provider reconciliation complete, 2026-07-14. The bounded durable active
 named-profile/Theme Studio slice is also verified; the ADR 0006 durable scoped
 profile-reference foundation and its real-root/modal acceptance extension
 passed host, governance, emulator, and physical install/package/role/permission
-gates. The final frozen APK's physical scoped-modal focus, copy/hash, and cold-
-launch rerun remains open after a secure-lockscreen non-run. The physical check
+gates. The final frozen APK's physical scoped-modal focus, exact copy/hash, and
+cold-launch gates also passed on an awake, unlocked Pixel 8. The physical check
 is intentionally Inbox-only; full process-death end-to-end and physical eligible-
 Thread modal coverage are not claimed. Representative physical-device
 performance, remaining API/OEM coverage, and carrier transport rows remain
@@ -714,8 +714,8 @@ by the scoped evidence below. Real-root behavior is backed by the production
 root driven through deterministic synthetic services; the physical check is a
 separate privacy-safe real MainActivity/Inbox smoke. This slice does not claim
 the complete scoped-wallpaper/GIF feature, full process-death end-to-end, or
-physical eligible-Thread modal coverage. Final frozen-artifact focus/copy/cold-
-launch evidence remains open as described below.
+physical eligible-Thread modal coverage. The final frozen-artifact Inbox focus,
+exact copy/hash, and cold-launch evidence passed as described below.
 
 - [x] The Aurora state database exports schema version 3 and an explicit
   version-2-to-version-3 migration preserves drafts, draft triggers, named
@@ -824,18 +824,18 @@ launch evidence remains open as described below.
 - [x] Focused host and migration tests, full host lint/build gates, clean-room,
   private-asset, dependency/checksum/lock/license/SBOM, permission/APK-content,
   complete emulator instrumentation, and privacy-safe physical-device
-  install/package/role/permission inspection pass with no private conversation
-  data or carrier send. Final frozen-artifact Download copy/hash, cold launch,
-  and scoped-modal focus remain in the next unchecked row.
-- [ ] The final frozen APK still requires a privacy-safe physical real
-  MainActivity check covering the Inbox modal only. The first gated attempt ran
-  while the device was dozing behind the secure lockscreen, reached no app
-  resource ID, and is not acceptance evidence. Aggregate private-state metadata
-  nevertheless remained `0|0|0` for screen-row count, conversation-row count,
-  and allocation revision. The unlocked rerun must use only resource IDs and
-  accessibility window metadata to prove a distinct focused modal and Cancel's
-  return to the same MainActivity/Inbox window without opening a Thread or
-  applying an assignment. No physical eligible-Thread modal claim is made.
+  install/package/role/permission inspection, exact Download copy/hash, cold
+  launch, and scoped-modal focus pass with no private conversation data or
+  carrier send.
+- [x] The final frozen APK passed a privacy-safe physical real-MainActivity check
+  covering the Inbox modal only. On an awake, unlocked Pixel 8, the gated
+  `MainActivityScopedAppearancePhysicalSmokeTest` passed one test in 2.098
+  seconds using only package/view IDs and accessibility window metadata. It
+  proved a distinct focused scoped dialog and Cancel's return to the same
+  MainActivity/Inbox window without opening a Thread or applying an assignment.
+  Aggregate appearance state remained `0|0|0` before and after for screen-row
+  count, conversation-row count, and allocation revision. No physical eligible-
+  Thread modal claim is made.
 
 ### Durable scoped-profile-reference evidence — automated/install gates 2026-07-14
 
@@ -886,11 +886,29 @@ acceptance journey, and conversation menu callback instrumentation.
 
 The frozen final debug APK is 13,396,196 bytes with SHA-256
 `d26a6a1c515d941ac38bb6b8ea1649d27f2ee3f9efc7f815ff74dfcebf164c03`.
-Those exact bytes were replace-installed on the connected Pixel 8. The installed
-package reported version code 3, `0.4.2-phase4`, target SDK 36, the SMS role,
-and granted READ/SEND/RECEIVE SMS, RECEIVE MMS, and notification permissions.
-The exact Download copy/hash, cold launch, and error-only process-log check are
-not yet recorded for this frozen artifact.
+Those exact bytes were replace-installed on connected serial
+`192.168.68.51:38677`, an awake, unlocked Google Pixel 8 (`shiba`) on Android
+16/API 36. The installed package reported version code 3, `0.4.2-phase4`, target
+SDK 36, the active SMS role, and granted READ/SEND/RECEIVE SMS, RECEIVE MMS, and
+notification permissions.
+
+The gated `MainActivityScopedAppearancePhysicalSmokeTest` passed its one test in
+2.098 seconds. It used only package/view IDs and accessibility window metadata
+to prove a distinct focused Inbox scoped dialog and Cancel's return to the same
+MainActivity/Inbox window without opening a Thread or applying an assignment.
+Aggregate appearance state before and after remained `0|0|0`: zero screen rows,
+zero conversation rows, and allocation revision zero. The temporary app test
+instrumentation package was removed after the run.
+
+The same target artifact was copied to
+`/sdcard/Download/AuroraSMS-debug.apk`. The workstation and Download files were
+both 13,396,196 bytes, and their SHA-256 values both equaled
+`d26a6a1c515d941ac38bb6b8ea1649d27f2ee3f9efc7f815ff74dfcebf164c03`.
+A force-stop/cold MainActivity launch returned `Status: ok`,
+`LaunchState: COLD`, `TotalTime: 1081`, and `WaitTime: 1083`; PID 30201 was
+alive and the expected MainActivity was resumed. The PID-only error log contained
+only Android's ashmem-pinning deprecation and no app crash. These timings are
+functional smoke evidence, not product performance evidence.
 
 Earlier foundation-artifact privacy-safe private-database metadata after cold
 launch showed state schema 3, the revision singleton at initial value zero, and
@@ -901,18 +919,18 @@ completeness claim was not reused. This paragraph is not frozen-artifact cold-
 launch evidence. The temporary app test instrumentation package was absent
 after that earlier run.
 
-The first final-artifact gated attempt ran on connected serial
+An earlier final-artifact gated attempt ran on connected serial
 `192.168.68.51:35459`, a Google Pixel 8 (`shiba`) on Android 16/API 36. Because
 the device was dozing behind the secure lockscreen, no app resource ID was
-reached and the run is not a modal-focus result. Aggregate private database
+reached and that attempt is not a modal-focus result. Aggregate private database
 metadata before and after remained `0|0|0`: zero screen rows, zero conversation
-rows, and revision zero.
+rows, and revision zero. The successful unlocked run above supersedes that
+non-run as final-artifact physical acceptance evidence.
 
 No message text, address, participant fingerprint, accessibility text/content
 description, UI hierarchy, screenshot, or private asset was exported, and no
-carrier message was sent. No physical modal result is claimed until the unlocked
-final-artifact rerun; it will not cover an eligible Thread modal or full process
-death.
+carrier message was sent. This physical result covers only the Inbox modal; it
+does not cover an eligible Thread modal or full process-death end-to-end.
 
 ### Phase 4 foundation and lifecycle evidence
 

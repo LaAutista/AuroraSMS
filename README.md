@@ -108,10 +108,14 @@ a normal Inbox or unanchored Thread:
   sets of at most 8. Larger indexed conversations inherit global defaults until
   a bounded full-identity query is added.
 
-The final frozen APK still requires its intentionally Inbox-only physical focus
-rerun after the first attempt reached no app resource ID behind the secure
-lockscreen. That non-run changed no assignment metadata and is not acceptance
-evidence. Physical eligible-Thread modal coverage remains follow-on work.
+The final frozen APK passed its intentionally Inbox-only physical focus gate on
+an awake, unlocked Pixel 8. The gated real-`MainActivity` smoke used only
+package/view IDs and accessibility window metadata to prove a distinct focused
+scoped dialog, then Cancel returned to the same MainActivity/Inbox window without
+opening a Thread or applying an assignment; aggregate appearance state remained
+`0|0|0`. The exact 13,396,196-byte APK was copied to Download with matching
+SHA-256, and a privacy-safe cold launch resumed MainActivity without an app
+crash. Physical eligible-Thread modal coverage remains follow-on work.
 
 Assignment-local focal/dim controls, import/export, navigation variants,
 wallpapers, GIF lifecycle, full accessibility/performance coverage, and

@@ -2,10 +2,10 @@
 
 Status: accepted and implemented for the bounded Phase 4 slice; host,
 governance, emulator, and physical install/package/role/permission verification
-passed on 2026-07-14; real-root live/restoration acceptance also passed; the
-final frozen APK's Inbox-only physical modal-focus, copy/hash, and cold-launch
-rerun remains open after a secure-lockscreen non-run; full process-death end-to-
-end and physical eligible-Thread modal coverage are not claimed
+passed on 2026-07-14; real-root live/restoration acceptance and the final frozen
+APK's Inbox-only physical modal-focus, exact copy/hash, and cold-launch gates also
+passed on 2026-07-14; full process-death end-to-end and physical eligible-Thread
+modal coverage are not claimed
 
 ## Context
 
@@ -248,9 +248,12 @@ into that same Thread received a distinct route-state identity and its own exact
 jump. SavedState for popped or evicted route entries is removed, keeping
 retention bounded to `MAXIMUM_RETAINED_ROUTES`. The separate Pixel check covers
 only real MainActivity/Inbox modal focus and Cancel. The final frozen artifact
-still requires its unlocked rerun; the secure-lockscreen attempt reached no app
-tag and is not acceptance evidence. It does not extend these conclusions to
-physical Thread behavior or full process death.
+passed that unlocked check using package/view IDs and accessibility window
+metadata: a distinct focused scoped dialog opened over MainActivity/Inbox, and
+Cancel returned to the same window without opening a Thread or applying an
+assignment. Exact Download-copy/hash and cold-launch diagnostics also passed.
+This does not extend these conclusions to physical Thread behavior or full
+process death.
 
 Restorable modal state is bounded to a schema version, the selected and
 baseline profile IDs, expected revision, and one private target token. For a
