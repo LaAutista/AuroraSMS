@@ -93,16 +93,16 @@ for apk in "${APKS[@]}"; do
             ;;
     esac
     if [[ "$build_identity" == app_release || "$build_identity" == app_benchmark ]]; then
-        if rg -q '^application-debuggable' <<<"$badging"; then
+        if grep -q '^application-debuggable' <<<"$badging"; then
             printf 'Release-equivalent APK is debuggable: %s\n' "$apk" >&2
             exit 1
         fi
-    elif ! rg -q '^application-debuggable' <<<"$badging"; then
+    elif ! grep -q '^application-debuggable' <<<"$badging"; then
         printf 'Debug/test APK is unexpectedly non-debuggable: %s\n' "$apk" >&2
         exit 1
     fi
 
-    if rg --fixed-strings -- "$PRIVATE_ROOT_NAME" "$entry_list"; then
+    if grep -F -- "$PRIVATE_ROOT_NAME" "$entry_list"; then
         printf 'Private handoff path found in APK entry names: %s\n' "$apk" >&2
         exit 1
     fi
@@ -118,7 +118,7 @@ for apk in "${APKS[@]}"; do
     done <"$entry_list"
 
     for token in org.fossify FossifyOrg org.simplemobiletools; do
-        if rg --fixed-strings -- "$token" "$strings_file" "$manifest_dump"; then
+        if grep -F -- "$token" "$strings_file" "$manifest_dump"; then
             printf 'Prohibited token found in APK %s: %s\n' "$apk" "$token" >&2
             exit 1
         fi
@@ -133,7 +133,7 @@ for apk in "${APKS[@]}"; do
             'inbox_20k' \
             'search_500k' \
             'thread_250k'; do
-            if rg --fixed-strings -- "$marker" "$strings_file" "$manifest_dump"; then
+            if grep -F -- "$marker" "$strings_file" "$manifest_dump"; then
                 printf 'Benchmark fixture marker leaked into %s APK %s: %s\n' \
                     "$build_identity" "$apk" "$marker" >&2
                 exit 1
@@ -150,14 +150,14 @@ for apk in "${APKS[@]}"; do
             'DiagnosticsViewModel' \
             'SyntheticPeople' \
             'SyntheticMessages'; do
-            if rg --fixed-strings -- "$marker" "$strings_file" "$manifest_dump"; then
+            if grep -F -- "$marker" "$strings_file" "$manifest_dump"; then
                 printf 'Debug/testing marker found in release APK %s: %s\n' \
                     "$apk" "$marker" >&2
                 exit 1
             fi
         done
         for entry in assets/dexopt/baseline.prof assets/dexopt/baseline.profm; do
-            if ! rg --fixed-strings --line-regexp -- "$entry" "$entry_list"; then
+            if ! grep -Fx -- "$entry" "$entry_list"; then
                 printf 'Compiled Baseline Profile asset is missing from release APK %s: %s\n' \
                     "$apk" "$entry" >&2
                 exit 1
@@ -177,7 +177,7 @@ for apk in "${APKS[@]}"; do
             'inbox_20k' \
             'search_500k' \
             'thread_250k'; do
-            if ! rg --fixed-strings --quiet -- "$marker" "$strings_file" "$manifest_dump"; then
+            if ! grep -Fq -- "$marker" "$strings_file" "$manifest_dump"; then
                 printf 'Required synthetic benchmark marker is missing from %s: %s\n' \
                     "$apk" "$marker" >&2
                 exit 1
