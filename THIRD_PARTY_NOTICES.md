@@ -1,6 +1,7 @@
 # Third-party notices
 
-Status: Phase 1 resolved inventory; Phase 2 Room/KSP and Phase 3 performance-tool additions admitted
+Status: Phase 1 resolved inventory; Phase 2 Room/KSP and Phase 3 performance
+tool additions admitted; Phase 4 foundation adds no new coordinate
 
 AuroraSMS uses independently selected, exact-version build, AndroidX, Kotlin,
 Compose, coroutine, and test dependencies admitted by
@@ -45,6 +46,12 @@ terms. Perfetto and Benchmark native binaries are present only in the
 macrobenchmark test APK. The generated inventory and SBOM provide the canonical
 per-artifact notices; no benchmark/test native binary enters a production app
 APK.
+
+The Phase 4 AuroraMaterial foundation adds the `:core:designsystem` project
+module but no third-party coordinate or version. It reuses only the exact
+Kotlin, coroutine, AndroidX Core/Activity/Lifecycle, Compose, and JUnit graph
+already inventoried above. Its strict lockfile aligns to the existing verified
+graph and does not require a new dependency-verification checksum.
 
 The private AuroraSMS handoff, private screenshots, and original source
 artwork are not distributed repository content. Artwork ownership

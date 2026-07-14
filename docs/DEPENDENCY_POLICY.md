@@ -1,6 +1,8 @@
 # Dependency policy and allowlist
 
-Status: Phase 1 resolved; Phase 2 Room/KSP and Phase 3 benchmark/profile admissions reviewed, 2026-07-13
+Status: Phase 1 resolved; Phase 2 Room/KSP and Phase 3 benchmark/profile
+admissions reviewed; Phase 4 AuroraMaterial foundation reuses the admitted
+graph, 2026-07-14
 
 AuroraSMS prefers small original implementations and Android platform APIs.
 Dependencies are admitted only when they provide a necessary, maintained,
@@ -240,6 +242,27 @@ module, benchmark variant and fixture, update script, checked-in profile,
 release/benchmark ProfileInstaller dependencies, and associated manifest
 exceptions; product message/index data remains compatible because the benchmark
 database is synthetic and disposable.
+
+## Phase 4 AuroraMaterial foundation reuse
+
+The initial `:core:designsystem` module introduces no new external coordinate
+or version. It directly declares the already admitted Kotlin stdlib,
+coroutines-android, AndroidX Core, Activity Compose, Lifecycle Runtime,
+Lifecycle Runtime Compose, Compose BOM/UI/Foundation/Material 3, and JUnit
+coordinates so its otherwise minimal graph resolves to the same reviewed
+versions as `:app` and `:feature:conversations`.
+
+The direct alignment declarations prevent Compose's lower transitive minima
+from selecting a second AndroidX Core, Lifecycle, SavedState, tracing, or
+coroutine graph. The generated `core/designsystem/gradle.lockfile` contains
+only artifacts already represented in the admitted aggregate graph;
+`gradle/verification-metadata.xml` requires no new checksum. The module adds no
+manifest component, initializer, permission, native binary, provider, receiver,
+service, or network behavior.
+
+Image/GIF loading, Navigation Compose, DataStore, icon packs, fonts, and remote
+theme/media SDKs remain unapproved. Artwork remains outside dependency policy
+and behind the separate rights gate in `docs/ARTWORK_CATALOG.md`.
 
 ## Deferred and decision-gated dependencies
 

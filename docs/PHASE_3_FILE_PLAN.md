@@ -1,8 +1,10 @@
 # Phase 3 file-level plan
 
 Status: Phase 3 implementation and API 36 synthetic-emulator profile gate
-complete, 2026-07-13; physical-device performance and real-provider evidence
-remain pending
+complete, 2026-07-13; owner-approved Pixel 8 alpha install/hash/redacted smoke
+completed later that day. A subsequent Phase 4 physical window verified
+real-provider reconciliation; release-equivalent physical performance remains
+pending.
 
 ## Outcome
 
@@ -533,10 +535,24 @@ launch the exact debug APK, copy it to
 provider-history UI evidence requires owner acceptance of Android's role/read
 permission UI; tests never bypass it. No carrier message is required.
 
-The 2026-07-13 finalization deliberately deferred that physical install/copy
-step because the owner needed uninterrupted access to the working SMS app. No
-Phase 3 finalization command installed, launched, or changed the SMS role on the
-physical device; the row remains open until a new owner-approved test window.
+The initial 2026-07-13 finalization deliberately deferred that physical
+install/copy step because the owner needed uninterrupted access to a working
+SMS app. In a later explicitly approved window, the exact Phase 3 debug APK was
+installed in place on the Pixel 8/API 36, copied to
+`/sdcard/Download/AuroraSMS-debug.apk`, and matched by size and SHA-256. The
+existing AuroraSMS default role and grants remained intact. Redacted
+diagnostics and content-free UI tags proved provider/inbox/thread/composer
+reachability without retaining private content. Index reconciliation was still
+scanning, so verified completion and representative physical Macrobenchmark
+evidence remain open.
+
+That account remains the historical result for the exact Phase 3 APK. A later
+owner-approved Phase 4 window superseded only its reconciliation limitation:
+generation 10 initially completed with zero pending changes, 10,183
+verified/exhausted SMS rows, 4,926 verified/exhausted MMS rows, and 15,109
+indexed messages. A later provider signal durably marked it pending and
+triggered follow-up reconciliation. Representative physical Macrobenchmark
+evidence remains open.
 
 ## Stop conditions
 

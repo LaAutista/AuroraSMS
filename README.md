@@ -43,12 +43,35 @@ harness:
 - deterministic Baseline Profile capture plus startup, trace, frame, search,
   jump, and memory Macrobenchmarks.
 
+Phase 4 now has a verified AuroraMaterial foundation:
+
+- an isolated, immutable, schema-versioned appearance profile and semantic
+  token engine;
+- Dark, AMOLED, Light, and platform-dynamic palette paths, three row densities,
+  three bubble geometries, reduced motion, and four original avatar masks;
+- the existing Phase 3 colors and behavior preserved as the default app theme;
+- no new external dependency, permission, network path, artwork, or media
+  decode; and
+- physical validation hardening that admits bounded provider reads only while
+  an Aurora messaging activity is started, then resumes cleanly in foreground.
+
+The appearance foundation itself does not change role, permission, provider,
+index, draft, notification, or carrier-transport contracts. The lifecycle
+hardening is a separate reliability fix discovered during physical validation.
+
+Theme Studio, durable profile/override state, navigation variants, wallpapers,
+GIF lifecycle, full accessibility/device coverage, and approved canonical
+artwork remain Phase 4 follow-on gates. Artwork is still blocked on the exact
+written publication/derivative/distribution terms in
+`docs/ARTWORK_CATALOG.md`.
+
 Phase 3 does not change the existing carrier MMS limitations. Earlier Phase
 1/2 functional evidence covers a Pixel 8 on Android 16/API 36. Phase 3 profile
 capture and functional journeys are verified with synthetic data on the API 36
-emulator, while representative performance measurements remain pending on an
-owner-approved physical-device window. Emulator timings are not product
-performance evidence.
+emulator. A later owner-approved Pixel window also verified complete
+real-provider reconciliation and privacy-safe inbox/thread/search reachability;
+release-equivalent physical performance measurements remain pending. Emulator
+timings are not product performance evidence.
 
 End-to-end MMS is not yet claimed. Platform MMS staging and result handling are
 present, but encoding/decoding remains disabled until an independently audited

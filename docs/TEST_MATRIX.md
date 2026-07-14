@@ -1,9 +1,12 @@
 # AuroraSMS test matrix and phase-gate evidence
 
-Status: Phase 3 implementation, deterministic profile generation, and API 36
-synthetic-emulator functional gate complete, 2026-07-13; representative
-physical-device performance, real provider-history synchronization, remaining
-API/OEM coverage, and carrier transport rows pending.
+Status: Phase 3 implementation, deterministic profile generation, API 36
+synthetic-emulator functional gate, and owner-approved Pixel 8 alpha
+install/hash/smoke complete; Phase 4 AuroraMaterial foundation, foreground
+provider-read lifecycle hardening, exact physical APK handoff, and verified
+real-provider reconciliation complete, 2026-07-14. Representative
+physical-device performance, remaining API/OEM coverage, and carrier transport
+rows remain pending.
 
 ## Evidence rules
 
@@ -37,14 +40,15 @@ API/OEM coverage, and carrier transport rows pending.
 | Tablet/foldable/large screen | Adaptive navigation and state parity | Phase 4/release |
 
 The current environment has SDK platforms 36 and 37.0, a physical Google Pixel
-8 (`shiba`) running Android 16/API 36, and the synthetic-only
+8 (`shiba`) running LineageOS Android 16/API 36, and the synthetic-only
 `AuroraSMS_API36` API 36 AVD. Earlier physical evidence below covers only the
-Pixel/API combination. During Phase 3 finalization the physical phone was
-reserved for uninterrupted owner messaging and was not installed to, launched,
-queried for message content, or assigned the AuroraSMS role. Phase 3 connected
-functional and profile-generation evidence therefore uses only the AVD; its
-timings are not representative performance evidence. The remaining required
-API and OEM rows stay pending.
+Pixel/API combination. Phase 3 connected functional/profile-generation
+evidence used the AVD; its timings are not representative performance
+evidence. In a later owner-approved window, the exact Phase 3 debug APK was
+installed in place and exercised against the real provider using only redacted
+diagnostics and content-free UI tags. No message body, address, query,
+attachment, screenshot, database, or broad log was retained. The remaining
+required API and OEM rows stay pending.
 
 ## Phase 0 documentation gate
 
@@ -70,7 +74,7 @@ API and OEM rows stay pending.
 - [x] Wrapper-only build succeeds on the documented toolchain.
 - [x] `assembleDebug`, `assembleRelease`, host unit tests, and lint pass.
 - [ ] Instrumentation/device tests pass on the required API/device matrix; all
-  26 current app/notification/telephony tests pass on a physical Pixel 8/API
+  26 Phase 1 app/notification/telephony tests pass on a physical Pixel 8/API
   36, while the other required API/device rows remain pending.
 - [x] No Android module applies `org.jetbrains.kotlin.android` under AGP 9.
 - [x] Java and Kotlin outputs target 17 even when Gradle runs on host JDK 26.
@@ -266,6 +270,10 @@ Run on a telephony-capable device after explicit test-recipient approval.
 
 ## Cross-phase lifecycle and storage pressure
 
+- [x] Provider batches and head verification defer at the next bounded unit
+  after every Aurora messaging activity stops; zero-to-one foreground resume
+  restarts cleanly without a false dirty mark, and role-loss pause is not
+  blocked behind the foreground gate.
 - [ ] Low/full storage during provider receive/write, index batch commit,
   attachment staging, pending send/delete, wallpaper import, and backup export
   never reports false success or destroys durable state.
@@ -294,8 +302,9 @@ attachment-heavy MMS metadata.
 
 - [x] Initial sync indexes newest first in bounded provider pages and
   application-lifetime coroutine work.
-- [ ] Real provider-backed initial-sync UI responsiveness is deferred to Phase
-  3 presentation and explicit owner role/permission acceptance.
+- [x] An owner-approved Pixel 8/API 36 window exercised the real SMS/MMS
+  provider through verified completion while inbox, thread, and search remained
+  reachable. This is functional evidence, not a latency claim.
 - [x] Checkpoint resume after process death never restarts from zero.
 - [x] A completed sync runs and persists a lightweight consistency pass and
   completion generation; restart/reconcile does not mistake partial coverage
@@ -508,13 +517,33 @@ Startup/inbox/scroll/thread/prepend/fling/search/exact-jump/back journeys all
 completed. This is profile determinism and reachability evidence only; no AVD
 latency, frame, or memory number is used as a product claim.
 
-The final debug APK is 12,865,082 bytes with SHA-256
+The final Phase 3 debug APK is 12,865,082 bytes with SHA-256
 `cda0f726c6cd931f386cb66e2b16d58bc74f84a3790cc0926ec57f6cccbc249e`.
-It was intentionally not installed, launched, or copied to the physical phone
-because the owner needed the existing working SMS app. Physical install/hash,
-release-equivalent Macrobenchmark percentiles, real-provider responsiveness,
-low-memory, and decoded-attachment profile rows remain open for an explicitly
-approved later device window.
+It was initially withheld while the owner needed uninterrupted messaging, then
+installed in place during an explicitly approved Pixel 8/API 36 window. The
+same bytes were copied to `/sdcard/Download/AuroraSMS-debug.apk`; the device
+size and SHA-256 matched the local artifact, and the existing default-SMS role
+and grants remained intact.
+
+Redacted diagnostics reported a working provider surface with 10,178 SMS rows,
+4,926 MMS rows, one active subscription, all eight role grants, and ready index
+and state databases. The index was still scanning and had not reached verified
+complete reconciliation, so this is responsiveness/reachability evidence only,
+not a complete-history claim. Content-free UI tags proved the inbox, one
+conversation, two visible bubbles, and composer were reachable without
+retaining private text. Release-equivalent Macrobenchmark percentiles,
+verified real-provider reconciliation, low-memory, and decoded-attachment
+profile rows remain open.
+
+A later owner-approved Phase 4 physical window supersedes only that historical
+reconciliation limitation. Generation 10 initially reached `COMPLETE` with
+zero pending changes: 10,183 verified SMS rows plus 4,926 verified MMS rows,
+for 15,109 indexed messages. Both provider checkpoints were exhausted and
+their verified counts matched. A later provider signal durably marked that
+completed generation pending and triggered follow-up reconciliation. No
+message body, address, query result, attachment, database, or broad log was
+retained, and no carrier message was sent. Representative physical
+Macrobenchmark, low-memory, and decoded-attachment profile rows remain open.
 
 Physical-device performance targets after a warm index:
 
@@ -528,6 +557,87 @@ Physical-device performance targets after a warm index:
 | Text-only browsing PSS | n/a | aim <150 MiB |
 
 ## Phase 4 appearance/accessibility matrix
+
+### AuroraMaterial foundation
+
+- [x] A dedicated `:core:designsystem` leaf module owns immutable appearance
+  profiles, tokens, palettes, and shapes without app/provider/index/state or
+  transport dependencies.
+- [x] The schema-v1 profile rejects unsupported schema, hue, and wallpaper-dim
+  inputs before rendering.
+- [x] The default profile preserves the Phase 3 primary/background colors and
+  exposes a 48 dp minimum touch-target token.
+- [x] Compact, comfortable, and spacious row tokens remain at or above the
+  target floor; reduced motion resolves to zero decorative motion scale.
+- [x] Circle, rounded-square, squircle, and hexagon masks resolve to concrete
+  original Compose shapes.
+- [x] Dark, AMOLED, Light, and system-dynamic/fallback color paths use platform
+  and already admitted Compose APIs only.
+- [x] The app root consumes the default AuroraMaterial theme; the appearance
+  foundation itself does not change role, permission, provider, index, route,
+  draft, notification, or transport contracts.
+- [x] The foundation adds no external coordinate/version, artwork, media
+  decoder, permission, component, native binary, initializer, or network path.
+- [x] Separate physical-validation hardening admits new provider batches and
+  head verification only while at least one Aurora messaging activity is
+  started, preserves one already-admitted bounded unit, and resumes deferred
+  work without falsely marking provider state dirty.
+- [ ] Durable profile/override persistence, Theme Studio, navigation variants,
+  approved artwork, local static/GIF assignments, and full surface/device
+  accessibility remain follow-on slices.
+
+### Phase 4 foundation and lifecycle evidence
+
+Implementation commits `bbf1369` (AuroraMaterial), `edbb200` (physical
+navigation/diagnostics), and `013452d` (foreground reconciliation lifecycle)
+were verified on 2026-07-14.
+
+The final offline host gate was:
+
+```text
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease :app:lintBenchmark :app:assembleBenchmark :macrobenchmark:check :macrobenchmark:assembleBenchmark verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon --no-parallel --console=plain
+```
+
+It completed 883 tasks successfully. Clean-room verification checked all 19
+private-reference hashes. Dependency, merged-manifest, packaged-permission, and
+APK-content gates passed for debug, release, benchmark target, and both
+macrobenchmark APK outputs. The separate license/SBOM gate produced 201 license
+records with zero unknown or disallowed licenses, 441 CycloneDX components,
+and 442 dependency nodes. Shell syntax checks and Python bytecode compilation
+also passed for the repository scripts.
+
+The final connected command was pinned to `AuroraSMS_API36`:
+
+```text
+ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline --no-daemon --no-parallel --console=plain
+```
+
+It discovered 79 tests: app 16, database benchmark 3, index 29, notifications
+3, durable state 12, telephony 15, and presentation 1. Seventy-eight passed
+with zero failures/errors; `configuredScaleBenchmark_requiresExplicitOptIn`
+was the single intentional skip. An initial final run exposed a warm
+notification-route state race; the exact isolated regression and the complete
+79-test suite passed after the stale route callback was guarded.
+
+The final debug APK is 12,783,155 bytes with SHA-256
+`fa2714bbcd10e070fbf72cea79a37050c2e082a99e4c0b45abea1e62bf65cb68`.
+Those exact bytes were installed over the existing Pixel 8/API 36 app and
+copied to `/sdcard/Download/AuroraSMS-debug.apk`; local, installed `base.apk`,
+and Download hashes matched. Version `0.4.0-phase4`, the AuroraSMS default-SMS
+role, and the READ/SEND/RECEIVE SMS, RECEIVE MMS, and notification grants were
+present after installation.
+
+Privacy-safe physical evidence used only counts, process state, package state,
+and content-free Compose resource tags. A generic search query reached the
+results section without exporting any result text. During a live provider
+scan, Home allowed one admitted bounded unit to finish; the committed count then
+remained unchanged across a second interval while the app process stayed alive.
+Foreground resume continued from the same checkpoint. A provider change during
+the resumed run set the durable pending flag and caused the expected clean
+follow-up generation rather than losing the signal. The latest process exit
+after installation was `PACKAGE UPDATED`; the prior excessive-CPU exit remains
+historical evidence from before lifecycle hardening. No carrier message was
+sent.
 
 - [ ] Before ingestion, written artwork permission is recorded for the exact
   repository, derivative, APK/store, promotional, redistribution, and
