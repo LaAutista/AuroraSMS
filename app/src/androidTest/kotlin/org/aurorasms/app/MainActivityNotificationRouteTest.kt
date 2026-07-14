@@ -20,7 +20,8 @@ class MainActivityNotificationRouteTest {
 
     @Test
     fun coldAndSingleTopWarmIntentsReachTheirExactConversations() {
-        val scenario = ActivityScenario.launch<MainActivity>(notificationIntent(601L))
+        val coldLaunchIntent = notificationIntent(601L)
+        val scenario = ActivityScenario.launch<MainActivity>(coldLaunchIntent)
         try {
             scenario.onActivity { activity ->
                 assertEquals(ConversationId(601L), activity.openedConversationId)
@@ -35,6 +36,10 @@ class MainActivityNotificationRouteTest {
             )
             scenario.waitForOpenedConversation(ConversationId(602L))
         } finally {
+            // MainActivity deliberately replaces a consumed notification intent with ACTION_MAIN.
+            // ActivityScenario identifies its activity by the launch intent's filter fields, so
+            // restore that identity before close or it ignores the real DESTROYED callback.
+            scenario.onActivity { activity -> activity.intent = Intent(coldLaunchIntent) }
             scenario.close()
         }
     }

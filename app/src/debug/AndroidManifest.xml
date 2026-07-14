@@ -10,6 +10,9 @@
         <activity
             android:name="org.aurorasms.app.appearance.ScopedAppearanceTestActivity"
             android:exported="false" />
+        <activity
+            android:name="org.aurorasms.app.AuroraSmsRootTestActivity"
+            android:exported="false" />
 
         <!-- Debug is not a performance deliverable and exposes no profile control surface. -->
         <provider

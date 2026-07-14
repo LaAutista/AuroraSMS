@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -200,7 +201,9 @@ internal fun ScopedAppearanceDialog(
     }
 
     AlertDialog(
-        modifier = Modifier.testTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG),
+        modifier = Modifier
+            .semantics { testTagsAsResourceId = true }
+            .testTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG),
         onDismissRequest = ::dismissIfIdle,
         title = { Text(stringResource(kind.titleResource())) },
         text = {

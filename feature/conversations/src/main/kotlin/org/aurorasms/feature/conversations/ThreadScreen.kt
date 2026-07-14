@@ -38,8 +38,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -229,6 +231,7 @@ private fun ThreadMoreMenu(
             Text(stringResource(R.string.more))
         }
         DropdownMenu(
+            modifier = Modifier.semantics { testTagsAsResourceId = true },
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
@@ -272,17 +275,38 @@ private fun ThreadReady(
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
 ) {
     val items = state.window.items
+    val leadingItemCount = if (state.loadingOlder) 1 else 0
     val listState = rememberLazyListState()
     var initiallyPositioned by remember { mutableStateOf(false) }
-    var shouldFollowNewest by remember { mutableStateOf(state.highlightedMessageId == null) }
+    var shouldFollowNewest by rememberSaveable {
+        mutableStateOf(state.highlightedMessageId == null)
+    }
+    var savedVisibleMessageKind by rememberSaveable { mutableStateOf<String?>(null) }
+    var savedVisibleMessageValue by rememberSaveable { mutableStateOf<Long?>(null) }
+    var savedVisibleScrollOffset by rememberSaveable { mutableStateOf(0) }
     var visibleMessageIds by remember { mutableStateOf(emptySet<ProviderMessageId>()) }
+    val messageIndexByUiKey: Map<Any, Int> = remember(items) {
+        items.mapIndexed { index, message -> message.providerMessageId.stableUiKey() to index }.toMap()
+    }
 
-    LaunchedEffect(listState, items, state.window.olderCursor, state.loadingOlder) {
+    LaunchedEffect(
+        listState,
+        items,
+        state.window.olderCursor,
+        state.window.newerCursor,
+        state.loadingOlder,
+        state.loadingNewer,
+        initiallyPositioned,
+    ) {
         snapshotFlow {
             val visible = listState.layoutInfo.visibleItemsInfo
             VisibleThreadSnapshot(
-                positions = visible.map { it.index to it.offset },
+                items = visible.map { VisibleThreadItem(key = it.key, offset = it.offset) },
                 canScrollForward = listState.canScrollForward,
+                firstVisibleKey = visible.firstOrNull {
+                    it.index == listState.firstVisibleItemIndex
+                }?.key,
+                firstVisibleScrollOffset = listState.firstVisibleItemScrollOffset,
             )
         }.distinctUntilChanged().collect { snapshot ->
             val atNewest = !snapshot.canScrollForward &&
@@ -290,52 +314,94 @@ private fun ThreadReady(
                 !state.window.pendingNewer
             shouldFollowNewest = atNewest
             onAtNewestChanged(atNewest)
-            if (snapshot.positions.isEmpty()) {
+            if (snapshot.items.isEmpty()) {
                 visibleMessageIds = emptySet()
                 onViewportChanged(items.take(MAXIMUM_VIEWPORT_THREAD_ROWS))
                 return@collect
             }
-            val firstIndex = snapshot.positions.minOf { it.first }
-            val lastIndex = snapshot.positions.maxOf { it.first }
-            visibleMessageIds = snapshot.positions.mapNotNullTo(LinkedHashSet()) { (index, _) ->
+            val visibleMessageIndices = snapshot.items.mapNotNull { visibleItem ->
+                messageIndexByUiKey[visibleItem.key]
+            }
+            if (visibleMessageIndices.isEmpty()) {
+                visibleMessageIds = emptySet()
+                onViewportChanged(items.take(MAXIMUM_VIEWPORT_THREAD_ROWS))
+                return@collect
+            }
+            val firstIndex = visibleMessageIndices.min()
+            val lastIndex = visibleMessageIndices.max()
+            val firstVisibleMessageIndex = messageIndexByUiKey[snapshot.firstVisibleKey]
+            if (initiallyPositioned && !state.loadingOlder && firstVisibleMessageIndex != null) {
+                items.getOrNull(firstVisibleMessageIndex)?.providerMessageId?.let { visibleId ->
+                    savedVisibleMessageKind = visibleId.kind.name
+                    savedVisibleMessageValue = visibleId.value
+                    savedVisibleScrollOffset = snapshot.firstVisibleScrollOffset
+                }
+            }
+            visibleMessageIds = visibleMessageIndices.mapNotNullTo(LinkedHashSet()) { index ->
                 items.getOrNull(index)?.providerMessageId
             }
             val viewportStart = (firstIndex - THREAD_VIEWPORT_PREFETCH_ROWS).coerceAtLeast(0)
             val viewportEnd = (lastIndex + THREAD_VIEWPORT_PREFETCH_ROWS + 1).coerceAtMost(items.size)
             onViewportChanged(items.subList(viewportStart, viewportEnd).take(MAXIMUM_VIEWPORT_THREAD_ROWS))
-            if (state.window.olderCursor != null && !state.loadingOlder && firstIndex <= 3) {
-                val position = snapshot.positions.firstOrNull { it.first == firstIndex } ?: return@collect
-                val anchor = items.getOrNull(firstIndex) ?: return@collect
-                onLoadOlder(WindowAnchor(anchor.providerMessageId, position.second))
+            if (
+                initiallyPositioned &&
+                state.window.olderCursor != null &&
+                !state.loadingOlder &&
+                firstIndex <= 3
+            ) {
+                val anchorIndex = firstVisibleMessageIndex ?: return@collect
+                val anchor = items.getOrNull(anchorIndex) ?: return@collect
+                onLoadOlder(WindowAnchor(anchor.providerMessageId, snapshot.firstVisibleScrollOffset))
             }
             if (
+                initiallyPositioned &&
                 state.window.newerCursor != null &&
                 !state.loadingNewer &&
                 lastIndex >= items.lastIndex - 3
             ) {
-                val position = snapshot.positions.firstOrNull { it.first == firstIndex } ?: return@collect
-                val anchor = items.getOrNull(firstIndex) ?: return@collect
-                onLoadNewer(WindowAnchor(anchor.providerMessageId, position.second))
+                val anchorIndex = firstVisibleMessageIndex ?: return@collect
+                val anchor = items.getOrNull(anchorIndex) ?: return@collect
+                onLoadNewer(WindowAnchor(anchor.providerMessageId, snapshot.firstVisibleScrollOffset))
             }
         }
     }
-    LaunchedEffect(items, state.highlightedMessageId) {
+    LaunchedEffect(items, state.highlightedMessageId, leadingItemCount) {
         if (initiallyPositioned || items.isEmpty()) return@LaunchedEffect
+        val savedVisibleMessageId = savedVisibleMessageKind
+            ?.let { savedKind -> ProviderKind.entries.firstOrNull { it.name == savedKind } }
+            ?.let { savedKind ->
+                savedVisibleMessageValue?.let { savedValue -> ProviderMessageId(savedKind, savedValue) }
+            }
+        val savedIndex = if (shouldFollowNewest) {
+            null
+        } else {
+            savedVisibleMessageId
+                ?.let { target -> items.indexOfFirst { it.providerMessageId == target } }
+                ?.takeIf { it >= 0 }
+        }
         val highlighted = state.highlightedMessageId
             ?.let { target -> items.indexOfFirst { it.providerMessageId == target } }
             ?.takeIf { it >= 0 }
-        listState.scrollToItem(highlighted ?: items.lastIndex)
+        withFrameNanos { }
+        listState.scrollToItem(
+            index = (savedIndex ?: highlighted ?: items.lastIndex) + leadingItemCount,
+            scrollOffset = if (savedIndex != null) savedVisibleScrollOffset.coerceAtLeast(0) else 0,
+        )
         initiallyPositioned = true
     }
     LaunchedEffect(state.restoreAnchor, items) {
         val anchor = state.restoreAnchor ?: return@LaunchedEffect
         val index = items.indexOfFirst { it.providerMessageId == anchor.stableKey }
-        if (index >= 0) listState.scrollToItem(index, anchor.scrollOffsetPixels)
+        if (index >= 0) {
+            withFrameNanos { }
+            listState.scrollToItem(index + leadingItemCount, anchor.scrollOffsetPixels)
+        }
         onAnchorRestored()
     }
     LaunchedEffect(items.lastOrNull()?.providerMessageId) {
         if (initiallyPositioned && shouldFollowNewest && state.restoreAnchor == null && items.isNotEmpty()) {
-            listState.scrollToItem(items.lastIndex)
+            withFrameNanos { }
+            listState.scrollToItem(items.lastIndex + leadingItemCount)
         }
     }
 
@@ -356,6 +422,9 @@ private fun ThreadReady(
                     .align(Alignment.CenterHorizontally)
                     .padding(vertical = 6.dp),
                 onClick = {
+                    savedVisibleMessageKind = null
+                    savedVisibleMessageValue = null
+                    savedVisibleScrollOffset = 0
                     initiallyPositioned = false
                     shouldFollowNewest = true
                     onAcceptPending()
@@ -684,8 +753,15 @@ private sealed interface AttachmentUiState {
 }
 
 private data class VisibleThreadSnapshot(
-    val positions: List<Pair<Int, Int>>,
+    val items: List<VisibleThreadItem>,
     val canScrollForward: Boolean,
+    val firstVisibleKey: Any?,
+    val firstVisibleScrollOffset: Int,
+)
+
+private data class VisibleThreadItem(
+    val key: Any,
+    val offset: Int,
 )
 
 private fun ProviderMessageId.stableUiKey(): String = "${kind.name}:$value"

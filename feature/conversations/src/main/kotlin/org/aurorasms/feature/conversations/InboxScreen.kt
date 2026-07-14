@@ -145,6 +145,7 @@ private fun InboxMoreMenu(
             Text(stringResource(R.string.more))
         }
         DropdownMenu(
+            modifier = Modifier.semantics { testTagsAsResourceId = true },
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
@@ -261,7 +262,9 @@ private fun InboxReady(
             }
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag(INBOX_LIST_TEST_TAG),
                 state = listState,
             ) {
                 items(
@@ -400,5 +403,6 @@ const val INBOX_APPEARANCE_ACTION_TEST_TAG: String = "aurora-inbox-appearance-ac
 const val INBOX_SCOPE_APPEARANCE_ACTION_TEST_TAG: String = "aurora-inbox-scope-appearance-action"
 const val CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG: String =
     "aurora-conversation-defaults-appearance-action"
+const val INBOX_LIST_TEST_TAG: String = "aurora-inbox-list"
 const val INBOX_ROW_TEST_TAG: String = "aurora-inbox-row"
 private const val VIEWPORT_PREFETCH_ROWS: Int = 10

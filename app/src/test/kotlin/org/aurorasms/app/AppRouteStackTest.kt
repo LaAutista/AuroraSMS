@@ -29,4 +29,20 @@ class AppRouteStackTest {
         assertEquals(false, shouldDismissScopedEditor(observedGeneration = 4L, currentGeneration = 4L))
         assertEquals(true, shouldDismissScopedEditor(observedGeneration = 4L, currentGeneration = 5L))
     }
+
+    @Test
+    fun restoredThreadStateEntriesArePositiveAndUniqueWithoutChangingValidIds() {
+        val repaired = repairThreadStateEntryIds(
+            listOf(
+                AppRoute.Inbox,
+                AppRoute.Thread(ProviderThreadId(4L), stateEntryId = 0L),
+                AppRoute.Thread(ProviderThreadId(5L), stateEntryId = 7L),
+                AppRoute.Thread(ProviderThreadId(6L), stateEntryId = 7L),
+            ),
+        ).filterIsInstance<AppRoute.Thread>()
+
+        assertEquals(3, repaired.map { it.stateEntryId }.toSet().size)
+        assertEquals(true, repaired.all { it.stateEntryId > 0L })
+        assertEquals(7L, repaired[1].stateEntryId)
+    }
 }

@@ -101,18 +101,19 @@ class MainActivity : ComponentActivity() {
         diagnosticsLauncher = BuildVariantDiagnosticsLauncher(application)
         roleState = roleCoordinator.refresh()
         refreshPermissionState()
-        val initialConversation = initialConversationId(
+        val rawConversationId = intent.getLongExtra(
+            AppNotificationIntentFactory.EXTRA_CONVERSATION_ID,
+            INVALID_CONVERSATION_ID,
+        ).takeIf { it != INVALID_CONVERSATION_ID }
+        val initialRouting = initialConversationRouting(
             action = intent.action,
-            rawConversationId = intent.getLongExtra(
-                AppNotificationIntentFactory.EXTRA_CONVERSATION_ID,
-                INVALID_CONVERSATION_ID,
-            ).takeIf { it != INVALID_CONVERSATION_ID },
+            rawConversationId = rawConversationId,
             savedConversationId = savedInstanceState
                 ?.takeIf { it.containsKey(STATE_OPEN_CONVERSATION) }
                 ?.getLong(STATE_OPEN_CONVERSATION),
         )
-        openedConversationId = initialConversation
-        pendingConversationId = initialConversation
+        openedConversationId = initialRouting.openedConversationId
+        pendingConversationId = initialRouting.pendingConversationId
         val appContainer = (application as AuroraSmsApplication).container
 
         setContent {
@@ -371,6 +372,31 @@ internal fun initialConversationId(
     savedConversationId: Long?,
 ): ConversationId? = notificationConversationId(action, rawConversationId)
     ?: savedConversationId?.takeIf { it > 0L }?.let(::ConversationId)
+
+internal class InitialConversationRouting(
+    val openedConversationId: ConversationId?,
+    val pendingConversationId: ConversationId?,
+) {
+    override fun toString(): String =
+        "InitialConversationRouting(hasOpened=${openedConversationId != null}, " +
+            "hasPending=${pendingConversationId != null}, REDACTED)"
+}
+
+internal fun initialConversationRouting(
+    action: String?,
+    rawConversationId: Long?,
+    savedConversationId: Long?,
+): InitialConversationRouting {
+    val notificationConversation = notificationConversationId(action, rawConversationId)
+    return InitialConversationRouting(
+        openedConversationId = initialConversationId(
+            action = action,
+            rawConversationId = rawConversationId,
+            savedConversationId = savedConversationId,
+        ),
+        pendingConversationId = notificationConversation,
+    )
+}
 
 @Composable
 private fun roleStateDescription(state: RoleOnboardingState): String = when (state) {

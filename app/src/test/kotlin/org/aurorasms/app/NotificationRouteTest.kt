@@ -68,4 +68,25 @@ class NotificationRouteTest {
             ),
         )
     }
+
+    @Test
+    fun restoredRouteIsOpenedButIsNotReplayedAsANewPendingNotification() {
+        val restored = initialConversationRouting(
+            action = "android.intent.action.MAIN",
+            rawConversationId = null,
+            savedConversationId = 903L,
+        )
+
+        assertEquals(ConversationId(903L), restored.openedConversationId)
+        assertNull(restored.pendingConversationId)
+
+        val notification = initialConversationRouting(
+            action = AppNotificationIntentFactory.ACTION_OPEN_CONVERSATION,
+            rawConversationId = 905L,
+            savedConversationId = 903L,
+        )
+
+        assertEquals(ConversationId(905L), notification.openedConversationId)
+        assertEquals(ConversationId(905L), notification.pendingConversationId)
+    }
 }

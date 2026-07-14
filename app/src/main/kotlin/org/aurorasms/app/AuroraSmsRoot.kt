@@ -73,10 +73,47 @@ internal fun AuroraSmsRoot(
     onOpenedConversationChanged: (ConversationId?) -> Unit,
     onInboxReady: () -> Unit,
 ) {
+    val services = remember(container) { AppContainerAuroraSmsRootServices(container) }
+    AuroraSmsRoot(
+        services = services,
+        appearance = appearance,
+        appearanceController = appearanceController,
+        pendingConversationId = pendingConversationId,
+        diagnosticsAvailable = diagnosticsAvailable,
+        contactsPermissionGranted = contactsPermissionGranted,
+        onOpenDiagnostics = onOpenDiagnostics,
+        onRequestContactsPermission = onRequestContactsPermission,
+        onPendingConversationConsumed = onPendingConversationConsumed,
+        onOpenedConversationChanged = onOpenedConversationChanged,
+        onInboxReady = onInboxReady,
+    )
+}
+
+@Composable
+internal fun AuroraSmsRoot(
+    services: AuroraSmsRootServices,
+    appearance: AppAppearanceState,
+    appearanceController: AppearanceController,
+    pendingConversationId: ConversationId?,
+    diagnosticsAvailable: Boolean,
+    contactsPermissionGranted: Boolean,
+    onOpenDiagnostics: () -> Unit,
+    onRequestContactsPermission: () -> Unit,
+    onPendingConversationConsumed: (ConversationId) -> Unit,
+    onOpenedConversationChanged: (ConversationId?) -> Unit,
+    onInboxReady: () -> Unit,
+) {
     val initialStack = remember {
         buildList {
             add(AppRoute.Inbox)
-            pendingConversationId?.let { id -> add(AppRoute.Thread(id.asProviderThreadId())) }
+            pendingConversationId?.let { id ->
+                add(
+                    AppRoute.Thread(
+                        providerThreadId = id.asProviderThreadId(),
+                        stateEntryId = 1L,
+                    ),
+                )
+            }
         }
     }
     var routes by rememberSaveable(stateSaver = APP_ROUTE_STACK_SAVER) {
@@ -89,17 +126,38 @@ internal fun AuroraSmsRoot(
     val route = routes.last()
     val context = LocalContext.current
 
+    fun newThreadRoute(
+        providerThreadId: ProviderThreadId,
+        anchor: SearchAnchor? = null,
+    ): AppRoute.Thread = AppRoute.Thread(
+        providerThreadId = providerThreadId,
+        anchor = anchor,
+        stateEntryId = nextThreadStateEntryId(routes),
+    )
+
+    fun setRoutes(updated: List<AppRoute>) {
+        val retainedStateKeys = updated.mapTo(HashSet()) { it.saveableScreenKey() }
+        routes.asSequence()
+            .map { it.saveableScreenKey() }
+            .distinct()
+            .filterNot(retainedStateKeys::contains)
+            .forEach(saveableScreens::removeState)
+        routes = updated
+    }
+
     fun push(next: AppRoute) {
-        routes = listOf(AppRoute.Inbox) +
-            (routes.drop(1) + next).takeLast(MAXIMUM_RETAINED_ROUTES - 1)
+        setRoutes(
+            listOf(AppRoute.Inbox) +
+                (routes.drop(1) + next).takeLast(MAXIMUM_RETAINED_ROUTES - 1),
+        )
     }
 
     fun pop() {
-        if (routes.size > 1) routes = routes.dropLast(1)
+        if (routes.size > 1) setRoutes(routes.dropLast(1))
     }
 
     fun replaceCurrent(next: AppRoute) {
-        routes = routes.dropLast(1) + next
+        setRoutes(routes.dropLast(1) + next)
     }
 
     LaunchedEffect(pendingConversationId) {
@@ -112,7 +170,13 @@ internal fun AuroraSmsRoot(
             previewProfile = null
             saveableScreens.removeState(AppRoute.Appearance.saveableScreenKey())
         }
-        routes = listOf(AppRoute.Inbox, AppRoute.Thread(pending.asProviderThreadId()))
+        if (
+            currentThread?.providerThreadId != pending.asProviderThreadId() ||
+            currentThread.anchor != null ||
+            routes.size != 2
+        ) {
+            setRoutes(listOf(AppRoute.Inbox, newThreadRoute(pending.asProviderThreadId())))
+        }
         onPendingConversationConsumed(pending)
     }
     LaunchedEffect(route) {
@@ -137,7 +201,7 @@ internal fun AuroraSmsRoot(
         saveableScreens.SaveableStateProvider(route.saveableScreenKey()) {
             when (route) {
             AppRoute.Inbox -> InboxRoute(
-                container = container,
+                services = services,
                 appearance = appearance,
                 appearanceController = appearanceController,
                 scopedEditorDismissalGeneration = scopedEditorDismissalGeneration,
@@ -145,7 +209,7 @@ internal fun AuroraSmsRoot(
                 contactsPermissionGranted = contactsPermissionGranted,
                 onOpenConversation = {
                     PresentationTrace.begin(PresentationTrace.THREAD_OPEN)
-                    push(AppRoute.Thread(it))
+                    push(newThreadRoute(it))
                 },
                 onOpenSearch = { push(AppRoute.Search()) },
                 onOpenAppearance = { push(AppRoute.Appearance) },
@@ -168,13 +232,13 @@ internal fun AuroraSmsRoot(
                 },
             )
             is AppRoute.Search -> SearchRoute(
-                container = container,
+                services = services,
                 route = route,
                 onQueryChanged = { replaceCurrent(AppRoute.Search(it)) },
                 onOpenHit = { hit ->
                     PresentationTrace.begin(PresentationTrace.EXACT_JUMP)
                     push(
-                        AppRoute.Thread(
+                        newThreadRoute(
                             providerThreadId = hit.providerThreadId,
                             anchor = SearchAnchor(
                                 localRowId = hit.localRowId,
@@ -184,11 +248,11 @@ internal fun AuroraSmsRoot(
                         ),
                     )
                 },
-                onOpenConversation = { push(AppRoute.Thread(it)) },
+                onOpenConversation = { push(newThreadRoute(it)) },
                 onBack = ::pop,
             )
             is AppRoute.Thread -> ThreadRoute(
-                container = container,
+                services = services,
                 appearance = appearance,
                 appearanceController = appearanceController,
                 scopedEditorDismissalGeneration = scopedEditorDismissalGeneration,
@@ -204,7 +268,7 @@ internal fun AuroraSmsRoot(
 
 @Composable
 private fun InboxRoute(
-    container: AppContainer,
+    services: AuroraSmsRootServices,
     appearance: AppAppearanceState,
     appearanceController: AppearanceController,
     scopedEditorDismissalGeneration: Long,
@@ -218,10 +282,10 @@ private fun InboxRoute(
     onReady: () -> Unit,
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val holder = remember(container, scope) {
+    val holder = remember(services, scope) {
         InboxStateHolder(
-            repository = container.conversationRepository,
-            contactCache = container.contactCache,
+            repository = services.conversationRepository,
+            contactCache = services.contactCache,
             scope = scope,
         )
     }
@@ -324,7 +388,7 @@ private fun InboxRoute(
 
 @Composable
 private fun SearchRoute(
-    container: AppContainer,
+    services: AuroraSmsRootServices,
     route: AppRoute.Search,
     onQueryChanged: (String) -> Unit,
     onOpenHit: (SearchHit) -> Unit,
@@ -332,8 +396,8 @@ private fun SearchRoute(
     onBack: () -> Unit,
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val holder = remember(container, scope) {
-        SearchStateHolder(messageIndex = container.messageIndex, scope = scope)
+    val holder = remember(services, scope) {
+        SearchStateHolder(messageIndex = services.messageIndex, scope = scope)
     }
     DisposableEffect(holder) { onDispose(holder::close) }
     LaunchedEffect(holder) {
@@ -367,7 +431,7 @@ private fun SearchRoute(
 
 @Composable
 private fun ThreadRoute(
-    container: AppContainer,
+    services: AuroraSmsRootServices,
     appearance: AppAppearanceState,
     appearanceController: AppearanceController,
     scopedEditorDismissalGeneration: Long,
@@ -377,14 +441,14 @@ private fun ThreadRoute(
     onBack: () -> Unit,
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val holder = remember(container, route.providerThreadId, route.anchor, scope) {
+    val holder = remember(services, route.providerThreadId, route.anchor, route.stateEntryId, scope) {
         ThreadStateHolder(
             providerThreadId = route.providerThreadId,
-            repository = container.threadTimelineRepository,
-            conversationRepository = container.conversationRepository,
-            messageIndex = container.messageIndex,
-            contactCache = container.contactCache,
-            subscriptionRepository = container.subscriptionRepository,
+            repository = services.threadTimelineRepository,
+            conversationRepository = services.conversationRepository,
+            messageIndex = services.messageIndex,
+            contactCache = services.contactCache,
+            subscriptionRepository = services.subscriptionRepository,
             scope = scope,
             initialAnchor = route.anchor,
         )
@@ -401,15 +465,15 @@ private fun ThreadRoute(
     }
 
     var savedBody by rememberSaveable(route.providerThreadId.value) { mutableStateOf<String?>(null) }
-    val writer = remember(container, route.providerThreadId) {
-        container.createDraftWriter(
+    val writer = remember(services, route.providerThreadId) {
+        services.createDraftWriter(
             identity = DraftIdentity.ProviderThread(route.providerThreadId),
             restoredUnacknowledged = savedBody?.let { body ->
                 DraftEditorContent(body = body.takeIf(String::isNotEmpty), subject = null)
             },
         )
     }
-    DisposableEffect(writer) { onDispose { container.releaseDraftWriter(writer) } }
+    DisposableEffect(writer) { onDispose { services.releaseDraftWriter(writer) } }
     val draftStatus by writer.status.collectAsStateWithLifecycle()
     LaunchedEffect(draftStatus) {
         when (val status = draftStatus) {
@@ -464,8 +528,8 @@ private fun ThreadRoute(
         ThreadScreen(
             state = threadState,
             composer = composer,
-            attachmentRepository = container.mmsAttachmentRepository,
-            previewLoader = container.previewLoader,
+            attachmentRepository = services.mmsAttachmentRepository,
+            previewLoader = services.previewLoader,
             onBack = onBack,
             onOpenSearch = onOpenSearch,
             conversationAppearanceAvailable = conversationScope != null,
@@ -589,7 +653,7 @@ private fun AppRoute.saveableScreenKey(): String = when (this) {
     AppRoute.Inbox -> "inbox"
     AppRoute.Appearance -> "appearance"
     is AppRoute.Search -> "search"
-    is AppRoute.Thread -> "thread-${providerThreadId.value}"
+    is AppRoute.Thread -> "thread-entry-$stateEntryId"
 }
 
 private val APP_ROUTE_STACK_SAVER: Saver<List<AppRoute>, Bundle> = Saver(
@@ -606,8 +670,41 @@ private val APP_ROUTE_STACK_SAVER: Saver<List<AppRoute>, Bundle> = Saver(
             ?.takeIf { routes -> routes.none { it == null } }
             ?.filterNotNull()
             ?.let(::normalizeRestoredRoutes)
+            ?.let(::repairThreadStateEntryIds)
     },
 )
+
+internal fun repairThreadStateEntryIds(routes: List<AppRoute>): List<AppRoute> {
+    val retainedIds = HashSet<Long>()
+    val keepExisting = routes.map { route ->
+        route !is AppRoute.Thread ||
+            (route.stateEntryId > 0L && retainedIds.add(route.stateEntryId))
+    }
+    val allocatedIds = HashSet(retainedIds)
+    var candidate = 1L
+    return routes.mapIndexed { index, route ->
+        if (route !is AppRoute.Thread || keepExisting[index]) return@mapIndexed route
+        while (candidate in allocatedIds) {
+            check(candidate < Long.MAX_VALUE) { "Thread route state entry IDs are exhausted" }
+            candidate += 1L
+        }
+        route.copy(stateEntryId = candidate).also {
+            allocatedIds += candidate
+        }
+    }
+}
+
+private fun nextThreadStateEntryId(routes: List<AppRoute>): Long {
+    val allocatedIds = routes.asSequence()
+        .filterIsInstance<AppRoute.Thread>()
+        .mapTo(HashSet()) { it.stateEntryId }
+    var candidate = 1L
+    while (candidate in allocatedIds) {
+        check(candidate < Long.MAX_VALUE) { "Thread route state entry IDs are exhausted" }
+        candidate += 1L
+    }
+    return candidate
+}
 
 internal fun normalizeRestoredRoutes(routes: List<AppRoute>): List<AppRoute>? = routes
     .takeIf { candidate ->
@@ -628,6 +725,7 @@ private fun saveRoute(route: AppRoute): Bundle = Bundle().apply {
         is AppRoute.Thread -> {
             putString(ROUTE_TYPE_KEY, ROUTE_THREAD)
             putLong(ROUTE_THREAD_ID_KEY, route.providerThreadId.value)
+            putLong(ROUTE_THREAD_STATE_ENTRY_KEY, route.stateEntryId)
             route.anchor?.let { anchor ->
                 putLong(ROUTE_ANCHOR_ROW_KEY, anchor.localRowId)
                 putString(ROUTE_ANCHOR_KIND_KEY, anchor.providerId.kind.name)
@@ -657,7 +755,11 @@ private fun restoreRoute(bundle: Bundle): AppRoute? = try {
             } else {
                 null
             }
-            AppRoute.Thread(threadId, anchor)
+            AppRoute.Thread(
+                providerThreadId = threadId,
+                anchor = anchor,
+                stateEntryId = bundle.getLong(ROUTE_THREAD_STATE_ENTRY_KEY),
+            )
         }
         else -> null
     }
@@ -674,6 +776,7 @@ private const val ROUTES_KEY: String = "routes"
 private const val ROUTE_TYPE_KEY: String = "type"
 private const val ROUTE_QUERY_KEY: String = "query"
 private const val ROUTE_THREAD_ID_KEY: String = "thread_id"
+private const val ROUTE_THREAD_STATE_ENTRY_KEY: String = "thread_state_entry_id"
 private const val ROUTE_ANCHOR_ROW_KEY: String = "anchor_row"
 private const val ROUTE_ANCHOR_KIND_KEY: String = "anchor_kind"
 private const val ROUTE_ANCHOR_PROVIDER_ID_KEY: String = "anchor_provider_id"
