@@ -6,10 +6,14 @@ install/hash/smoke complete; Phase 4 AuroraMaterial foundation, foreground
 provider-read lifecycle hardening, exact physical APK handoff, and verified
 real-provider reconciliation complete, 2026-07-14. The bounded durable active
 named-profile/Theme Studio slice is also verified; the ADR 0006 durable scoped
-profile-reference foundation passed host, governance, emulator, and physical
-install/copy/cold-launch gates; real-app modal focus and route-state preservation
-smoke remains pending. Representative physical-device performance, remaining
-API/OEM coverage, and carrier transport rows remain pending.
+profile-reference foundation and its real-root/modal acceptance extension
+passed host, governance, emulator, and physical install/package/role/permission
+gates. The final frozen APK's physical scoped-modal focus, copy/hash, and cold-
+launch rerun remains open after a secure-lockscreen non-run. The physical check
+is intentionally Inbox-only; full process-death end-to-end and physical eligible-
+Thread modal coverage are not claimed. Representative physical-device
+performance, remaining API/OEM coverage, and carrier transport rows remain
+pending.
 
 ## Evidence rules
 
@@ -703,12 +707,15 @@ AuroraSMS was left force-stopped on the canonical profile. No message text or
 address was exported, no screenshot was captured, and no carrier message was
 sent.
 
-### Durable scoped-profile-reference foundation — focused verification complete; real-app smoke pending
+### Durable scoped-profile-reference foundation and real-root/modal acceptance — verification complete
 
 These rows define the bounded ADR 0006 acceptance slice. Checked rows are backed
-by the scoped evidence below. The two unchecked real-app rows are not inferred
-from synthetic hosts, compile success, or package installation. This slice does
-not claim the complete scoped-wallpaper/GIF feature.
+by the scoped evidence below. Real-root behavior is backed by the production
+root driven through deterministic synthetic services; the physical check is a
+separate privacy-safe real MainActivity/Inbox smoke. This slice does not claim
+the complete scoped-wallpaper/GIF feature, full process-death end-to-end, or
+physical eligible-Thread modal coverage. Final frozen-artifact focus/copy/cold-
+launch evidence remains open as described below.
 
 - [x] The Aurora state database exports schema version 3 and an explicit
   version-2-to-version-3 migration preserves drafts, draft triggers, named
@@ -783,13 +790,22 @@ not claim the complete scoped-wallpaper/GIF feature.
   loading, target mismatch, missing-profile reset, errors, and in-flight writes.
   Restored state carries its exact private target token and cannot render/apply
   another target; controls wait for both authoritative inputs. No production
-  Activity is added, and both non-exported debug hosts are absent from
+  Activity is added, and all three non-exported debug hosts are absent from
   release/benchmark products.
-- [ ] A real `AuroraSmsRoot` end-to-end run must still prove that opening,
-  canceling, applying, resetting, rotating/restoring, and dismissing each modal
-  preserves the same route stack, screen state holder, paged window, scroll
-  anchor, search state, draft, and composer without pushing Theme Studio,
-  reconstructing Thread, or reloading provider/index presentation.
+- [x] The real `AuroraSmsRoot`, driven by deterministic synthetic services,
+  proves both bounded halves of the route-state contract. Live Inbox/global and
+  exact-anchor Thread modal operations cover selection changes, Cancel, named
+  Apply, inherited-reset Apply, Back, and dismissal while retaining the route,
+  visible state, retained Search route/query, draft, and composer; no operation
+  pushes Theme Studio or causes a provider/index presentation reload.
+  `ActivityScenario` recreation reconstructs the holder and performs exactly
+  one ADR 0003-permitted anchor query while restoring the exact modal target and
+  selection, stable visible `ProviderMessageId` plus offset, Search query,
+  draft, and composer. Fresh same-thread re-entry receives a unique route-state
+  entry and exact jump; popped or evicted route entries remove their saved state,
+  and retention remains bounded to `MAXIMUM_RETAINED_ROUTES`. This is not a full
+  process-death end-to-end claim and makes no exact-anchor recreation claim for
+  a normal Inbox or unanchored Thread.
 - [x] Applied screen/global-thread/conversation references and their revisions
   survive database reopen and process recreation. Modal draft restoration never
   resumes an in-flight write or treats an uncommitted selection as durable.
@@ -807,17 +823,26 @@ not claim the complete scoped-wallpaper/GIF feature.
   content.
 - [x] Focused host and migration tests, full host lint/build gates, clean-room,
   private-asset, dependency/checksum/lock/license/SBOM, permission/APK-content,
-  complete emulator instrumentation, and privacy-safe physical-device install,
-  same-byte Download copy/hash, package/role/permission inspection, and cold
-  launch pass with no private conversation data or carrier send.
-- [ ] A privacy-safe physical real-app scoped-modal focus smoke remains pending;
-  package installation and cold launch are not evidence that a real Inbox or
-  eligible Thread modal received focus or preserved its live route state.
+  complete emulator instrumentation, and privacy-safe physical-device
+  install/package/role/permission inspection pass with no private conversation
+  data or carrier send. Final frozen-artifact Download copy/hash, cold launch,
+  and scoped-modal focus remain in the next unchecked row.
+- [ ] The final frozen APK still requires a privacy-safe physical real
+  MainActivity check covering the Inbox modal only. The first gated attempt ran
+  while the device was dozing behind the secure lockscreen, reached no app
+  resource ID, and is not acceptance evidence. Aggregate private-state metadata
+  nevertheless remained `0|0|0` for screen-row count, conversation-row count,
+  and allocation revision. The unlocked rerun must use only resource IDs and
+  accessibility window metadata to prove a distinct focused modal and Cancel's
+  return to the same MainActivity/Inbox window without opening a Thread or
+  applying an assignment. No physical eligible-Thread modal claim is made.
 
 ### Durable scoped-profile-reference evidence — automated/install gates 2026-07-14
 
-Version `0.4.2-phase4` (`versionCode=3`) was verified from scoped implementation
-commit `1b33852`.
+Version `0.4.2-phase4` (`versionCode=3`) retains the durable scoped foundation
+from implementation commit `1b33852`; this evidence also covers the subsequent
+real-root/modal acceptance extension in the implementation/review set recorded
+by `docs/PHASE_4_FILE_PLAN.md`.
 
 The final offline host gate was:
 
@@ -825,12 +850,12 @@ The final offline host gate was:
 ./gradlew test lintDebug lintRelease assembleDebug assembleRelease :app:lintBenchmark :app:assembleBenchmark :macrobenchmark:check :macrobenchmark:assembleBenchmark verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon --no-parallel --console=plain
 ```
 
-It completed 883 tasks successfully. Generated XML reports contained 243 host
-tests: 243 passed with zero failures, errors, or skips. Lint, debug/release/
-benchmark assembly, macrobenchmark checks, clean-room/private-asset scans,
-dependency/lock verification, merged/package permission checks, and APK-content
-checks all passed. Release and benchmark outputs contained neither non-exported
-debug appearance test Activity.
+It completed 883 tasks successfully. Generated host XML reports contained 245
+tests: 245 passed with zero failures, errors, or skips. Lint, debug/release/
+benchmark assembly, macrobenchmark checks, all 19 clean-room private-reference
+hashes, private-asset scans, dependency/lock verification, merged/package
+permission checks, and APK-content checks all passed. Release and benchmark
+outputs contained none of the three non-exported debug test Activities.
 
 The final license/SBOM gate was:
 
@@ -849,35 +874,45 @@ The complete connected command was pinned to the API 36 emulator:
 ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline --no-daemon --no-parallel --console=plain
 ```
 
-It discovered 110 tests. One hundred nine passed with zero failures/errors;
-`configuredScaleBenchmark_requiresExplicitOptIn` was the single intentional
-skip. This includes state and index version-2-to-version-3 migration/schema
+It discovered 113 tests: 111 passed with zero failures or errors, and two were
+explicitly gated skips (the configured-scale benchmark and app physical scoped-
+appearance smoke). The module totals were app 30 with one skip, benchmark 3 with
+one skip, index 30, notifications 3, state 29, telephony 15, and conversations
+3. Coverage includes state and index version-2-to-version-3 migration/schema
 tests, sequence trigger/live-row-floor and ABA regressions, target-specific
 repository flows, strict participant completeness, scoped resolver/controller
-tests, the synthetic modal restoration/loading/Back suite, and conversation
-menu callback instrumentation.
+tests, the synthetic modal restoration/loading/Back suite, the real-root
+acceptance journey, and conversation menu callback instrumentation.
 
-The final debug APK is 13,184,767 bytes with SHA-256
-`d6e9d2fbb24f8300b862e2e8080780873a9eb0b9b0107e09a291d4e4a9b6a764`.
-Those exact bytes were replace-installed on the connected Pixel 8 and copied to
-`/sdcard/Download/AuroraSMS-debug.apk`; the Download size and SHA-256 matched the
-host artifact. A cold `MainActivity` launch succeeded with `TotalTime=2514 ms`.
-The installed package reported version code 3, `0.4.2-phase4`, target SDK 36,
-the SMS role, and granted READ/SEND/RECEIVE SMS, RECEIVE MMS, and notification
-permissions. Error-only process logs contained no app crash.
+The frozen final debug APK is 13,396,196 bytes with SHA-256
+`d26a6a1c515d941ac38bb6b8ea1649d27f2ee3f9efc7f815ff74dfcebf164c03`.
+Those exact bytes were replace-installed on the connected Pixel 8. The installed
+package reported version code 3, `0.4.2-phase4`, target SDK 36, the SMS role,
+and granted READ/SEND/RECEIVE SMS, RECEIVE MMS, and notification permissions.
+The exact Download copy/hash, cold launch, and error-only process-log check are
+not yet recorded for this frozen artifact.
 
-Privacy-safe private-database metadata after cold launch showed state schema 3,
-the revision singleton at initial value zero, and all three
-singleton/exact-increment/no-delete triggers. The index reported schema 3; old
-generations were paused/pending by migration and a new generation entered a
-fresh scan with the pending flag set, confirming that the older completeness
-claim was not reused. The temporary app test instrumentation package was absent
-after the run.
+Earlier foundation-artifact privacy-safe private-database metadata after cold
+launch showed state schema 3, the revision singleton at initial value zero, and
+all three singleton/exact-increment/no-delete triggers. The index reported
+schema 3; old generations were paused/pending by migration and a new generation
+entered a fresh scan with the pending flag set, confirming that the older
+completeness claim was not reused. This paragraph is not frozen-artifact cold-
+launch evidence. The temporary app test instrumentation package was absent
+after that earlier run.
 
-No message text, address, participant fingerprint, screenshot, or private asset
-was exported, and no carrier message was sent. The physical check did not focus
-or operate a real scoped modal; that and the real-root route-state journey remain
-the two explicit unchecked rows above.
+The first final-artifact gated attempt ran on connected serial
+`192.168.68.51:35459`, a Google Pixel 8 (`shiba`) on Android 16/API 36. Because
+the device was dozing behind the secure lockscreen, no app resource ID was
+reached and the run is not a modal-focus result. Aggregate private database
+metadata before and after remained `0|0|0`: zero screen rows, zero conversation
+rows, and revision zero.
+
+No message text, address, participant fingerprint, accessibility text/content
+description, UI hierarchy, screenshot, or private asset was exported, and no
+carrier message was sent. No physical modal result is claimed until the unlocked
+final-artifact rerun; it will not cover an eligible Thread modal or full process
+death.
 
 ### Phase 4 foundation and lifecycle evidence
 

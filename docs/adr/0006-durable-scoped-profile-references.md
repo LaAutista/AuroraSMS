@@ -1,9 +1,11 @@
 # ADR 0006: durable scoped profile references and deterministic inheritance
 
 Status: accepted and implemented for the bounded Phase 4 slice; host,
-governance, emulator, and physical install/copy/cold-launch verification passed
-on 2026-07-14; real-app modal focus and route-state preservation smoke remains
-pending
+governance, emulator, and physical install/package/role/permission verification
+passed on 2026-07-14; real-root live/restoration acceptance also passed; the
+final frozen APK's Inbox-only physical modal-focus, copy/hash, and cold-launch
+rerun remains open after a secure-lockscreen non-run; full process-death end-to-
+end and physical eligible-Thread modal coverage are not claimed
 
 ## Context
 
@@ -211,14 +213,44 @@ target without exposing private conversation data, and performs no write until
 explicit revision-checked `Apply`. Selecting `Inherited` is a staged reset; it
 is not an immediate durable action.
 
-Opening, canceling, applying, dismissing, rotating, or restoring the modal must
-preserve the same app route, route stack, screen state holder, paged window,
-scroll anchor, search state, draft, and composer state. Cancel, Back, and
-dismissal discard the staged profile/inherited choice and leave durable state
-unchanged. The modal must not push Theme Studio, create a production Activity,
-or reconstruct the Thread route. A separate non-exported debug-only Activity
-may host synthetic instrumentation and must be absent from release and
-benchmark products.
+While the current Activity/root composition remains alive, opening the modal,
+changing its selection, canceling, applying a named choice, applying an
+inherited reset, pressing Back, or dismissing it must preserve the same app
+route, route stack, screen state-holder instance,
+in-memory paged window, visible scroll anchor, retained Search route/query,
+draft, and composer state. None of those live modal actions may issue a
+provider/index presentation reload solely because the modal opened or closed.
+Cancel, Back, and dismissal discard the staged profile/inherited choice and
+leave durable state unchanged. The modal must not push Theme Studio, create a
+production Activity, or reconstruct the Thread route. A separate non-exported
+debug-only Activity may host synthetic instrumentation and must be absent from
+release and benchmark products.
+
+Configuration or process restoration has a different contract. It necessarily
+may reconstruct Compose state holders and must not serialize or claim identity
+for an in-memory page object. Instead, it restores the logical route stack, the
+exact modal target and bounded draft, a retained Search query, and the Thread
+draft/composer, then permits the existing ADR 0003 bounded presentation
+re-query. When the route already owns an exact saved Thread anchor, that bounded
+re-query must restore the same stable anchor. This decision does not
+claim exact-anchor reconstruction for a normal Inbox or an unanchored Thread;
+that requires a separately reviewed bounded anchor API. Restoration must not
+turn the modal into Theme Studio or a different Thread route.
+
+The completed acceptance extension exercises the real `AuroraSmsRoot` with
+deterministic synthetic services. Live Inbox/global and exact-anchor Thread
+modal operations retained their route and visible state, Search query, draft,
+and composer with zero modal-caused provider/index reload. An
+`ActivityScenario` recreation rebuilt the holder, performed exactly one bounded
+anchor query, and restored the exact modal target/selection, stable visible
+`ProviderMessageId` plus offset, Search query, draft, and composer. A new entry
+into that same Thread received a distinct route-state identity and its own exact
+jump. SavedState for popped or evicted route entries is removed, keeping
+retention bounded to `MAXIMUM_RETAINED_ROUTES`. The separate Pixel check covers
+only real MainActivity/Inbox modal focus and Cancel. The final frozen artifact
+still requires its unlocked rerun; the secure-lockscreen attempt reached no app
+tag and is not acceptance evidence. It does not extend these conclusions to
+physical Thread behavior or full process death.
 
 Restorable modal state is bounded to a schema version, the selected and
 baseline profile IDs, expected revision, and one private target token. For a

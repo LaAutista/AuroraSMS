@@ -4,10 +4,13 @@ Status: AuroraMaterial foundation, foreground provider-read lifecycle
 hardening, and the bounded durable active named-profile/Theme Studio slice
 implemented and verified on 2026-07-14; the durable scoped-profile-reference
 foundation specified by ADR 0006 passed host, governance, emulator, and physical
-install/copy/cold-launch gates on 2026-07-14, while real-app modal focus and
-route-state preservation smoke remains pending; assignment-local focal/dim
-values, media/artwork, import/export, navigation variants, and the full
-accessibility/performance matrix remain gated follow-on work
+install/package/role/permission gates plus real-root/modal acceptance on
+2026-07-14; the final frozen APK's deliberately Inbox-only physical focus,
+copy/hash, and cold-launch rerun remains open after a secure-lockscreen non-run;
+full process-death end-to-end and physical eligible-Thread modal coverage are
+not claimed; assignment-local focal/dim values, media/artwork, import/export,
+navigation variants, and the full accessibility/performance matrix remain gated
+follow-on work
 
 ## Outcome
 
@@ -322,10 +325,24 @@ Acceptance criteria:
 - keep Search on active named, canonical, and accessible-solid resolution; keep
   Theme Studio on its existing route-local transient preview followed by that
   same durable chain, with neither route receiving a scoped assignment;
-- present assignment as a modal over the current Inbox or Thread route so open,
-  cancel, apply, dismissal, rotation, and restoration retain the same route
-  stack, state holder, paged window, scroll anchor, search state, draft, and
-  composer state;
+- present assignment as a modal over the current Inbox or Thread route so,
+  while the Activity/root composition remains alive, opening it, changing its
+  selection, canceling, applying a named choice, applying an inherited reset,
+  Back, and dismissal retain the same route stack, state-holder instance,
+  in-memory paged window, visible scroll anchor, retained Search route/query,
+  draft, and composer, with no provider/index presentation reload caused solely
+  by the modal;
+- on configuration or process restoration, permit holder reconstruction and
+  the existing ADR 0003 bounded presentation re-query instead of serializing or
+  claiming identity for an in-memory page; restore the logical route stack,
+  exact modal target and bounded draft, retained Search query, and Thread
+  draft/composer, and restore the same stable anchor when the route owns
+  an exact saved Thread anchor; make no exact-anchor recreation claim for a
+  normal Inbox or unanchored Thread until a separately reviewed bounded anchor
+  API exists;
+- give every fresh Thread entry, including same-thread re-entry, a unique
+  route-state key and exact-jump state; remove SavedState for popped and evicted
+  entries so retained route state never exceeds `MAXIMUM_RETAINED_ROUTES`;
 - persist only a bounded private target token, baseline/selected profile IDs,
   and expected revision in `SavedState`; validate the target synchronously on
   restoration, discard a mismatched target draft, restore neither in-flight nor
@@ -342,21 +359,30 @@ Acceptance criteria:
   production permission/component, network path, artwork, media reference,
   picker, decoder, assignment-local focal/dim field, or GIF behavior.
 
-The implementation/review set is reconciled to the current diff below. It does
-not itself claim that any pending gate passed.
+The implementation/review set is reconciled to the completed scoped foundation
+and its real-root/modal acceptance extension below.
 
 ```text
 app/build.gradle.kts
 app/gradle.lockfile
+app/src/androidTest/kotlin/org/aurorasms/app/AuroraSmsRootAcceptanceTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/MainActivityNotificationRouteTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/appearance/MainActivityScopedAppearancePhysicalSmokeTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialogTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/diagnostics/DiagnosticsScreenTest.kt
 app/src/debug/AndroidManifest.xml
+app/src/debug/kotlin/org/aurorasms/app/AuroraSmsRootTestActivity.kt
 app/src/debug/kotlin/org/aurorasms/app/appearance/ScopedAppearanceTestActivity.kt
 app/src/main/kotlin/org/aurorasms/app/AppContainer.kt
+app/src/main/kotlin/org/aurorasms/app/AppRoute.kt
 app/src/main/kotlin/org/aurorasms/app/AuroraSmsRoot.kt
+app/src/main/kotlin/org/aurorasms/app/AuroraSmsRootServices.kt
+app/src/main/kotlin/org/aurorasms/app/MainActivity.kt
 app/src/main/kotlin/org/aurorasms/app/appearance/AppearanceController.kt
 app/src/main/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialog.kt
 app/src/main/res/values/strings.xml
 app/src/test/kotlin/org/aurorasms/app/AppRouteStackTest.kt
+app/src/test/kotlin/org/aurorasms/app/NotificationRouteTest.kt
 app/src/test/kotlin/org/aurorasms/app/ScopedAppearanceResolutionTest.kt
 app/src/test/kotlin/org/aurorasms/app/appearance/AppearanceControllerTest.kt
 core/index/schemas/org.aurorasms.core.index.storage.AuroraIndexDatabase/3.json
@@ -505,9 +531,16 @@ ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline
 At the device gate, install the exact debug APK in place, copy the same bytes to
 `/sdcard/Download/AuroraSMS-debug.apk`, compare SHA-256, verify package/role
 state, and exercise only privacy-safe UI/resource-ID and redacted diagnostic
-checks. Install/copy/hash and cold launch passed for `0.4.2-phase4`; the real-app
-scoped-modal focus and route-state smoke remains explicitly pending. No carrier
-message is sent by this slice.
+checks. The frozen `0.4.2-phase4` APK passed install/package/role/permission
+inspection. Its final copy/hash, cold launch, and deliberately Inbox-only focus
+rerun remain open: the first gated attempt reached no app resource ID behind the
+secure lockscreen and is not acceptance evidence. Real-root synthetic-service
+instrumentation separately proved live route/visible-state preservation with
+zero modal provider/index reload, exact-anchor restoration with one allowed
+recreation query, and unique state for fresh same-thread re-entry.
+Popped/evicted route state is removed and retention remains bounded to
+`MAXIMUM_RETAINED_ROUTES`. Full process-death end-to-end and physical eligible-
+Thread modal coverage are not claimed. No carrier message is sent by this slice.
 
 ## Stop conditions
 

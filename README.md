@@ -77,9 +77,19 @@ benchmark, clean-room, permission, APK-content, license/SBOM, API 36 emulator,
 and privacy-safe Pixel 8 persistence gates recorded in `docs/TEST_MATRIX.md`.
 
 The `0.4.2-phase4` durable scoped-profile-reference slice passed its host,
-governance, emulator, and physical install/copy/cold-launch gates. The real
-`AuroraSmsRoot` route-state journey and a physical real-modal focus smoke remain
-explicit follow-up checks:
+governance, emulator, and physical install/package/role/permission gates. Its
+final real-root/modal acceptance extension uses a real `AuroraSmsRoot` driven by
+deterministic synthetic services and proved that live Inbox/global and
+exact-anchor Thread modal operations
+retain their route and visible state, Search query, draft, and composer without
+a modal-caused provider/index reload. `ActivityScenario` recreation rebuilt the
+holder, issued exactly the one bounded anchor query allowed by ADR 0003, and
+restored the exact modal target/selection, visible provider-message anchor and
+offset, Search query, draft, and composer. Fresh same-thread re-entry also owns
+a distinct route-state entry and exact jump, while popped/evicted entries remove
+their saved state and retention stays bounded to `MAXIMUM_RETAINED_ROUTES`.
+This is not a full process-death end-to-end claim, nor an exact-anchor claim for
+a normal Inbox or unanchored Thread:
 
 - an explicit non-destructive version-2-to-version-3 state migration stores
   references from eligible screens and verified conversations to existing named
@@ -97,6 +107,11 @@ explicit follow-up checks:
   current `ConversationSummary` preview safely limits UI assignment to verified
   sets of at most 8. Larger indexed conversations inherit global defaults until
   a bounded full-identity query is added.
+
+The final frozen APK still requires its intentionally Inbox-only physical focus
+rerun after the first attempt reached no app resource ID behind the secure
+lockscreen. That non-run changed no assignment metadata and is not acceptance
+evidence. Physical eligible-Thread modal coverage remains follow-on work.
 
 Assignment-local focal/dim controls, import/export, navigation variants,
 wallpapers, GIF lifecycle, full accessibility/performance coverage, and

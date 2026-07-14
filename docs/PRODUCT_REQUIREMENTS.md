@@ -222,11 +222,36 @@ wallpaper chains:
 - applying `Inherited` revision-checks and deletes only that assignment;
   revision-checked profile deletion cascades its referencing assignments so
   each target immediately inherits; and
-- applying/resetting scoped profile references does not query Telephony, alter
-  index state, recreate a route/state holder, or disturb the paged window,
-  scroll anchor, search state, draft, or composer. The one-time index-schema
-  semantic invalidation is an upgrade/reconciliation boundary, not an
-  appearance action.
+- while the Activity/root composition remains alive, opening a scoped chooser,
+  changing its selection, canceling, applying a named choice, applying an
+  inherited reset, pressing Back, or dismissing it does not query Telephony,
+  alter index state, recreate its route/state holder,
+  reload provider/index presentation, or disturb the in-memory paged window,
+  visible scroll anchor, retained Search route/query, draft, or composer;
+- configuration/process restoration may reconstruct the state holder and
+  perform the existing ADR 0003 bounded presentation re-query; it restores the
+  logical route stack, exact chooser target and bounded draft, retained Search
+  query, Thread draft/composer, and the same stable anchor when an exact
+  saved Thread anchor exists, but does not serialize or claim identity for the
+  in-memory page; and
+- this scoped slice makes no exact-anchor recreation claim for a normal Inbox
+  or unanchored Thread without a separately reviewed bounded anchor API. The
+  one-time index-schema semantic invalidation is an upgrade/reconciliation
+  boundary, not an appearance action.
+
+The completed bounded acceptance extension proves this contract with the real
+`AuroraSmsRoot` and deterministic synthetic services: Inbox/global and
+exact-anchor Thread modal operations preserve their route and visible state,
+Search query, draft, and composer with zero modal-caused provider/index reload.
+`ActivityScenario` recreation reconstructs the holder, performs exactly one
+allowed anchor query, and restores the exact target/selection, stable visible
+`ProviderMessageId` plus offset, Search query, draft, and composer. A fresh
+same-thread re-entry receives a unique route-state entry and exact jump;
+popped/evicted entries remove their SavedState and retention is bounded to
+`MAXIMUM_RETAINED_ROUTES`. The physical real-app evidence is intentionally
+limited to the Inbox modal. The final frozen artifact still requires that
+unlocked focus rerun, so this does not yet claim its physical modal acceptance,
+full process-death end-to-end, or physical eligible-Thread modal coverage.
 
 Assignment-local focal points/dim values and every wallpaper/media reference,
 picker, renderer, decoder, canonical artwork mapping, and GIF lifecycle remain
