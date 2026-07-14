@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -77,6 +79,8 @@ fun ThreadScreen(
     previewLoader: BoundedPreviewLoader,
     onBack: () -> Unit,
     onOpenSearch: () -> Unit,
+    conversationAppearanceAvailable: Boolean,
+    onOpenConversationAppearance: () -> Unit,
     isDialable: (ParticipantAddress) -> Boolean,
     onDial: (ParticipantAddress) -> Unit,
     onRetry: () -> Unit,
@@ -117,6 +121,12 @@ fun ThreadScreen(
                     onBack()
                 },
                 onOpenSearch = onOpenSearch,
+                conversationAppearanceAvailable = conversationAppearanceAvailable,
+                onOpenConversationAppearance = {
+                    focusManager.clearFocus()
+                    keyboard?.hide()
+                    onOpenConversationAppearance()
+                },
                 isDialable = isDialable,
                 onDial = onDial,
             )
@@ -153,6 +163,8 @@ private fun ThreadHeader(
     state: ThreadUiState,
     onBack: () -> Unit,
     onOpenSearch: () -> Unit,
+    conversationAppearanceAvailable: Boolean,
+    onOpenConversationAppearance: () -> Unit,
     isDialable: (ParticipantAddress) -> Boolean,
     onDial: (ParticipantAddress) -> Unit,
 ) {
@@ -198,6 +210,37 @@ private fun ThreadHeader(
             TextButton(onClick = { onDial(dialAddress) }) { Text(stringResource(R.string.call)) }
         }
         TextButton(onClick = onOpenSearch) { Text(stringResource(R.string.search)) }
+        if (conversationAppearanceAvailable) {
+            ThreadMoreMenu(onOpenConversationAppearance = onOpenConversationAppearance)
+        }
+    }
+}
+
+@Composable
+private fun ThreadMoreMenu(
+    onOpenConversationAppearance: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TextButton(
+            modifier = Modifier.testTag(THREAD_MORE_ACTION_TEST_TAG),
+            onClick = { expanded = true },
+        ) {
+            Text(stringResource(R.string.more))
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            DropdownMenuItem(
+                modifier = Modifier.testTag(THREAD_APPEARANCE_ACTION_TEST_TAG),
+                text = { Text(stringResource(R.string.conversation_appearance)) },
+                onClick = {
+                    expanded = false
+                    onOpenConversationAppearance()
+                },
+            )
+        }
     }
 }
 
@@ -655,3 +698,5 @@ const val THREAD_SCREEN_TEST_TAG: String = "aurora-thread-screen"
 const val THREAD_LIST_TEST_TAG: String = "aurora-thread-list"
 const val MESSAGE_BUBBLE_TEST_TAG: String = "aurora-message-bubble"
 const val COMPOSER_TEST_TAG: String = "aurora-composer"
+const val THREAD_MORE_ACTION_TEST_TAG: String = "aurora-thread-more-action"
+const val THREAD_APPEARANCE_ACTION_TEST_TAG: String = "aurora-thread-appearance-action"

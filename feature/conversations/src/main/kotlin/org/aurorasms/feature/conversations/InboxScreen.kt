@@ -62,6 +62,8 @@ fun InboxScreen(
     onOpenConversation: (ProviderThreadId) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenInboxAppearance: () -> Unit,
+    onOpenConversationDefaults: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onRequestContactsPermission: () -> Unit,
     onRetry: () -> Unit,
@@ -100,6 +102,8 @@ fun InboxScreen(
                     diagnosticsAvailable = diagnosticsAvailable,
                     contactsPermissionGranted = contactsPermissionGranted,
                     onOpenAppearance = onOpenAppearance,
+                    onOpenInboxAppearance = onOpenInboxAppearance,
+                    onOpenConversationDefaults = onOpenConversationDefaults,
                     onOpenDiagnostics = onOpenDiagnostics,
                     onRequestContactsPermission = onRequestContactsPermission,
                 )
@@ -127,6 +131,8 @@ private fun InboxMoreMenu(
     diagnosticsAvailable: Boolean,
     contactsPermissionGranted: Boolean,
     onOpenAppearance: () -> Unit,
+    onOpenInboxAppearance: () -> Unit,
+    onOpenConversationDefaults: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onRequestContactsPermission: () -> Unit,
 ) {
@@ -148,6 +154,22 @@ private fun InboxMoreMenu(
                 onClick = {
                     expanded = false
                     onOpenAppearance()
+                },
+            )
+            DropdownMenuItem(
+                modifier = Modifier.testTag(INBOX_SCOPE_APPEARANCE_ACTION_TEST_TAG),
+                text = { Text(stringResource(R.string.inbox_appearance)) },
+                onClick = {
+                    expanded = false
+                    onOpenInboxAppearance()
+                },
+            )
+            DropdownMenuItem(
+                modifier = Modifier.testTag(CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG),
+                text = { Text(stringResource(R.string.conversation_defaults)) },
+                onClick = {
+                    expanded = false
+                    onOpenConversationDefaults()
                 },
             )
             if (!contactsPermissionGranted) {
@@ -375,5 +397,8 @@ const val INBOX_SCREEN_TEST_TAG: String = "aurora-inbox-screen"
 const val INBOX_SEARCH_ACTION_TEST_TAG: String = "aurora-inbox-search-action"
 const val INBOX_MORE_ACTION_TEST_TAG: String = "aurora-inbox-more-action"
 const val INBOX_APPEARANCE_ACTION_TEST_TAG: String = "aurora-inbox-appearance-action"
+const val INBOX_SCOPE_APPEARANCE_ACTION_TEST_TAG: String = "aurora-inbox-scope-appearance-action"
+const val CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG: String =
+    "aurora-conversation-defaults-appearance-action"
 const val INBOX_ROW_TEST_TAG: String = "aurora-inbox-row"
 private const val VIEWPORT_PREFETCH_ROWS: Int = 10

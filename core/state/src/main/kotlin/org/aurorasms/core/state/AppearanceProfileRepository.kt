@@ -11,6 +11,8 @@ enum class AppearanceStorageOperation {
     ACTIVATE,
     RESET_ACTIVE,
     DELETE,
+    SET_OVERRIDE,
+    RESET_OVERRIDE,
 }
 
 enum class AppearanceLimit {
@@ -68,5 +70,24 @@ interface AppearanceProfileRepository {
     suspend fun delete(
         id: AppearanceProfileId,
         expectedRevision: AppearanceRevision,
+    ): AppearanceRepositoryResult<Unit>
+
+    /** Observes only the requested durable scope; its first value is authoritative for that scope. */
+    fun observeOverride(scope: AppearanceScope): Flow<AppearanceOverride?>
+
+    /**
+     * Selects a named profile for one scope. A null [expectedRevision] means the caller observed
+     * inherited state; an existing assignment requires its exact optimistic revision.
+     */
+    suspend fun setOverride(
+        scope: AppearanceScope,
+        profileId: AppearanceProfileId,
+        expectedRevision: AppearanceOverrideRevision?,
+    ): AppearanceRepositoryResult<AppearanceOverride>
+
+    /** Resets one scope to inherited state without changing any other appearance selection. */
+    suspend fun resetOverride(
+        scope: AppearanceScope,
+        expectedRevision: AppearanceOverrideRevision?,
     ): AppearanceRepositoryResult<Unit>
 }

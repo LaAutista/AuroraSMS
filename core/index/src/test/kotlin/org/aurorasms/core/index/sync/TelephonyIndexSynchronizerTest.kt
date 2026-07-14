@@ -30,6 +30,7 @@ import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
 import org.aurorasms.core.model.MessageSyncFingerprint
 import org.aurorasms.core.model.MmsAttachmentSummary
+import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
@@ -82,6 +83,31 @@ class TelephonyIndexSynchronizerTest {
     }
 
     @Test
+    fun `pending paused generation starts a fresh scan instead of resuming stale projection`() = runTest {
+        val database = FakeIndexDatabase()
+        val staleGenerationId = database.sync.startGeneration(10L)
+        val staleCursor = cursor(timestamp = 50L, id = 5L)
+        database.sync.putCheckpoint(
+            checkpoint(staleGenerationId, ProviderKindCode.SMS, staleCursor, committedCount = 5L),
+        )
+        database.sync.markPendingChanges(staleGenerationId, 15L)
+        database.sync.stopActiveGeneration(
+            generationId = staleGenerationId,
+            terminalState = GenerationStateCode.PAUSED,
+            failureCode = null,
+            nowMillis = 20L,
+        )
+        val sms = SyncTestSmsSource(messages = listOf(sms(id = 1L, timestamp = 10L)))
+
+        val outcome = synchronizer(database, sms, SyncTestMmsSource()).synchronize()
+
+        assertTrue(outcome is IndexSyncOutcome.Complete)
+        assertEquals(2, database.sync.allGenerations().size)
+        assertTrue(database.sync.latestGeneration()?.generationId != staleGenerationId)
+        assertEquals(null, sms.readRequests.first().before)
+    }
+
+    @Test
     fun `crash after final checkpoint resumes by entering verification without another scan page`() = runTest {
         val database = FakeIndexDatabase()
         val generationId = database.sync.startGeneration(10L)
@@ -117,6 +143,25 @@ class TelephonyIndexSynchronizerTest {
         assertEquals(2, sms.readRequests.size)
         assertEquals(2, mms.readRequests.size)
         assertTrue((outcome as IndexSyncOutcome.Complete).coverage.verifiedComplete)
+    }
+
+    @Test
+    fun `mixed valid and missing provider identities keep the summary incomplete`() = runTest {
+        val database = FakeIndexDatabase()
+        val sms = SyncTestSmsSource(
+            messages = listOf(
+                sms(id = 2L, timestamp = 20L, sender = ParticipantAddress("+15550000001")),
+                sms(id = 1L, timestamp = 10L, sender = null),
+            ),
+        )
+
+        val outcome = synchronizer(database, sms, SyncTestMmsSource()).synchronize()
+
+        assertTrue(outcome is IndexSyncOutcome.Complete)
+        val summary = requireNotNull(database.messages.conversation(1L))
+        assertEquals(1, summary.indexedParticipantCount)
+        assertTrue(summary.participantsTruncated)
+        assertEquals(listOf("+15550000001"), database.messages.participantAddresses(1L))
     }
 
     @Test
@@ -1005,6 +1050,15 @@ private class FakeIndexedMessageDao : IndexedMessageDao() {
 
     fun contains(providerKind: Int, providerId: Long): Boolean = providerKind to providerId in rows
 
+    fun conversation(providerThreadId: Long): IndexedConversationEntity? = conversations[providerThreadId]
+
+    fun participantAddresses(providerThreadId: Long): List<String> = participants.values
+        .asSequence()
+        .filter { it.providerThreadId == providerThreadId }
+        .map(IndexedConversationParticipantEntity::address)
+        .sorted()
+        .toList()
+
     fun deleteConversationsOutside(generationId: Long): Int {
         val before = conversations.size
         conversations.entries.removeAll { it.value.lastSeenGeneration != generationId }
@@ -1090,10 +1144,14 @@ private fun <T> page(
 private fun smsRange(size: Int): List<SmsProviderMessage> =
     (size.toLong() downTo 1L).map { id -> sms(id = id, timestamp = id) }
 
-private fun sms(id: Long, timestamp: Long): SmsProviderMessage = SmsProviderMessage(
+private fun sms(
+    id: Long,
+    timestamp: Long,
+    sender: ParticipantAddress? = null,
+): SmsProviderMessage = SmsProviderMessage(
     id = ProviderMessageId(ProviderKind.SMS, id),
     providerThreadId = ProviderThreadId(1L),
-    sender = null,
+    sender = sender,
     body = "sms-$id",
     direction = MessageDirection.INCOMING,
     box = MessageBox.INBOX,

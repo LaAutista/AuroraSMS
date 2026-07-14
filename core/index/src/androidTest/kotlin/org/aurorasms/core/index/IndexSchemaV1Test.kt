@@ -12,6 +12,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.aurorasms.core.index.storage.AuroraIndexDatabase
 import org.aurorasms.core.index.storage.IndexDatabaseFactory
 import org.aurorasms.core.index.storage.INDEX_MIGRATION_1_2
+import org.aurorasms.core.index.storage.INDEX_MIGRATION_2_3
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -33,7 +34,7 @@ class IndexSchemaV1Test {
         val database = IndexDatabaseFactory.createInMemory(context)
         try {
             val sqlite = database.openHelper.writableDatabase
-            assertEquals(2, sqlite.version)
+            assertEquals(3, sqlite.version)
             val tables = sqlite.stringColumn(
                 "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')",
             ).toSet()
@@ -190,9 +191,9 @@ class IndexSchemaV1Test {
                 context,
                 AuroraIndexDatabase::class.java,
                 MIGRATION_DATABASE_NAME,
-            ).addMigrations(INDEX_MIGRATION_1_2).build()
+            ).addMigrations(INDEX_MIGRATION_1_2, INDEX_MIGRATION_2_3).build()
             try {
-                assertEquals(2, database.openHelper.writableDatabase.version)
+                assertEquals(3, database.openHelper.writableDatabase.version)
             } finally {
                 database.close()
             }

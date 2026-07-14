@@ -12,12 +12,15 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import org.aurorasms.core.state.AppearanceLimit
+import org.aurorasms.core.state.AppearanceOverride
+import org.aurorasms.core.state.AppearanceOverrideRevision
 import org.aurorasms.core.state.AppearanceProfile
 import org.aurorasms.core.state.AppearanceProfileEdit
 import org.aurorasms.core.state.AppearanceProfileId
 import org.aurorasms.core.state.AppearanceProfileRepository
 import org.aurorasms.core.state.AppearanceRepositoryResult
 import org.aurorasms.core.state.AppearanceRevision
+import org.aurorasms.core.state.AppearanceScope
 import org.aurorasms.core.state.AppearanceSnapshot
 import org.aurorasms.core.state.AppearanceStorageOperation
 import org.aurorasms.core.state.MAX_APPEARANCE_PROFILE_COUNT
@@ -26,8 +29,13 @@ import org.aurorasms.core.state.NewAppearanceProfile
 class RoomAppearanceProfileRepository internal constructor(
     private val database: AuroraStateDatabase,
     private val dao: AppearanceProfileDao,
+    private val overrideDao: AppearanceOverrideDao,
 ) : AppearanceProfileRepository {
-    constructor(database: AuroraStateDatabase) : this(database, database.appearanceProfileDao())
+    constructor(database: AuroraStateDatabase) : this(
+        database,
+        database.appearanceProfileDao(),
+        database.appearanceOverrideDao(),
+    )
 
     override val snapshots: Flow<AppearanceSnapshot> = dao.observeSelection()
         .map { loadSnapshotFailClosed() }
@@ -45,6 +53,68 @@ class RoomAppearanceProfileRepository internal constructor(
                 else -> throw failure
             }
         }
+
+    override fun observeOverride(scope: AppearanceScope): Flow<AppearanceOverride?> {
+        val stored = when (scope) {
+            is AppearanceScope.Screen -> overrideDao
+                .observeScreenOverride(scope.screen.storageCode)
+                .map { entity -> entity?.toDomainOrCorrupt() }
+            is AppearanceScope.Conversation -> overrideDao
+                .observeConversationOverride(scope.participantSetKey.toStorageValue())
+                .map { entity -> entity?.toDomainOrCorrupt(scope) }
+        }
+        return stored
+            .distinctUntilChanged()
+            .catch { failure ->
+                if (failure is CancellationException) throw failure
+                when (failure) {
+                    is SQLiteException,
+                    is SecurityException,
+                    is IllegalArgumentException,
+                    is IllegalStateException,
+                    is CorruptAppearanceStateException,
+                    -> emit(null)
+                    else -> throw failure
+                }
+            }
+    }
+
+    override suspend fun setOverride(
+        scope: AppearanceScope,
+        profileId: AppearanceProfileId,
+        expectedRevision: AppearanceOverrideRevision?,
+    ): AppearanceRepositoryResult<AppearanceOverride> = mutate(AppearanceStorageOperation.SET_OVERRIDE) {
+        database.withTransaction {
+            val revisionSequence = loadValidatedOverrideSequence()
+            when (scope) {
+                is AppearanceScope.Screen -> setScreenOverride(
+                    scope = scope,
+                    profileId = profileId,
+                    expectedRevision = expectedRevision,
+                    revisionSequence = revisionSequence,
+                )
+                is AppearanceScope.Conversation -> setConversationOverride(
+                    scope = scope,
+                    profileId = profileId,
+                    expectedRevision = expectedRevision,
+                    revisionSequence = revisionSequence,
+                )
+            }
+        }
+    }
+
+    override suspend fun resetOverride(
+        scope: AppearanceScope,
+        expectedRevision: AppearanceOverrideRevision?,
+    ): AppearanceRepositoryResult<Unit> = mutate(AppearanceStorageOperation.RESET_OVERRIDE) {
+        database.withTransaction {
+            loadValidatedOverrideSequence()
+            when (scope) {
+                is AppearanceScope.Screen -> resetScreenOverride(scope, expectedRevision)
+                is AppearanceScope.Conversation -> resetConversationOverride(scope, expectedRevision)
+            }
+        }
+    }
 
     override suspend fun create(
         profile: NewAppearanceProfile,
@@ -146,6 +216,178 @@ class RoomAppearanceProfileRepository internal constructor(
         }
     }
 
+    private suspend fun loadValidatedOverrideSequence(): AppearanceOverrideSequenceEntity {
+        if (overrideDao.revisionSequenceCount() != 1) throw CorruptAppearanceStateException()
+        val sequence = overrideDao.loadRevisionSequence() ?: throw CorruptAppearanceStateException()
+        if (
+            sequence.singletonId != APPEARANCE_OVERRIDE_SEQUENCE_SINGLETON_ID ||
+            sequence.lastAllocatedRevision < INITIAL_APPEARANCE_OVERRIDE_SEQUENCE ||
+            sequence.lastAllocatedRevision < (overrideDao.maximumStoredOverrideRevision() ?: 0L)
+        ) {
+            throw CorruptAppearanceStateException()
+        }
+        return sequence
+    }
+
+    private suspend fun allocateNextOverrideRevision(
+        sequence: AppearanceOverrideSequenceEntity,
+    ): AppearanceOverrideRevision {
+        if (sequence.lastAllocatedRevision == Long.MAX_VALUE) {
+            throw CorruptAppearanceStateException()
+        }
+        val nextRevision = sequence.lastAllocatedRevision + 1L
+        if (
+            overrideDao.updateRevisionSequenceIfUnchanged(
+                expectedRevision = sequence.lastAllocatedRevision,
+                newRevision = nextRevision,
+            ) != 1
+        ) {
+            throw CorruptAppearanceStateException()
+        }
+        return AppearanceOverrideRevision(nextRevision)
+    }
+
+    private suspend fun setScreenOverride(
+        scope: AppearanceScope.Screen,
+        profileId: AppearanceProfileId,
+        expectedRevision: AppearanceOverrideRevision?,
+        revisionSequence: AppearanceOverrideSequenceEntity,
+    ): AppearanceRepositoryResult<AppearanceOverride> {
+        val currentEntity = overrideDao.findScreenOverride(scope.screen.storageCode)
+        val current = currentEntity?.toDomainOrCorrupt()
+        if (!current.matchesExpected(expectedRevision)) {
+            return AppearanceRepositoryResult.StaleWrite
+        }
+        val target = dao.findProfile(profileId.value) ?: return AppearanceRepositoryResult.NotFound
+        target.toDomainOrCorrupt()
+
+        if (currentEntity == null) {
+            val revision = allocateNextOverrideRevision(revisionSequence)
+            val created = AppearanceScreenOverrideEntity(
+                screenCode = scope.screen.storageCode,
+                profileId = profileId.value,
+                revision = revision.value,
+            )
+            overrideDao.insertScreenOverride(created)
+            return AppearanceRepositoryResult.Success(created.toDomainOrCorrupt())
+        }
+        if (currentEntity.profileId == profileId.value) {
+            return AppearanceRepositoryResult.Success(checkNotNull(current))
+        }
+        if (currentEntity.revision == Long.MAX_VALUE) throw CorruptAppearanceStateException()
+        val revision = allocateNextOverrideRevision(revisionSequence)
+        val updated = currentEntity.copy(
+            profileId = profileId.value,
+            revision = revision.value,
+        )
+        if (
+            overrideDao.updateScreenOverrideIfRevision(
+                screenCode = updated.screenCode,
+                profileId = updated.profileId,
+                newRevision = updated.revision,
+                expectedRevision = currentEntity.revision,
+            ) != 1
+        ) {
+            throw CorruptAppearanceStateException()
+        }
+        return AppearanceRepositoryResult.Success(updated.toDomainOrCorrupt())
+    }
+
+    private suspend fun setConversationOverride(
+        scope: AppearanceScope.Conversation,
+        profileId: AppearanceProfileId,
+        expectedRevision: AppearanceOverrideRevision?,
+        revisionSequence: AppearanceOverrideSequenceEntity,
+    ): AppearanceRepositoryResult<AppearanceOverride> {
+        val participantSetKey = scope.participantSetKey.toStorageValue()
+        val currentEntity = overrideDao.findConversationOverride(participantSetKey)
+        val current = currentEntity?.toDomainOrCorrupt(scope)
+        if (!current.matchesExpected(expectedRevision)) {
+            return AppearanceRepositoryResult.StaleWrite
+        }
+        val target = dao.findProfile(profileId.value) ?: return AppearanceRepositoryResult.NotFound
+        target.toDomainOrCorrupt()
+
+        if (currentEntity == null) {
+            val revision = allocateNextOverrideRevision(revisionSequence)
+            val created = AppearanceConversationOverrideEntity(
+                participantSetKey = participantSetKey,
+                providerThreadId = scope.providerThreadId.value,
+                profileId = profileId.value,
+                revision = revision.value,
+            )
+            overrideDao.insertConversationOverride(created)
+            return AppearanceRepositoryResult.Success(created.toDomainOrCorrupt(scope))
+        }
+        if (
+            currentEntity.profileId == profileId.value &&
+            currentEntity.providerThreadId == scope.providerThreadId.value
+        ) {
+            return AppearanceRepositoryResult.Success(checkNotNull(current))
+        }
+        if (currentEntity.revision == Long.MAX_VALUE) throw CorruptAppearanceStateException()
+        val revision = allocateNextOverrideRevision(revisionSequence)
+        val updated = currentEntity.copy(
+            providerThreadId = scope.providerThreadId.value,
+            profileId = profileId.value,
+            revision = revision.value,
+        )
+        if (
+            overrideDao.updateConversationOverrideIfRevision(
+                participantSetKey = updated.participantSetKey,
+                providerThreadId = updated.providerThreadId,
+                profileId = updated.profileId,
+                newRevision = updated.revision,
+                expectedRevision = currentEntity.revision,
+            ) != 1
+        ) {
+            throw CorruptAppearanceStateException()
+        }
+        return AppearanceRepositoryResult.Success(updated.toDomainOrCorrupt(scope))
+    }
+
+    private suspend fun resetScreenOverride(
+        scope: AppearanceScope.Screen,
+        expectedRevision: AppearanceOverrideRevision?,
+    ): AppearanceRepositoryResult<Unit> {
+        val current = overrideDao.findScreenOverride(scope.screen.storageCode)?.toDomainOrCorrupt()
+        if (!current.matchesExpected(expectedRevision)) {
+            return AppearanceRepositoryResult.StaleWrite
+        }
+        if (current == null) return AppearanceRepositoryResult.Success(Unit)
+        if (
+            overrideDao.deleteScreenOverrideIfRevision(
+                screenCode = scope.screen.storageCode,
+                expectedRevision = current.revision.value,
+            ) != 1
+        ) {
+            throw CorruptAppearanceStateException()
+        }
+        return AppearanceRepositoryResult.Success(Unit)
+    }
+
+    private suspend fun resetConversationOverride(
+        scope: AppearanceScope.Conversation,
+        expectedRevision: AppearanceOverrideRevision?,
+    ): AppearanceRepositoryResult<Unit> {
+        val participantSetKey = scope.participantSetKey.toStorageValue()
+        val current = overrideDao.findConversationOverride(participantSetKey)
+            ?.toDomainOrCorrupt(scope)
+        if (!current.matchesExpected(expectedRevision)) {
+            return AppearanceRepositoryResult.StaleWrite
+        }
+        if (current == null) return AppearanceRepositoryResult.Success(Unit)
+        if (
+            overrideDao.deleteConversationOverrideIfRevision(
+                participantSetKey = participantSetKey,
+                expectedRevision = current.revision.value,
+            ) != 1
+        ) {
+            throw CorruptAppearanceStateException()
+        }
+        return AppearanceRepositoryResult.Success(Unit)
+    }
+
     private suspend fun loadSnapshotFailClosed(): AppearanceSnapshot = try {
         database.withTransaction { loadValidatedSnapshot() }
     } catch (cancellation: CancellationException) {
@@ -209,6 +451,24 @@ class RoomAppearanceProfileRepository internal constructor(
         throw CorruptAppearanceStateException()
     }
 
+    private fun AppearanceScreenOverrideEntity.toDomainOrCorrupt(): AppearanceOverride = try {
+        toDomain()
+    } catch (_: IllegalArgumentException) {
+        throw CorruptAppearanceStateException()
+    } catch (_: IllegalStateException) {
+        throw CorruptAppearanceStateException()
+    }
+
+    private fun AppearanceConversationOverrideEntity.toDomainOrCorrupt(
+        requestedScope: AppearanceScope.Conversation? = null,
+    ): AppearanceOverride = try {
+        toDomain(requestedScope)
+    } catch (_: IllegalArgumentException) {
+        throw CorruptAppearanceStateException()
+    } catch (_: IllegalStateException) {
+        throw CorruptAppearanceStateException()
+    }
+
     private suspend fun <T> mutate(
         operation: AppearanceStorageOperation,
         block: suspend () -> AppearanceRepositoryResult<T>,
@@ -222,6 +482,8 @@ class RoomAppearanceProfileRepository internal constructor(
         AppearanceRepositoryResult.StorageFailure(operation)
     } catch (_: SecurityException) {
         AppearanceRepositoryResult.StorageFailure(operation)
+    } catch (_: IllegalArgumentException) {
+        AppearanceRepositoryResult.CorruptData
     } catch (_: IllegalStateException) {
         AppearanceRepositoryResult.StorageFailure(operation)
     } catch (_: CorruptAppearanceStateException) {
@@ -252,5 +514,12 @@ private suspend fun AppearanceProfileDao.updateEntityIfRevision(
     updatedTimestampMillis = entity.updatedTimestampMillis,
     expectedRevision = expectedRevision,
 )
+
+private fun AppearanceOverride?.matchesExpected(
+    expectedRevision: AppearanceOverrideRevision?,
+): Boolean = when (this) {
+    null -> expectedRevision == null
+    else -> revision == expectedRevision
+}
 
 private class CorruptAppearanceStateException : RuntimeException()

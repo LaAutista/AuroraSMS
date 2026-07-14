@@ -2,7 +2,9 @@
 
 Status: Phase 1 resolved; Phase 2 Room/KSP and Phase 3 benchmark/profile
 admissions reviewed; Phase 4 AuroraMaterial foundation and bounded durable
-active-profile/Theme Studio slice reuse the admitted graph, 2026-07-14
+active-profile/Theme Studio slice reuse the admitted graph; the scoped
+profile-reference foundation reused the same graph and passed its resolved,
+license/SBOM, manifest, and packaged-output checks, 2026-07-14
 
 AuroraSMS prefers small original implementations and Android platform APIs.
 Dependencies are admitted only when they provide a necessary, maintained,
@@ -91,6 +93,7 @@ resolved transitive graph are reviewed before merge.
 | `androidx.test:runner` | 1.7.0 | Android test only | Apache-2.0 | Instrumentation runner |
 | `androidx.test:rules` | 1.7.0 | Android test only | Apache-2.0 | Receiver/service/activity contracts |
 | `androidx.test.ext:junit` / `junit-ktx` | 1.3.0 | Android test only | Apache-2.0 | Android JUnit integration |
+| `androidx.test.espresso:espresso-core` | 3.5.0 | Android test only | Apache-2.0 | Dialog-window Back behavior; already resolved transitively by Compose UI test and now exposed only to instrumentation source |
 | `androidx.compose.ui:ui-test-junit4` | BOM | Android test only | Apache-2.0 | Diagnostic Compose behavior |
 
 No icon-pack artifact is approved; AuroraSMS uses small original vector assets.
@@ -243,7 +246,7 @@ release/benchmark ProfileInstaller dependencies, and associated manifest
 exceptions; product message/index data remains compatible because the benchmark
 database is synthetic and disposable.
 
-## Phase 4 AuroraMaterial and active-profile reuse
+## Phase 4 AuroraMaterial, active-profile reuse, and scoped-reference constraint
 
 The initial `:core:designsystem` module introduces no new external coordinate
 or version. It directly declares the already admitted Kotlin stdlib,
@@ -269,10 +272,32 @@ production manifest component, permission, initializer, native binary, or
 network path. DataStore is not added and does not share ownership of appearance
 state.
 
-Instrumentation uses one non-exported Activity in the debug source set to host
-Theme Studio without acquiring the default-SMS role. It adds no coordinate and
-must be absent from release and benchmark manifests/APKs; it is not a production
-navigation or component dependency.
+The implemented durable scoped-profile-reference foundation migrates that same
+state database from version 2 to version 3, exposes target-specific Room flows,
+adds a durable monotonic assignment-revision singleton, and adds an app-owned
+Compose modal. It reuses the exact admitted Room/KSP, Kotlin, coroutine, and
+Compose coordinates. Its versioned participant-set fingerprint uses platform
+`java.security.MessageDigest` SHA-256 and adds no cryptography, normalization,
+or hashing dependency. No DataStore owner, Navigation Compose artifact,
+media/image/GIF library, picker helper, or other coordinate is admitted by ADR
+0006.
+
+The scoped modal's Android test uses Espresso's root-level Back action. The app
+therefore declares `androidx.test.espresso:espresso-core:3.5.0` directly in
+`androidTestImplementation`, using a version-catalog alias. The exact artifact,
+version, and transitives were already present in the resolved Android-test
+runtime through the admitted Compose test graph; the lockfile changes only add
+those existing artifacts to the Android-test compile classpath. This declaration
+adds no resolved artifact/version, repository, checksum, license/SBOM component,
+production coordinate, runtime class, manifest component, or APK content. The
+final dependency, lock, license/SBOM, manifest, and APK-content gates passed.
+
+Instrumentation uses two non-exported Activities in the debug source set: the
+existing Theme Studio host and the scoped-assignment modal host. They exercise
+synthetic Compose state without acquiring the default-SMS role, add no
+coordinate, and must be absent from release and benchmark manifests/APKs. The
+slice adds no production Activity, navigation destination, or component
+dependency.
 
 Image/GIF loading, Navigation Compose, DataStore, icon packs, fonts, and remote
 theme/media SDKs remain unapproved. Artwork remains outside dependency policy

@@ -110,8 +110,11 @@ import org.aurorasms.core.state.AppearanceProfile
 import org.aurorasms.core.state.AppearanceProfileEdit
 import org.aurorasms.core.state.AppearanceProfileId
 import org.aurorasms.core.state.AppearanceProfileRepository
+import org.aurorasms.core.state.AppearanceOverride
+import org.aurorasms.core.state.AppearanceOverrideRevision
 import org.aurorasms.core.state.AppearanceRepositoryResult
 import org.aurorasms.core.state.AppearanceRevision
+import org.aurorasms.core.state.AppearanceScope
 import org.aurorasms.core.state.AppearanceSnapshot
 import org.aurorasms.core.state.AppearanceStorageOperation
 import org.aurorasms.core.state.Draft
@@ -614,6 +617,21 @@ private object EmptyBenchmarkAppearanceProfileRepository : AppearanceProfileRepo
         expectedRevision: AppearanceRevision,
     ): AppearanceRepositoryResult<Unit> =
         AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.DELETE)
+
+    override fun observeOverride(scope: AppearanceScope): Flow<AppearanceOverride?> = flowOf(null)
+
+    override suspend fun setOverride(
+        scope: AppearanceScope,
+        profileId: AppearanceProfileId,
+        expectedRevision: AppearanceOverrideRevision?,
+    ): AppearanceRepositoryResult<AppearanceOverride> =
+        AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.SET_OVERRIDE)
+
+    override suspend fun resetOverride(
+        scope: AppearanceScope,
+        expectedRevision: AppearanceOverrideRevision?,
+    ): AppearanceRepositoryResult<Unit> =
+        AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.RESET_OVERRIDE)
 }
 
 sealed interface IndexStorageStatus {
@@ -777,6 +795,34 @@ private class DeferredAppearanceProfileRepository(
         runtimeState.awaitReadyAppearanceProfileRepository()
             ?.delete(id, expectedRevision)
             ?: AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.DELETE)
+
+    override fun observeOverride(scope: AppearanceScope): Flow<AppearanceOverride?> = runtimeState
+        .flatMapLatest { state ->
+            when (state) {
+                is StateRuntimeState.Ready -> state.appearanceProfileRepository.observeOverride(scope)
+                StateRuntimeState.Opening,
+                is StateRuntimeState.Failed,
+                -> emptyFlow()
+            }
+        }
+        .conflate()
+
+    override suspend fun setOverride(
+        scope: AppearanceScope,
+        profileId: AppearanceProfileId,
+        expectedRevision: AppearanceOverrideRevision?,
+    ): AppearanceRepositoryResult<AppearanceOverride> =
+        runtimeState.awaitReadyAppearanceProfileRepository()
+            ?.setOverride(scope, profileId, expectedRevision)
+            ?: AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.SET_OVERRIDE)
+
+    override suspend fun resetOverride(
+        scope: AppearanceScope,
+        expectedRevision: AppearanceOverrideRevision?,
+    ): AppearanceRepositoryResult<Unit> =
+        runtimeState.awaitReadyAppearanceProfileRepository()
+            ?.resetOverride(scope, expectedRevision)
+            ?: AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.RESET_OVERRIDE)
 
     override fun toString(): String = "DeferredAppearanceProfileRepository(content=REDACTED)"
 }

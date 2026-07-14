@@ -17,7 +17,7 @@ object IndexProjectionMapper {
     ): IndexedProviderProjection = IndexedProviderProjection(
         message = fromSms(message, generationId),
         participantAddresses = listOfNotNull(message.sender?.value),
-        participantsTruncated = false,
+        participantsTruncated = message.sender == null,
     )
 
     fun fromSms(
@@ -104,6 +104,7 @@ object IndexProjectionMapper {
             message = fromMms(message, generationId),
             participantAddresses = allParticipants.take(MAXIMUM_INDEXED_CONVERSATION_PARTICIPANTS),
             participantsTruncated = message.participantsTruncated ||
+                allParticipants.isEmpty() ||
                 allParticipants.size > MAXIMUM_INDEXED_CONVERSATION_PARTICIPANTS,
         )
     }

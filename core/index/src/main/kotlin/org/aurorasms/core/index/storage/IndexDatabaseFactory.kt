@@ -21,7 +21,7 @@ object IndexDatabaseFactory {
         AuroraIndexDatabase::class.java,
         DATABASE_NAME,
     ).openHelperFactory(ControlledIndexOpenHelperFactory)
-        .addMigrations(INDEX_MIGRATION_1_2)
+        .addMigrations(INDEX_MIGRATION_1_2, INDEX_MIGRATION_2_3)
         .addCallback(IndexFtsTriggerPolicy.callback)
         .build()
 

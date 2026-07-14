@@ -76,10 +76,32 @@ Version `0.4.1-phase4` passed the complete offline host, lint, release,
 benchmark, clean-room, permission, APK-content, license/SBOM, API 36 emulator,
 and privacy-safe Pixel 8 persistence gates recorded in `docs/TEST_MATRIX.md`.
 
-Screen/conversation overrides, import/export, navigation variants, wallpapers,
-GIF lifecycle, full accessibility/performance coverage, and approved canonical
-artwork remain Phase 4 follow-on gates. Artwork is still blocked on the exact
-written publication/derivative/distribution terms in
+The `0.4.2-phase4` durable scoped-profile-reference slice passed its host,
+governance, emulator, and physical install/copy/cold-launch gates. The real
+`AuroraSmsRoot` route-state journey and a physical real-modal focus smoke remain
+explicit follow-up checks:
+
+- an explicit non-destructive version-2-to-version-3 state migration stores
+  references from eligible screens and verified conversations to existing named
+  profiles, never copied profile tokens or raw participant addresses;
+- a durable globally monotonic assignment-revision sequence prevents stale
+  delete/recreate ABA writes, while target-specific Room flows keep observation
+  bounded;
+- Inbox and global conversation defaults are route-local modals, and Thread
+  exposes conversation appearance only for a verified complete identity;
+- the private restoration token is validated against the current target,
+  mutation controls wait for both the durable profile snapshot and the exact
+  target-assignment query after process load, and no production Activity is
+  added; and
+- the core fingerprint contract accepts 1 through 100 participants, while the
+  current `ConversationSummary` preview safely limits UI assignment to verified
+  sets of at most 8. Larger indexed conversations inherit global defaults until
+  a bounded full-identity query is added.
+
+Assignment-local focal/dim controls, import/export, navigation variants,
+wallpapers, GIF lifecycle, full accessibility/performance coverage, and
+approved canonical artwork remain Phase 4 follow-on gates. Artwork is still
+blocked on the exact written publication/derivative/distribution terms in
 `docs/ARTWORK_CATALOG.md`.
 
 Phase 3 does not change the existing carrier MMS limitations. Earlier Phase

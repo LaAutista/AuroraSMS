@@ -75,4 +75,23 @@
     <string name="appearance_delete_failed">The saved profile could not be deleted.</string>
     <string name="appearance_stale_profile">This profile changed elsewhere. Reload it before applying.</string>
     <string name="appearance_duplicate_name">A saved profile already uses that name.</string>
+    <string name="appearance_scope_inbox_title">Inbox appearance</string>
+    <string name="appearance_scope_global_threads_title">Conversation defaults</string>
+    <string name="appearance_scope_conversation_title">Conversation appearance</string>
+    <string name="appearance_scope_explanation">This changes appearance only. Messages, drafts, and sending are unaffected.</string>
+    <string name="appearance_scope_profile">Profile</string>
+    <string name="appearance_scope_use_inherited">Use inherited appearance</string>
+    <string name="appearance_scope_inherited_state">Inherited: %1$s</string>
+    <string name="appearance_scope_override_state">Override: %1$s</string>
+    <string name="appearance_scope_preview_description">Synthetic scoped appearance preview</string>
+    <string name="appearance_scope_preview_title">Appearance preview</string>
+    <string name="appearance_scope_preview_incoming">Incoming preview</string>
+    <string name="appearance_scope_preview_outgoing">Outgoing preview</string>
+    <string name="appearance_scope_reset">Reset to inherited</string>
+    <string name="appearance_scope_applying">Applying appearance…</string>
+    <string name="appearance_scope_save_failed">This appearance assignment could not be saved.</string>
+    <string name="appearance_scope_stale">This assignment changed elsewhere. Close and reopen it before applying.</string>
+    <string name="appearance_scope_profile_missing">That saved profile is no longer available.</string>
+    <string name="appearance_scope_profile_unavailable">Saved profile unavailable</string>
+    <string name="appearance_scope_profiles_loading">Loading appearance…</string>
 </resources>

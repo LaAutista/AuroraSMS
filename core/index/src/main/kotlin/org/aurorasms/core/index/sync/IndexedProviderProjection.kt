@@ -28,7 +28,9 @@ data class IndexedProviderProjection(
         fun fromMessageOnly(message: IndexedMessageEntity): IndexedProviderProjection = IndexedProviderProjection(
             message = message,
             participantAddresses = listOfNotNull(message.senderAddress),
-            participantsTruncated = false,
+            // This compatibility path has no bounded participant projection,
+            // so it must never claim that conversation identity is complete.
+            participantsTruncated = true,
         )
     }
 }

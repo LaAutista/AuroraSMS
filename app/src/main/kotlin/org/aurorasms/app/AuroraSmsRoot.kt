@@ -20,10 +20,17 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.flowOf
+import org.aurorasms.app.appearance.AppAppearanceOverrideObservation
 import org.aurorasms.app.appearance.AppAppearanceState
 import org.aurorasms.app.appearance.AppearanceController
+import org.aurorasms.app.appearance.ScopedAppearanceDialog
+import org.aurorasms.app.appearance.ScopedAppearanceKind
 import org.aurorasms.app.appearance.ThemeStudioRoute
+import org.aurorasms.app.appearance.profileFor
+import org.aurorasms.app.appearance.profileNameFor
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.DraftWriteStatus
 import org.aurorasms.core.index.SearchAnchor
@@ -38,6 +45,9 @@ import org.aurorasms.core.model.asProviderThreadId
 import org.aurorasms.core.designsystem.AuroraMaterialProfile
 import org.aurorasms.core.designsystem.AuroraMaterialTheme
 import org.aurorasms.core.state.DraftIdentity
+import org.aurorasms.core.state.AppearanceParticipantSetKey
+import org.aurorasms.core.state.AppearanceScope
+import org.aurorasms.core.state.AppearanceScreenScope
 import org.aurorasms.feature.conversations.ComposerUiState
 import org.aurorasms.feature.conversations.InboxScreen
 import org.aurorasms.feature.conversations.InboxStateHolder
@@ -74,6 +84,7 @@ internal fun AuroraSmsRoot(
     }
     var inboxDrawReported by rememberSaveable { mutableStateOf(false) }
     var previewProfile by remember { mutableStateOf<AuroraMaterialProfile?>(null) }
+    var scopedEditorDismissalGeneration by rememberSaveable { mutableStateOf(0L) }
     val saveableScreens = rememberSaveableStateHolder()
     val route = routes.last()
     val context = LocalContext.current
@@ -93,6 +104,10 @@ internal fun AuroraSmsRoot(
 
     LaunchedEffect(pendingConversationId) {
         val pending = pendingConversationId ?: return@LaunchedEffect
+        val currentThread = route as? AppRoute.Thread
+        if (currentThread?.providerThreadId != pending.asProviderThreadId()) {
+            scopedEditorDismissalGeneration += 1L
+        }
         if (route == AppRoute.Appearance) {
             previewProfile = null
             saveableScreens.removeState(AppRoute.Appearance.saveableScreenKey())
@@ -113,11 +128,19 @@ internal fun AuroraSmsRoot(
         pop()
     }
 
-    AuroraMaterialTheme(profile = previewProfile ?: appearance.activeProfile) {
+    val rootProfile = if (route == AppRoute.Appearance) {
+        previewProfile ?: appearance.activeProfile
+    } else {
+        appearance.activeProfile
+    }
+    AuroraMaterialTheme(profile = rootProfile) {
         saveableScreens.SaveableStateProvider(route.saveableScreenKey()) {
             when (route) {
             AppRoute.Inbox -> InboxRoute(
                 container = container,
+                appearance = appearance,
+                appearanceController = appearanceController,
+                scopedEditorDismissalGeneration = scopedEditorDismissalGeneration,
                 diagnosticsAvailable = diagnosticsAvailable,
                 contactsPermissionGranted = contactsPermissionGranted,
                 onOpenConversation = {
@@ -166,6 +189,9 @@ internal fun AuroraSmsRoot(
             )
             is AppRoute.Thread -> ThreadRoute(
                 container = container,
+                appearance = appearance,
+                appearanceController = appearanceController,
+                scopedEditorDismissalGeneration = scopedEditorDismissalGeneration,
                 route = route,
                 context = context,
                 onOpenSearch = { push(AppRoute.Search()) },
@@ -179,6 +205,9 @@ internal fun AuroraSmsRoot(
 @Composable
 private fun InboxRoute(
     container: AppContainer,
+    appearance: AppAppearanceState,
+    appearanceController: AppearanceController,
+    scopedEditorDismissalGeneration: Long,
     diagnosticsAvailable: Boolean,
     contactsPermissionGranted: Boolean,
     onOpenConversation: (ProviderThreadId) -> Unit,
@@ -204,22 +233,93 @@ private fun InboxRoute(
             onReady()
         }
     }
-    InboxScreen(
-        state = state,
-        diagnosticsAvailable = diagnosticsAvailable,
-        contactsPermissionGranted = contactsPermissionGranted,
-        onOpenConversation = onOpenConversation,
-        onOpenSearch = onOpenSearch,
-        onOpenAppearance = onOpenAppearance,
-        onOpenDiagnostics = onOpenDiagnostics,
-        onRequestContactsPermission = onRequestContactsPermission,
-        onRetry = holder::reload,
-        onLoadOlder = holder::loadOlder,
-        onAtNewestChanged = holder::markUserAtNewest,
-        onAcceptPending = holder::acceptPendingNewer,
-        onViewportChanged = holder::onViewportChanged,
-        onAnchorRestored = holder::anchorRestored,
+    val inboxScope = remember { AppearanceScope.Screen(AppearanceScreenScope.INBOX) }
+    val globalThreadScope = remember { AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD) }
+    val inboxOverrideObservation by remember(appearanceController, inboxScope) {
+        appearanceController.observeOverride(inboxScope)
+    }.collectAsStateWithLifecycle(
+        initialValue = AppAppearanceOverrideObservation.loading(inboxScope),
     )
+    val globalThreadOverrideObservation by remember(appearanceController, globalThreadScope) {
+        appearanceController.observeOverride(globalThreadScope)
+    }.collectAsStateWithLifecycle(
+        initialValue = AppAppearanceOverrideObservation.loading(globalThreadScope),
+    )
+    val inboxOverride = inboxOverrideObservation.overrideFor(inboxScope)
+    val globalThreadOverride = globalThreadOverrideObservation.overrideFor(globalThreadScope)
+    var editorScopeCode by rememberSaveable { mutableStateOf<String?>(null) }
+    var observedDismissalGeneration by rememberSaveable {
+        mutableStateOf(scopedEditorDismissalGeneration)
+    }
+    LaunchedEffect(scopedEditorDismissalGeneration) {
+        if (shouldDismissScopedEditor(observedDismissalGeneration, scopedEditorDismissalGeneration)) {
+            editorScopeCode = null
+            observedDismissalGeneration = scopedEditorDismissalGeneration
+        }
+    }
+    val editorScope = when (editorScopeCode) {
+        AppearanceScreenScope.INBOX.storageCode -> inboxScope
+        AppearanceScreenScope.GLOBAL_THREAD.storageCode -> globalThreadScope
+        else -> null
+    }
+    val canonicalName = stringResource(R.string.appearance_default_profile)
+    val activeName = appearance.activeProfileName(canonicalName)
+    val inboxProfile = appearance.profileFor(inboxOverride, appearance.activeProfile)
+
+    AuroraMaterialTheme(profile = inboxProfile) {
+        InboxScreen(
+            state = state,
+            diagnosticsAvailable = diagnosticsAvailable,
+            contactsPermissionGranted = contactsPermissionGranted,
+            onOpenConversation = onOpenConversation,
+            onOpenSearch = onOpenSearch,
+            onOpenAppearance = onOpenAppearance,
+            onOpenInboxAppearance = { editorScopeCode = AppearanceScreenScope.INBOX.storageCode },
+            onOpenConversationDefaults = {
+                editorScopeCode = AppearanceScreenScope.GLOBAL_THREAD.storageCode
+            },
+            onOpenDiagnostics = onOpenDiagnostics,
+            onRequestContactsPermission = onRequestContactsPermission,
+            onRetry = holder::reload,
+            onLoadOlder = holder::loadOlder,
+            onAtNewestChanged = holder::markUserAtNewest,
+            onAcceptPending = holder::acceptPendingNewer,
+            onViewportChanged = holder::onViewportChanged,
+            onAnchorRestored = holder::anchorRestored,
+        )
+        editorScope?.let { target ->
+            val currentObservation = when (target.screen) {
+                AppearanceScreenScope.INBOX -> inboxOverrideObservation
+                AppearanceScreenScope.GLOBAL_THREAD -> globalThreadOverrideObservation
+                AppearanceScreenScope.ARCHIVE,
+                AppearanceScreenScope.SETTINGS,
+                AppearanceScreenScope.SPAM_BLOCKED,
+                -> AppAppearanceOverrideObservation.unavailable()
+            }
+            val currentOverride = currentObservation.overrideFor(target)
+            ScopedAppearanceDialog(
+                kind = when (target.screen) {
+                    AppearanceScreenScope.INBOX -> ScopedAppearanceKind.INBOX
+                    AppearanceScreenScope.GLOBAL_THREAD -> ScopedAppearanceKind.GLOBAL_THREADS
+                    AppearanceScreenScope.ARCHIVE,
+                    AppearanceScreenScope.SETTINGS,
+                    AppearanceScreenScope.SPAM_BLOCKED,
+                    -> return@let
+                },
+                privateRestorationKey = target.privateScopedAppearanceRestorationKey(),
+                profiles = appearance.profiles,
+                profileSnapshotReady = appearance.profileSnapshotReady,
+                overrideSnapshotReady = currentObservation.isReadyFor(target),
+                inheritedProfile = appearance.activeProfile,
+                inheritedName = activeName,
+                currentOverride = currentOverride,
+                onApply = { profileId, expectedRevision ->
+                    appearanceController.applyOverride(target, profileId, expectedRevision)
+                },
+                onDismiss = { editorScopeCode = null },
+            )
+        }
+    }
 }
 
 @Composable
@@ -268,6 +368,9 @@ private fun SearchRoute(
 @Composable
 private fun ThreadRoute(
     container: AppContainer,
+    appearance: AppAppearanceState,
+    appearanceController: AppearanceController,
+    scopedEditorDismissalGeneration: Long,
     route: AppRoute.Thread,
     context: Context,
     onOpenSearch: () -> Unit,
@@ -316,29 +419,134 @@ private fun ThreadRoute(
         }
     }
     val composer = draftStatus.toComposerUiState(savedBody.orEmpty())
-
-    ThreadScreen(
-        state = threadState,
-        composer = composer,
-        attachmentRepository = container.mmsAttachmentRepository,
-        previewLoader = container.previewLoader,
-        onBack = onBack,
-        onOpenSearch = onOpenSearch,
-        isDialable = ::isConservativeDialAddress,
-        onDial = { address -> launchSystemDialer(context, address) },
-        onRetry = holder::loadLatest,
-        onLoadOlder = holder::loadOlder,
-        onLoadNewer = holder::loadNewer,
-        onAtNewestChanged = holder::markUserAtNewest,
-        onAcceptPending = holder::acceptPendingNewer,
-        onViewportChanged = holder::onViewportChanged,
-        onAnchorRestored = holder::anchorRestored,
-        onToggleMessageExpansion = holder::toggleMessageExpansion,
-        onDraftChanged = { body ->
-            val content = DraftEditorContent(body = body.takeIf(String::isNotEmpty), subject = null)
-            if (writer.submit(content)) savedBody = body
-        },
+    val globalThreadScope = remember { AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD) }
+    val globalThreadOverrideObservation by remember(appearanceController, globalThreadScope) {
+        appearanceController.observeOverride(globalThreadScope)
+    }.collectAsStateWithLifecycle(
+        initialValue = AppAppearanceOverrideObservation.loading(globalThreadScope),
     )
+    val globalThreadOverride = globalThreadOverrideObservation.overrideFor(globalThreadScope)
+    val conversationScope = remember(route.providerThreadId, threadState) {
+        trustedConversationAppearanceScope(route.providerThreadId, threadState)
+    }
+    val canonicalName = stringResource(R.string.appearance_default_profile)
+    val activeName = appearance.activeProfileName(canonicalName)
+    val globalThreadProfile = appearance.profileFor(globalThreadOverride, appearance.activeProfile)
+    val globalThreadName = appearance.profileNameFor(globalThreadOverride, activeName)
+    val conversationOverrideFlow = remember(appearanceController, conversationScope) {
+        conversationScope?.let(appearanceController::observeOverride)
+            ?: flowOf(AppAppearanceOverrideObservation.unavailable())
+    }
+    val conversationOverrideObservation by conversationOverrideFlow.collectAsStateWithLifecycle(
+        initialValue = conversationScope
+            ?.let(AppAppearanceOverrideObservation::loading)
+            ?: AppAppearanceOverrideObservation.unavailable(),
+    )
+    val conversationOverride = conversationScope?.let(conversationOverrideObservation::overrideFor)
+    val conversationOverrideReady = conversationScope?.let(
+        conversationOverrideObservation::isReadyFor,
+    ) == true
+    val privateRestorationKey = conversationScope?.privateScopedAppearanceRestorationKey()
+    var openEditorTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    val appearanceEditorOpen = privateRestorationKey != null && openEditorTarget == privateRestorationKey
+    var observedDismissalGeneration by rememberSaveable(privateRestorationKey) {
+        mutableStateOf(scopedEditorDismissalGeneration)
+    }
+    LaunchedEffect(scopedEditorDismissalGeneration) {
+        if (shouldDismissScopedEditor(observedDismissalGeneration, scopedEditorDismissalGeneration)) {
+            openEditorTarget = null
+            observedDismissalGeneration = scopedEditorDismissalGeneration
+        }
+    }
+    val conversationProfile = appearance.profileFor(conversationOverride, globalThreadProfile)
+
+    AuroraMaterialTheme(profile = conversationProfile) {
+        ThreadScreen(
+            state = threadState,
+            composer = composer,
+            attachmentRepository = container.mmsAttachmentRepository,
+            previewLoader = container.previewLoader,
+            onBack = onBack,
+            onOpenSearch = onOpenSearch,
+            conversationAppearanceAvailable = conversationScope != null,
+            onOpenConversationAppearance = {
+                openEditorTarget = privateRestorationKey.takeIf { conversationScope != null }
+            },
+            isDialable = ::isConservativeDialAddress,
+            onDial = { address -> launchSystemDialer(context, address) },
+            onRetry = holder::loadLatest,
+            onLoadOlder = holder::loadOlder,
+            onLoadNewer = holder::loadNewer,
+            onAtNewestChanged = holder::markUserAtNewest,
+            onAcceptPending = holder::acceptPendingNewer,
+            onViewportChanged = holder::onViewportChanged,
+            onAnchorRestored = holder::anchorRestored,
+            onToggleMessageExpansion = holder::toggleMessageExpansion,
+            onDraftChanged = { body ->
+                val content = DraftEditorContent(body = body.takeIf(String::isNotEmpty), subject = null)
+                if (writer.submit(content)) savedBody = body
+            },
+        )
+        if (appearanceEditorOpen) {
+            ScopedAppearanceDialog(
+                kind = ScopedAppearanceKind.CONVERSATION,
+                privateRestorationKey = privateRestorationKey,
+                profiles = appearance.profiles,
+                profileSnapshotReady = appearance.profileSnapshotReady,
+                overrideSnapshotReady = conversationOverrideReady,
+                inheritedProfile = globalThreadProfile,
+                inheritedName = globalThreadName,
+                currentOverride = conversationOverride,
+                onApply = { profileId, expectedRevision ->
+                    appearanceController.applyOverride(
+                        conversationScope,
+                        profileId,
+                        expectedRevision,
+                    )
+                },
+                onDismiss = { openEditorTarget = null },
+            )
+        }
+    }
+}
+
+internal fun trustedConversationAppearanceScope(
+    providerThreadId: ProviderThreadId,
+    state: ThreadUiState,
+): AppearanceScope.Conversation? {
+    val ready = state as? ThreadUiState.Ready ?: return null
+    val summary = ready.conversation ?: return null
+    if (
+        !ready.coverage.verifiedComplete ||
+        summary.providerThreadId != providerThreadId ||
+        summary.participantsTruncated ||
+        summary.indexedParticipantCount != summary.participants.size
+    ) {
+        return null
+    }
+    return runCatching {
+        AppearanceScope.Conversation(
+            participantSetKey = AppearanceParticipantSetKey.fromParticipants(summary.participants),
+            providerThreadId = providerThreadId,
+        )
+    }.getOrNull()
+}
+
+private fun AppAppearanceState.activeProfileName(canonicalName: String): String = activeProfileId
+    ?.let { activeId -> profiles.firstOrNull { it.id == activeId } }
+    ?.name
+    ?: canonicalName
+
+internal fun shouldDismissScopedEditor(
+    observedGeneration: Long,
+    currentGeneration: Long,
+): Boolean = observedGeneration != currentGeneration
+
+/** App-private SavedState key only. The returned value must never be logged, displayed, or exported. */
+internal fun AppearanceScope.privateScopedAppearanceRestorationKey(): String = when (this) {
+    is AppearanceScope.Screen -> "screen:${screen.storageCode}"
+    is AppearanceScope.Conversation ->
+        "conversation:${providerThreadId.value}:${participantSetKey.toPrivateStorageToken()}"
 }
 
 private fun DraftWriteStatus.toComposerUiState(restoredBody: String): ComposerUiState = when (this) {

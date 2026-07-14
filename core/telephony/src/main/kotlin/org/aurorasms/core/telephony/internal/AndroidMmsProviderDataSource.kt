@@ -232,29 +232,7 @@ class AndroidMmsProviderDataSource(
                 rows
             } ?: return MmsAddressMetadata.INCOMPLETE
 
-            val valid = rawRows.mapNotNull { row ->
-                val normalized = row.address
-                    ?.trim()
-                    ?.takeIf { it.isNotEmpty() && !it.equals(INSERT_ADDRESS_TOKEN, ignoreCase = true) }
-                    ?: return@mapNotNull null
-                val address = try {
-                    ParticipantAddress(normalized)
-                } catch (_: IllegalArgumentException) {
-                    return@mapNotNull null
-                }
-                row to address
-            }
-            val participants = LinkedHashMap<String, ParticipantAddress>()
-            valid.forEach { (_, address) ->
-                if (participants.size < MmsProviderMessage.MAX_MMS_PARTICIPANTS) {
-                    participants.putIfAbsent(address.value, address)
-                }
-            }
-            MmsAddressMetadata(
-                sender = valid.firstOrNull { (row) -> row.type == MMS_FROM_ADDRESS_TYPE }?.second,
-                participants = participants.values.toList(),
-                truncated = rawRows.size > MAX_INSPECTED_MMS_ADDRESS_ROWS,
-            )
+            projectAddressMetadata(rawRows)
         } catch (denied: SecurityException) {
             throw denied
         } catch (_: IllegalArgumentException) {
@@ -361,12 +339,6 @@ class AndroidMmsProviderDataSource(
         }
     }
 
-    companion object {
-        private const val MMS_FROM_ADDRESS_TYPE = 137
-        private const val INSERT_ADDRESS_TOKEN = "insert-address-token"
-        private const val MMS_ADDRESS_PATH = "addr"
-        private const val MMS_PART_PATH = "part"
-    }
 }
 
 private data class RawMmsProviderRow(
@@ -391,16 +363,21 @@ private data class RawMmsProviderRow(
     )
 }
 
-private data class RawMmsAddress(
+internal data class RawMmsAddress(
     val address: String?,
     val type: Int,
-)
+) {
+    override fun toString(): String = "RawMmsAddress(hasAddress=${address != null}, type=$type, REDACTED)"
+}
 
-private data class MmsAddressMetadata(
+internal data class MmsAddressMetadata(
     val sender: ParticipantAddress?,
     val participants: List<ParticipantAddress>,
     val truncated: Boolean,
 ) {
+    override fun toString(): String =
+        "MmsAddressMetadata(hasSender=${sender != null}, participantCount=${participants.size}, truncated=$truncated)"
+
     companion object {
         val INCOMPLETE = MmsAddressMetadata(
             sender = null,
@@ -408,6 +385,49 @@ private data class MmsAddressMetadata(
             truncated = true,
         )
     }
+}
+
+internal fun projectAddressMetadata(rawRows: List<RawMmsAddress>): MmsAddressMetadata {
+    val valid = ArrayList<Pair<RawMmsAddress, ParticipantAddress>>(rawRows.size)
+    var identityIncomplete = rawRows.isEmpty()
+    for (row in rawRows) {
+        val rawAddress = row.address
+        if (rawAddress == null) {
+            identityIncomplete = true
+            continue
+        }
+        val normalized = rawAddress.trim()
+        if (normalized.equals(INSERT_ADDRESS_TOKEN, ignoreCase = true)) continue
+        if (normalized.isEmpty()) {
+            identityIncomplete = true
+            continue
+        }
+        val address = try {
+            ParticipantAddress(normalized)
+        } catch (_: IllegalArgumentException) {
+            identityIncomplete = true
+            continue
+        }
+        valid += row to address
+    }
+
+    val participants = LinkedHashMap<String, ParticipantAddress>()
+    var participantOverflow = false
+    valid.forEach { (_, address) ->
+        if (participants.size < MmsProviderMessage.MAX_MMS_PARTICIPANTS) {
+            participants.putIfAbsent(address.value, address)
+        } else if (address.value !in participants) {
+            participantOverflow = true
+        }
+    }
+    return MmsAddressMetadata(
+        sender = valid.firstOrNull { (row) -> row.type == MMS_FROM_ADDRESS_TYPE }?.second,
+        participants = participants.values.toList(),
+        truncated = identityIncomplete ||
+            participantOverflow ||
+            participants.isEmpty() ||
+            rawRows.size > MAX_INSPECTED_MMS_ADDRESS_ROWS,
+    )
 }
 
 internal data class RawMmsPart(
@@ -551,6 +571,10 @@ private const val MILLIS_PER_SECOND_VALUE = 1_000L
 private const val MAX_MMS_DATE_SECONDS = Long.MAX_VALUE / MILLIS_PER_SECOND_VALUE
 private const val MAX_INSPECTED_MMS_ADDRESS_ROWS = MmsProviderMessage.MAX_MMS_PARTICIPANTS
 private const val MAX_INSPECTED_MMS_PART_ROWS = 100
+private const val MMS_FROM_ADDRESS_TYPE = 137
+private const val INSERT_ADDRESS_TOKEN = "insert-address-token"
+private const val MMS_ADDRESS_PATH = "addr"
+private const val MMS_PART_PATH = "part"
 private const val TEXT_PLAIN_MIME_TYPE = "text/plain"
 private const val SMIL_MIME_TYPE = "application/smil"
 private const val DEFAULT_BINARY_MIME_TYPE = "application/octet-stream"

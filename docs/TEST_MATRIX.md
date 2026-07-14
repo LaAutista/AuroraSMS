@@ -5,9 +5,11 @@ synthetic-emulator functional gate, and owner-approved Pixel 8 alpha
 install/hash/smoke complete; Phase 4 AuroraMaterial foundation, foreground
 provider-read lifecycle hardening, exact physical APK handoff, and verified
 real-provider reconciliation complete, 2026-07-14. The bounded durable active
-named-profile/Theme Studio slice has implementation verification pending.
-Representative physical-device performance, remaining API/OEM coverage, and
-carrier transport rows remain pending.
+named-profile/Theme Studio slice is also verified; the ADR 0006 durable scoped
+profile-reference foundation passed host, governance, emulator, and physical
+install/copy/cold-launch gates; real-app modal focus and route-state preservation
+smoke remains pending. Representative physical-device performance, remaining
+API/OEM coverage, and carrier transport rows remain pending.
 
 ## Evidence rules
 
@@ -700,6 +702,183 @@ profiles and canonical snapshot revision `3`, which also survived relaunch.
 AuroraSMS was left force-stopped on the canonical profile. No message text or
 address was exported, no screenshot was captured, and no carrier message was
 sent.
+
+### Durable scoped-profile-reference foundation — focused verification complete; real-app smoke pending
+
+These rows define the bounded ADR 0006 acceptance slice. Checked rows are backed
+by the scoped evidence below. The two unchecked real-app rows are not inferred
+from synthetic hosts, compile success, or package installation. This slice does
+not claim the complete scoped-wallpaper/GIF feature.
+
+- [x] The Aurora state database exports schema version 3 and an explicit
+  version-2-to-version-3 migration preserves drafts, draft triggers, named
+  profiles, active selection, revisions, and the complete version-1-to-version-3
+  migration path without destructive fallback.
+- [x] The rebuildable Aurora index exports schema version 3. Its explicit
+  version-2-to-version-3 migration preserves searchable rows but semantically
+  invalidates every pre-v3 completeness claim by marking generations
+  paused/pending, clearing completion/failure markers, and advancing the signal
+  sequence. The next synchronization starts a fresh scan from empty checkpoints
+  instead of resuming a stale version-2 cursor.
+- [x] Screen assignments admit only stable `inbox`, `archive`, `settings`,
+  `spam_blocked`, and `global_thread` codes. Unknown codes, Search, and
+  Appearance/Theme Studio cannot become override scopes; controls exist only
+  for the currently reachable Inbox and Thread flows.
+- [x] The participant fingerprint matches ADR 0006 byte-for-byte: narrow NFC
+  normalization only, exact deduplication, unsigned UTF-8 byte ordering, exact
+  domain separator plus NUL, four-byte big-endian count/length fields, SHA-256,
+  and lowercase `sha256-v1:` storage. Case, telephone formatting, short codes,
+  alphanumeric senders, and email-style MMS addresses are not rewritten; empty
+  and greater-than-100-participant inputs are rejected before hashing.
+- [x] Conversation appearance rows store only the fingerprint, current positive
+  provider thread ID, named-profile reference, and revision. Schema, entities,
+  models, exceptions, logs, and `toString` expose no raw participant address,
+  display name, participant serialization, message content, or contact ID.
+- [x] A conversation assignment can be created, rebound, or resolved only from
+  verified-complete, non-truncated participants. Missing, incomplete,
+  truncated, malformed, or mismatched identity falls through to
+  `global_thread`; a thread-ID match alone never resolves the assignment.
+  Dropped malformed SMS/MMS address rows taint the completeness signal even
+  when valid rows survive, while the platform MMS insert-address placeholder
+  alone is not treated as a participant.
+- [x] Screen and conversation repositories expose target-specific flows and do
+  not load all conversation assignments. Updating one target leaves every
+  unrelated target emission and durable row unchanged. The first requested Room
+  row-or-null is authoritative; the app exposes typed Loading until a positive
+  profile snapshot revision and Ready observation for the exact target arrive.
+- [x] Assignment Apply uses an expected revision, or an explicit must-be-absent
+  creation expectation. Duplicate creates and stale updates return typed
+  outcomes and commit no partial state.
+- [x] Every actual screen/conversation assignment create or update allocates the
+  next positive value from one durable global revision singleton in the same
+  transaction. Reset, cascade deletion, reopen, and recreation never reuse an
+  allocated revision; stale pre-deletion revisions cannot update/delete a
+  recreated target. Physical triggers admit only the singleton at revision zero,
+  require exact `old + 1` updates, and reject deletion; a sequence below any
+  live-row revision, or missing/malformed/exhausted state, fails closed without a
+  partial write.
+- [x] Selecting `Inherited` changes only modal draft state. Cancel, Back, and
+  dismissal are durable no-ops; Apply revision-checks and deletes only that
+  target row, while a stale inherited Apply leaves the newer assignment intact.
+- [x] Revision-checked named-profile deletion cascades all referencing screen
+  and conversation rows in the same transaction. Each affected target emits
+  its inherited result without an intermediate dangling profile reference.
+- [x] Resolver tests cover conversation -> `global_thread` -> active named ->
+  canonical, eligible screen -> active named -> canonical, Search -> active
+  named -> canonical, and Theme Studio's existing route-local preview -> active
+  named -> canonical. Missing profiles, unknown codes, unsupported schemas,
+  corrupt values, and storage failures remain usable and never mutate another
+  scope; the renderer's accessible-solid fallback remains available after
+  canonical failure.
+- [x] Inbox More reaches separate Inbox appearance and `Conversation defaults`
+  (`global_thread`) modals. Thread More reaches `Conversation appearance` only
+  when its current participant identity is verified; no private participant
+  value appears in the modal or semantics tree. The current
+  `ConversationSummary` preview is bounded to 8 participants, so indexed
+  conversations with 9 through 100 participants inherit `global_thread` until
+  a bounded full-identity query is implemented; the core fingerprint contract
+  remains 1 through 100.
+- [x] Synthetic modal/controller instrumentation covers selection, inherited
+  reset, Cancel, window-level Back, recreation, delayed profile/assignment
+  loading, target mismatch, missing-profile reset, errors, and in-flight writes.
+  Restored state carries its exact private target token and cannot render/apply
+  another target; controls wait for both authoritative inputs. No production
+  Activity is added, and both non-exported debug hosts are absent from
+  release/benchmark products.
+- [ ] A real `AuroraSmsRoot` end-to-end run must still prove that opening,
+  canceling, applying, resetting, rotating/restoring, and dismissing each modal
+  preserves the same route stack, screen state holder, paged window, scroll
+  anchor, search state, draft, and composer without pushing Theme Studio,
+  reconstructing Thread, or reloading provider/index presentation.
+- [x] Applied screen/global-thread/conversation references and their revisions
+  survive database reopen and process recreation. Modal draft restoration never
+  resumes an in-flight write or treats an uncommitted selection as durable.
+- [x] Index rebuild/recovery, provider reconciliation/change signals, role loss,
+  and role regain do not delete, rewrite, or globally invalidate appearance
+  assignments. Appearance Apply, including an inherited Apply, performs no
+  Telephony query/write, index mutation/rebuild, carrier action, or notification
+  action.
+- [x] The slice adds no external production coordinate, repository, DataStore owner,
+  permission, production component, initializer, native binary, network path,
+  artwork, media URI/reference, picker, decoder, assignment-local focal/dim
+  state, GIF behavior, or private asset. Direct Android-test Espresso 3.5.0
+  exposes an already-resolved transitive artifact to instrumentation compile;
+  it introduces no new artifact/version, license/SBOM component, or product APK
+  content.
+- [x] Focused host and migration tests, full host lint/build gates, clean-room,
+  private-asset, dependency/checksum/lock/license/SBOM, permission/APK-content,
+  complete emulator instrumentation, and privacy-safe physical-device install,
+  same-byte Download copy/hash, package/role/permission inspection, and cold
+  launch pass with no private conversation data or carrier send.
+- [ ] A privacy-safe physical real-app scoped-modal focus smoke remains pending;
+  package installation and cold launch are not evidence that a real Inbox or
+  eligible Thread modal received focus or preserved its live route state.
+
+### Durable scoped-profile-reference evidence — automated/install gates 2026-07-14
+
+Version `0.4.2-phase4` (`versionCode=3`) was verified from the final working
+tree based on `9a83ab5`. The scoped implementation commit does not exist until
+this evidence is committed, so no later commit identifier is claimed here.
+
+The final offline host gate was:
+
+```text
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease :app:lintBenchmark :app:assembleBenchmark :macrobenchmark:check :macrobenchmark:assembleBenchmark verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon --no-parallel --console=plain
+```
+
+It completed 883 tasks successfully. Generated XML reports contained 243 host
+tests: 243 passed with zero failures, errors, or skips. Lint, debug/release/
+benchmark assembly, macrobenchmark checks, clean-room/private-asset scans,
+dependency/lock verification, merged/package permission checks, and APK-content
+checks all passed. Release and benchmark outputs contained neither non-exported
+debug appearance test Activity.
+
+The final license/SBOM gate was:
+
+```text
+./gradlew --no-parallel checkLicense generateLicenseReport cyclonedxBom --offline --no-daemon --console=plain
+```
+
+It completed 18 tasks successfully. The direct Android-test Espresso 3.5.0
+declaration changed compile-classpath lock membership only: that exact artifact,
+version, and transitives were already resolved by the admitted Compose test
+runtime, and no new production coordinate or packaged artifact was introduced.
+
+The complete connected command was pinned to the API 36 emulator:
+
+```text
+ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline --no-daemon --no-parallel --console=plain
+```
+
+It discovered 110 tests. One hundred nine passed with zero failures/errors;
+`configuredScaleBenchmark_requiresExplicitOptIn` was the single intentional
+skip. This includes state and index version-2-to-version-3 migration/schema
+tests, sequence trigger/live-row-floor and ABA regressions, target-specific
+repository flows, strict participant completeness, scoped resolver/controller
+tests, the synthetic modal restoration/loading/Back suite, and conversation
+menu callback instrumentation.
+
+The final debug APK is 13,184,767 bytes with SHA-256
+`d6e9d2fbb24f8300b862e2e8080780873a9eb0b9b0107e09a291d4e4a9b6a764`.
+Those exact bytes were replace-installed on the connected Pixel 8 and copied to
+`/sdcard/Download/AuroraSMS-debug.apk`; the Download size and SHA-256 matched the
+host artifact. A cold `MainActivity` launch succeeded with `TotalTime=2514 ms`.
+The installed package reported version code 3, `0.4.2-phase4`, target SDK 36,
+the SMS role, and granted READ/SEND/RECEIVE SMS, RECEIVE MMS, and notification
+permissions. Error-only process logs contained no app crash.
+
+Privacy-safe private-database metadata after cold launch showed state schema 3,
+the revision singleton at initial value zero, and all three
+singleton/exact-increment/no-delete triggers. The index reported schema 3; old
+generations were paused/pending by migration and a new generation entered a
+fresh scan with the pending flag set, confirming that the older completeness
+claim was not reused. The temporary app test instrumentation package was absent
+after the run.
+
+No message text, address, participant fingerprint, screenshot, or private asset
+was exported, and no carrier message was sent. The physical check did not focus
+or operate a real scoped modal; that and the real-root route-state journey remain
+the two explicit unchecked rows above.
 
 ### Phase 4 foundation and lifecycle evidence
 

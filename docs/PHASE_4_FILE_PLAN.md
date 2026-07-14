@@ -2,9 +2,12 @@
 
 Status: AuroraMaterial foundation, foreground provider-read lifecycle
 hardening, and the bounded durable active named-profile/Theme Studio slice
-implemented and verified on 2026-07-14; overrides, import/export, navigation
-variants, media/artwork, and the full accessibility/performance matrix remain
-gated follow-on work
+implemented and verified on 2026-07-14; the durable scoped-profile-reference
+foundation specified by ADR 0006 passed host, governance, emulator, and physical
+install/copy/cold-launch gates on 2026-07-14, while real-app modal focus and
+route-state preservation smoke remains pending; assignment-local focal/dim
+values, media/artwork, import/export, navigation variants, and the full
+accessibility/performance matrix remain gated follow-on work
 
 ## Outcome
 
@@ -25,6 +28,13 @@ an app-owned Theme Studio destination whose in-memory preview is confined to the
 visible Appearance route until atomic `Apply`, Cancel, Back, or route disposal.
 It still admits no provider/index/transport coupling, DataStore, override,
 import/export, navigation variant, wallpaper, artwork, or decoder.
+
+ADR 0006 defines the implemented bounded slice: durable references from an
+eligible screen or verified conversation identity to an existing named profile.
+It is a profile-resolution and route-preserving assignment foundation only. It
+does not add wallpaper/media references, assignment-local focal/dim values,
+artwork, pickers, decoders, GIF lifecycle, or final
+accessibility/performance claims.
 
 ## Foundation acceptance criteria
 
@@ -68,13 +78,19 @@ repository exposes one validated active named profile, or the code-owned
 canonical default, to Compose. It may persist only Aurora-owned appearance
 state; changing appearance must not query Telephony, dirty the index generation,
 reconstruct the current thread route, or touch carrier transport. Scoped
-screen/conversation overrides extend this boundary only in a later slice.
+screen/conversation profile references extend this boundary in ADR 0006 without
+moving durable state into the design system.
 
-The eventual resolution order is explicit and deterministic:
+The implemented resolution order is explicit and deterministic:
 
 ```text
-conversation override [future]
-  -> eligible screen override [future]
+conversation profile reference [ADR 0006; focused verification complete]
+  -> global_thread profile reference [ADR 0006; focused verification complete]
+  -> active named profile
+  -> canonical built-in default
+  -> accessible solid fallback
+
+eligible screen profile reference [ADR 0006; focused verification complete]
   -> active named profile
   -> canonical built-in default
   -> accessible solid fallback
@@ -238,19 +254,165 @@ docs/TEST_MATRIX.md
 README.md
 ```
 
-The test host exists only in the debug source set, is non-exported, and must be
-absent from release and benchmark manifests/APKs. It is not a production
-Appearance entry point.
+`ScopedAppearanceTestActivity` is a second synthetic host beside the existing
+Theme Studio test host. Both Activities are non-exported, debug-source-set only,
+and required to be absent from release and benchmark manifests/APKs. The slice
+adds no production Activity or navigation component.
 
-## Follow-on slices
+## Implemented durable scoped-profile-reference foundation
 
-### 1. Scoped overrides
+ADR 0006 is the controlling decision for this bounded slice. Focused storage,
+resolver, modal, host, governance, emulator, and physical install/copy evidence
+is recorded in `docs/TEST_MATRIX.md`; the explicitly unchecked real-app
+route-state and physical modal-focus rows remain release follow-ups.
 
-- Add eligible screen and conversation overrides, global-thread inheritance,
-  focal points, dim values, and reset-to-inherited without duplicating the
-  active-profile source of truth.
-- Prove index recovery and provider changes do not alter any appearance scope.
-- Keep missing/revoked assignments on the deterministic fallback chain.
+Acceptance criteria:
+
+- migrate the Aurora state Room database explicitly and non-destructively from
+  version 2 to version 3, preserving drafts, named profiles, the active
+  selection, triggers, and all prior migrations;
+- migrate the rebuildable Aurora index from version 2 to version 3 by preserving
+  searchable rows but semantically invalidating every pre-v3 completeness claim:
+  mark generations paused/pending, clear completion/failure markers, advance the
+  signal sequence, and start a fresh scan rather than resume a stale checkpoint;
+- store only references to existing named profiles, never copied profile-token
+  snapshots, in separate screen and conversation assignment rows;
+- admit only the exact stable screen codes `inbox`, `archive`, `settings`,
+  `spam_blocked`, and `global_thread`; Search and Appearance/Theme Studio are
+  not override scopes;
+- expose Inbox appearance and `Conversation defaults` (`global_thread`) from
+  Inbox More, and `Conversation appearance` for the verified current
+  conversation from Thread More;
+  Archive, Settings, and Spam & Blocked codes remain model vocabulary until
+  those routes exist;
+- identify a conversation with both its current positive provider thread ID and
+  the exact versioned participant-set fingerprint from ADR 0006, computed only
+  from verified-complete, non-truncated participants; store no raw address or
+  participant-set serialization in appearance tables;
+- treat the fingerprint as authoritative and the provider thread ID as a
+  rebindable routing hint; incomplete, truncated, unavailable, or mismatched
+  identity falls back to global-thread inheritance instead of resolving by
+  thread ID alone; provider rows dropped as malformed taint the existing
+  incomplete/truncated signal even when other valid addresses survive, while
+  Android's intentional MMS insert-address placeholder is ignored only when a
+  real bounded address set remains;
+- expose only target-specific Room flows, never an unbounded collection of all
+  conversation assignments, and keep provider IDs, fingerprints, repositories,
+  and database handles outside `:core:designsystem`; treat the first Room
+  row-or-null as authoritative and keep an explicit app loading state until a
+  positive durable profile revision and the exact target query both arrive;
+- require an expected assignment revision, or an explicit must-be-absent
+  expectation for creation, on `Apply`; stage `Inherited` in the modal and
+  delete the assignment only when Apply commits against its current revision;
+  Cancel, Back, and dismissal make no durable change, and stale/failure outcomes
+  make no partial change;
+- allocate every actual assignment create/update revision from one durable,
+  positive, globally monotonic Room singleton in the same transaction; never
+  reuse an allocated revision after reset, cascade deletion, database reopen,
+  or target recreation, so stale pre-deletion revisions cannot pass an ABA
+  check; physically require singleton-zero insert, exact `old + 1` advance, and
+  no delete, then fail closed when the sequence is missing, malformed, exhausted,
+  or below the maximum live assignment revision;
+- cascade a revision-checked named-profile deletion through referencing scope
+  rows in the same transaction so each target immediately inherits its next
+  valid fallback;
+- resolve a conversation through conversation, `global_thread`, active named,
+  canonical, and accessible-solid fallbacks; resolve an eligible screen through
+  screen, active named, canonical, and accessible-solid fallbacks;
+- keep Search on active named, canonical, and accessible-solid resolution; keep
+  Theme Studio on its existing route-local transient preview followed by that
+  same durable chain, with neither route receiving a scoped assignment;
+- present assignment as a modal over the current Inbox or Thread route so open,
+  cancel, apply, dismissal, rotation, and restoration retain the same route
+  stack, state holder, paged window, scroll anchor, search state, draft, and
+  composer state;
+- persist only a bounded private target token, baseline/selected profile IDs,
+  and expected revision in `SavedState`; validate the target synchronously on
+  restoration, discard a mismatched target draft, restore neither in-flight nor
+  transient error state, and keep mutation controls disabled until both the
+  first validated durable profile snapshot and the exact target-assignment
+  query are loaded;
+- keep the fingerprint model bounded at 1 through 100 participants, while the
+  current UI exposes conversation assignment only when the maximum-8-member
+  `ConversationSummary` preview is the complete verified identity; conversations
+  with 9 through 100 indexed participants safely inherit `global_thread` until
+  a separately reviewed full-identity query exists; and
+- make no appearance action query/write Telephony, mutate/rebuild the index,
+  perform a carrier action, or change notifications; add no DataStore owner,
+  production permission/component, network path, artwork, media reference,
+  picker, decoder, assignment-local focal/dim field, or GIF behavior.
+
+The implementation/review set is reconciled to the current diff below. It does
+not itself claim that any pending gate passed.
+
+```text
+app/build.gradle.kts
+app/gradle.lockfile
+app/src/androidTest/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialogTest.kt
+app/src/debug/AndroidManifest.xml
+app/src/debug/kotlin/org/aurorasms/app/appearance/ScopedAppearanceTestActivity.kt
+app/src/main/kotlin/org/aurorasms/app/AppContainer.kt
+app/src/main/kotlin/org/aurorasms/app/AuroraSmsRoot.kt
+app/src/main/kotlin/org/aurorasms/app/appearance/AppearanceController.kt
+app/src/main/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialog.kt
+app/src/main/res/values/strings.xml
+app/src/test/kotlin/org/aurorasms/app/AppRouteStackTest.kt
+app/src/test/kotlin/org/aurorasms/app/ScopedAppearanceResolutionTest.kt
+app/src/test/kotlin/org/aurorasms/app/appearance/AppearanceControllerTest.kt
+core/index/schemas/org.aurorasms.core.index.storage.AuroraIndexDatabase/3.json
+core/index/src/androidTest/kotlin/org/aurorasms/core/index/IndexMigration2To3Test.kt
+core/index/src/androidTest/kotlin/org/aurorasms/core/index/IndexSchemaV1Test.kt
+core/index/src/main/kotlin/org/aurorasms/core/index/storage/AuroraIndexDatabase.kt
+core/index/src/main/kotlin/org/aurorasms/core/index/storage/IndexDatabaseFactory.kt
+core/index/src/main/kotlin/org/aurorasms/core/index/storage/IndexDatabaseMigrations.kt
+core/index/src/main/kotlin/org/aurorasms/core/index/sync/IndexProjectionMapper.kt
+core/index/src/main/kotlin/org/aurorasms/core/index/sync/IndexedProviderProjection.kt
+core/index/src/test/kotlin/org/aurorasms/core/index/sync/IndexProjectionMapperTest.kt
+core/index/src/test/kotlin/org/aurorasms/core/index/sync/TelephonyIndexSynchronizerTest.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/AppearanceOverride.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/AppearanceProfileRepository.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/AppearanceOverrideDao.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/AppearanceOverrideEntity.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/AppearanceOverrideSequenceEnforcement.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/AppearanceOverrideSequenceEntity.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/AuroraStateDatabase.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/RoomAppearanceProfileRepository.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/StateDatabaseFactory.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/StateDatabaseMigrations.kt
+core/state/src/test/kotlin/org/aurorasms/core/state/AppearanceOverrideContractTest.kt
+core/state/src/test/kotlin/org/aurorasms/core/state/storage/AppearanceOverrideEntityTest.kt
+core/state/src/androidTest/kotlin/org/aurorasms/core/state/AppearanceProfileRepositoryInstrumentedTest.kt
+core/state/src/androidTest/kotlin/org/aurorasms/core/state/StateDatabaseReopenTest.kt
+core/state/src/androidTest/kotlin/org/aurorasms/core/state/StateSchemaV1Test.kt
+core/state/src/androidTest/kotlin/org/aurorasms/core/state/StateMigration2To3Test.kt
+core/state/schemas/org.aurorasms.core.state.storage.AuroraStateDatabase/3.json
+core/state/schemas/org.aurorasms.core.state.storage.AuroraStateDatabase/3-triggers.sql
+core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidMmsProviderDataSource.kt
+core/telephony/src/test/kotlin/org/aurorasms/core/telephony/ProviderProjectionPolicyTest.kt
+feature/conversations/src/main/kotlin/org/aurorasms/feature/conversations/InboxScreen.kt
+feature/conversations/src/main/kotlin/org/aurorasms/feature/conversations/ThreadScreen.kt
+feature/conversations/src/main/res/values/strings.xml
+feature/conversations/src/androidTest/kotlin/org/aurorasms/feature/conversations/ConversationUiStateTest.kt
+gradle/libs.versions.toml
+docs/adr/0006-durable-scoped-profile-references.md
+docs/PHASE_4_FILE_PLAN.md
+docs/PRODUCT_REQUIREMENTS.md
+docs/DEPENDENCY_POLICY.md
+docs/TEST_MATRIX.md
+docs/THREAT_MODEL.md
+README.md
+```
+
+## Remaining follow-on slices
+
+### 1. Scoped wallpaper assignments and local treatment
+
+- Add independent wallpaper/media references for eligible screens, the global
+  thread fallback, and conversations on top of the profile-reference resolver.
+- Add assignment-local focal points and dim values with real renderer consumers,
+  live preview, revision-checked apply/reset, and no dead stored controls.
+- Prove revoked/missing/corrupt media advances through the wallpaper-specific
+  canonical/theme/solid chains without changing any profile-reference scope.
 
 ### 2. Import and export
 
@@ -313,6 +475,17 @@ admitted for the version-1 Aurora state database and the existing Compose/app
 graph. The version-2 schema and Theme Studio add no coordinate or repository.
 Room remains the sole durable appearance owner; DataStore is not added.
 
+The implemented scoped-profile-reference foundation also reuses only that
+admitted Room/KSP, Kotlin, coroutine, Compose, and platform Java cryptography
+graph. A version-3 schema, SHA-256 participant fingerprint, target-specific
+flow, and route-preserving modal require no new coordinate, repository,
+permission, production component, initializer, native library, or network path.
+The scoped dialog's direct Android-test declaration of
+`androidx.test.espresso:espresso-core:3.5.0` promotes the already-resolved
+transitive test artifact to the compile classpath; it introduces no new resolved
+artifact/version, checksum, license, or production coordinate. The lock,
+resolved-graph, license/SBOM, manifest, and packaged-output checks passed.
+
 No image loader, GIF decoder, navigation library, DataStore, icon pack, font,
 remote theme service, or media SDK is approved by this plan. Any later
 coordinate requires the full dependency-admission record before source code
@@ -332,7 +505,9 @@ ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline
 At the device gate, install the exact debug APK in place, copy the same bytes to
 `/sdcard/Download/AuroraSMS-debug.apk`, compare SHA-256, verify package/role
 state, and exercise only privacy-safe UI/resource-ID and redacted diagnostic
-checks. No carrier message is sent by this slice.
+checks. Install/copy/hash and cold launch passed for `0.4.2-phase4`; the real-app
+scoped-modal focus and route-state smoke remains explicitly pending. No carrier
+message is sent by this slice.
 
 ## Stop conditions
 
@@ -346,3 +521,12 @@ network permission/path, reading message/provider data from the design system,
 running more than one animated decoder, allowing unbounded media/profile input,
 or weakening any Phase 1-3 role, transport, index, privacy, or performance
 invariant.
+
+For the scoped-profile-reference foundation, also stop before storing raw
+participant addresses or a reversible participant serialization, resolving a
+conversation by thread ID alone, accepting incomplete/truncated participant
+identity, exposing an unbounded all-conversation assignment flow, treating
+Search or Theme Studio as a scope, exposing controls for absent routes, applying
+a profile or staged inherited choice without the expected revision,
+pushing/replacing the current route for the modal, or adding focal/dim/media
+state without its separately accepted renderer and UI contract.

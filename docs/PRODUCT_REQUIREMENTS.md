@@ -45,8 +45,10 @@ transport; AuroraSMS's approved runtime scope remains SMS/MMS.
 - AuroraSMS maintains a rebuildable, synchronized local projection for display
   and full-text search.
 - Drafts, scheduled messages, pending sends/deletes, spam decisions, named
-  appearance profiles, the active-profile selection, and later appearance
-  overrides live in a separate durable Aurora state store.
+  appearance profiles, the active-profile selection, and scoped profile
+  overrides live in a separate durable Aurora state store. Conversation
+  appearance identity stores only a versioned participant-set fingerprint plus
+  the current provider thread ID, never raw participant addresses.
 - No UI path loads an entire message history or unbounded result list.
 - Search coverage does not depend on a user manually scrolling old messages.
 - Ordinary conversations with more than one unique canonical recipient always
@@ -90,8 +92,10 @@ graph, screen instances, deep links, back behavior, and restored state.
 - Telephony SMS/MMS provider: real-message source of truth.
 - Aurora index database: disposable/rebuildable projection for paging and FTS.
 - Aurora state database: durable Aurora-only state, including drafts, named
-  appearance profiles, the active-profile selection, and later scoped
-  appearance overrides.
+  appearance profiles, the active-profile selection, and scoped
+  appearance overrides. A conversation override uses the ADR 0006
+  participant-set fingerprint as its stable identity and a provider thread ID
+  only as a current routing hint.
 - No DataStore owner exists in the approved implementation. Adding one for a
   future lightweight preference requires a measured ADR, dependency admission,
   and field ownership that does not overlap the Aurora state database.
@@ -166,6 +170,69 @@ Wallpaper inheritance is surface-specific:
 | Archive | User Archive override -> Aurora Cabinet -> active theme wallpaper -> safe solid |
 | Settings | User Settings override -> Aurora Office -> active theme wallpaper -> safe solid |
 | Spam & Blocked | User Spam override -> Aurora Spam & Block -> active theme wallpaper -> safe solid |
+
+The bounded scoped-profile-reference foundation is distinct from those final
+wallpaper chains:
+
+- eligible screen codes are exactly Inbox, Archive, Settings, Spam & Blocked,
+  and global thread fallback; Search and Appearance/Theme Studio are not
+  override scopes;
+- each scoped row references one existing named profile and never copies that
+  profile's token values;
+- assignment creates and actual updates allocate positive revisions from one
+  durable, globally monotonic sequence in the same transaction; reset, cascade
+  deletion, database reopen, and recreation never reuse a revision, so a stale
+  pre-deletion modal cannot pass an ABA check; physical triggers admit only the
+  singleton-zero insert, exact `old + 1` advances, and no deletion, while
+  repository validation rejects a sequence below any live assignment revision;
+- a conversation row stores its current positive provider thread ID and the
+  exact versioned SHA-256 participant-set fingerprint defined by ADR 0006, but
+  no raw address, display name, participant serialization, message content, or
+  contact identifier;
+- the fingerprint is computed only for verified-complete, non-truncated
+  participants and is authoritative; unavailable, incomplete, truncated, or
+  mismatched identity inherits `global_thread` rather than resolving by thread
+  ID alone;
+- the index version-2-to-version-3 migration preserves searchable rows but
+  revokes every older verified-complete claim by marking generations
+  paused/pending; a fresh scan from empty checkpoints must complete under the
+  stricter missing/malformed participant rules before conversation assignment
+  is available;
+- the fingerprint contract accepts 1 through 100 participants, but the current
+  Thread UI has only the maximum-8-member `ConversationSummary` preview and
+  exposes assignment only when that preview is the complete verified set;
+  conversations with 9 through 100 indexed participants inherit
+  `global_thread` until a bounded full-identity query is implemented;
+- repository observation is target-specific, not an unbounded collection of
+  every customized conversation; its first Room row-or-null is authoritative,
+  while the app retains explicit loading until a positive durable profile
+  revision and the exact target query both arrive;
+- Inbox More exposes Inbox appearance and `Conversation defaults`
+  (`global_thread`), while Thread More exposes `Conversation appearance` only
+  for the verified current conversation; future screen codes have no controls
+  until their routes exist;
+- the chooser is modal over the current route, stages a named profile or
+  `Inherited`, and writes only on revision-checked Apply; Cancel, Back, and
+  dismissal are durable no-ops;
+- restorable chooser state contains only a bounded schema, private target token,
+  baseline/selected profile IDs, and expected revision; a target mismatch is
+  discarded synchronously, controls stay disabled while either the durable
+  profile snapshot or exact target-assignment query is loading, and
+  in-flight/error/dismissal state is not restored as completed work;
+- applying `Inherited` revision-checks and deletes only that assignment;
+  revision-checked profile deletion cascades its referencing assignments so
+  each target immediately inherits; and
+- applying/resetting scoped profile references does not query Telephony, alter
+  index state, recreate a route/state holder, or disturb the paged window,
+  scroll anchor, search state, draft, or composer. The one-time index-schema
+  semantic invalidation is an upgrade/reconciliation boundary, not an
+  appearance action.
+
+Assignment-local focal points/dim values and every wallpaper/media reference,
+picker, renderer, decoder, canonical artwork mapping, and GIF lifecycle remain
+separate acceptance work. The profile-reference foundation does not claim the
+wallpaper-specific chains merely because a named profile already has future
+wallpaper vocabulary.
 
 Required themes include Aurora Dark, AMOLED Black, Light, and System/Dynamic.
 Required avatar masks are circle, rounded square, squircle, and hexagon.
@@ -262,6 +329,11 @@ Theme Studio with a live preview.
 - Normal data stays in credential-encrypted private storage.
 - Photo Picker/Storage Access Framework is preferred over broad storage access.
 - Message bodies, addresses, URIs, and search terms never enter logs.
+- Provider thread IDs and participant-set fingerprints used for conversation
+  appearance are sensitive pseudonymous metadata: keep them private, excluded
+  from backup, absent from logs/`toString`, and never describe them as anonymous
+  or telemetry-safe. The bounded target token that combines them for app-private
+  `SavedState` follows the same restrictions and is never displayed or exported.
 - Release builds remove debug logging.
 - Notification privacy supports sender and body, sender only, or generic.
 - App lock may use `BiometricPrompt`/device credential but must not be called

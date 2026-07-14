@@ -23,4 +23,10 @@ class AppRouteStackTest {
             ),
         )
     }
+
+    @Test
+    fun notificationDismissalGenerationSurvivesRotationButInvalidatesRetainedEditors() {
+        assertEquals(false, shouldDismissScopedEditor(observedGeneration = 4L, currentGeneration = 4L))
+        assertEquals(true, shouldDismissScopedEditor(observedGeneration = 4L, currentGeneration = 5L))
+    }
 }

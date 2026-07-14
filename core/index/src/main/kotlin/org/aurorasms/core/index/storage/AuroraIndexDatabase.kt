@@ -14,7 +14,7 @@ import androidx.room.RoomDatabase
         IndexGenerationEntity::class,
         IndexCheckpointEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AuroraIndexDatabase : RoomDatabase() {

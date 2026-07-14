@@ -4,6 +4,9 @@
     <string name="search">Search</string>
     <string name="more">More</string>
     <string name="appearance">Appearance</string>
+    <string name="inbox_appearance">Inbox appearance</string>
+    <string name="conversation_defaults">Conversation defaults</string>
+    <string name="conversation_appearance">Conversation appearance</string>
     <string name="diagnostics">Diagnostics</string>
     <string name="loading_messages">Loading messages…</string>
     <string name="no_conversations">No conversations are indexed yet.</string>

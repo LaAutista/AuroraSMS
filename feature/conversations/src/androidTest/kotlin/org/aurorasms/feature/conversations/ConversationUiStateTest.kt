@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.delay
 import org.aurorasms.core.index.IndexCoverage
@@ -45,6 +46,8 @@ class ConversationUiStateTest {
                     previewLoader = RejectingPreviewLoader,
                     onBack = {},
                     onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
                     isDialable = { false },
                     onDial = {},
                     onRetry = {},
@@ -63,7 +66,80 @@ class ConversationUiStateTest {
         compose.onNodeWithTag(THREAD_LIST_TEST_TAG).assertIsDisplayed()
         compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsDisplayed()
         compose.onNodeWithText("Send unavailable").assertIsNotEnabled()
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
+        compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).assertDoesNotExist()
         compose.runOnIdle { check(repository.readAttempts == 0) }
+    }
+
+    @Test
+    fun trustedConversationAppearanceActionUsesOnlyTheRouteCallback() {
+        var openCount = 0
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = readyThreadState(),
+                    composer = ComposerUiState(body = "Synthetic draft", saving = false, failed = false),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = true,
+                    onOpenConversationAppearance = { openCount += 1 },
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle { check(openCount == 1) }
+    }
+
+    @Test
+    fun inboxAppearanceEntriesUseSeparateRouteCallbacks() {
+        var inboxCount = 0
+        var defaultsCount = 0
+        compose.setContent {
+            MaterialTheme {
+                InboxScreen(
+                    state = InboxUiState.Loading,
+                    diagnosticsAvailable = false,
+                    contactsPermissionGranted = true,
+                    onOpenConversation = {},
+                    onOpenSearch = {},
+                    onOpenAppearance = {},
+                    onOpenInboxAppearance = { inboxCount += 1 },
+                    onOpenConversationDefaults = { defaultsCount += 1 },
+                    onOpenDiagnostics = {},
+                    onRequestContactsPermission = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag(INBOX_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(INBOX_SCOPE_APPEARANCE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(INBOX_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle {
+            check(inboxCount == 1)
+            check(defaultsCount == 1)
+        }
     }
 }
 

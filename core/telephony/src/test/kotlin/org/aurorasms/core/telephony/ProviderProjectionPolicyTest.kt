@@ -2,7 +2,9 @@
 
 package org.aurorasms.core.telephony
 
+import org.aurorasms.core.telephony.internal.RawMmsAddress
 import org.aurorasms.core.telephony.internal.RawMmsPart
+import org.aurorasms.core.telephony.internal.projectAddressMetadata
 import org.aurorasms.core.telephony.internal.projectPartMetadata
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -110,11 +112,56 @@ class ProviderProjectionPolicyTest {
         assertTrue(projected.attachments.metadataTruncated)
     }
 
+    @Test
+    fun mmsAddressProjectionRetainsValidRowsButMarksMalformedIdentityIncomplete() {
+        val projected = projectAddressMetadata(
+            listOf(
+                RawMmsAddress("+15550000001", MMS_FROM_ADDRESS_TYPE),
+                RawMmsAddress("malformed\u0000address", MMS_TO_ADDRESS_TYPE),
+                RawMmsAddress("insert-address-token", MMS_TO_ADDRESS_TYPE),
+            ),
+        )
+
+        assertEquals("+15550000001", projected.sender?.value)
+        assertEquals(listOf("+15550000001"), projected.participants.map { it.value })
+        assertTrue(projected.truncated)
+        assertFalse(projected.toString().contains("+15550000001"))
+    }
+
+    @Test
+    fun mmsInsertAddressPlaceholderDoesNotPoisonACompleteActualSet() {
+        val projected = projectAddressMetadata(
+            listOf(
+                RawMmsAddress("insert-address-token", MMS_FROM_ADDRESS_TYPE),
+                RawMmsAddress("+15550000002", MMS_TO_ADDRESS_TYPE),
+            ),
+        )
+
+        assertNull(projected.sender)
+        assertEquals(listOf("+15550000002"), projected.participants.map { it.value })
+        assertFalse(projected.truncated)
+    }
+
+    @Test
+    fun mmsAddressProjectionMarksAnEmptyActualSetIncomplete() {
+        val projected = projectAddressMetadata(
+            listOf(RawMmsAddress("insert-address-token", MMS_FROM_ADDRESS_TYPE)),
+        )
+
+        assertTrue(projected.participants.isEmpty())
+        assertTrue(projected.truncated)
+    }
+
     private data class RawRow(
         val timestampMillis: Long,
         val id: Long,
         val value: String?,
     ) {
         fun cursor(): ProviderPageCursor = ProviderPageCursor(timestampMillis, id)
+    }
+
+    private companion object {
+        const val MMS_FROM_ADDRESS_TYPE = 137
+        const val MMS_TO_ADDRESS_TYPE = 151
     }
 }

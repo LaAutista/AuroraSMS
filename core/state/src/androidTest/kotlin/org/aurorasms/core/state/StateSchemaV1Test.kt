@@ -12,6 +12,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.aurorasms.core.state.storage.AuroraStateDatabase
 import org.aurorasms.core.state.storage.AppearanceSelectionEnforcement
+import org.aurorasms.core.state.storage.AppearanceOverrideSequenceEnforcement
 import org.aurorasms.core.state.storage.DraftIdentityEnforcement
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
@@ -50,10 +51,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionTwo_hasBoundedDraftAndAppearanceTables() {
+    fun schemaVersionThree_hasBoundedDraftAndAppearanceTables() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
+            assertEquals(3, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -88,6 +90,54 @@ class StateSchemaCurrentTest {
                         "AND name = 'appearance_profiles'",
                 ).use { it.moveToFirst() },
             )
+            assertEquals(
+                setOf("screen_code", "profile_id", "revision"),
+                sqlite.tableColumns("appearance_screen_overrides"),
+            )
+            assertEquals(
+                setOf("participant_set_key", "provider_thread_id", "profile_id", "revision"),
+                sqlite.tableColumns("appearance_conversation_overrides"),
+            )
+            assertTrue(
+                sqlite.indexNames("appearance_screen_overrides")
+                    .contains("index_appearance_screen_overrides_profile_id"),
+            )
+            assertTrue(
+                sqlite.indexNames("appearance_conversation_overrides")
+                    .contains("index_appearance_conversation_overrides_provider_thread_id"),
+            )
+            assertFalse(
+                sqlite.indexIsUnique(
+                    "appearance_conversation_overrides",
+                    "index_appearance_conversation_overrides_provider_thread_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexNames("appearance_conversation_overrides")
+                    .contains("index_appearance_conversation_overrides_profile_id"),
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_screen_overrides'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_conversation_overrides'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_override_revision_sequence'",
+                ).use { it.moveToFirst() },
+            )
+            assertEquals(
+                setOf("singleton_id", "last_allocated_revision"),
+                sqlite.tableColumns("appearance_override_revision_sequence"),
+            )
             assertTrue(
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
@@ -101,13 +151,30 @@ class StateSchemaCurrentTest {
                     cursor.getLong(0)
                 },
             )
+            assertEquals(
+                1L,
+                sqlite.query("SELECT COUNT(*) FROM appearance_override_revision_sequence")
+                    .use { cursor ->
+                        check(cursor.moveToFirst())
+                        cursor.getLong(0)
+                    },
+            )
+            assertEquals(
+                0L,
+                sqlite.query(
+                    "SELECT last_allocated_revision FROM appearance_override_revision_sequence",
+                ).use { cursor ->
+                    check(cursor.moveToFirst())
+                    cursor.getLong(0)
+                },
+            )
         } finally {
             database.close()
         }
     }
 
     @Test
-    fun exportedVersionTwoStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedVersionThreeStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(
@@ -121,6 +188,24 @@ class StateSchemaCurrentTest {
                         "AND name = 'appearance_profiles'",
                 ).use { it.moveToFirst() },
             )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_screen_overrides'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_conversation_overrides'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_override_revision_sequence'",
+                ).use { it.moveToFirst() },
+            )
         }
 
         val database = Room.databaseBuilder(
@@ -130,6 +215,7 @@ class StateSchemaCurrentTest {
         )
             .addCallback(DraftIdentityEnforcement.callback)
             .addCallback(AppearanceSelectionEnforcement.callback)
+            .addCallback(AppearanceOverrideSequenceEnforcement.callback)
             .build()
         try {
             assertEquals(AuroraStateDatabase.VERSION, database.openHelper.writableDatabase.version)
@@ -137,6 +223,15 @@ class StateSchemaCurrentTest {
                 0L,
                 database.openHelper.writableDatabase
                     .query("SELECT COUNT(*) FROM appearance_selection")
+                    .use { cursor ->
+                        check(cursor.moveToFirst())
+                        cursor.getLong(0)
+                    },
+            )
+            assertEquals(
+                0L,
+                database.openHelper.writableDatabase
+                    .query("SELECT COUNT(*) FROM appearance_override_revision_sequence")
                     .use { cursor ->
                         check(cursor.moveToFirst())
                         cursor.getLong(0)
@@ -155,6 +250,9 @@ class StateSchemaCurrentTest {
         assertTriggerExists(sqlite, DraftIdentityEnforcement.UPDATE_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME)
+        assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.UPDATE_TRIGGER_NAME)
+        assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.DELETE_TRIGGER_NAME)
 
         assertThrows(SQLiteConstraintException::class.java) {
             sqlite.execSQL(
@@ -175,6 +273,9 @@ class StateSchemaCurrentTest {
         sqlite.execSQL("DROP TRIGGER ${DraftIdentityEnforcement.UPDATE_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${AppearanceOverrideSequenceEnforcement.UPDATE_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${AppearanceOverrideSequenceEnforcement.DELETE_TRIGGER_NAME}")
         database.close()
 
         database = openStateDatabase()
@@ -184,11 +285,21 @@ class StateSchemaCurrentTest {
             assertTriggerExists(sqlite, DraftIdentityEnforcement.UPDATE_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME)
+            assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME)
+            assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.UPDATE_TRIGGER_NAME)
+            assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.DELETE_TRIGGER_NAME)
             assertThrows(SQLiteConstraintException::class.java) {
                 sqlite.execSQL(
                     "INSERT INTO appearance_selection(" +
                         "singleton_id, active_profile_id, snapshot_revision" +
                         ") VALUES (2, NULL, 1)",
+                )
+            }
+            assertThrows(SQLiteConstraintException::class.java) {
+                sqlite.execSQL(
+                    "INSERT INTO appearance_override_revision_sequence(" +
+                        "singleton_id, last_allocated_revision" +
+                        ") VALUES (2, 0)",
                 )
             }
             assertThrows(SQLiteConstraintException::class.java) {
@@ -279,6 +390,34 @@ class StateSchemaCurrentTest {
                 arrayOf(triggerName),
             ).use { it.moveToFirst() },
         )
+    }
+
+    private fun androidx.sqlite.db.SupportSQLiteDatabase.tableColumns(table: String): Set<String> =
+        query("PRAGMA table_info(`$table`)").use { cursor ->
+            val nameColumn = cursor.getColumnIndexOrThrow("name")
+            buildSet {
+                while (cursor.moveToNext()) add(cursor.getString(nameColumn))
+            }
+        }
+
+    private fun androidx.sqlite.db.SupportSQLiteDatabase.indexNames(table: String): Set<String> =
+        query("PRAGMA index_list(`$table`)").use { cursor ->
+            val nameColumn = cursor.getColumnIndexOrThrow("name")
+            buildSet {
+                while (cursor.moveToNext()) add(cursor.getString(nameColumn))
+            }
+        }
+
+    private fun androidx.sqlite.db.SupportSQLiteDatabase.indexIsUnique(
+        table: String,
+        index: String,
+    ): Boolean = query("PRAGMA index_list(`$table`)").use { cursor ->
+        val nameColumn = cursor.getColumnIndexOrThrow("name")
+        val uniqueColumn = cursor.getColumnIndexOrThrow("unique")
+        while (cursor.moveToNext()) {
+            if (cursor.getString(nameColumn) == index) return@use cursor.getInt(uniqueColumn) != 0
+        }
+        error("Missing expected index")
     }
 
     companion object {

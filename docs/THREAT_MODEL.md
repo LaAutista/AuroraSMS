@@ -30,7 +30,7 @@ AuroraSMS must:
 | Contacts and photos | Sensitive personal data | Optional permission, bounded cache, invalidate on change, no serialization per message |
 | Subscription/SIM choice | Sensitive device data | Minimal access, validated fallback, no identifier logging |
 | Notification content/settings | Sensitive disclosure control | User-selectable privacy levels, lock-screen safe defaults |
-| Appearance profiles and media URIs | Sensitive when user photos are used | Validated declarative data, scoped URI access, no executable themes |
+| Appearance profiles, scoped participant fingerprints/thread hints, and media URIs | Sensitive pseudonymous/private data, especially when user photos are used | Validated declarative data, target-specific access, scoped URI access, no executable themes or appearance logs |
 | Backups/exports/shares | Critical portable data | User initiated, versioned, validated, authenticated/encrypted before shipping |
 | Signing key and release metadata | Critical supply-chain asset | Never in Git; encrypted owner-controlled offline backups |
 | Private handoff screenshots/PDF | Critical development-only personal data | Ignored local-only reference; never copied, committed, packaged, or uploaded |
@@ -258,6 +258,26 @@ Controls:
 - deterministic contrast scrim and automatic accessible-color correction;
 - validated ranges/schema for every token, with safe fallback;
 - immutable scoped profiles and explicit precedence;
+- versioned conversation fingerprints derived only from verified-complete,
+  non-truncated participant sets, with no raw participant addresses stored in
+  appearance tables and no resolution by provider thread ID alone;
+- target-specific assignment flows and redacted models/logs so one
+  conversation's fingerprint or appearance cannot leak through another target;
+- one non-reusing monotonic assignment-revision sequence, so a stale revision
+  cannot regain authority after a target is reset and recreated; physical
+  singleton/exact-increment/no-delete triggers and a maximum-live-row floor
+  check fail closed on rollback or tampering;
+- semantic index versioning that preserves searchable rows but revokes all
+  pre-v3 participant-completeness claims, forces a fresh scan from empty
+  checkpoints, and leaves conversation assignment inherited while pending;
+- a bounded app-private `SavedState` target token whose conversation form
+  contains only the thread hint and one-way fingerprint; target mismatches are
+  discarded synchronously, mutation stays disabled while durable profiles or
+  the exact target assignment load, and the token is never logged, displayed,
+  analyzed, or exported;
+- current Thread UI assignment only for a complete verified participant preview
+  of at most 8 members; 9-through-100-member indexed conversations inherit
+  `global_thread` until a bounded full-identity query is reviewed;
 - independent per-screen/per-conversation media references and reset semantics;
 - 4.5:1 body-text target, 3:1 non-text affordances, 48 dp targets, TalkBack,
   RTL, 200% font, and reduced-motion tests;
@@ -311,6 +331,10 @@ Controls:
 - No OS/cloud backup of messages or derived state.
 - Release logs redact bodies, addresses, URIs, searches, file names, and SIM
   identifiers; debug logs use synthetic fixtures only.
+- Appearance participant fingerprints and provider thread hints are sensitive
+  pseudonymous identifiers: exclude them from logs, `toString`, telemetry,
+  exports, and OS/cloud backup. The private restoration token that combines
+  them in bounded `SavedState` has the same restrictions.
 - Contacts permission is optional and denial leaves number-based messaging
   usable.
 - Destructive and external actions require explicit, contextual user intent.

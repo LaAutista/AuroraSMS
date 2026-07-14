@@ -82,3 +82,25 @@ val INDEX_MIGRATION_1_2: Migration = object : Migration(1, 2) {
         )
     }
 }
+
+/**
+ * Invalidates v2 participant-completeness projections before scoped appearance can trust them.
+ *
+ * The physical index remains rebuildable and searchable, but no pre-v3 generation may retain a
+ * verified-complete claim. A pending paused latest generation makes the coordinator start a fresh
+ * scan from empty checkpoints instead of resuming any v2 cursor.
+ */
+val INDEX_MIGRATION_2_3: Migration = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            UPDATE `index_generations`
+            SET `state` = ${GenerationStateCode.PAUSED},
+                `completed_at_ms` = NULL,
+                `pending_changes` = 1,
+                `failure_code` = NULL,
+                `signal_sequence` = `signal_sequence` + 1
+            """.trimIndent(),
+        )
+    }
+}

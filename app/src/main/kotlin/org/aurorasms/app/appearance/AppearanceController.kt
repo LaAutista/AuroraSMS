@@ -3,11 +3,18 @@
 package org.aurorasms.app.appearance
 
 import androidx.compose.runtime.Immutable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlin.math.roundToInt
 import org.aurorasms.core.designsystem.AuroraAvatarMask
@@ -19,6 +26,8 @@ import org.aurorasms.core.designsystem.AuroraRowDensity
 import org.aurorasms.core.state.AppearanceAvatarMask
 import org.aurorasms.core.state.AppearanceBubbleGeometry
 import org.aurorasms.core.state.AppearanceNavigationStyle
+import org.aurorasms.core.state.AppearanceOverride
+import org.aurorasms.core.state.AppearanceOverrideRevision
 import org.aurorasms.core.state.AppearancePalette
 import org.aurorasms.core.state.AppearanceProfile
 import org.aurorasms.core.state.AppearanceProfileEdit
@@ -28,6 +37,7 @@ import org.aurorasms.core.state.AppearanceProfileRepository
 import org.aurorasms.core.state.AppearanceProfileValues
 import org.aurorasms.core.state.AppearanceRepositoryResult
 import org.aurorasms.core.state.AppearanceRevision
+import org.aurorasms.core.state.AppearanceScope
 import org.aurorasms.core.state.AppearanceRowDensity
 import org.aurorasms.core.state.AppearanceSnapshot
 import org.aurorasms.core.state.NewAppearanceProfile
@@ -51,10 +61,11 @@ data class AppAppearanceState(
     val activeProfileId: Long?,
     val activeProfile: AuroraMaterialProfile,
     val snapshotRevision: Long,
+    val profileSnapshotReady: Boolean,
 ) {
     override fun toString(): String =
         "AppAppearanceState(profileCount=${profiles.size}, hasActive=${activeProfileId != null}, " +
-            "snapshotRevision=$snapshotRevision, REDACTED)"
+            "snapshotRevision=$snapshotRevision, profileSnapshotReady=$profileSnapshotReady, REDACTED)"
 
     companion object {
         val Default: AppAppearanceState = AppAppearanceState(
@@ -62,13 +73,73 @@ data class AppAppearanceState(
             activeProfileId = null,
             activeProfile = AuroraMaterialProfile.Default,
             snapshotRevision = 0L,
+            profileSnapshotReady = false,
         )
+    }
+}
+
+@Immutable
+data class AppAppearanceOverride(
+    val profileId: Long,
+    val revision: Long,
+) {
+    init {
+        require(profileId > 0L) { "An app appearance override profile ID must be positive" }
+        require(revision > 0L) { "An app appearance override revision must be positive" }
+    }
+
+    override fun toString(): String = "AppAppearanceOverride(REDACTED)"
+}
+
+/**
+ * One target-tagged assignment observation. The target is retained only so callers can reject a
+ * stale emission synchronously while a switched Flow produces its first value; its string form is
+ * deliberately redacted because conversation scopes contain app-private correlation material.
+ */
+@Immutable
+internal data class AppAppearanceOverrideObservation(
+    val scope: AppearanceScope?,
+    val override: AppAppearanceOverride?,
+    val ready: Boolean,
+) {
+    init {
+        require(scope != null || !ready) { "A missing appearance scope cannot be ready" }
+        require(scope != null || override == null) { "A missing appearance scope cannot be assigned" }
+        require(ready || override == null) { "A loading appearance scope cannot be assigned" }
+    }
+
+    fun overrideFor(expectedScope: AppearanceScope): AppAppearanceOverride? =
+        takeIf { ready && scope == expectedScope }?.override
+
+    fun isReadyFor(expectedScope: AppearanceScope): Boolean = ready && scope == expectedScope
+
+    override fun toString(): String =
+        "AppAppearanceOverrideObservation(ready=$ready, hasOverride=${override != null}, " +
+            "scope=REDACTED)"
+
+    companion object {
+        fun loading(scope: AppearanceScope): AppAppearanceOverrideObservation =
+            AppAppearanceOverrideObservation(scope = scope, override = null, ready = false)
+
+        fun unavailable(): AppAppearanceOverrideObservation =
+            AppAppearanceOverrideObservation(scope = null, override = null, ready = false)
     }
 }
 
 sealed interface AppearanceControllerResult {
     data object Success : AppearanceControllerResult
     data class Failed(val error: ThemeStudioError) : AppearanceControllerResult
+}
+
+sealed interface ScopedAppearanceControllerResult {
+    data object Success : ScopedAppearanceControllerResult
+    data class Failed(val error: ScopedAppearanceError) : ScopedAppearanceControllerResult
+}
+
+enum class ScopedAppearanceError {
+    SAVE_FAILED,
+    STALE_ASSIGNMENT,
+    PROFILE_MISSING,
 }
 
 /**
@@ -88,6 +159,51 @@ class AppearanceController(
             started = SharingStarted.Eagerly,
             initialValue = AppAppearanceState.Default,
         )
+
+    /** Observes exactly one bounded scope; callers own collection lifetime and no scope is cached. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    internal fun observeOverride(scope: AppearanceScope): Flow<AppAppearanceOverrideObservation> = state
+        .map { appearance -> appearance.profileSnapshotReady }
+        .distinctUntilChanged()
+        .flatMapLatest { profileSnapshotReady ->
+            if (!profileSnapshotReady) {
+                flowOf(AppAppearanceOverrideObservation.loading(scope))
+            } else {
+                repository.observeOverride(scope).map { override ->
+                    AppAppearanceOverrideObservation(
+                        scope = scope,
+                        override = override?.takeIf { it.scope == scope }?.toAppOverride(),
+                        ready = true,
+                    )
+                }
+            }
+        }
+        .onStart { emit(AppAppearanceOverrideObservation.loading(scope)) }
+        .distinctUntilChanged()
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            emit(AppAppearanceOverrideObservation.loading(scope))
+        }
+
+    suspend fun applyOverride(
+        scope: AppearanceScope,
+        profileId: Long?,
+        expectedRevision: Long?,
+    ): ScopedAppearanceControllerResult = try {
+        val expected = expectedRevision?.let(::AppearanceOverrideRevision)
+        val result = if (profileId == null) {
+            repository.resetOverride(scope, expected)
+        } else {
+            repository.setOverride(
+                scope = scope,
+                profileId = AppearanceProfileId(profileId),
+                expectedRevision = expected,
+            )
+        }
+        result.toScopedControllerResult()
+    } catch (_: IllegalArgumentException) {
+        ScopedAppearanceControllerResult.Failed(ScopedAppearanceError.SAVE_FAILED)
+    }
 
     suspend fun apply(request: ThemeStudioApplyRequest): AppearanceControllerResult {
         if (request.resetToDefault) {
@@ -171,6 +287,27 @@ class AppearanceController(
         }
 }
 
+internal fun AppAppearanceState.profileFor(
+    override: AppAppearanceOverride?,
+    inherited: AuroraMaterialProfile,
+): AuroraMaterialProfile = override
+    ?.let { assignment -> profiles.firstOrNull { it.id == assignment.profileId } }
+    ?.profile
+    ?: inherited
+
+internal fun AppAppearanceState.profileNameFor(
+    override: AppAppearanceOverride?,
+    inheritedName: String,
+): String = override
+    ?.let { assignment -> profiles.firstOrNull { it.id == assignment.profileId } }
+    ?.name
+    ?: inheritedName
+
+private fun AppearanceOverride.toAppOverride(): AppAppearanceOverride = AppAppearanceOverride(
+    profileId = profileId.value,
+    revision = revision.value,
+)
+
 private fun AppearanceSnapshot.toAppState(): AppAppearanceState {
     val mapped = profiles.mapNotNull { profile ->
         runCatching { profile.toAppProfile() }.getOrNull()
@@ -182,6 +319,7 @@ private fun AppearanceSnapshot.toAppState(): AppAppearanceState {
         activeProfileId = activeId,
         activeProfile = active,
         snapshotRevision = revision,
+        profileSnapshotReady = revision > 0L,
     )
 }
 
@@ -287,6 +425,21 @@ private fun AppearanceRepositoryResult<*>.toControllerResult(
     is AppearanceRepositoryResult.StorageFailure,
     -> AppearanceControllerResult.Failed(fallback)
 }
+
+private fun AppearanceRepositoryResult<*>.toScopedControllerResult(): ScopedAppearanceControllerResult =
+    when (this) {
+        is AppearanceRepositoryResult.Success -> ScopedAppearanceControllerResult.Success
+        AppearanceRepositoryResult.StaleWrite,
+        AppearanceRepositoryResult.Conflict,
+        -> ScopedAppearanceControllerResult.Failed(ScopedAppearanceError.STALE_ASSIGNMENT)
+        AppearanceRepositoryResult.NotFound ->
+            ScopedAppearanceControllerResult.Failed(ScopedAppearanceError.PROFILE_MISSING)
+        AppearanceRepositoryResult.InvalidTimestamp,
+        AppearanceRepositoryResult.CorruptData,
+        is AppearanceRepositoryResult.LimitExceeded,
+        is AppearanceRepositoryResult.StorageFailure,
+        -> ScopedAppearanceControllerResult.Failed(ScopedAppearanceError.SAVE_FAILED)
+    }
 
 private const val PERMILL_SCALE: Float = 1_000f
 private const val DEFAULT_FOCAL_PERMILL: Int = 500

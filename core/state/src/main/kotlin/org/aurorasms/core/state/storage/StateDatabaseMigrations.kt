@@ -60,3 +60,64 @@ val STATE_MIGRATION_1_2: Migration = object : Migration(1, 2) {
         db.execSQL(AppearanceSelectionEnforcement.INSERT_DEFAULT_SELECTION)
     }
 }
+
+val STATE_MIGRATION_2_3: Migration = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `appearance_override_revision_sequence` (
+                `singleton_id` INTEGER NOT NULL,
+                `last_allocated_revision` INTEGER NOT NULL,
+                PRIMARY KEY(`singleton_id`)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `appearance_screen_overrides` (
+                `screen_code` TEXT NOT NULL,
+                `profile_id` INTEGER NOT NULL,
+                `revision` INTEGER NOT NULL,
+                PRIMARY KEY(`screen_code`),
+                FOREIGN KEY(`profile_id`) REFERENCES `appearance_profiles`(`profile_id`)
+                    ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS `index_appearance_screen_overrides_profile_id`
+            ON `appearance_screen_overrides` (`profile_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `appearance_conversation_overrides` (
+                `participant_set_key` TEXT NOT NULL,
+                `provider_thread_id` INTEGER NOT NULL,
+                `profile_id` INTEGER NOT NULL,
+                `revision` INTEGER NOT NULL,
+                PRIMARY KEY(`participant_set_key`),
+                FOREIGN KEY(`profile_id`) REFERENCES `appearance_profiles`(`profile_id`)
+                    ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS `index_appearance_conversation_overrides_provider_thread_id`
+            ON `appearance_conversation_overrides` (`provider_thread_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS `index_appearance_conversation_overrides_profile_id`
+            ON `appearance_conversation_overrides` (`profile_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(AppearanceOverrideSequenceEnforcement.CREATE_INSERT_TRIGGER)
+        db.execSQL(AppearanceOverrideSequenceEnforcement.CREATE_UPDATE_TRIGGER)
+        db.execSQL(AppearanceOverrideSequenceEnforcement.CREATE_DELETE_TRIGGER)
+        db.execSQL(AppearanceOverrideSequenceEnforcement.INSERT_INITIAL_SEQUENCE)
+    }
+}
