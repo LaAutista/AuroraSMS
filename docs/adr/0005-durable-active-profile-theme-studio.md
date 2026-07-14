@@ -1,7 +1,7 @@
 # ADR 0005: durable active profile and transactional Theme Studio
 
-Status: accepted for the bounded Phase 4 persistence/UI slice, 2026-07-14;
-implementation verification is pending
+Status: accepted and implemented for the bounded Phase 4 persistence/UI slice;
+implementation commit `325f2ce` verified 2026-07-14
 
 ## Context
 

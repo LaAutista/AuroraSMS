@@ -1,11 +1,10 @@
 # Phase 4 file-level plan
 
-Status: AuroraMaterial foundation and foreground provider-read lifecycle
-hardening implemented and verified on 2026-07-14; the bounded durable active
-named-profile and Theme Studio slice is accepted for implementation with its
-verification evidence pending; overrides, import/export, navigation variants,
-media/artwork, and the full accessibility/performance matrix remain gated
-follow-on work
+Status: AuroraMaterial foundation, foreground provider-read lifecycle
+hardening, and the bounded durable active named-profile/Theme Studio slice
+implemented and verified on 2026-07-14; overrides, import/export, navigation
+variants, media/artwork, and the full accessibility/performance matrix remain
+gated follow-on work
 
 ## Outcome
 
@@ -20,7 +19,7 @@ user-selected profile, decode a wallpaper/GIF, add a hidden destination screen,
 or alter any SMS/MMS behavior. A separate physical-validation fix in this phase
 bounds provider reconciliation by foreground lifecycle.
 
-The next bounded slice extends the existing Aurora-owned Room state boundary
+The completed bounded slice extends the existing Aurora-owned Room state boundary
 from version 1 to version 2 for named profiles and one active selection. It adds
 an app-owned Theme Studio destination whose in-memory preview is confined to the
 visible Appearance route until atomic `Apply`, Cancel, Back, or route disposal.
@@ -179,15 +178,17 @@ editor/preview. Its acceptance criteria are:
   network path, artwork, media reference, decoder, Telephony read, index
   invalidation, or carrier behavior.
 
-Implementation and verification evidence for this slice remain pending. The
-corresponding `docs/TEST_MATRIX.md` rows stay unchecked until the exact host,
-migration, emulator, governance, and privacy-safe device gates run.
+Implementation commit `325f2ce` passed the exact host, migration, emulator,
+governance, release-manifest, and privacy-safe Pixel gates. Commands, counts,
+artifact hashes, and bounded outcomes are recorded in `docs/TEST_MATRIX.md`.
 
 The bounded slice is reviewed as this separate file set; the list is reconciled
 against the final diff before evidence is recorded:
 
 ```text
+.gitignore
 app/build.gradle.kts
+app/src/androidTest/kotlin/org/aurorasms/app/MainActivityNotificationRouteTest.kt
 app/src/debug/AndroidManifest.xml
 app/src/debug/kotlin/org/aurorasms/app/appearance/ThemeStudioTestActivity.kt
 app/src/main/kotlin/org/aurorasms/app/AppContainer.kt

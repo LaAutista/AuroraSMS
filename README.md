@@ -59,8 +59,7 @@ The appearance foundation itself does not change role, permission, provider,
 index, draft, notification, or carrier-transport contracts. The lifecycle
 hardening is a separate reliability fix discovered during physical validation.
 
-A bounded active-profile/Theme Studio follow-on is now under implementation,
-with final verification evidence still pending:
+The bounded active-profile/Theme Studio slice is now implemented and verified:
 
 - an explicit non-destructive version-1-to-version-2 migration of the durable
   Aurora state database for bounded named profiles and one active selection;
@@ -72,6 +71,10 @@ with final verification evidence still pending:
   and
 - deterministic `Cancel`/Back behavior with no DataStore, dependency,
   permission, network, artwork, or media addition.
+
+Version `0.4.1-phase4` passed the complete offline host, lint, release,
+benchmark, clean-room, permission, APK-content, license/SBOM, API 36 emulator,
+and privacy-safe Pixel 8 persistence gates recorded in `docs/TEST_MATRIX.md`.
 
 Screen/conversation overrides, import/export, navigation variants, wallpapers,
 GIF lifecycle, full accessibility/performance coverage, and approved canonical

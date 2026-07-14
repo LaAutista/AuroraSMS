@@ -583,60 +583,123 @@ Physical-device performance targets after a warm index:
   head verification only while at least one Aurora messaging activity is
   started, preserves one already-admitted bounded unit, and resumes deferred
   work without falsely marking provider state dirty.
-- [ ] The bounded durable active named-profile/Theme Studio slice meets the
-  narrowly scoped pending rows below. Overrides, import/export, navigation
+- [x] The bounded durable active named-profile/Theme Studio slice meets the
+  narrowly scoped verified rows below. Overrides, import/export, navigation
   variants, approved artwork, local static/GIF assignments, and full
   surface/device accessibility remain follow-on slices.
 
-### Durable active profile and Theme Studio slice — evidence pending
+### Durable active profile and Theme Studio slice — verified 2026-07-14
 
-These rows define the safe slice accepted by ADR 0005. They remain unchecked
-until the implementation is complete and the exact commands, variants, and
-non-sensitive outcomes are recorded; a compile or Compose preview alone is not
+These rows define the safe slice accepted by ADR 0005. Implementation commit
+`325f2ce` passed the exact commands, variants, and non-sensitive outcomes
+recorded below; a compile or Compose preview alone was not treated as
 verification.
 
-- [ ] The Aurora state database exports schema version 2 and an explicit
+- [x] The Aurora state database exports schema version 2 and an explicit
   version-1-to-version-2 migration preserves durable draft rows, draft identity
   enforcement, and all version-1 invariants without destructive fallback.
-- [ ] Named profile rows and the active selection enforce bounded count/name
+- [x] Named profile rows and the active selection enforce bounded count/name
   rules, referential integrity, and one coherent active target; the canonical
   code-owned default requires no mutable database row.
-- [ ] Palette, density, avatar-mask, navigation, and bubble choices round-trip
+- [x] Palette, density, avatar-mask, navigation, and bubble choices round-trip
   explicit stable codes rather than enum ordinals/declaration names. Unknown
   codes, unsupported profile schemas, and out-of-range numeric values never
   reach rendering and resolve safely to the canonical profile.
-- [ ] Narrow host color tests prove custom hue changes coherent static role
+- [x] Narrow host color tests prove custom hue changes coherent static role
   families without changing canonical defaults, all 360 tested dark/light hue
   role pairs reach at least 4.5:1, and high contrast uses opaque black/white
   foreground/container pairs. This is not full surface/device accessibility
   acceptance.
-- [ ] Repository tests cover create/update plus activation in one transaction,
+- [x] Repository tests cover create/update plus activation in one transaction,
   optimistic-revision stale writes and deletes, duplicate-name conflicts,
   profile limits, reset-to-canonical, and deletion of the active profile
   without an invalid intermediate snapshot.
-- [ ] With no durable selection the app root uses the canonical profile; after
+- [x] With no durable selection the app root uses the canonical profile; after
   successful `Apply`, the selected named profile survives recreation/relaunch
   and becomes the root theme only from the validated repository snapshot.
-- [ ] Theme Studio is reachable through the existing app-owned route, and its
+- [x] Theme Studio is reachable through the existing app-owned route, and its
   bounded in-memory preview covers only the admitted palette, hue, density,
   avatar, bubble, and high-contrast controls. Reduced motion remains a validated
   profile/token value but is not exposed until a production animation consumes
   it. Preview may recompose only the visible Appearance route/root theme subtree
   and never escapes to another route. No bottom-bar/adaptive-rail variant,
   override, import/export, wallpaper, or media behavior is implied.
-- [ ] Editing, profile selection, and Reset affect only the transient preview
+- [x] Editing, profile selection, and Reset affect only the transient preview
   before commit. `Cancel`, system Back, and route disposal discard the draft
   and restore the durable active profile; failed or stale `Apply` leaves that
   durable selection unchanged.
-- [ ] Bounded saveable editor state restores deterministically after
+- [x] Bounded saveable editor state restores deterministically after
   recreation, while an in-flight database operation, error, or confirmation
   dialog is not restored as a completed write.
-- [ ] The slice adds no external coordinate, DataStore, permission, exported
+- [x] The slice adds no external coordinate, DataStore, permission, exported
   production component, initializer, native binary, network path, artwork,
   media reference, or decoder. Its non-exported debug-only UI test host is absent
   from release/benchmark outputs, and appearance actions do not query Telephony,
   invalidate the message index, reconstruct a thread route, or touch carrier
   transport.
+
+### Durable active profile and Theme Studio evidence
+
+Version `0.4.1-phase4` (`versionCode=2`) at implementation commit `325f2ce`
+was verified with the final offline host gate:
+
+```text
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease :app:lintBenchmark :app:assembleBenchmark :macrobenchmark:check :macrobenchmark:assembleBenchmark verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon --no-parallel --console=plain
+```
+
+It completed 883 tasks successfully. The generated XML reports contain 218
+host unit tests with zero failures, errors, or skips. Clean-room verification
+checked all 19 private-reference hashes. Dependency, merged-manifest,
+packaged-permission, and APK-content gates passed for debug, release, benchmark
+target, and both macrobenchmark APK outputs. The non-exported
+`ThemeStudioTestActivity` appeared only in the debug merged manifest and was
+absent from release and benchmark manifests.
+
+The final license/SBOM command was:
+
+```text
+./gradlew --no-parallel checkLicense generateLicenseReport cyclonedxBom --offline --no-daemon --console=plain
+```
+
+It produced 201 license records with zero unknown/disallowed dependencies, 441
+CycloneDX components, and 442 dependency nodes.
+
+The final connected command was pinned to `AuroraSMS_API36`:
+
+```text
+ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline --no-daemon --no-parallel --console=plain
+```
+
+It discovered 89 tests: app 19, database benchmark 3, index 29, notifications
+3, durable state 19, telephony 15, and presentation 1. Eighty-eight passed with
+zero failures/errors; `configuredScaleBenchmark_requiresExplicitOptIn` was the
+single intentional skip. The full run initially exposed an asynchronous warm
+notification-route race. After exact-ID pending acknowledgement and bounded
+delivery synchronization, its isolated Gradle regression passed 1/1 and ten
+direct stress repetitions passed 10/10 before the complete 89-test suite
+passed.
+
+The final debug APK is 13,016,704 bytes with SHA-256
+`691f8e6a07a45a594630b41e115ac06977db05e3555672ce371975a6bb91f5fe`.
+Those exact bytes were installed over the existing Pixel 8/Android 16/API 36
+app and copied to `/sdcard/Download/AuroraSMS-debug.apk`; the local artifact,
+installed `base.apk`, and Download copy hashes matched. The default-SMS role
+and READ/SEND/RECEIVE SMS, RECEIVE MMS/WAP push, and notification grants all
+remained present.
+
+The physical acceptance used only resource IDs, known static control-label
+bounds, and non-sensitive Room metadata. Opening the retained app migrated the
+Aurora state database to version 2 with zero named profiles and the canonical
+selection. More -> Appearance was reachable. Staging a new copy and pressing
+Cancel left profile count, canonical selection, and snapshot revision
+unchanged at `0`, canonical, and `1`. Applying a synthetic Light profile
+atomically produced one active profile (`profile_id=1`, profile revision `1`,
+snapshot revision `2`); the same active ID, revision, and palette survived a
+force-stop/cold relaunch. Confirmed deletion returned atomically to zero named
+profiles and canonical snapshot revision `3`, which also survived relaunch.
+AuroraSMS was left force-stopped on the canonical profile. No message text or
+address was exported, no screenshot was captured, and no carrier message was
+sent.
 
 ### Phase 4 foundation and lifecycle evidence
 
@@ -671,7 +734,7 @@ was the single intentional skip. An initial final run exposed a warm
 notification-route state race; the exact isolated regression and the complete
 79-test suite passed after the stale route callback was guarded.
 
-The final debug APK is 12,783,155 bytes with SHA-256
+The foundation-slice debug APK was 12,783,155 bytes with SHA-256
 `fa2714bbcd10e070fbf72cea79a37050c2e082a99e4c0b45abea1e62bf65cb68`.
 Those exact bytes were installed over the existing Pixel 8/API 36 app and
 copied to `/sdcard/Download/AuroraSMS-debug.apk`; local, installed `base.apk`,
