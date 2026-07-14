@@ -81,6 +81,16 @@ class MainActivity : ComponentActivity() {
         notificationPermissionGranted = granted
     }
 
+    override fun onStart() {
+        super.onStart()
+        (application as AuroraSmsApplication).container.onMessagingActivityStarted()
+    }
+
+    override fun onStop() {
+        (application as AuroraSmsApplication).container.onMessagingActivityStopped()
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         roleCoordinator = DefaultSmsRoleCoordinator(
@@ -130,7 +140,11 @@ class MainActivity : ComponentActivity() {
                                     Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN),
                                 )
                             },
-                            onOpenedConversationChanged = { openedConversationId = it },
+                            onOpenedConversationChanged = { conversationId ->
+                                if (pendingConversationId == null) {
+                                    openedConversationId = conversationId
+                                }
+                            },
                             onInboxReady = {
                                 if (!fullyDrawnReported) {
                                     fullyDrawnReported = true

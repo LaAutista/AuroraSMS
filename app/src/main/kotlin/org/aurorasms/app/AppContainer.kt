@@ -35,6 +35,7 @@ import kotlinx.coroutines.sync.withLock
 import org.aurorasms.app.contacts.AppContactCacheController
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.SerializedDraftWriter
+import org.aurorasms.app.index.ForegroundIndexReadGate
 import org.aurorasms.app.preview.AndroidBoundedPreviewLoader
 import org.aurorasms.core.index.AnchorWindowResult
 import org.aurorasms.core.index.IndexCoverage
@@ -160,6 +161,7 @@ class AppContainer(
     )
     private val indexRuntimeState = MutableStateFlow<IndexRuntimeState>(IndexRuntimeState.Opening)
     private val indexOpenMutex = Mutex()
+    private val foregroundIndexReadGate = ForegroundIndexReadGate()
     private var indexRetryJob: Job? = null
     @Volatile
     private var activeIndexDatabase: AuroraIndexDatabase? = null
@@ -173,7 +175,7 @@ class AppContainer(
             val outcome = awaitIndexRuntime().synchronizer.reconcile(reasons)
             if (
                 outcome is IndexSyncOutcome.Complete &&
-                reasons.any(IndexSignal::requiresDurableAmbiguousLedger)
+                reconciliationCoversAmbiguousSignalLedger(reasons)
             ) {
                 clearAmbiguousSignalLedger(signalSequence)
             }
@@ -355,6 +357,16 @@ class AppContainer(
         contactCacheController?.onContactsPermissionChanged()
     }
 
+    fun onMessagingActivityStarted() {
+        if (foregroundIndexReadGate.onActivityStarted()) {
+            indexCoordinator.resumeAfterForeground()
+        }
+    }
+
+    fun onMessagingActivityStopped() {
+        foregroundIndexReadGate.onActivityStopped()
+    }
+
     fun createDraftWriter(
         identity: DraftIdentity,
         restoredUnacknowledged: DraftEditorContent?,
@@ -448,6 +460,8 @@ class AppContainer(
                                 smsSource = smsProviderDataSource,
                                 mmsSource = mmsProviderDataSource,
                                 roleState = defaultSmsRoleState,
+                                isProviderReadPermitted =
+                                    foregroundIndexReadGate::isProviderReadPermitted,
                             ),
                         )
                         activeIndexDatabase = result.database
@@ -659,6 +673,7 @@ private class DeferredDraftRepository(
 private class StateStorageUnavailableException : IllegalStateException("State storage unavailable")
 
 private fun IndexSignal.requiresDurableAmbiguousLedger(): Boolean = when (this) {
+    IndexSignal.FOREGROUND_RESUME,
     IndexSignal.STARTUP,
     IndexSignal.INCOMING_INSERT,
     IndexSignal.PERIODIC_RECONCILIATION,
@@ -668,6 +683,17 @@ private fun IndexSignal.requiresDurableAmbiguousLedger(): Boolean = when (this) 
     IndexSignal.ROLE_CHANGED,
     -> true
 }
+
+/**
+ * A foreground resume can complete provider work that originally started from
+ * a durable ambiguous signal and was deferred at the background read gate. It
+ * may therefore clear an unchanged ledger after a complete reconciliation,
+ * while still never creating that ledger or marking provider state dirty.
+ */
+internal fun reconciliationCoversAmbiguousSignalLedger(reasons: Set<IndexSignal>): Boolean =
+    reasons.any { signal ->
+        signal == IndexSignal.FOREGROUND_RESUME || signal.requiresDurableAmbiguousLedger()
+    }
 
 private suspend fun StateFlow<IndexRuntimeState>.awaitReadyRuntime(): IndexRuntime {
     val state = when (val current = value) {

@@ -419,12 +419,60 @@ class TelephonyIndexSynchronizerTest {
         assertTrue(database.messages.committedBatchTargets.all { it in 100..500 })
     }
 
+    @Test
+    fun `provider read permission is rechecked between bounded scan batches`() = runTest {
+        val database = FakeIndexDatabase()
+        val sms = SyncTestSmsSource(messages = smsRange(600))
+        var permitChecks = 0
+        val synchronizer = synchronizer(
+            database = database,
+            sms = sms,
+            mms = SyncTestMmsSource(),
+            isProviderReadPermitted = { ++permitChecks < 3 },
+        )
+
+        val outcome = synchronizer.synchronize()
+        assertEquals(3, permitChecks)
+        val readsBeforePause = sms.readRequests.size
+        assertTrue(readsBeforePause > 0)
+        assertEquals(500L, database.messages.count())
+        assertTrue(outcome is IndexSyncOutcome.Pending)
+        assertEquals(GenerationStateCode.SCANNING, database.sync.latestGeneration()?.state)
+
+        val resumed = synchronizer(
+            database = database,
+            sms = sms,
+            mms = SyncTestMmsSource(),
+        ).synchronize()
+        assertTrue(resumed is IndexSyncOutcome.Complete)
+        assertTrue(sms.readRequests.size > readsBeforePause)
+        assertEquals(600L, database.messages.count())
+    }
+
+    @Test
+    fun `background deferral releases mutex for immediate role loss pause`() = runTest {
+        val database = FakeIndexDatabase()
+        val generationId = database.sync.startGeneration(10L)
+        val synchronizer = synchronizer(
+            database = database,
+            sms = SyncTestSmsSource(),
+            mms = SyncTestMmsSource(),
+            isProviderReadPermitted = { false },
+        )
+
+        assertTrue(synchronizer.synchronize() is IndexSyncOutcome.Pending)
+        synchronizer.pauseForRoleLoss()
+
+        assertEquals(GenerationStateCode.PAUSED, database.sync.generationById(generationId)?.state)
+    }
+
     private fun synchronizer(
         database: FakeIndexDatabase,
         sms: SmsProviderDataSource,
         mms: MmsProviderDataSource,
         roleHeld: Boolean = true,
         monotonicMillis: () -> Long = { 10L },
+        isProviderReadPermitted: () -> Boolean = { true },
     ): TelephonyIndexSynchronizer = TelephonyIndexSynchronizer(
         database = database,
         smsSource = sms,
@@ -433,6 +481,7 @@ class TelephonyIndexSynchronizerTest {
         ioDispatcher = Dispatchers.Unconfined,
         wallClockMillis = { 1_000L },
         monotonicMillis = monotonicMillis,
+        isProviderReadPermitted = isProviderReadPermitted,
     )
 }
 

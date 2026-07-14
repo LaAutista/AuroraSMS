@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
  */
 enum class IndexSignal {
     STARTUP,
+    FOREGROUND_RESUME,
     ROLE_CHANGED,
     INCOMING_INSERT,
     EXTERNAL_PROVIDER_CHANGE,
@@ -46,7 +47,7 @@ enum class IndexSignalDiagnostic {
  * database write. Startup and periodic health checks may explicitly opt out.
  *
  * Only one [reconcile] call can run at a time. Signals already pending are
- * represented by a six-value enum set, while the channel holds at most one
+ * represented by a seven-value enum set, while the channel holds at most one
  * wake-up. Signals received during a reconciliation therefore cause exactly
  * one subsequent call, regardless of duplicate volume.
  *

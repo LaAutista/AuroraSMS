@@ -40,6 +40,7 @@ class TelephonyIndexSynchronizer(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val wallClockMillis: () -> Long = System::currentTimeMillis,
     private val monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000L },
+    private val isProviderReadPermitted: () -> Boolean = { true },
 ) {
     private val mutex = Mutex()
     private val syncDao = database.indexSyncDao()
@@ -82,6 +83,9 @@ class TelephonyIndexSynchronizer(
             pauseCurrentGeneration()
             return IndexSyncOutcome.Paused(IndexFailureCode.ROLE_REQUIRED)
         }
+        if (!isProviderReadPermitted()) {
+            return IndexSyncOutcome.Pending(messageIndex.coverage())
+        }
 
         val active = syncDao.activeGeneration()
         val latest = syncDao.latestGeneration()
@@ -118,6 +122,9 @@ class TelephonyIndexSynchronizer(
                     if (attempt == MAX_GENERATIONS_PER_RUN - 1) {
                         return IndexSyncOutcome.Pending(messageIndex.coverage())
                     }
+                }
+                GenerationResult.Deferred -> {
+                    return IndexSyncOutcome.Pending(messageIndex.coverage())
                 }
                 is GenerationResult.Failed -> {
                     recordFailure(generation.generationId, result.code)
@@ -156,6 +163,7 @@ class TelephonyIndexSynchronizer(
                 if (!roleState.isRoleHeld()) {
                     return GenerationResult.Failed(IndexFailureCode.ROLE_REQUIRED)
                 }
+                if (!isProviderReadPermitted()) return GenerationResult.Deferred
                 val checkpoints = syncDao.checkpoints(generation.generationId)
                 val smsCheckpoint = checkpoints.singleOrNull { it.providerKind == ProviderKindCode.SMS }
                     ?: return GenerationResult.Failed(IndexFailureCode.UNKNOWN)
@@ -250,6 +258,7 @@ class TelephonyIndexSynchronizer(
         if (generation.state != GenerationStateCode.VERIFYING) {
             return GenerationResult.Failed(IndexFailureCode.UNKNOWN)
         }
+        if (!isProviderReadPermitted()) return GenerationResult.Deferred
         return when (val result = reconciler.verifyAndComplete(generation.generationId, safeNow())) {
             is IndexReconcileResult.Verified -> GenerationResult.Complete(result.summary.deletedRows)
             IndexReconcileResult.Dirty -> GenerationResult.Dirty
@@ -307,6 +316,7 @@ class TelephonyIndexSynchronizer(
     private sealed interface GenerationResult {
         class Complete(val deletedRows: Int) : GenerationResult
         data object Dirty : GenerationResult
+        data object Deferred : GenerationResult
         class Failed(val code: IndexFailureCode) : GenerationResult
     }
 

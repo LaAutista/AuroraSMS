@@ -65,6 +65,25 @@ class AppIndexCoordinatorTest {
         coordinator.close()
     }
 
+    @Test
+    fun foregroundResumeSchedulesCleanReconciliationWithoutDirtyMark() = runTest {
+        val events = mutableListOf<String>()
+        val coordinator = AppIndexCoordinator(
+            applicationScope = backgroundScope,
+            markPendingChanges = { events += "dirty" },
+            synchronize = { reasons ->
+                events += reasons.single().name
+                IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
+            },
+        )
+
+        coordinator.resumeAfterForeground()
+        runCurrent()
+
+        assertEquals(listOf(IndexSignal.FOREGROUND_RESUME.name), events)
+        coordinator.close()
+    }
+
     private companion object {
         val PARTIAL_COVERAGE = IndexCoverage(
             generationId = 1L,

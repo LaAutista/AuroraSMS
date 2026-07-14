@@ -25,11 +25,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import org.aurorasms.app.AuroraSmsApplication
 import org.aurorasms.app.AuroraSmsTheme
 import org.aurorasms.app.R
 import java.util.Locale
 
 class ComposeMessageActivity : ComponentActivity() {
+    override fun onStart() {
+        super.onStart()
+        (application as AuroraSmsApplication).container.onMessagingActivityStarted()
+    }
+
+    override fun onStop() {
+        (application as AuroraSmsApplication).container.onMessagingActivityStopped()
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val request = parseRequest(intent)

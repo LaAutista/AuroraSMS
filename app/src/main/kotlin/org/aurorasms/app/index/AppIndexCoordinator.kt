@@ -55,6 +55,13 @@ class AppIndexCoordinator(
 
     suspend fun signal(signal: IndexSignal): Boolean = signals.signal(signal)
 
+    /** Restarts deferred provider work without falsely marking provider data dirty. */
+    fun resumeAfterForeground() {
+        applicationScope.launch {
+            signals.signal(IndexSignal.FOREGROUND_RESUME, requiresDirtyMark = false)
+        }
+    }
+
     override fun close() {
         periodicJob?.cancel()
         signals.close()
