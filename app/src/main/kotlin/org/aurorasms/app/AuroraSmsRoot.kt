@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -92,6 +93,7 @@ internal fun AuroraSmsRoot(
             (route as? AppRoute.Thread)?.providerThreadId?.asConversationId(),
         )
     }
+    BackHandler(enabled = routes.size > 1, onBack = ::pop)
 
     saveableScreens.SaveableStateProvider(route.saveableScreenKey()) {
         when (route) {

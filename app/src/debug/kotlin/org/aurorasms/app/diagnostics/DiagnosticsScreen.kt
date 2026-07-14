@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -16,7 +19,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 import org.aurorasms.app.R
 import org.aurorasms.app.IndexStorageStatus
@@ -29,9 +35,18 @@ fun DiagnosticsScreen(
     onRefresh: () -> Unit,
     onClose: () -> Unit,
 ) {
-    Surface(modifier = Modifier.fillMaxSize()) {
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .semantics { testTagsAsResourceId = true }
+            .testTag(DIAGNOSTICS_SCREEN_TEST_TAG),
+    ) {
         Column(
-            modifier = Modifier.padding(24.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
@@ -114,16 +129,26 @@ fun DiagnosticsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Button(onClick = onRefresh) {
+                Button(
+                    modifier = Modifier.testTag(DIAGNOSTICS_REFRESH_TEST_TAG),
+                    onClick = onRefresh,
+                ) {
                     Text(stringResource(R.string.diagnostics_refresh))
                 }
-                OutlinedButton(onClick = onClose) {
+                OutlinedButton(
+                    modifier = Modifier.testTag(DIAGNOSTICS_CLOSE_TEST_TAG),
+                    onClick = onClose,
+                ) {
                     Text(stringResource(R.string.diagnostics_close))
                 }
             }
         }
     }
 }
+
+const val DIAGNOSTICS_SCREEN_TEST_TAG: String = "aurora-diagnostics-screen"
+const val DIAGNOSTICS_REFRESH_TEST_TAG: String = "aurora-diagnostics-refresh"
+const val DIAGNOSTICS_CLOSE_TEST_TAG: String = "aurora-diagnostics-close"
 
 @Composable
 private fun stateStorageText(status: StateStorageStatus): String = when (status) {

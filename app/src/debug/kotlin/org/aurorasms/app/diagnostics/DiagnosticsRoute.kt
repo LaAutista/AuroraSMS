@@ -3,6 +3,7 @@
 package org.aurorasms.app.diagnostics
 
 import android.app.Application
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.viewmodel.compose.viewModel
 
@@ -11,6 +12,7 @@ fun DiagnosticsRoute(
     application: Application,
     onClose: () -> Unit,
 ) {
+    BackHandler(onBack = onClose)
     val diagnostics: DiagnosticsViewModel = viewModel(
         factory = DiagnosticsViewModel.Factory(application),
     )
