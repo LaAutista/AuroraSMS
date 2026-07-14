@@ -1,8 +1,9 @@
 # AuroraSMS test matrix and phase-gate evidence
 
-Status: Phase 2 implementation and Pixel 8/API 36 synthetic database gate
-complete, 2026-07-12; real provider-history synchronization, remaining API/OEM
-coverage, and carrier transport rows pending.
+Status: Phase 3 implementation, deterministic profile generation, and API 36
+synthetic-emulator functional gate complete, 2026-07-13; representative
+physical-device performance, real provider-history synchronization, remaining
+API/OEM coverage, and carrier transport rows pending.
 
 ## Evidence rules
 
@@ -35,11 +36,15 @@ coverage, and carrier transport rows pending.
 | Low-memory device/emulator | Allocation/decode pressure | Phase 3/4/release |
 | Tablet/foldable/large screen | Adaptive navigation and state parity | Phase 4/release |
 
-The current environment has SDK platforms 36 and 37.0 plus a physical
-Google Pixel 8 (`shiba`) running Android 16/API 36 with telephony messaging and
-subscription features. No emulator, system image, or AVD is installed. The
-device evidence below covers only this Pixel/API combination; the remaining
-required API and OEM rows stay pending.
+The current environment has SDK platforms 36 and 37.0, a physical Google Pixel
+8 (`shiba`) running Android 16/API 36, and the synthetic-only
+`AuroraSMS_API36` API 36 AVD. Earlier physical evidence below covers only the
+Pixel/API combination. During Phase 3 finalization the physical phone was
+reserved for uninterrupted owner messaging and was not installed to, launched,
+queried for message content, or assigned the AuroraSMS role. Phase 3 connected
+functional and profile-generation evidence therefore uses only the AVD; its
+timings are not representative performance evidence. The remaining required
+API and OEM rows stay pending.
 
 ## Phase 0 documentation gate
 
@@ -436,19 +441,80 @@ baseline, and physical-device durability/FTS/synchronization evidence tests.
 
 ## Phase 3 inbox/thread performance matrix
 
-- [ ] Inbox and thread use stable keys and granular updates.
-- [ ] A 250k-message thread never creates a 250k-item UI list.
-- [ ] Prepending older rows preserves the visible anchor.
-- [ ] Incoming messages do not force a user away from their read position.
+- [x] Inbox and thread use stable keys and granular updates.
+- [x] A 250k-message thread never creates a 250k-item UI list.
+- [x] Prepending older rows preserves the visible anchor.
+- [x] Incoming messages do not force a user away from their read position.
 - [ ] Rotation, split screen, process recreation, and back navigation preserve
-  appropriate state.
-- [ ] Scroll-to-bottom/new-message affordance works without forced jumps.
-- [ ] Contact rename/photo change invalidates only the bounded contact cache.
-- [ ] Attachment previews load at display size and release correctly.
-- [ ] Debug StrictMode reports no tested main-thread provider/DB/file/decode
+  appropriate state. Rotation/process/back coverage passes; explicit
+  split-screen device evidence remains pending.
+- [x] Scroll-to-bottom/new-message affordance works without forced jumps.
+- [x] Contact rename/photo change invalidates only the bounded contact cache.
+- [x] Attachment previews load at display size and release correctly in focused
+  bounded-loader tests.
+- [x] Debug StrictMode reports no tested main-thread provider/DB/file/decode
   operation.
-- [ ] Baseline Profile includes startup, inbox, thread, search, exact jump,
-  attachment open, and back journeys.
+- [x] Baseline Profile includes startup, inbox, thread/prepend, search, exact
+  jump, the synthetic attachment presentation path, and back journeys. No real
+  attachment bytes are admitted to the profile fixture.
+
+### Phase 3 implementation evidence for `d767295`
+
+The following offline host gates passed on 2026-07-13:
+
+```text
+./gradlew test lintDebug lintRelease :app:lintBenchmark assembleDebug assembleRelease :app:assembleBenchmark :macrobenchmark:check :macrobenchmark:assembleBenchmark --offline --no-daemon --no-parallel
+./gradlew verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon --no-parallel
+./gradlew checkLicense generateLicenseReport cyclonedxBom --offline --no-daemon --no-parallel
+bash -n scripts/*.sh
+PYTHONPYCACHEPREFIX=/tmp/aurorasms-pycache python3 -m py_compile scripts/patch-benchmark-apk.py
+```
+
+The build/lint/test gate completed 789 tasks. Clean-room verification checked
+all 19 private-reference hashes. Manifest and packaged-APK checks passed for
+debug, R8/resource-shrunk release, R8 benchmark target, and the separate
+macrobenchmark APK. The release APK contains nonempty
+`assets/dexopt/baseline.prof` and `assets/dexopt/baseline.profm`. The generated
+license inventory contains 201 records with zero disallowed licenses; the
+aggregate CycloneDX JSON contains 440 components and 441 dependency nodes.
+
+The post-commit connected command was pinned to the AVD so Gradle could not
+select the physical phone:
+
+```text
+ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline --no-daemon --no-parallel
+```
+
+It discovered 78 tests: app 15, existing database benchmark 3, index 29,
+notifications 3, durable state 12, telephony 15, and presentation 1. Seventy-
+seven passed with zero failures/errors; the existing
+`configuredScaleBenchmark_requiresExplicitOptIn` row was the single intentional
+skip. An earlier pre-commit run exposed that `:macrobenchmark` still offered a
+default debug variant and incorrectly paired benchmark-only tests with the
+fixture-free debug app. Phase 3 disabled that variant, reran the same root task,
+and retained the initial failure rather than treating it as passing evidence.
+
+The profile update used only the API 36 AVD and synthetic fixtures:
+
+```text
+./scripts/update-baseline-profile.sh --verify-twice \
+  --device emulator-5556 --allow-emulator-profile
+```
+
+Both final Aurora-owned captures contained the same 1,977 normalized rules.
+The exact intersection is `app/src/main/baseline-prof.txt`, SHA-256
+`2eda2fae24a54e1a526dfca3f79a6dce12be7d4448317174882dc98de2f2bf9a`.
+Startup/inbox/scroll/thread/prepend/fling/search/exact-jump/back journeys all
+completed. This is profile determinism and reachability evidence only; no AVD
+latency, frame, or memory number is used as a product claim.
+
+The final debug APK is 12,865,082 bytes with SHA-256
+`cda0f726c6cd931f386cb66e2b16d58bc74f84a3790cc0926ec57f6cccbc249e`.
+It was intentionally not installed, launched, or copied to the physical phone
+because the owner needed the existing working SMS app. Physical install/hash,
+release-equivalent Macrobenchmark percentiles, real-provider responsiveness,
+low-memory, and decoded-attachment profile rows remain open for an explicitly
+approved later device window.
 
 Physical-device performance targets after a warm index:
 
