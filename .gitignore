@@ -12,6 +12,7 @@ local.properties
 
 # Android, Gradle, IDE, and native build output.
 .gradle/
+.kotlin/
 .idea/
 *.iml
 build/

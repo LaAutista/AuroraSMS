@@ -11,6 +11,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.aurorasms.core.state.storage.AuroraStateDatabase
+import org.aurorasms.core.state.storage.AppearanceSelectionEnforcement
 import org.aurorasms.core.state.storage.DraftIdentityEnforcement
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
@@ -27,7 +28,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class StateSchemaV1Test {
+class StateSchemaCurrentTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @get:Rule
@@ -49,7 +50,7 @@ class StateSchemaV1Test {
     }
 
     @Test
-    fun schemaVersionOne_hasBoundedDraftColumnsAndIndices() {
+    fun schemaVersionTwo_hasBoundedDraftAndAppearanceTables() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
@@ -81,18 +82,43 @@ class StateSchemaV1Test {
             assertTrue(indices.contains("index_drafts_provider_thread_id"))
             assertTrue(indices.contains("index_drafts_participant_set_key"))
             assertTrue(indices.contains("index_drafts_updated_timestamp_ms_draft_id"))
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_profiles'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_selection'",
+                ).use { it.moveToFirst() },
+            )
+            assertEquals(
+                1L,
+                sqlite.query("SELECT COUNT(*) FROM appearance_selection").use { cursor ->
+                    check(cursor.moveToFirst())
+                    cursor.getLong(0)
+                },
+            )
         } finally {
             database.close()
         }
     }
 
     @Test
-    fun migrationTestHelper_createsExportedSchemaVersionOneAndCurrentRoomValidatesIt() {
+    fun exportedVersionTwoStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'drafts'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_profiles'",
                 ).use { it.moveToFirst() },
             )
         }
@@ -103,9 +129,19 @@ class StateSchemaV1Test {
             MIGRATION_DATABASE_NAME,
         )
             .addCallback(DraftIdentityEnforcement.callback)
+            .addCallback(AppearanceSelectionEnforcement.callback)
             .build()
         try {
             assertEquals(AuroraStateDatabase.VERSION, database.openHelper.writableDatabase.version)
+            assertEquals(
+                0L,
+                database.openHelper.writableDatabase
+                    .query("SELECT COUNT(*) FROM appearance_selection")
+                    .use { cursor ->
+                        check(cursor.moveToFirst())
+                        cursor.getLong(0)
+                    },
+            )
         } finally {
             database.close()
         }
@@ -117,6 +153,8 @@ class StateSchemaV1Test {
         var sqlite = database.openHelper.writableDatabase
         assertTriggerExists(sqlite, DraftIdentityEnforcement.INSERT_TRIGGER_NAME)
         assertTriggerExists(sqlite, DraftIdentityEnforcement.UPDATE_TRIGGER_NAME)
+        assertTriggerExists(sqlite, AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME)
 
         assertThrows(SQLiteConstraintException::class.java) {
             sqlite.execSQL(
@@ -135,6 +173,8 @@ class StateSchemaV1Test {
 
         sqlite.execSQL("DROP TRIGGER ${DraftIdentityEnforcement.INSERT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${DraftIdentityEnforcement.UPDATE_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME}")
         database.close()
 
         database = openStateDatabase()
@@ -142,6 +182,15 @@ class StateSchemaV1Test {
             sqlite = database.openHelper.writableDatabase
             assertTriggerExists(sqlite, DraftIdentityEnforcement.INSERT_TRIGGER_NAME)
             assertTriggerExists(sqlite, DraftIdentityEnforcement.UPDATE_TRIGGER_NAME)
+            assertTriggerExists(sqlite, AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME)
+            assertTriggerExists(sqlite, AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME)
+            assertThrows(SQLiteConstraintException::class.java) {
+                sqlite.execSQL(
+                    "INSERT INTO appearance_selection(" +
+                        "singleton_id, active_profile_id, snapshot_revision" +
+                        ") VALUES (2, NULL, 1)",
+                )
+            }
             assertThrows(SQLiteConstraintException::class.java) {
                 sqlite.execSQL(
                     """

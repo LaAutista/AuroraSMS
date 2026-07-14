@@ -1,0 +1,277 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "5458525bcf032fbeee4f30987b6166e1",
+    "entities": [
+      {
+        "tableName": "drafts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`draft_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `provider_thread_id` INTEGER, `participant_set_key` TEXT, `body` TEXT, `subject` TEXT, `created_timestamp_ms` INTEGER NOT NULL, `updated_timestamp_ms` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "draftId",
+            "columnName": "draft_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerThreadId",
+            "columnName": "provider_thread_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "participantSetKey",
+            "columnName": "participant_set_key",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "body",
+            "columnName": "body",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "subject",
+            "columnName": "subject",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdTimestampMillis",
+            "columnName": "created_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedTimestampMillis",
+            "columnName": "updated_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "draft_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_drafts_provider_thread_id",
+            "unique": true,
+            "columnNames": [
+              "provider_thread_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_drafts_provider_thread_id` ON `${TABLE_NAME}` (`provider_thread_id`)"
+          },
+          {
+            "name": "index_drafts_participant_set_key",
+            "unique": true,
+            "columnNames": [
+              "participant_set_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_drafts_participant_set_key` ON `${TABLE_NAME}` (`participant_set_key`)"
+          },
+          {
+            "name": "index_drafts_updated_timestamp_ms_draft_id",
+            "unique": false,
+            "columnNames": [
+              "updated_timestamp_ms",
+              "draft_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_drafts_updated_timestamp_ms_draft_id` ON `${TABLE_NAME}` (`updated_timestamp_ms`, `draft_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "appearance_profiles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`profile_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `normalized_name` TEXT NOT NULL, `profile_schema_version` INTEGER NOT NULL, `palette_code` TEXT NOT NULL, `hue_degrees` INTEGER NOT NULL, `row_density_code` TEXT NOT NULL, `avatar_mask_code` TEXT NOT NULL, `navigation_style_code` TEXT NOT NULL, `bubble_geometry_code` TEXT NOT NULL, `reduced_motion` INTEGER NOT NULL, `high_contrast` INTEGER NOT NULL, `wallpaper_dim_permill` INTEGER NOT NULL, `focal_x_permill` INTEGER NOT NULL, `focal_y_permill` INTEGER NOT NULL, `revision` INTEGER NOT NULL, `created_timestamp_ms` INTEGER NOT NULL, `updated_timestamp_ms` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "profileId",
+            "columnName": "profile_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "normalizedName",
+            "columnName": "normalized_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileSchemaVersion",
+            "columnName": "profile_schema_version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paletteCode",
+            "columnName": "palette_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hueDegrees",
+            "columnName": "hue_degrees",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rowDensityCode",
+            "columnName": "row_density_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "avatarMaskCode",
+            "columnName": "avatar_mask_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "navigationStyleCode",
+            "columnName": "navigation_style_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bubbleGeometryCode",
+            "columnName": "bubble_geometry_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reducedMotion",
+            "columnName": "reduced_motion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "highContrast",
+            "columnName": "high_contrast",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "wallpaperDimPermill",
+            "columnName": "wallpaper_dim_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "focalXPermill",
+            "columnName": "focal_x_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "focalYPermill",
+            "columnName": "focal_y_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdTimestampMillis",
+            "columnName": "created_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedTimestampMillis",
+            "columnName": "updated_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "profile_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_appearance_profiles_normalized_name",
+            "unique": true,
+            "columnNames": [
+              "normalized_name"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_appearance_profiles_normalized_name` ON `${TABLE_NAME}` (`normalized_name`)"
+          }
+        ]
+      },
+      {
+        "tableName": "appearance_selection",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`singleton_id` INTEGER NOT NULL, `active_profile_id` INTEGER, `snapshot_revision` INTEGER NOT NULL, PRIMARY KEY(`singleton_id`), FOREIGN KEY(`active_profile_id`) REFERENCES `appearance_profiles`(`profile_id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "singletonId",
+            "columnName": "singleton_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeProfileId",
+            "columnName": "active_profile_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "snapshotRevision",
+            "columnName": "snapshot_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "singleton_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_appearance_selection_active_profile_id",
+            "unique": false,
+            "columnNames": [
+              "active_profile_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_appearance_selection_active_profile_id` ON `${TABLE_NAME}` (`active_profile_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "appearance_profiles",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "active_profile_id"
+            ],
+            "referencedColumns": [
+              "profile_id"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5458525bcf032fbeee4f30987b6166e1')"
+    ]
+  }
+}

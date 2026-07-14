@@ -37,6 +37,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":core:designsystem"))
     api(project(":core:index"))
     implementation(project(":core:model"))
     implementation(project(":core:telephony"))

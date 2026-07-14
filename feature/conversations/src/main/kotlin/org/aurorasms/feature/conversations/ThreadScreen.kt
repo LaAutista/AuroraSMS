@@ -5,6 +5,7 @@ package org.aurorasms.feature.conversations
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,6 +58,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import org.aurorasms.core.index.conversation.ConversationSummary
 import org.aurorasms.core.index.timeline.TimelineMessage
 import org.aurorasms.core.index.timeline.TimelineMessageContent
+import org.aurorasms.core.designsystem.LocalAuroraMaterialTokens
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
@@ -383,6 +385,7 @@ private fun MessageBubble(
     attachmentRepository: MmsAttachmentRepository,
     previewLoader: BoundedPreviewLoader,
 ) {
+    val tokens = LocalAuroraMaterialTokens.current
     val incoming = message.direction == MessageDirection.INCOMING
     val directionDescription = stringResource(
         if (incoming) R.string.incoming_message else R.string.outgoing_message,
@@ -412,7 +415,7 @@ private fun MessageBubble(
                 .widthIn(max = 360.dp)
                 .semantics { stateDescription = directionDescription }
                 .testTag(MESSAGE_BUBBLE_TEST_TAG),
-            shape = MaterialTheme.shapes.large,
+            shape = RoundedCornerShape(tokens.bubbleCornerRadius),
             color = when {
                 highlighted -> MaterialTheme.colorScheme.tertiaryContainer
                 incoming -> MaterialTheme.colorScheme.surfaceVariant

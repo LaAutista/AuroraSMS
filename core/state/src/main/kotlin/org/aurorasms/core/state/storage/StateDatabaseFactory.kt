@@ -47,7 +47,9 @@ object StateDatabaseFactory {
             DATABASE_NAME,
         )
             .openHelperFactory(NonDeletingStateOpenHelperFactory)
+            .addMigrations(STATE_MIGRATION_1_2)
             .addCallback(DraftIdentityEnforcement.callback)
+            .addCallback(AppearanceSelectionEnforcement.callback)
             .build()
         return try {
             database.openHelper.writableDatabase

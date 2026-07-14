@@ -22,8 +22,8 @@ Phase 1 established the independently implemented default-SMS foundation:
 
 Phase 2 added the complete-history local data and search foundation:
 
-- separate private Room v1 databases for the rebuildable message index and
-  durable Aurora-owned draft state;
+- separate private Room databases for the rebuildable message index and
+  durable Aurora-owned state, initially introduced at schema version 1;
 - bounded, newest-first SMS/MMS metadata projection with durable checkpoints,
   verified reconciliation, and truthful partial coverage;
 - safe FTS4 global and in-thread keyset search plus bounded exact-result
@@ -59,8 +59,22 @@ The appearance foundation itself does not change role, permission, provider,
 index, draft, notification, or carrier-transport contracts. The lifecycle
 hardening is a separate reliability fix discovered during physical validation.
 
-Theme Studio, durable profile/override state, navigation variants, wallpapers,
-GIF lifecycle, full accessibility/device coverage, and approved canonical
+A bounded active-profile/Theme Studio follow-on is now under implementation,
+with final verification evidence still pending:
+
+- an explicit non-destructive version-1-to-version-2 migration of the durable
+  Aurora state database for bounded named profiles and one active selection;
+- stable storage codes and a code-owned canonical fallback rather than enum
+  ordinals or a duplicated default row;
+- an app-owned, in-memory preview limited to the visible Appearance route, with
+  durable application theme changes only after a successful atomic `Apply` or
+  confirmed revision-checked deletion of the active named profile;
+  and
+- deterministic `Cancel`/Back behavior with no DataStore, dependency,
+  permission, network, artwork, or media addition.
+
+Screen/conversation overrides, import/export, navigation variants, wallpapers,
+GIF lifecycle, full accessibility/performance coverage, and approved canonical
 artwork remain Phase 4 follow-on gates. Artwork is still blocked on the exact
 written publication/derivative/distribution terms in
 `docs/ARTWORK_CATALOG.md`.

@@ -14,6 +14,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -29,10 +30,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.aurorasms.app.contacts.AppContactCacheController
+import org.aurorasms.app.appearance.AppearanceController
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.SerializedDraftWriter
 import org.aurorasms.app.index.ForegroundIndexReadGate
@@ -102,6 +106,14 @@ import org.aurorasms.core.telephony.internal.AndroidSmsTransport
 import org.aurorasms.core.telephony.internal.AndroidSubscriptionRepository
 import org.aurorasms.core.telephony.internal.MmsPduStagingStore
 import org.aurorasms.core.state.storage.AuroraStateDatabase
+import org.aurorasms.core.state.AppearanceProfile
+import org.aurorasms.core.state.AppearanceProfileEdit
+import org.aurorasms.core.state.AppearanceProfileId
+import org.aurorasms.core.state.AppearanceProfileRepository
+import org.aurorasms.core.state.AppearanceRepositoryResult
+import org.aurorasms.core.state.AppearanceRevision
+import org.aurorasms.core.state.AppearanceSnapshot
+import org.aurorasms.core.state.AppearanceStorageOperation
 import org.aurorasms.core.state.Draft
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftIdentity
@@ -110,6 +122,8 @@ import org.aurorasms.core.state.DraftRepositoryResult
 import org.aurorasms.core.state.DraftRevision
 import org.aurorasms.core.state.DraftStorageOperation
 import org.aurorasms.core.state.NewDraft
+import org.aurorasms.core.state.NewAppearanceProfile
+import org.aurorasms.core.state.storage.RoomAppearanceProfileRepository
 import org.aurorasms.core.state.storage.RoomDraftRepository
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
@@ -191,6 +205,12 @@ class AppContainer(
     val stateStorageStatus: StateFlow<StateStorageStatus> = _stateStorageStatus.asStateFlow()
     private val stateRuntimeState = MutableStateFlow<StateRuntimeState>(StateRuntimeState.Opening)
     val draftRepository: DraftRepository = DeferredDraftRepository(stateRuntimeState)
+    val appearanceProfileRepository: AppearanceProfileRepository =
+        DeferredAppearanceProfileRepository(stateRuntimeState)
+    val appearanceController = AppearanceController(
+        repository = appearanceProfileRepository,
+        scope = applicationScope,
+    )
     @Volatile
     private var stateDatabase: AuroraStateDatabase? = null
 
@@ -261,14 +281,20 @@ class AppContainer(
         }
         requestIndexOpen()
         if (syntheticIndexOnly) {
-            stateRuntimeState.value = StateRuntimeState.Ready(EmptyBenchmarkDraftRepository)
+            stateRuntimeState.value = StateRuntimeState.Ready(
+                draftRepository = EmptyBenchmarkDraftRepository,
+                appearanceProfileRepository = EmptyBenchmarkAppearanceProfileRepository,
+            )
             _stateStorageStatus.value = StateStorageStatus.Ready
         } else {
             applicationScope.launch(Dispatchers.IO) {
                 when (val result = StateDatabaseFactory.open(application)) {
                     is StateDatabaseOpenResult.Opened -> {
                         stateDatabase = result.database
-                        stateRuntimeState.value = StateRuntimeState.Ready(RoomDraftRepository(result.database))
+                        stateRuntimeState.value = StateRuntimeState.Ready(
+                            draftRepository = RoomDraftRepository(result.database),
+                            appearanceProfileRepository = RoomAppearanceProfileRepository(result.database),
+                        )
                         _stateStorageStatus.value = StateStorageStatus.Ready
                     }
                     is StateDatabaseOpenResult.Failed -> {
@@ -561,6 +587,35 @@ private object EmptyBenchmarkDraftRepository : DraftRepository {
         DraftRepositoryResult.StorageFailure(DraftStorageOperation.DELETE)
 }
 
+private object EmptyBenchmarkAppearanceProfileRepository : AppearanceProfileRepository {
+    override val snapshots: Flow<AppearanceSnapshot> = flowOf(AppearanceSnapshot.Empty)
+
+    override suspend fun create(
+        profile: NewAppearanceProfile,
+        activate: Boolean,
+    ): AppearanceRepositoryResult<AppearanceProfile> =
+        AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.CREATE)
+
+    override suspend fun update(
+        edit: AppearanceProfileEdit,
+        expectedRevision: AppearanceRevision,
+        activate: Boolean,
+    ): AppearanceRepositoryResult<AppearanceProfile> =
+        AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.UPDATE)
+
+    override suspend fun activate(id: AppearanceProfileId): AppearanceRepositoryResult<Unit> =
+        AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.ACTIVATE)
+
+    override suspend fun resetActive(): AppearanceRepositoryResult<Unit> =
+        AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.RESET_ACTIVE)
+
+    override suspend fun delete(
+        id: AppearanceProfileId,
+        expectedRevision: AppearanceRevision,
+    ): AppearanceRepositoryResult<Unit> =
+        AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.DELETE)
+}
+
 sealed interface IndexStorageStatus {
     data object Opening : IndexStorageStatus
     data class Ready(val recovered: Boolean) : IndexStorageStatus
@@ -643,7 +698,10 @@ private class IndexStorageUnavailableException : IllegalStateException("Index st
 
 private sealed interface StateRuntimeState {
     data object Opening : StateRuntimeState
-    data class Ready(val draftRepository: DraftRepository) : StateRuntimeState
+    data class Ready(
+        val draftRepository: DraftRepository,
+        val appearanceProfileRepository: AppearanceProfileRepository,
+    ) : StateRuntimeState
     data class Failed(val reason: StateDatabaseOpenFailureReason) : StateRuntimeState
 }
 
@@ -668,6 +726,59 @@ private class DeferredDraftRepository(
         runtimeState.awaitReadyDraftRepository().delete(id)
 
     override fun toString(): String = "DeferredDraftRepository(content=REDACTED)"
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+private class DeferredAppearanceProfileRepository(
+    private val runtimeState: StateFlow<StateRuntimeState>,
+) : AppearanceProfileRepository {
+    override val snapshots: Flow<AppearanceSnapshot> = runtimeState
+        .flatMapLatest { state ->
+            when (state) {
+                is StateRuntimeState.Ready -> state.appearanceProfileRepository.snapshots
+                StateRuntimeState.Opening,
+                is StateRuntimeState.Failed,
+                -> flowOf(AppearanceSnapshot.Empty)
+            }
+        }
+        .conflate()
+
+    override suspend fun create(
+        profile: NewAppearanceProfile,
+        activate: Boolean,
+    ): AppearanceRepositoryResult<AppearanceProfile> =
+        runtimeState.awaitReadyAppearanceProfileRepository()
+            ?.create(profile, activate)
+            ?: AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.CREATE)
+
+    override suspend fun update(
+        edit: AppearanceProfileEdit,
+        expectedRevision: AppearanceRevision,
+        activate: Boolean,
+    ): AppearanceRepositoryResult<AppearanceProfile> =
+        runtimeState.awaitReadyAppearanceProfileRepository()
+            ?.update(edit, expectedRevision, activate)
+            ?: AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.UPDATE)
+
+    override suspend fun activate(id: AppearanceProfileId): AppearanceRepositoryResult<Unit> =
+        runtimeState.awaitReadyAppearanceProfileRepository()
+            ?.activate(id)
+            ?: AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.ACTIVATE)
+
+    override suspend fun resetActive(): AppearanceRepositoryResult<Unit> =
+        runtimeState.awaitReadyAppearanceProfileRepository()
+            ?.resetActive()
+            ?: AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.RESET_ACTIVE)
+
+    override suspend fun delete(
+        id: AppearanceProfileId,
+        expectedRevision: AppearanceRevision,
+    ): AppearanceRepositoryResult<Unit> =
+        runtimeState.awaitReadyAppearanceProfileRepository()
+            ?.delete(id, expectedRevision)
+            ?: AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.DELETE)
+
+    override fun toString(): String = "DeferredAppearanceProfileRepository(content=REDACTED)"
 }
 
 private class StateStorageUnavailableException : IllegalStateException("State storage unavailable")
@@ -717,6 +828,15 @@ private suspend fun StateFlow<StateRuntimeState>.awaitReadyDraftRepository(): Dr
         is StateRuntimeState.Failed -> throw StateStorageUnavailableException()
         StateRuntimeState.Opening -> error("State runtime did not leave opening state")
     }
+}
+
+private suspend fun StateFlow<StateRuntimeState>.awaitReadyAppearanceProfileRepository():
+    AppearanceProfileRepository? {
+    val state = when (val current = value) {
+        StateRuntimeState.Opening -> first { it !is StateRuntimeState.Opening }
+        else -> current
+    }
+    return (state as? StateRuntimeState.Ready)?.appearanceProfileRepository
 }
 
 private class SentPartTracker {

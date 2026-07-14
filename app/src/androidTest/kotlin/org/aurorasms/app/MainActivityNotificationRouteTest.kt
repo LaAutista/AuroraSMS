@@ -4,10 +4,10 @@ package org.aurorasms.app
 
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import org.aurorasms.app.message.AppNotificationIntentFactory
 import org.aurorasms.core.model.ConversationId
 import org.junit.Assert.assertEquals
@@ -33,11 +33,7 @@ class MainActivityNotificationRouteTest {
                         Intent.FLAG_ACTIVITY_SINGLE_TOP,
                 ),
             )
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-
-            scenario.onActivity { activity ->
-                assertEquals(ConversationId(602L), activity.openedConversationId)
-            }
+            scenario.waitForOpenedConversation(ConversationId(602L))
         } finally {
             scenario.close()
         }
@@ -48,4 +44,23 @@ class MainActivityNotificationRouteTest {
             .setAction(AppNotificationIntentFactory.ACTION_OPEN_CONVERSATION)
             .putExtra(AppNotificationIntentFactory.EXTRA_CONVERSATION_ID, conversationId)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    private fun ActivityScenario<MainActivity>.waitForOpenedConversation(
+        expected: ConversationId,
+    ) {
+        val timeoutAt = SystemClock.uptimeMillis() + ROUTE_TIMEOUT_MILLIS
+        var actual: ConversationId?
+        do {
+            actual = null
+            onActivity { activity -> actual = activity.openedConversationId }
+            if (actual == expected) return
+            SystemClock.sleep(ROUTE_POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        assertEquals(expected, actual)
+    }
+
+    private companion object {
+        const val ROUTE_TIMEOUT_MILLIS = 5_000L
+        const val ROUTE_POLL_INTERVAL_MILLIS = 10L
+    }
 }

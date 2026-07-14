@@ -21,6 +21,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.aurorasms.app.appearance.AppAppearanceState
+import org.aurorasms.app.appearance.AppearanceController
+import org.aurorasms.app.appearance.ThemeStudioRoute
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.DraftWriteStatus
 import org.aurorasms.core.index.SearchAnchor
@@ -32,6 +35,8 @@ import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.asConversationId
 import org.aurorasms.core.model.asProviderThreadId
+import org.aurorasms.core.designsystem.AuroraMaterialProfile
+import org.aurorasms.core.designsystem.AuroraMaterialTheme
 import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.feature.conversations.ComposerUiState
 import org.aurorasms.feature.conversations.InboxScreen
@@ -47,12 +52,14 @@ import org.aurorasms.feature.conversations.ThreadUiState
 @Composable
 internal fun AuroraSmsRoot(
     container: AppContainer,
+    appearance: AppAppearanceState,
+    appearanceController: AppearanceController,
     pendingConversationId: ConversationId?,
     diagnosticsAvailable: Boolean,
     contactsPermissionGranted: Boolean,
     onOpenDiagnostics: () -> Unit,
     onRequestContactsPermission: () -> Unit,
-    onPendingConversationConsumed: () -> Unit,
+    onPendingConversationConsumed: (ConversationId) -> Unit,
     onOpenedConversationChanged: (ConversationId?) -> Unit,
     onInboxReady: () -> Unit,
 ) {
@@ -66,6 +73,7 @@ internal fun AuroraSmsRoot(
         mutableStateOf(initialStack)
     }
     var inboxDrawReported by rememberSaveable { mutableStateOf(false) }
+    var previewProfile by remember { mutableStateOf<AuroraMaterialProfile?>(null) }
     val saveableScreens = rememberSaveableStateHolder()
     val route = routes.last()
     val context = LocalContext.current
@@ -85,18 +93,29 @@ internal fun AuroraSmsRoot(
 
     LaunchedEffect(pendingConversationId) {
         val pending = pendingConversationId ?: return@LaunchedEffect
+        if (route == AppRoute.Appearance) {
+            previewProfile = null
+            saveableScreens.removeState(AppRoute.Appearance.saveableScreenKey())
+        }
         routes = listOf(AppRoute.Inbox, AppRoute.Thread(pending.asProviderThreadId()))
-        onPendingConversationConsumed()
+        onPendingConversationConsumed(pending)
     }
     LaunchedEffect(route) {
         onOpenedConversationChanged(
             (route as? AppRoute.Thread)?.providerThreadId?.asConversationId(),
         )
     }
-    BackHandler(enabled = routes.size > 1, onBack = ::pop)
+    BackHandler(enabled = routes.size > 1) {
+        if (route == AppRoute.Appearance) {
+            previewProfile = null
+            saveableScreens.removeState(AppRoute.Appearance.saveableScreenKey())
+        }
+        pop()
+    }
 
-    saveableScreens.SaveableStateProvider(route.saveableScreenKey()) {
-        when (route) {
+    AuroraMaterialTheme(profile = previewProfile ?: appearance.activeProfile) {
+        saveableScreens.SaveableStateProvider(route.saveableScreenKey()) {
+            when (route) {
             AppRoute.Inbox -> InboxRoute(
                 container = container,
                 diagnosticsAvailable = diagnosticsAvailable,
@@ -106,6 +125,7 @@ internal fun AuroraSmsRoot(
                     push(AppRoute.Thread(it))
                 },
                 onOpenSearch = { push(AppRoute.Search()) },
+                onOpenAppearance = { push(AppRoute.Appearance) },
                 onOpenDiagnostics = onOpenDiagnostics,
                 onRequestContactsPermission = onRequestContactsPermission,
                 onReady = {
@@ -113,6 +133,15 @@ internal fun AuroraSmsRoot(
                         inboxDrawReported = true
                         onInboxReady()
                     }
+                },
+            )
+            AppRoute.Appearance -> ThemeStudioRoute(
+                appearance = appearance,
+                controller = appearanceController,
+                onPreviewProfileChange = { previewProfile = it },
+                onClose = {
+                    saveableScreens.removeState(AppRoute.Appearance.saveableScreenKey())
+                    pop()
                 },
             )
             is AppRoute.Search -> SearchRoute(
@@ -142,6 +171,7 @@ internal fun AuroraSmsRoot(
                 onOpenSearch = { push(AppRoute.Search()) },
                 onBack = ::pop,
             )
+            }
         }
     }
 }
@@ -153,6 +183,7 @@ private fun InboxRoute(
     contactsPermissionGranted: Boolean,
     onOpenConversation: (ProviderThreadId) -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenAppearance: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onRequestContactsPermission: () -> Unit,
     onReady: () -> Unit,
@@ -179,6 +210,7 @@ private fun InboxRoute(
         contactsPermissionGranted = contactsPermissionGranted,
         onOpenConversation = onOpenConversation,
         onOpenSearch = onOpenSearch,
+        onOpenAppearance = onOpenAppearance,
         onOpenDiagnostics = onOpenDiagnostics,
         onRequestContactsPermission = onRequestContactsPermission,
         onRetry = holder::reload,
@@ -347,6 +379,7 @@ private fun launchSystemDialer(context: Context, address: ParticipantAddress) {
 
 private fun AppRoute.saveableScreenKey(): String = when (this) {
     AppRoute.Inbox -> "inbox"
+    AppRoute.Appearance -> "appearance"
     is AppRoute.Search -> "search"
     is AppRoute.Thread -> "thread-${providerThreadId.value}"
 }
@@ -360,14 +393,26 @@ private val APP_ROUTE_STACK_SAVER: Saver<List<AppRoute>, Bundle> = Saver(
     restore = { bundle ->
         @Suppress("DEPRECATION")
         bundle.getParcelableArrayList<Bundle>(ROUTES_KEY)
-            ?.mapNotNull(::restoreRoute)
-            ?.takeIf(List<AppRoute>::isNotEmpty)
+            ?.take(MAXIMUM_RETAINED_ROUTES)
+            ?.map(::restoreRoute)
+            ?.takeIf { routes -> routes.none { it == null } }
+            ?.filterNotNull()
+            ?.let(::normalizeRestoredRoutes)
     },
 )
+
+internal fun normalizeRestoredRoutes(routes: List<AppRoute>): List<AppRoute>? = routes
+    .takeIf { candidate ->
+        candidate.isNotEmpty() &&
+            candidate.first() == AppRoute.Inbox &&
+            candidate.drop(1).none { it == AppRoute.Inbox }
+    }
+    ?.take(MAXIMUM_RETAINED_ROUTES)
 
 private fun saveRoute(route: AppRoute): Bundle = Bundle().apply {
     when (route) {
         AppRoute.Inbox -> putString(ROUTE_TYPE_KEY, ROUTE_INBOX)
+        AppRoute.Appearance -> putString(ROUTE_TYPE_KEY, ROUTE_APPEARANCE)
         is AppRoute.Search -> {
             putString(ROUTE_TYPE_KEY, ROUTE_SEARCH)
             putString(ROUTE_QUERY_KEY, route.query)
@@ -387,6 +432,7 @@ private fun saveRoute(route: AppRoute): Bundle = Bundle().apply {
 private fun restoreRoute(bundle: Bundle): AppRoute? = try {
     when (bundle.getString(ROUTE_TYPE_KEY)) {
         ROUTE_INBOX -> AppRoute.Inbox
+        ROUTE_APPEARANCE -> AppRoute.Appearance
         ROUTE_SEARCH -> AppRoute.Search(bundle.getString(ROUTE_QUERY_KEY).orEmpty())
         ROUTE_THREAD -> {
             val threadId = ProviderThreadId(bundle.getLong(ROUTE_THREAD_ID_KEY))
@@ -424,6 +470,7 @@ private const val ROUTE_ANCHOR_ROW_KEY: String = "anchor_row"
 private const val ROUTE_ANCHOR_KIND_KEY: String = "anchor_kind"
 private const val ROUTE_ANCHOR_PROVIDER_ID_KEY: String = "anchor_provider_id"
 private const val ROUTE_INBOX: String = "inbox"
+private const val ROUTE_APPEARANCE: String = "appearance"
 private const val ROUTE_SEARCH: String = "search"
 private const val ROUTE_THREAD: String = "thread"
 private const val INVALID_SAVED_ID: Long = -1L

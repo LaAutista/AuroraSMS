@@ -8,6 +8,8 @@ import org.aurorasms.core.model.ProviderThreadId
 internal sealed interface AppRoute {
     data object Inbox : AppRoute
 
+    data object Appearance : AppRoute
+
     data class Search(val query: String = "") : AppRoute {
         override fun toString(): String = "AppRoute.Search(queryLength=${query.length}, REDACTED)"
     }

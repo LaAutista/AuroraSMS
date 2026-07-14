@@ -2,6 +2,8 @@
 <resources>
     <string name="inbox_title">AuroraSMS</string>
     <string name="search">Search</string>
+    <string name="more">More</string>
+    <string name="appearance">Appearance</string>
     <string name="diagnostics">Diagnostics</string>
     <string name="loading_messages">Loading messages…</string>
     <string name="no_conversations">No conversations are indexed yet.</string>

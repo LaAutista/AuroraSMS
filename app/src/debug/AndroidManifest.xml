@@ -4,6 +4,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <application>
+        <activity
+            android:name="org.aurorasms.app.appearance.ThemeStudioTestActivity"
+            android:exported="false" />
+
         <!-- Debug is not a performance deliverable and exposes no profile control surface. -->
         <provider
             android:name="androidx.startup.InitializationProvider"

@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.aurorasms.app.diagnostics.BuildVariantDiagnosticsLauncher
 import org.aurorasms.app.diagnostics.DiagnosticsLauncher
 import org.aurorasms.app.message.AppNotificationIntentFactory
@@ -38,6 +39,7 @@ import org.aurorasms.app.role.DefaultSmsRoleCoordinator
 import org.aurorasms.app.role.RoleOnboardingState
 import org.aurorasms.app.role.UnsupportedReason
 import org.aurorasms.core.designsystem.AuroraMaterialTheme
+import org.aurorasms.core.designsystem.AuroraMaterialProfile
 import org.aurorasms.core.model.ConversationId
 
 class MainActivity : ComponentActivity() {
@@ -111,9 +113,11 @@ class MainActivity : ComponentActivity() {
         )
         openedConversationId = initialConversation
         pendingConversationId = initialConversation
+        val appContainer = (application as AuroraSmsApplication).container
 
         setContent {
-            AuroraSmsTheme {
+            val appearance by appContainer.appearanceController.state.collectAsStateWithLifecycle()
+            AuroraSmsTheme(profile = appearance.activeProfile) {
                 val savedBranches = rememberSaveableStateHolder()
                 val messagingEligible = roleState == RoleOnboardingState.Held &&
                     permissionState[Manifest.permission.READ_SMS] == true
@@ -122,7 +126,9 @@ class MainActivity : ComponentActivity() {
                 } else if (messagingEligible) {
                     savedBranches.SaveableStateProvider(ROOT_STATE_KEY) {
                         AuroraSmsRoot(
-                            container = (application as AuroraSmsApplication).container,
+                            container = appContainer,
+                            appearance = appearance,
+                            appearanceController = appContainer.appearanceController,
                             pendingConversationId = pendingConversationId,
                             diagnosticsAvailable = diagnosticsLauncher.available,
                             contactsPermissionGranted = contactsPermissionGranted,
@@ -134,11 +140,13 @@ class MainActivity : ComponentActivity() {
                                     roleState = roleCoordinator.state
                                 }
                             },
-                            onPendingConversationConsumed = {
-                                pendingConversationId = null
-                                setIntent(
-                                    Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN),
-                                )
+                            onPendingConversationConsumed = { consumedConversationId ->
+                                if (pendingConversationId == consumedConversationId) {
+                                    pendingConversationId = null
+                                    setIntent(
+                                        Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN),
+                                    )
+                                }
                             },
                             onOpenedConversationChanged = { conversationId ->
                                 if (pendingConversationId == null) {
@@ -259,8 +267,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AuroraSmsTheme(content: @Composable () -> Unit) {
-    AuroraMaterialTheme(content = content)
+fun AuroraSmsTheme(
+    profile: AuroraMaterialProfile = AuroraMaterialProfile.Default,
+    content: @Composable () -> Unit,
+) {
+    AuroraMaterialTheme(profile = profile, content = content)
 }
 
 @Composable

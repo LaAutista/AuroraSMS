@@ -4,9 +4,10 @@ Status: Phase 3 implementation, deterministic profile generation, API 36
 synthetic-emulator functional gate, and owner-approved Pixel 8 alpha
 install/hash/smoke complete; Phase 4 AuroraMaterial foundation, foreground
 provider-read lifecycle hardening, exact physical APK handoff, and verified
-real-provider reconciliation complete, 2026-07-14. Representative
-physical-device performance, remaining API/OEM coverage, and carrier transport
-rows remain pending.
+real-provider reconciliation complete, 2026-07-14. The bounded durable active
+named-profile/Theme Studio slice has implementation verification pending.
+Representative physical-device performance, remaining API/OEM coverage, and
+carrier transport rows remain pending.
 
 ## Evidence rules
 
@@ -582,9 +583,60 @@ Physical-device performance targets after a warm index:
   head verification only while at least one Aurora messaging activity is
   started, preserves one already-admitted bounded unit, and resumes deferred
   work without falsely marking provider state dirty.
-- [ ] Durable profile/override persistence, Theme Studio, navigation variants,
-  approved artwork, local static/GIF assignments, and full surface/device
-  accessibility remain follow-on slices.
+- [ ] The bounded durable active named-profile/Theme Studio slice meets the
+  narrowly scoped pending rows below. Overrides, import/export, navigation
+  variants, approved artwork, local static/GIF assignments, and full
+  surface/device accessibility remain follow-on slices.
+
+### Durable active profile and Theme Studio slice — evidence pending
+
+These rows define the safe slice accepted by ADR 0005. They remain unchecked
+until the implementation is complete and the exact commands, variants, and
+non-sensitive outcomes are recorded; a compile or Compose preview alone is not
+verification.
+
+- [ ] The Aurora state database exports schema version 2 and an explicit
+  version-1-to-version-2 migration preserves durable draft rows, draft identity
+  enforcement, and all version-1 invariants without destructive fallback.
+- [ ] Named profile rows and the active selection enforce bounded count/name
+  rules, referential integrity, and one coherent active target; the canonical
+  code-owned default requires no mutable database row.
+- [ ] Palette, density, avatar-mask, navigation, and bubble choices round-trip
+  explicit stable codes rather than enum ordinals/declaration names. Unknown
+  codes, unsupported profile schemas, and out-of-range numeric values never
+  reach rendering and resolve safely to the canonical profile.
+- [ ] Narrow host color tests prove custom hue changes coherent static role
+  families without changing canonical defaults, all 360 tested dark/light hue
+  role pairs reach at least 4.5:1, and high contrast uses opaque black/white
+  foreground/container pairs. This is not full surface/device accessibility
+  acceptance.
+- [ ] Repository tests cover create/update plus activation in one transaction,
+  optimistic-revision stale writes and deletes, duplicate-name conflicts,
+  profile limits, reset-to-canonical, and deletion of the active profile
+  without an invalid intermediate snapshot.
+- [ ] With no durable selection the app root uses the canonical profile; after
+  successful `Apply`, the selected named profile survives recreation/relaunch
+  and becomes the root theme only from the validated repository snapshot.
+- [ ] Theme Studio is reachable through the existing app-owned route, and its
+  bounded in-memory preview covers only the admitted palette, hue, density,
+  avatar, bubble, and high-contrast controls. Reduced motion remains a validated
+  profile/token value but is not exposed until a production animation consumes
+  it. Preview may recompose only the visible Appearance route/root theme subtree
+  and never escapes to another route. No bottom-bar/adaptive-rail variant,
+  override, import/export, wallpaper, or media behavior is implied.
+- [ ] Editing, profile selection, and Reset affect only the transient preview
+  before commit. `Cancel`, system Back, and route disposal discard the draft
+  and restore the durable active profile; failed or stale `Apply` leaves that
+  durable selection unchanged.
+- [ ] Bounded saveable editor state restores deterministically after
+  recreation, while an in-flight database operation, error, or confirmation
+  dialog is not restored as a completed write.
+- [ ] The slice adds no external coordinate, DataStore, permission, exported
+  production component, initializer, native binary, network path, artwork,
+  media reference, or decoder. Its non-exported debug-only UI test host is absent
+  from release/benchmark outputs, and appearance actions do not query Telephony,
+  invalidate the message index, reconstruct a thread route, or touch carrier
+  transport.
 
 ### Phase 4 foundation and lifecycle evidence
 

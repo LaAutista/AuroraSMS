@@ -44,8 +44,9 @@ transport; AuroraSMS's approved runtime scope remains SMS/MMS.
 - Android's Telephony provider is authoritative for actual SMS and MMS.
 - AuroraSMS maintains a rebuildable, synchronized local projection for display
   and full-text search.
-- Drafts, scheduled messages, pending sends/deletes, spam decisions, and
-  appearance overrides live in a separate durable Aurora state store.
+- Drafts, scheduled messages, pending sends/deletes, spam decisions, named
+  appearance profiles, the active-profile selection, and later appearance
+  overrides live in a separate durable Aurora state store.
 - No UI path loads an entire message history or unbounded result list.
 - Search coverage does not depend on a user manually scrolling old messages.
 - Ordinary conversations with more than one unique canonical recipient always
@@ -88,8 +89,12 @@ graph, screen instances, deep links, back behavior, and restored state.
 
 - Telephony SMS/MMS provider: real-message source of truth.
 - Aurora index database: disposable/rebuildable projection for paging and FTS.
-- Aurora state database: durable Aurora-only state.
-- DataStore: lightweight global preferences and versioned design tokens.
+- Aurora state database: durable Aurora-only state, including drafts, named
+  appearance profiles, the active-profile selection, and later scoped
+  appearance overrides.
+- No DataStore owner exists in the approved implementation. Adding one for a
+  future lightweight preference requires a measured ADR, dependency admission,
+  and field ownership that does not overlap the Aurora state database.
 
 Corrupt index recovery may discard and rebuild only the index. It must never
 erase a draft, schedule, pending send, or appearance assignment.

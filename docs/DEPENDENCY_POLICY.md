@@ -1,8 +1,8 @@
 # Dependency policy and allowlist
 
 Status: Phase 1 resolved; Phase 2 Room/KSP and Phase 3 benchmark/profile
-admissions reviewed; Phase 4 AuroraMaterial foundation reuses the admitted
-graph, 2026-07-14
+admissions reviewed; Phase 4 AuroraMaterial foundation and bounded durable
+active-profile/Theme Studio slice reuse the admitted graph, 2026-07-14
 
 AuroraSMS prefers small original implementations and Android platform APIs.
 Dependencies are admitted only when they provide a necessary, maintained,
@@ -243,7 +243,7 @@ release/benchmark ProfileInstaller dependencies, and associated manifest
 exceptions; product message/index data remains compatible because the benchmark
 database is synthetic and disposable.
 
-## Phase 4 AuroraMaterial foundation reuse
+## Phase 4 AuroraMaterial and active-profile reuse
 
 The initial `:core:designsystem` module introduces no new external coordinate
 or version. It directly declares the already admitted Kotlin stdlib,
@@ -260,6 +260,20 @@ only artifacts already represented in the admitted aggregate graph;
 manifest component, initializer, permission, native binary, provider, receiver,
 service, or network behavior.
 
+The bounded durable active-profile slice migrates the existing Aurora state
+Room database from schema version 1 to version 2 and uses the already admitted
+Room runtime, Room testing, and KSP compiler coordinates. Its app-owned Theme
+Studio uses the existing Compose graph. A schema migration, DAO, repository,
+and UI destination do not add a third-party coordinate, repository, checksum,
+production manifest component, permission, initializer, native binary, or
+network path. DataStore is not added and does not share ownership of appearance
+state.
+
+Instrumentation uses one non-exported Activity in the debug source set to host
+Theme Studio without acquiring the default-SMS role. It adds no coordinate and
+must be absent from release and benchmark manifests/APKs; it is not a production
+navigation or component dependency.
+
 Image/GIF loading, Navigation Compose, DataStore, icon packs, fonts, and remote
 theme/media SDKs remain unapproved. Artwork remains outside dependency policy
 and behind the separate rights gate in `docs/ARTWORK_CATALOG.md`.
@@ -272,7 +286,7 @@ and behind the separate rights gate in `docs/ARTWORK_CATALOG.md`.
 | Phone-number normalization | 1 | Prefer platform APIs; approve libphonenumber only if measured correctness needs justify its size |
 | Room | 2 | Approved only as recorded above for separate index/state databases, FTS4, schema export, and explicit migrations |
 | Paging 3 | 2-3 | Confirm bounded keyset/anchor behavior and no deep OFFSET fallback |
-| DataStore | 4 | Versioned profile/preferences only, never message storage |
+| DataStore | Unscheduled | Admit only if a measured ADR proves a lightweight-preference need that the Aurora state database should not own; it must never duplicate named-profile, active-selection, override, draft, message, or index ownership |
 | Image/GIF decoding library | 4 | One-visible-decoder lifecycle, bomb limits, no network fetcher, APK size, API 26 behavior |
 | WorkManager | 2 or 5 | Only for a lifecycle need platform alarms/receivers cannot meet; audit manifest and background behavior |
 | Biometric | Later privacy phase | App-lock semantics and fallback wording |

@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.aurorasms.app.AuroraSmsApplication
 import org.aurorasms.app.AuroraSmsTheme
 import org.aurorasms.app.R
@@ -44,8 +45,10 @@ class ComposeMessageActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val request = parseRequest(intent)
+        val appContainer = (application as AuroraSmsApplication).container
         setContent {
-            AuroraSmsTheme {
+            val appearance by appContainer.appearanceController.state.collectAsStateWithLifecycle()
+            AuroraSmsTheme(profile = appearance.activeProfile) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     Column(
                         modifier = Modifier.padding(24.dp),
