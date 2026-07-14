@@ -816,9 +816,8 @@ not claim the complete scoped-wallpaper/GIF feature.
 
 ### Durable scoped-profile-reference evidence — automated/install gates 2026-07-14
 
-Version `0.4.2-phase4` (`versionCode=3`) was verified from the final working
-tree based on `9a83ab5`. The scoped implementation commit does not exist until
-this evidence is committed, so no later commit identifier is claimed here.
+Version `0.4.2-phase4` (`versionCode=3`) was verified from scoped implementation
+commit `1b33852`.
 
 The final offline host gate was:
 
