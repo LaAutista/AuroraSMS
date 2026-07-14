@@ -21,14 +21,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -39,6 +37,7 @@ import org.aurorasms.app.role.AndroidSmsRolePlatform
 import org.aurorasms.app.role.DefaultSmsRoleCoordinator
 import org.aurorasms.app.role.RoleOnboardingState
 import org.aurorasms.app.role.UnsupportedReason
+import org.aurorasms.core.designsystem.AuroraMaterialTheme
 import org.aurorasms.core.model.ConversationId
 
 class MainActivity : ComponentActivity() {
@@ -247,15 +246,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AuroraSmsTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = darkColorScheme(
-            primary = Color(0xFF78D6C6),
-            secondary = Color(0xFF9CB8FF),
-            background = Color(0xFF101419),
-            surface = Color(0xFF171C22),
-        ),
-        content = content,
-    )
+    AuroraMaterialTheme(content = content)
 }
 
 @Composable

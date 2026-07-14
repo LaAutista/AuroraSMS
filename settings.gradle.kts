@@ -36,6 +36,7 @@ rootProject.name = "AuroraSMS"
 include(
     ":app",
     ":benchmark",
+    ":core:designsystem",
     ":core:index",
     ":core:model",
     ":core:notifications",
