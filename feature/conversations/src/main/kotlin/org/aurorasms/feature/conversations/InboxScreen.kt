@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -28,8 +29,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,7 +61,13 @@ fun InboxScreen(
     onViewportChanged: (List<ConversationSummary>) -> Unit,
     onAnchorRestored: () -> Unit,
 ) {
-    Surface(modifier = Modifier.fillMaxSize()) {
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding()
+            .semantics { testTagsAsResourceId = true }
+            .testTag(INBOX_SCREEN_TEST_TAG),
+    ) {
         Column {
             Row(
                 modifier = Modifier
@@ -80,7 +90,10 @@ fun InboxScreen(
                         Text(stringResource(R.string.use_contacts))
                     }
                 }
-                TextButton(onClick = onOpenSearch) {
+                TextButton(
+                    modifier = Modifier.testTag(INBOX_SEARCH_ACTION_TEST_TAG),
+                    onClick = onOpenSearch,
+                ) {
                     Text(stringResource(R.string.search))
                 }
             }
@@ -216,6 +229,7 @@ private fun ConversationRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag(INBOX_ROW_TEST_TAG)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -292,4 +306,7 @@ internal fun FailurePane(onRetry: () -> Unit) {
 internal fun formatTimestamp(timestampMillis: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestampMillis))
 
+const val INBOX_SCREEN_TEST_TAG: String = "aurora-inbox-screen"
+const val INBOX_SEARCH_ACTION_TEST_TAG: String = "aurora-inbox-search-action"
+const val INBOX_ROW_TEST_TAG: String = "aurora-inbox-row"
 private const val VIEWPORT_PREFETCH_ROWS: Int = 10

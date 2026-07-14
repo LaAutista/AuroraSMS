@@ -17,6 +17,7 @@ import org.gradle.api.tasks.testing.Test
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.android.library) apply false
+    alias(libs.plugins.android.test) apply false
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.ksp) apply false
@@ -25,7 +26,7 @@ plugins {
 }
 
 group = "org.aurorasms"
-version = "0.2.0-phase2"
+version = "0.3.0-phase3"
 
 allprojects {
     group = "org.aurorasms"
@@ -68,6 +69,7 @@ licenseReport {
         "debugAndroidTestRuntimeClasspath",
         "debugRuntimeClasspath",
         "debugUnitTestRuntimeClasspath",
+        "benchmarkRuntimeClasspath",
         "kspDebugAndroidTestKotlinProcessorClasspath",
         "kspDebugKotlinProcessorClasspath",
         "kspDebugUnitTestKotlinProcessorClasspath",
@@ -119,7 +121,12 @@ val verifyPrivateAssets by tasks.registering(Exec::class) {
 val verifyPermissions by tasks.registering(Exec::class) {
     group = "verification"
     description = "Checks app manifests and built APKs against the permission ledger."
-    dependsOn(":app:processDebugMainManifest", ":app:processReleaseMainManifest")
+    dependsOn(
+        ":app:processBenchmarkMainManifest",
+        ":app:processDebugMainManifest",
+        ":app:processReleaseMainManifest",
+        ":macrobenchmark:processBenchmarkManifest",
+    )
     commandLine("bash", layout.projectDirectory.file("scripts/verify-permissions.sh").asFile)
 }
 
@@ -163,7 +170,7 @@ val verifyDependencies by tasks.registering {
                         }
 
                     val standardAndroidClasspath = Regex(
-                        "^(debug|release)(AndroidTest|UnitTest)?" +
+                        "^(benchmark|debug|release)(AndroidTest|UnitTest)?" +
                             "(Compile|Runtime)Classpath$",
                     )
                     val standardJvmOrToolClasspath = configuration.name in setOf(
@@ -180,6 +187,7 @@ val verifyDependencies by tasks.registering {
                             standardJvmOrToolClasspath ||
                             configuration.name == "ksp" ||
                             configuration.name.startsWith("kspDebug") ||
+                            configuration.name.startsWith("kspBenchmark") ||
                             configuration.name.startsWith("kspRelease") ||
                             configuration.name.startsWith("unified-test-platform")
                     if (!isVerificationClasspath) {
@@ -215,15 +223,17 @@ val verifyDependencies by tasks.registering {
                             id is ProjectComponentIdentifier &&
                             candidateProject.path == ":app" &&
                             configuration.name == "releaseRuntimeClasspath" &&
-                            id.projectPath == ":core:testing"
+                            id.projectPath in setOf(":core:testing", ":macrobenchmark")
                         ) {
-                            violations += ":core:testing leaked into :app release runtime"
+                            violations += "${id.projectPath} leaked into :app release runtime"
                         }
                         if (
                             id is ModuleComponentIdentifier &&
                             configuration.name == "releaseRuntimeClasspath" &&
                             (
-                                id.module == "room-compiler" ||
+                                id.module == "benchmark-macro" ||
+                                    id.module == "benchmark-macro-junit4" ||
+                                    id.module == "room-compiler" ||
                                     id.module == "room-testing" ||
                                     id.group == "com.google.devtools.ksp"
                             )

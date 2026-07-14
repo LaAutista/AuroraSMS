@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# These types are supplied by the separately installed, R8-enabled target APK,
+# or are compile-time-only annotations. The com.android.test shrinker cannot
+# inspect that APK while shrinking the instrumentation APK.
+-dontwarn androidx.arch.core.executor.ArchTaskExecutor
+-dontwarn androidx.arch.core.internal.FastSafeIterableMap
+-dontwarn androidx.arch.core.internal.SafeIterableMap$IteratorWithAdditions
+-dontwarn androidx.profileinstaller.ProfileInstallReceiver
+-dontwarn androidx.startup.Initializer
+-dontwarn com.google.errorprone.annotations.CanIgnoreReturnValue
+-dontwarn com.google.errorprone.annotations.MustBeClosed

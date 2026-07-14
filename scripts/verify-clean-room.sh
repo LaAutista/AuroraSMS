@@ -49,7 +49,7 @@ if [[ "$HASH_ONLY" == false ]]; then
         'org.simplemobiletools'
     )
     SCAN_ROOTS=()
-    for relative in app core feature benchmark build-logic buildSrc; do
+    for relative in app core feature benchmark macrobenchmark build-logic buildSrc; do
         if [[ -e "$ROOT/$relative" ]]; then
             SCAN_ROOTS+=("$ROOT/$relative")
         fi
@@ -60,6 +60,25 @@ if [[ "$HASH_ONLY" == false ]]; then
             rg --hidden --glob '!**/build/**' --fixed-strings --line-number \
                 -- "$token" "${SCAN_ROOTS[@]}"; then
             printf 'Clean-room token found in implementation roots: %s\n' "$token" >&2
+            exit 1
+        fi
+    done
+
+    BENCHMARK_CONTROL_ROOTS=(
+        "$ROOT/app/src/benchmark"
+        "$ROOT/macrobenchmark/src"
+    )
+    BENCHMARK_BYPASS_TOKENS=(
+        'appops set'
+        'cmd role add-role-holder'
+        'pm grant'
+        'content://mms'
+        'content://sms'
+    )
+    for token in "${BENCHMARK_BYPASS_TOKENS[@]}"; do
+        if rg --fixed-strings --line-number -- "$token" "${BENCHMARK_CONTROL_ROOTS[@]}"; then
+            printf 'Role, permission, or real-provider bypass found in benchmark control code: %s\n' \
+                "$token" >&2
             exit 1
         fi
     done

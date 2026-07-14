@@ -5,6 +5,10 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val baselineProfileCapture = providers.gradleProperty("auroraBaselineProfileCapture")
+    .map(String::toBooleanStrict)
+    .orElse(false)
+
 android {
     namespace = "org.aurorasms.app"
     compileSdk = 37
@@ -14,7 +18,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "0.2.0-phase2"
+        versionName = "0.3.0-phase3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -25,7 +29,21 @@ android {
         }
         release {
             isDebuggable = false
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+        create("benchmark") {
+            initWith(getByName("release"))
+            // Manual HRF capture must use unobfuscated signatures. Normal
+            // benchmark/performance builds remain release-equivalent and R8-enabled.
+            isMinifyEnabled = !baselineProfileCapture.get()
+            isShrinkResources = !baselineProfileCapture.get()
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
         }
     }
 
@@ -89,9 +107,11 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
-
-    debugImplementation(project(":core:testing"))
     debugImplementation(libs.androidx.lifecycle.viewmodel.compose)
+    "benchmarkImplementation"(project(":core:testing"))
+    "benchmarkImplementation"(libs.androidx.profileinstaller)
+    "benchmarkImplementation"(libs.androidx.room.runtime)
+    "releaseImplementation"(libs.androidx.profileinstaller)
 
     testImplementation(project(":core:testing"))
     testImplementation(libs.junit)

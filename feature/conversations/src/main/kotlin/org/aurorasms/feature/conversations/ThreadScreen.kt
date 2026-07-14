@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -48,6 +49,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -97,7 +99,13 @@ fun ThreadScreen(
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize()) {
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding()
+            .semantics { testTagsAsResourceId = true }
+            .testTag(THREAD_SCREEN_TEST_TAG),
+    ) {
         Column(modifier = Modifier.imePadding()) {
             ThreadHeader(
                 state = state,
@@ -640,6 +648,7 @@ private const val MAXIMUM_HEADER_NAMES: Int = 3
 private const val THREAD_VIEWPORT_PREFETCH_ROWS: Int = 10
 private const val MAXIMUM_VIEWPORT_THREAD_ROWS: Int = 100
 private const val MAXIMUM_COMPOSER_CHARACTERS: Int = 100_000
+const val THREAD_SCREEN_TEST_TAG: String = "aurora-thread-screen"
 const val THREAD_LIST_TEST_TAG: String = "aurora-thread-list"
 const val MESSAGE_BUBBLE_TEST_TAG: String = "aurora-message-bubble"
 const val COMPOSER_TEST_TAG: String = "aurora-composer"

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,6 +33,8 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.aurorasms.core.index.SearchHit
@@ -57,7 +60,13 @@ fun SearchScreen(
             onBack()
         }
     }
-    Surface(modifier = Modifier.fillMaxSize()) {
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding()
+            .semantics { testTagsAsResourceId = true }
+            .testTag(SEARCH_SCREEN_TEST_TAG),
+    ) {
         Column {
             Row(
                 modifier = Modifier
@@ -102,7 +111,9 @@ fun SearchScreen(
     }
 }
 
+const val SEARCH_SCREEN_TEST_TAG: String = "aurora-search-screen"
 const val SEARCH_FIELD_TEST_TAG: String = "aurora-search-field"
+const val SEARCH_HIT_TEST_TAG: String = "aurora-search-hit"
 private const val MAXIMUM_SAVED_SEARCH_QUERY_CHARACTERS: Int = 256
 
 @Composable
@@ -156,6 +167,7 @@ private fun SearchResults(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .testTag(SEARCH_HIT_TEST_TAG)
                     .clickable { onOpenHit(hit) }
                     .padding(horizontal = 16.dp, vertical = 12.dp),
             ) {

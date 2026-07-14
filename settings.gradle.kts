@@ -43,4 +43,5 @@ include(
     ":core:telephony",
     ":core:testing",
     ":feature:conversations",
+    ":macrobenchmark",
 )

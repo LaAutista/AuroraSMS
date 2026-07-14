@@ -1,6 +1,6 @@
 # Dependency policy and allowlist
 
-Status: Phase 1 resolved; Phase 2 Room/KSP admission reviewed, 2026-07-12
+Status: Phase 1 resolved; Phase 2 Room/KSP and Phase 3 benchmark/profile admissions reviewed, 2026-07-13
 
 AuroraSMS prefers small original implementations and Android platform APIs.
 Dependencies are admitted only when they provide a necessary, maintained,
@@ -164,6 +164,82 @@ Admission remains conditional on resolved lock/checksum review, license report,
 SBOM, release-runtime leakage checks, merged-manifest inspection, and APK
 permission/content scans. An unexpected transitive or component reopens this
 decision before merge.
+
+## Exact Phase 3 benchmark and profile admission
+
+Phase 3 adds release-equivalent journey evidence and a checked-in Baseline
+Profile without applying the Baseline Profile Gradle plugin. The exact direct
+additions are:
+
+| Coordinate or plugin | Version | Scope | License | Approved purpose |
+|---|---:|---|---|---|
+| `com.android.test` | 9.2.1 | Build/test module only | Apache-2.0 | Builds the separate self-instrumenting APK that controls `:app`; never packaged in the product |
+| `androidx.benchmark:benchmark-macro-junit4` | 1.4.1 | `:macrobenchmark` only | Apache-2.0 | Physical-device Macrobenchmark metrics and manual `BaselineProfileRule` capture |
+| `androidx.profileinstaller:profileinstaller` | 1.4.1 | App runtime | Apache-2.0 | Supported profile capture/reset bridge and release Baseline Profile installation |
+
+Canonical upstream and source are the AndroidX Benchmark and ProfileInstaller
+release pages at `developer.android.com/jetpack/androidx/releases/benchmark`
+and `developer.android.com/jetpack/androidx/releases/profileinstaller`, with
+source in `android.googlesource.com/platform/frameworks/support`. These are the
+minimum stable 1.4.1 versions documented together for manual Baseline Profile
+generation. Alpha tooling and the Baseline Profile Gradle plugin remain
+unapproved.
+
+The locked Macrobenchmark graph adds Benchmark common/macro/traceprocessor,
+UiAutomator 2.3.0, AndroidX test rules 1.5.0, tracing/perfetto 1.0.0/1.2.0,
+Moshi 1.13.0, Okio 3.9.1, and Wire 5.2.1. All are Apache-2.0-compatible FOSS.
+The trace tooling packages `libbenchmarkNative.so` and
+`libtracing_perfetto.so` for four test ABIs. Those native files, the Benchmark
+classes, UiAutomator, Moshi, Okio, Wire, and `:core:testing` are confined to the
+separately installed test/benchmark APKs and are rejected from the app release
+runtime.
+
+The macrobenchmark test manifest has an exact audited exception for
+`INTERNET` (localhost-only Perfetto trace processing), `QUERY_ALL_PACKAGES`,
+legacy external-storage report permissions, and `REORDER_TASKS`. It contains
+AndroidX test isolation activities plus a DUMP-protected tracing receiver and
+Startup initializer. This exception never applies to the app APK: normal debug
+and release manifests retain no network permission, profileable tag, benchmark
+authority, or benchmark control permission. Release intentionally retains only
+ProfileInstaller's non-exported Startup initializer and DUMP-protected receiver
+to install the checked-in profile; debug removes both.
+
+Only the app benchmark target enables the signature-protected synthetic fixture
+provider. Its normal performance build is non-debuggable and R8-enabled. The
+deterministic update script sets
+`auroraBaselineProfileCapture=true` so manual HRF capture uses unobfuscated
+method signatures as required by the Android tooling guidance; the final
+release remains fully R8-enabled and rewrites the checked-in rules. Generated
+profile output is normalized twice and scanned before admission. Because
+connected-test cleanup uninstalls the default-SMS target and revokes its role,
+the update script uses replace-install plus the self-instrumenting runner and
+asserts the owner-granted role/`READ_SMS` state both before and after install.
+
+The connected Pixel uses a MagiskSU release whose post-29 CLI no longer exits
+for AndroidX Benchmark 1.4.1's legacy `su root id` capability probe. AuroraSMS
+does not grant, revoke, or otherwise mutate device root policy. The device-run
+script deterministically changes that single, same-length string in the
+separate test APK to `su root<&-`, which closes standard input before MagiskSU
+can enter an interactive shell and returns no root identity. It verifies that
+the replacement preserves DEX string-table order, repairs the DEX headers,
+zip-aligns, and
+re-signs it with the same debug certificate as the benchmark target. It then
+verifies the exact replacement, DEX integrity, APK signature, certificate
+match, and a no-fixture shell preflight before any expensive seed. This forces
+AndroidX down its supported non-root shell path and does not modify the app
+APK, its code, its profileable surface, or measured journeys. The resolved
+official AndroidX artifact, locks, checksums, notices, and SBOM remain
+unchanged; the prepared APK is a generated local test artifact only.
+
+ProfileInstaller performs no application network I/O and adds no native code.
+The release initializer schedules its bounded installation work off the startup
+critical path; its exported receiver is guarded by the platform DUMP permission.
+Both are removed from debug, and the benchmark fixture/control surface remains
+absent from release. Removing this admission means deleting the macrobenchmark
+module, benchmark variant and fixture, update script, checked-in profile,
+release/benchmark ProfileInstaller dependencies, and associated manifest
+exceptions; product message/index data remains compatible because the benchmark
+database is synthetic and disposable.
 
 ## Deferred and decision-gated dependencies
 

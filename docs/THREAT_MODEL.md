@@ -275,6 +275,17 @@ Controls:
 - ban dynamic/JitPack/reference-app artifacts and `org.fossify:*`;
 - fail every FOSS variant on `INTERNET`, unapproved permissions, repositories,
   startup initializers, or exported components;
+- admit only the release/benchmark ProfileInstaller initializer and its
+  DUMP-protected receiver, while debug removes both and release rejects every
+  synthetic benchmark authority, permission, and fixture marker;
+- isolate the Phase 3 Macrobenchmark/Perfetto network and component exception
+  in a separate test APK, while build-identity checks prove normal app variants
+  contain neither the exception nor the signature-protected synthetic fixture;
+- self-instrument the test package so its runner and test-only dependencies
+  never execute in the default-SMS app process;
+- allow the fixture only fixed seed/shape commands against the known private
+  rebuildable index, reject role/permission/provider bypass strings, and expose
+  no query/insert/update/delete data plane;
 - no real device data/private references in tests or CI artifacts;
 - reproducible release instructions, signed checksums, and new signing identity.
 

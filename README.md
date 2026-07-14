@@ -31,10 +31,24 @@ Phase 2 added the complete-history local data and search foundation:
 - controlled index-only corruption recovery, typed storage failures, redacted
   diagnostics, and deterministic synthetic scale benchmarks.
 
-Phase 2 does not add the final inbox, thread, search, or composer presentation
-and does not change the existing carrier MMS limitations. Physical evidence
-currently covers a Pixel 8 on Android 16/API 36; the remaining API/OEM and
-carrier rows stay pending.
+Phase 3 adds the bounded presentation and its release-equivalent performance
+harness:
+
+- stable-key inbox, thread, search, exact-result jump, attachment-preview, and
+  durable-draft presentation over capped keyset windows;
+- bounded contact resolution, scroll-anchor preservation, and explicit
+  incomplete/unavailable states;
+- an R8-enabled benchmark target with signature-protected synthetic 20k-inbox,
+  250k-thread, and 500k-search fixtures; and
+- deterministic Baseline Profile capture plus startup, trace, frame, search,
+  jump, and memory Macrobenchmarks.
+
+Phase 3 does not change the existing carrier MMS limitations. Earlier Phase
+1/2 functional evidence covers a Pixel 8 on Android 16/API 36. Phase 3 profile
+capture and functional journeys are verified with synthetic data on the API 36
+emulator, while representative performance measurements remain pending on an
+owner-approved physical-device window. Emulator timings are not product
+performance evidence.
 
 End-to-end MMS is not yet claimed. Platform MMS staging and result handling are
 present, but encoding/decoding remains disabled until an independently audited
@@ -61,6 +75,8 @@ The debug APK is produced at
 
 ```bash
 ./gradlew test lintDebug lintRelease assembleDebug assembleRelease --offline
+./gradlew :app:lintBenchmark :app:assembleBenchmark \
+  :macrobenchmark:check :macrobenchmark:assembleBenchmark --offline
 ./gradlew connectedDebugAndroidTest --offline
 ./gradlew verifyGovernance --offline
 ./gradlew --no-parallel checkLicense generateLicenseReport cyclonedxBom --offline

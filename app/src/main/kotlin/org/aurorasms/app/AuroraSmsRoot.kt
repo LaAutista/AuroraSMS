@@ -38,8 +38,10 @@ import org.aurorasms.feature.conversations.InboxStateHolder
 import org.aurorasms.feature.conversations.InboxUiState
 import org.aurorasms.feature.conversations.SearchScreen
 import org.aurorasms.feature.conversations.SearchStateHolder
+import org.aurorasms.feature.conversations.SearchUiState
 import org.aurorasms.feature.conversations.ThreadScreen
 import org.aurorasms.feature.conversations.ThreadStateHolder
+import org.aurorasms.feature.conversations.ThreadUiState
 
 @Composable
 internal fun AuroraSmsRoot(
@@ -97,7 +99,10 @@ internal fun AuroraSmsRoot(
                 container = container,
                 diagnosticsAvailable = diagnosticsAvailable,
                 contactsPermissionGranted = contactsPermissionGranted,
-                onOpenConversation = { push(AppRoute.Thread(it)) },
+                onOpenConversation = {
+                    PresentationTrace.begin(PresentationTrace.THREAD_OPEN)
+                    push(AppRoute.Thread(it))
+                },
                 onOpenSearch = { push(AppRoute.Search()) },
                 onOpenDiagnostics = onOpenDiagnostics,
                 onRequestContactsPermission = onRequestContactsPermission,
@@ -113,6 +118,7 @@ internal fun AuroraSmsRoot(
                 route = route,
                 onQueryChanged = { replaceCurrent(AppRoute.Search(it)) },
                 onOpenHit = { hit ->
+                    PresentationTrace.begin(PresentationTrace.EXACT_JUMP)
                     push(
                         AppRoute.Thread(
                             providerThreadId = hit.providerThreadId,
@@ -197,12 +203,24 @@ private fun SearchRoute(
     }
     DisposableEffect(holder) { onDispose(holder::close) }
     LaunchedEffect(holder) {
-        if (route.query.isNotEmpty()) holder.updateQuery(route.query)
+        if (route.query.isNotEmpty()) {
+            PresentationTrace.begin(PresentationTrace.SEARCH_RESULTS)
+            holder.updateQuery(route.query)
+        }
     }
     val state by holder.state.collectAsStateWithLifecycle()
+    LaunchedEffect(state) {
+        if (state is SearchUiState.Page || state is SearchUiState.Invalid) {
+            withFrameNanos { }
+            PresentationTrace.end(PresentationTrace.SEARCH_RESULTS)
+        }
+    }
     SearchScreen(
         state = state,
         onQueryChanged = { query ->
+            if (query.isNotBlank() && state.query.isBlank()) {
+                PresentationTrace.begin(PresentationTrace.SEARCH_RESULTS)
+            }
             holder.updateQuery(query)
             onQueryChanged(query)
         },
@@ -236,6 +254,14 @@ private fun ThreadRoute(
     }
     DisposableEffect(holder) { onDispose(holder::close) }
     val threadState by holder.state.collectAsStateWithLifecycle()
+    LaunchedEffect(threadState) {
+        if (threadState is ThreadUiState.Ready) {
+            withFrameNanos { }
+            PresentationTrace.end(
+                if (route.anchor == null) PresentationTrace.THREAD_OPEN else PresentationTrace.EXACT_JUMP,
+            )
+        }
+    }
 
     var savedBody by rememberSaveable(route.providerThreadId.value) { mutableStateOf<String?>(null) }
     val writer = remember(container, route.providerThreadId) {

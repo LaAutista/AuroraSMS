@@ -46,10 +46,12 @@ jobs:
           ./gradlew --no-daemon --no-parallel
           verifyCleanRoom verifyPrivateAssets verifyDependencies
 
-      - name: Test, lint, and assemble both variants
+      - name: Test, lint, and assemble governed variants
         run: >-
           ./gradlew --no-daemon --no-parallel
           test lintDebug lintRelease assembleDebug assembleRelease
+          :app:lintBenchmark :app:assembleBenchmark
+          :macrobenchmark:check :macrobenchmark:assembleBenchmark
 
       - name: Verify merged manifests and APK contents
         run: >-

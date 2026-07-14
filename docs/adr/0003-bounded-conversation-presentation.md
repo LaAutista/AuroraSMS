@@ -158,9 +158,11 @@ existing database benchmark remains separate from a release-equivalent,
 profileable Macrobenchmark target. Stable Benchmark 1.4.1 plus direct
 ProfileInstaller 1.4.1 use manual `BaselineProfileRule` HRF capture; the AGP 9-
 incompatible stable Baseline Profile plugin and its alpha fix are not applied.
-The profile covers startup, inbox, thread open/prepend, search, exact jump,
-attachment open, and back. A signature-protected benchmark-only provider seeds
-fixed synthetic private data and is proven absent from debug/release.
+The profile covers startup, inbox, thread open/prepend, search, exact jump, the
+synthetic attachment presentation path, and back. A signature-protected
+benchmark-only provider seeds fixed synthetic private data and is proven absent
+from debug/release; decoded-preview correctness remains covered by focused
+bounded-loader tests rather than real attachment bytes in the profile fixture.
 
 Every latency percentile uses five warmups and 30 measured iterations with
 semantic readiness endpoints. Frame evidence uses deadline overrun and fixed

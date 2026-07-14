@@ -5,7 +5,9 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 MANIFEST_ROOT="$ROOT/app/build/intermediates/merged_manifests"
+MACRO_MANIFEST_ROOT="$ROOT/macrobenchmark/build/intermediates/packaged_manifests/benchmark"
 MANIFESTS=()
+MACRO_MANIFESTS=()
 APKS=()
 
 if [[ -d "$MANIFEST_ROOT" ]]; then
@@ -21,12 +23,21 @@ if ((${#MANIFESTS[@]} == 0)); then
     MANIFESTS+=("$ROOT/app/src/main/AndroidManifest.xml")
 fi
 
-while IFS= read -r -d '' apk; do
-    APKS+=("$apk")
-done < <(
-    find "$ROOT/app/build/outputs/apk" -type f -name '*.apk' \
-        ! -path '*/androidTest/*' -print0 2>/dev/null | sort -z
-)
+if [[ -d "$MACRO_MANIFEST_ROOT" ]]; then
+    while IFS= read -r -d '' manifest; do
+        MACRO_MANIFESTS+=("$manifest")
+    done < <(find "$MACRO_MANIFEST_ROOT" -type f -name AndroidManifest.xml -print0 | sort -z)
+fi
+
+for apk_root in "$ROOT/app/build/outputs/apk" "$ROOT/macrobenchmark/build/outputs/apk/benchmark"; do
+    [[ -d "$apk_root" ]] || continue
+    while IFS= read -r -d '' apk; do
+        APKS+=("$apk")
+    done < <(
+        find "$apk_root" -type f -name '*.apk' \
+            ! -path '*/androidTest/*' -print0 2>/dev/null | sort -z
+    )
+done
 
 SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 if [[ -z "$SDK_ROOT" && -f "$ROOT/local.properties" ]]; then
@@ -38,7 +49,7 @@ if [[ -n "$SDK_ROOT" && -d "$SDK_ROOT/build-tools" ]]; then
     AAPT2="$(find "$SDK_ROOT/build-tools" -mindepth 2 -maxdepth 2 -type f -name aapt2 -print | sort -V | tail -1)"
 fi
 
-args=("${MANIFESTS[@]}")
+args=(--app-manifests "${MANIFESTS[@]}" --macro-manifests "${MACRO_MANIFESTS[@]}")
 if ((${#APKS[@]} > 0)); then
     if [[ -z "$AAPT2" ]]; then
         printf 'Built APKs exist, but aapt2 was not found under the configured Android SDK.\n' >&2
@@ -58,6 +69,9 @@ from pathlib import Path
 
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 APP_ID = "org.aurorasms.app"
+MACRO_ID = "org.aurorasms.macrobenchmark"
+CONTROL_PERMISSION = f"{APP_ID}.permission.BENCHMARK_CONTROL"
+MACRO_DYNAMIC_RECEIVER_PERMISSION = f"{MACRO_ID}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
 
 allowed_permissions = {
     "android.permission.POST_NOTIFICATIONS",
@@ -79,15 +93,17 @@ forbidden_permissions = {
 arguments = sys.argv[1:]
 aapt2 = None
 apks: list[Path] = []
-if "--aapt2" in arguments:
-    split = arguments.index("--aapt2")
-    manifests = [Path(item) for item in arguments[:split]]
-    aapt2 = arguments[split + 1]
-    if arguments[split + 2] != "--apk":
+if not arguments or arguments[0] != "--app-manifests" or "--macro-manifests" not in arguments:
+    raise SystemExit("Malformed internal verify-permissions invocation")
+macro_split = arguments.index("--macro-manifests")
+aapt_split = arguments.index("--aapt2") if "--aapt2" in arguments else len(arguments)
+manifests = [Path(item) for item in arguments[1:macro_split]]
+macro_manifests = [Path(item) for item in arguments[macro_split + 1 : aapt_split]]
+if aapt_split < len(arguments):
+    aapt2 = arguments[aapt_split + 1]
+    if arguments[aapt_split + 2] != "--apk":
         raise SystemExit("Malformed internal verify-permissions invocation")
-    apks = [Path(item) for item in arguments[split + 3 :]]
-else:
-    manifests = [Path(item) for item in arguments]
+    apks = [Path(item) for item in arguments[aapt_split + 3 :]]
 
 
 def attr(element: ET.Element, name: str) -> str | None:
@@ -141,6 +157,8 @@ def require_component(
 
 def verify_manifest(path: Path) -> None:
     root = ET.parse(path).getroot()
+    is_benchmark = "benchmark" in path.parts
+    has_profile_installer = is_benchmark or "release" in path.parts
     permissions = {
         attr(item, "name")
         for tag in ("uses-permission", "uses-permission-sdk-23")
@@ -167,6 +185,64 @@ def verify_manifest(path: Path) -> None:
         raise AssertionError(f"{path}: missing application element")
     if attr(application, "allowBackup") != "false":
         raise AssertionError(f"{path}: application must set allowBackup=false")
+
+    control_declarations = [
+        item for item in root.findall("permission") if attr(item, "name") == CONTROL_PERMISSION
+    ]
+    profileable = application.findall("profileable")
+    fixture_providers = [
+        item
+        for item in application.findall("provider")
+        if attr(item, "name") in {
+            ".benchmark.BenchmarkFixtureProvider",
+            f"{APP_ID}.benchmark.BenchmarkFixtureProvider",
+        }
+        or attr(item, "authorities") == f"{APP_ID}.benchmark.fixture"
+    ]
+    startup_providers = [
+        item
+        for item in application.findall("provider")
+        if attr(item, "name") == "androidx.startup.InitializationProvider"
+    ]
+    profile_receivers = [
+        item
+        for item in application.findall("receiver")
+        if attr(item, "name") == "androidx.profileinstaller.ProfileInstallReceiver"
+    ]
+    if is_benchmark:
+        if len(control_declarations) != 1 or attr(control_declarations[0], "protectionLevel") != "signature":
+            raise AssertionError(f"{path}: benchmark control permission must be signature-only")
+        if len(profileable) != 1 or attr(profileable[0], "shell") != "true":
+            raise AssertionError(f"{path}: benchmark target must be profileable by shell")
+        if len(fixture_providers) != 1:
+            raise AssertionError(f"{path}: benchmark target must expose exactly one fixture provider")
+        fixture = fixture_providers[0]
+        if (
+            attr(fixture, "exported") != "true"
+            or attr(fixture, "permission") != CONTROL_PERMISSION
+            or attr(fixture, "authorities") != f"{APP_ID}.benchmark.fixture"
+        ):
+            raise AssertionError(f"{path}: benchmark fixture provider boundary is invalid")
+    elif control_declarations or profileable or fixture_providers:
+        raise AssertionError(f"{path}: benchmark control surface leaked into a normal app variant")
+
+    if has_profile_installer:
+        if len(startup_providers) != 1 or attr(startup_providers[0], "exported") != "false":
+            raise AssertionError(f"{path}: profile build requires one non-exported Startup provider")
+        initializers = {
+            attr(item, "name")
+            for item in startup_providers[0].findall("meta-data")
+            if attr(item, "value") == "androidx.startup"
+        }
+        if "androidx.profileinstaller.ProfileInstallerInitializer" not in initializers:
+            raise AssertionError(f"{path}: ProfileInstallerInitializer metadata is missing")
+        if len(profile_receivers) != 1:
+            raise AssertionError(f"{path}: profile build requires ProfileInstallReceiver")
+        receiver = profile_receivers[0]
+        if attr(receiver, "exported") != "true" or attr(receiver, "permission") != "android.permission.DUMP":
+            raise AssertionError(f"{path}: ProfileInstallReceiver must be shell-guarded")
+    elif startup_providers or profile_receivers:
+        raise AssertionError(f"{path}: profile installer leaked into a non-profile build")
 
     forbidden_services = {
         "androidx.room.MultiInstanceInvalidationService",
@@ -215,9 +291,20 @@ def verify_manifest(path: Path) -> None:
         "android.provider.action.DEFAULT_SMS_PACKAGE_CHANGED",
         "android.provider.action.EXTERNAL_PROVIDER_CHANGE",
     }
+    if has_profile_installer:
+        allowed_exported_actions.update(
+            {
+                "androidx.profileinstaller.action.BENCHMARK_OPERATION",
+                "androidx.profileinstaller.action.INSTALL_PROFILE",
+                "androidx.profileinstaller.action.SAVE_PROFILE",
+                "androidx.profileinstaller.action.SKIP_FILE",
+            }
+        )
     for tag in ("activity", "activity-alias", "receiver", "service", "provider"):
         for component in application.findall(tag):
             if attr(component, "exported") != "true":
+                continue
+            if component in fixture_providers:
                 continue
             actions = {
                 attr(action, "name")
@@ -232,12 +319,78 @@ def verify_manifest(path: Path) -> None:
                 )
 
 
+def verify_macro_manifest(path: Path) -> None:
+    root = ET.parse(path).getroot()
+    if root.get("package") != MACRO_ID:
+        raise AssertionError(f"{path}: unexpected macrobenchmark package")
+    permissions = {
+        attr(item, "name")
+        for tag in ("uses-permission", "uses-permission-sdk-23")
+        for item in root.findall(tag)
+        if attr(item, "name")
+    }
+    expected_permissions = {
+        CONTROL_PERMISSION,
+        MACRO_DYNAMIC_RECEIVER_PERMISSION,
+        "android.permission.INTERNET",
+        "android.permission.QUERY_ALL_PACKAGES",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.REORDER_TASKS",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+    }
+    if permissions != expected_permissions:
+        raise AssertionError(
+            f"{path}: macrobenchmark permissions changed: {sorted(permissions ^ expected_permissions)}"
+        )
+    dynamic_declarations = [
+        item
+        for item in root.findall("permission")
+        if attr(item, "name") == MACRO_DYNAMIC_RECEIVER_PERMISSION
+    ]
+    if (
+        len(dynamic_declarations) != 1
+        or attr(dynamic_declarations[0], "protectionLevel") != "signature"
+    ):
+        raise AssertionError(f"{path}: macrobenchmark dynamic receiver permission changed")
+    instrumentations = root.findall("instrumentation")
+    if len(instrumentations) != 1:
+        raise AssertionError(f"{path}: expected exactly one instrumentation entry")
+    instrumentation = instrumentations[0]
+    if (
+        attr(instrumentation, "name") != "androidx.test.runner.AndroidJUnitRunner"
+        or attr(instrumentation, "targetPackage") != MACRO_ID
+    ):
+        raise AssertionError(f"{path}: macrobenchmark instrumentation target changed")
+    queried_providers = {
+        attr(item, "authorities")
+        for queries in root.findall("queries")
+        for item in queries.findall("provider")
+        if attr(item, "authorities")
+    }
+    if f"{APP_ID}.benchmark.fixture" not in queried_providers:
+        raise AssertionError(f"{path}: macrobenchmark fixture query is missing")
+    application = root.find("application")
+    if application is None or attr(application, "debuggable") != "true":
+        raise AssertionError(f"{path}: macrobenchmark test process must be debuggable")
+    if any(attr(item, "authorities") == f"{APP_ID}.benchmark.fixture" for item in application.findall("provider")):
+        raise AssertionError(f"{path}: fixture provider must live only in the target APK")
+
+
 for manifest in manifests:
     verify_manifest(manifest)
     print(f"Permission ledger passed: {manifest}")
 
+for manifest in macro_manifests:
+    verify_macro_manifest(manifest)
+    print(f"Macrobenchmark permission boundary passed: {manifest}")
+
 if aapt2:
     for apk in apks:
+        badging = subprocess.check_output(
+            [aapt2, "dump", "badging", str(apk)], text=True, stderr=subprocess.STDOUT
+        )
+        package_match = re.search(r"^package: name='([^']+)'", badging, re.MULTILINE)
+        package_name = package_match.group(1) if package_match else None
         output = subprocess.check_output(
             [aapt2, "dump", "permissions", str(apk)], text=True, stderr=subprocess.STDOUT
         )
@@ -248,10 +401,23 @@ if aapt2:
             for match in [re.search(r"name='([^']+)'", line)]
             if match
         }
-        unexpected = apk_permissions - allowed_permissions
+        expected = allowed_permissions
+        if package_name == MACRO_ID:
+            expected = {
+                CONTROL_PERMISSION,
+                MACRO_DYNAMIC_RECEIVER_PERMISSION,
+                "android.permission.INTERNET",
+                "android.permission.QUERY_ALL_PACKAGES",
+                "android.permission.READ_EXTERNAL_STORAGE",
+                "android.permission.REORDER_TASKS",
+                "android.permission.WRITE_EXTERNAL_STORAGE",
+            }
+        elif package_name != APP_ID:
+            raise AssertionError(f"{apk}: unexpected APK package {package_name}")
+        unexpected = apk_permissions - expected
         if unexpected:
             raise AssertionError(f"{apk}: unexpected packaged permissions: {sorted(unexpected)}")
-        if apk_permissions & forbidden_permissions:
+        if package_name == APP_ID and apk_permissions & forbidden_permissions:
             raise AssertionError(f"{apk}: packaged a forbidden network permission")
         print(f"Packaged permission ledger passed: {apk}")
 PY

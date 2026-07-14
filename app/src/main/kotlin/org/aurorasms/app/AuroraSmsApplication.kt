@@ -3,6 +3,7 @@
 package org.aurorasms.app
 
 import android.app.Application
+import org.aurorasms.app.benchmark.BuildVariantBenchmarkPolicy
 import org.aurorasms.app.strictmode.BuildVariantStrictMode
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.TransportResult
@@ -15,17 +16,25 @@ import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.TelephonyEntryPoint
 
 class AuroraSmsApplication : Application(), TelephonyEntryPoint, NotificationEntryPoint {
-    lateinit var container: AppContainer
-        private set
+    private val containerDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AppContainer(
+            application = this,
+            syntheticIndexOnly = BuildVariantBenchmarkPolicy.syntheticIndexOnly,
+        )
+    }
+    val container: AppContainer by containerDelegate
+
+    internal val isContainerInitialized: Boolean
+        get() = containerDelegate.isInitialized()
 
     override fun onCreate() {
         super.onCreate()
         BuildVariantStrictMode.install()
-        container = AppContainer(this)
+        if (!BuildVariantBenchmarkPolicy.deferContainerInitialization) container
     }
 
     override fun onTerminate() {
-        if (::container.isInitialized) container.close()
+        if (containerDelegate.isInitialized()) container.close()
         super.onTerminate()
     }
 

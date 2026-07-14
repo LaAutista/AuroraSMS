@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -45,6 +46,7 @@ import org.aurorasms.app.message.ReplyTargetRegistry
 import org.aurorasms.app.message.SharedPreferencesReplyReplayGuard
 import org.aurorasms.app.message.SharedPreferencesReplyTargetStore
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.index.MessageIndex
@@ -75,11 +77,20 @@ import org.aurorasms.core.notifications.InlineReplyHandler
 import org.aurorasms.core.notifications.MessageNotifier
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.ContactCache
+import org.aurorasms.core.telephony.ContactCacheInvalidation
 import org.aurorasms.core.telephony.EncodedMmsPdu
 import org.aurorasms.core.telephony.IncomingMessageSink
 import org.aurorasms.core.telephony.MessageTransport
+import org.aurorasms.core.telephony.MmsAttachmentContentReader
+import org.aurorasms.core.telephony.MmsAttachmentId
+import org.aurorasms.core.telephony.MmsAttachmentListResult
+import org.aurorasms.core.telephony.MmsAttachmentReadResult
+import org.aurorasms.core.telephony.MmsAttachmentRepository
+import org.aurorasms.core.telephony.ResolvedContact
 import org.aurorasms.core.telephony.SmsProviderDataSource
 import org.aurorasms.core.telephony.SmsProviderStatus
+import org.aurorasms.core.telephony.SubscriptionRepository
+import org.aurorasms.core.telephony.SubscriptionSnapshot
 import org.aurorasms.core.telephony.internal.AndroidContactResolver
 import org.aurorasms.core.telephony.internal.AndroidDefaultSmsRoleState
 import org.aurorasms.core.telephony.internal.AndroidMmsProviderDataSource
@@ -96,6 +107,7 @@ import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.core.state.DraftRepository
 import org.aurorasms.core.state.DraftRepositoryResult
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.DraftStorageOperation
 import org.aurorasms.core.state.NewDraft
 import org.aurorasms.core.state.storage.RoomDraftRepository
 import org.aurorasms.core.state.storage.StateDatabaseFactory
@@ -105,6 +117,7 @@ import org.aurorasms.feature.conversations.BoundedPreviewLoader
 
 class AppContainer(
     val application: Application,
+    private val syntheticIndexOnly: Boolean = false,
 ) {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val replyTargets = ReplyTargetRegistry(
@@ -120,15 +133,27 @@ class AppContainer(
     val defaultSmsRoleState: DefaultSmsRoleState = AndroidDefaultSmsRoleState(application)
     val smsProviderDataSource: SmsProviderDataSource =
         AndroidSmsProviderDataSource(application, defaultSmsRoleState)
-    val subscriptionRepository = AndroidSubscriptionRepository(application)
-    private val contactCacheController = AppContactCacheController(
-        context = application,
-        resolver = AndroidContactResolver(application),
-        applicationScope = applicationScope,
-    )
-    val contactCache: ContactCache = contactCacheController.cache
+    val subscriptionRepository: SubscriptionRepository = if (syntheticIndexOnly) {
+        UnavailableSubscriptionRepository
+    } else {
+        AndroidSubscriptionRepository(application)
+    }
+    private val contactCacheController = if (syntheticIndexOnly) {
+        null
+    } else {
+        AppContactCacheController(
+            context = application,
+            resolver = AndroidContactResolver(application),
+            applicationScope = applicationScope,
+        )
+    }
+    val contactCache: ContactCache = contactCacheController?.cache ?: AddressOnlyContactCache
     val mmsProviderDataSource = AndroidMmsProviderDataSource(application, defaultSmsRoleState)
-    val mmsAttachmentRepository = AndroidMmsAttachmentRepository(application, defaultSmsRoleState)
+    val mmsAttachmentRepository: MmsAttachmentRepository = if (syntheticIndexOnly) {
+        UnavailableMmsAttachmentRepository
+    } else {
+        AndroidMmsAttachmentRepository(application, defaultSmsRoleState)
+    }
     val previewLoader: BoundedPreviewLoader = AndroidBoundedPreviewLoader(
         repository = mmsAttachmentRepository,
         applicationScope = applicationScope,
@@ -171,10 +196,8 @@ class AppContainer(
     private val indexSignalLock = Any()
     private val pendingIndexSignals: EnumSet<IndexSignal> = EnumSet.noneOf(IndexSignal::class.java)
     private val indexSignalWakeUps = Channel<Unit>(capacity = Channel.CONFLATED)
-    private var ambiguousSignalLedgered: Boolean = indexSignalLedger.getBoolean(
-        INDEX_SIGNAL_LEDGER_KEY,
-        false,
-    )
+    private var ambiguousSignalLedgered: Boolean = !syntheticIndexOnly &&
+        indexSignalLedger.getBoolean(INDEX_SIGNAL_LEDGER_KEY, false)
     private var ambiguousSignalSequence: Long = if (ambiguousSignalLedgered) 1L else 0L
     private val providerObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
@@ -221,28 +244,35 @@ class AppContainer(
     val lastIndexOutcome: StateFlow<IndexSyncOutcome?> = indexCoordinator.lastOutcome
 
     init {
-        applicationScope.launch {
-            for (ignored in indexSignalWakeUps) {
-                val signals = takePendingIndexSignals()
-                val conservativeSignal = signals.singleOrNull()
-                    ?: IndexSignal.EXTERNAL_PROVIDER_CHANGE
-                signalIndex(conservativeSignal)
+        if (!syntheticIndexOnly) {
+            applicationScope.launch {
+                for (ignored in indexSignalWakeUps) {
+                    val signals = takePendingIndexSignals()
+                    val conservativeSignal = signals.singleOrNull()
+                        ?: IndexSignal.EXTERNAL_PROVIDER_CHANGE
+                    signalIndex(conservativeSignal)
+                }
             }
         }
         if (ambiguousSignalLedgered) {
             enqueueIndexSignal(IndexSignal.EXTERNAL_PROVIDER_CHANGE)
         }
         requestIndexOpen()
-        applicationScope.launch(Dispatchers.IO) {
-            when (val result = StateDatabaseFactory.open(application)) {
-                is StateDatabaseOpenResult.Opened -> {
-                    stateDatabase = result.database
-                    stateRuntimeState.value = StateRuntimeState.Ready(RoomDraftRepository(result.database))
-                    _stateStorageStatus.value = StateStorageStatus.Ready
-                }
-                is StateDatabaseOpenResult.Failed -> {
-                    stateRuntimeState.value = StateRuntimeState.Failed(result.reason)
-                    _stateStorageStatus.value = StateStorageStatus.Failed(result.reason)
+        if (syntheticIndexOnly) {
+            stateRuntimeState.value = StateRuntimeState.Ready(EmptyBenchmarkDraftRepository)
+            _stateStorageStatus.value = StateStorageStatus.Ready
+        } else {
+            applicationScope.launch(Dispatchers.IO) {
+                when (val result = StateDatabaseFactory.open(application)) {
+                    is StateDatabaseOpenResult.Opened -> {
+                        stateDatabase = result.database
+                        stateRuntimeState.value = StateRuntimeState.Ready(RoomDraftRepository(result.database))
+                        _stateStorageStatus.value = StateStorageStatus.Ready
+                    }
+                    is StateDatabaseOpenResult.Failed -> {
+                        stateRuntimeState.value = StateRuntimeState.Failed(result.reason)
+                        _stateStorageStatus.value = StateStorageStatus.Failed(result.reason)
+                    }
                 }
             }
         }
@@ -286,7 +316,7 @@ class AppContainer(
 
     suspend fun onDefaultSmsRoleChanged(isDefaultSmsApp: Boolean) {
         previewLoader.clear()
-        if (!isDefaultSmsApp) {
+        if (!isDefaultSmsApp && !syntheticIndexOnly) {
             replyTargets.clear()
             sentPartTracker.clear()
         }
@@ -314,13 +344,15 @@ class AppContainer(
     /** Retries observer registration and reconciliation after explicit role/permission UI success. */
     fun onMessagingEligibilityChanged() {
         applicationScope.launch { previewLoader.clear() }
-        ensureProviderObserverRegistered()
         requestIndexOpen()
-        enqueueIndexSignal(IndexSignal.ROLE_CHANGED)
+        if (!syntheticIndexOnly) {
+            ensureProviderObserverRegistered()
+            enqueueIndexSignal(IndexSignal.ROLE_CHANGED)
+        }
     }
 
     fun onContactsPermissionChanged() {
-        contactCacheController.onContactsPermissionChanged()
+        contactCacheController?.onContactsPermissionChanged()
     }
 
     fun createDraftWriter(
@@ -352,7 +384,7 @@ class AppContainer(
         indexCoordinator.close()
         activeIndexDatabase?.let(IndexDatabaseFactory::close)
         stateDatabase?.let(StateDatabaseFactory::close)
-        contactCacheController.close()
+        contactCacheController?.close()
         applicationScope.cancel()
     }
 
@@ -368,6 +400,7 @@ class AppContainer(
     }
 
     private fun enqueueIndexSignal(signal: IndexSignal) {
+        if (syntheticIndexOnly) return
         if (signal.requiresDurableAmbiguousLedger()) recordAmbiguousSignal()
         synchronized(indexSignalLock) {
             pendingIndexSignals.add(signal)
@@ -421,11 +454,13 @@ class AppContainer(
                         indexRuntimeState.value = IndexRuntimeState.Ready(runtime)
                         _indexStorageStatus.value = IndexStorageStatus.Ready(result.recovered)
                         indexRetryJob?.cancel()
-                        ensureProviderObserverRegistered()
-                        if (synchronized(indexSignalLock) { ambiguousSignalLedgered }) {
-                            enqueueIndexSignal(IndexSignal.EXTERNAL_PROVIDER_CHANGE)
+                        if (!syntheticIndexOnly) {
+                            ensureProviderObserverRegistered()
+                            if (synchronized(indexSignalLock) { ambiguousSignalLedgered }) {
+                                enqueueIndexSignal(IndexSignal.EXTERNAL_PROVIDER_CHANGE)
+                            }
+                            indexCoordinator.start()
                         }
-                        indexCoordinator.start()
                     }
                     is IndexDatabaseOpenResult.Failed -> {
                         indexRuntimeState.value = IndexRuntimeState.Failed(result.reason)
@@ -448,6 +483,7 @@ class AppContainer(
     private suspend fun awaitIndexRuntime(): IndexRuntime = indexRuntimeState.awaitReadyRuntime()
 
     private fun ensureProviderObserverRegistered() {
+        if (syntheticIndexOnly) return
         if (!providerObserverRegistered.compareAndSet(false, true)) return
         try {
             application.contentResolver.registerContentObserver(
@@ -466,6 +502,49 @@ class AppContainer(
         const val INDEX_SIGNAL_LEDGER_NAME: String = "aurora_index_signal_ledger"
         const val INDEX_SIGNAL_LEDGER_KEY: String = "ambiguous_provider_change_pending"
     }
+}
+
+private object AddressOnlyContactCache : ContactCache {
+    override val invalidations: Flow<ContactCacheInvalidation> = emptyFlow()
+
+    override suspend fun resolve(addresses: List<ParticipantAddress>): List<ResolvedContact> =
+        addresses.map { address -> ResolvedContact(address, displayName = null, photoUri = null) }
+
+    override suspend fun invalidate() = Unit
+}
+
+private object UnavailableSubscriptionRepository : SubscriptionRepository {
+    override suspend fun activeSubscriptions(): SubscriptionSnapshot =
+        SubscriptionSnapshot.FeatureUnavailable
+}
+
+private object UnavailableMmsAttachmentRepository : MmsAttachmentRepository {
+    override suspend fun listStaticImages(
+        providerMessageId: org.aurorasms.core.model.ProviderMessageId,
+    ): MmsAttachmentListResult = MmsAttachmentListResult.Unavailable
+
+    override suspend fun <T> read(
+        id: MmsAttachmentId,
+        reader: MmsAttachmentContentReader<T>,
+    ): MmsAttachmentReadResult<T> = MmsAttachmentReadResult.Unavailable
+}
+
+private object EmptyBenchmarkDraftRepository : DraftRepository {
+    override suspend fun create(draft: NewDraft): DraftRepositoryResult<Draft> =
+        DraftRepositoryResult.StorageFailure(DraftStorageOperation.CREATE)
+
+    override suspend fun read(id: DraftId): DraftRepositoryResult<Draft> = DraftRepositoryResult.NotFound
+
+    override suspend fun read(identity: DraftIdentity): DraftRepositoryResult<Draft> =
+        DraftRepositoryResult.NotFound
+
+    override suspend fun update(
+        draft: Draft,
+        expectedRevision: DraftRevision,
+    ): DraftRepositoryResult<Draft> = DraftRepositoryResult.StorageFailure(DraftStorageOperation.UPDATE)
+
+    override suspend fun delete(id: DraftId): DraftRepositoryResult<Unit> =
+        DraftRepositoryResult.StorageFailure(DraftStorageOperation.DELETE)
 }
 
 sealed interface IndexStorageStatus {

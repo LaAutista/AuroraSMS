@@ -227,11 +227,30 @@ These exact entries are ledgered and do not grant network or user-data access.
 The permission name must resolve under the AuroraSMS application ID; any other
 AndroidX or transitive manifest addition remains unapproved.
 
-Activity Compose transitively offers AndroidX Startup and ProfileInstaller
-components on some classpaths. AuroraSMS explicitly removes
-`androidx.startup.InitializationProvider` and
-`androidx.profileinstaller.ProfileInstallReceiver` during manifest merge; they
-are absent from both packaged variants and are not approved entry points.
+The debug build explicitly removes AndroidX Startup and ProfileInstaller
+components. Release keeps exactly one non-exported
+`androidx.startup.InitializationProvider` containing only
+`ProfileInstallerInitializer`, plus one exported
+`ProfileInstallReceiver` guarded by the platform signature/privileged DUMP
+permission. These components install the checked-in Baseline Profile for local
+and older-device delivery; they add no app permission or network path.
+
+The Phase 3 app benchmark target is a separate, local, non-debuggable,
+profileable build identity. It alone declares the signature permission
+`org.aurorasms.app.permission.BENCHMARK_CONTROL`, exposes
+`org.aurorasms.app.benchmark.fixture` behind that permission, and uses the same
+audited ProfileInstaller components as release.
+The same-signed macrobenchmark test APK requests the control permission. Its
+Benchmark/Perfetto tooling also declares `INTERNET` for a localhost-only trace
+processor, package query, legacy report-storage, task-reordering, and its
+AndroidX Core package-private signature receiver permission. All inherited SMS,
+phone, contacts, notification, vibration, and telephony-feature declarations
+are explicitly stripped from the macrobenchmark manifest. The runner
+self-instruments its separate test package and controls
+the app only through Macrobenchmark shell APIs and the signature-protected
+fixture provider; it never executes inside the SMS app process. None of these
+test-only permissions or benchmark controls is allowed in the normal app APK;
+merged-manifest and build-identity APK checks enforce the split.
 
 The MMS PDU staging provider is an Aurora-owned `FileProvider` subclass,
 exported `false`, with `grantUriPermissions=true` and cache-only paths limited

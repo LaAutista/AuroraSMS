@@ -1,7 +1,8 @@
 # Phase 3 file-level plan
 
-Status: approved Phase 3 implementation baseline, 2026-07-13; production edits
-have not started
+Status: Phase 3 implementation and API 36 synthetic-emulator profile gate
+complete, 2026-07-13; physical-device performance and real-provider evidence
+remain pending
 
 ## Outcome
 
@@ -392,10 +393,32 @@ and Phase 3 does not silently adopt the 1.5 alpha compatibility fix.
 `BaselineProfileRule` runs from the `com.android.test` module against the
 benchmark variant. The generated HRF is normalized, reviewed, and copied by the
 deterministic update script to `app/src/main/baseline-prof.txt`; there is no
-`:app:generateBaselineProfile` claim. ProfileInstaller's receiver is enabled
-only in the benchmark target for capture/reset and remains removed from normal
-debug/release manifests. The release APK consumes the checked-in HRF through
-AGP and must contain nonempty `baseline.prof` and `baseline.profm` assets.
+`:app:generateBaselineProfile` claim. The debug build removes ProfileInstaller's
+initializer and receiver. Release retains the audited non-exported initializer
+and DUMP-protected receiver so sideloaded profiles work on supported Android
+versions; benchmark retains the same profile path plus its separate fixture.
+The release APK consumes the checked-in HRF through AGP and must contain
+nonempty `baseline.prof` and `baseline.profm` assets.
+
+The normal benchmark target remains R8-enabled for every performance run.
+Because this plan intentionally omits the Baseline Profile Gradle plugin, the
+manual update script sets `auroraBaselineProfileCapture=true` only while
+capturing human-readable rules, which temporarily disables target obfuscation
+so those rules use original signatures. The checked-in HRF is then consumed and
+rewritten by R8 in the normal release build. Profile generation is never used
+as product-performance evidence.
+
+The as-built capture command requires an explicit device when more than one is
+authorized and refuses an emulator unless `--allow-emulator-profile` is also
+present. Two independently normalized Aurora-owned captures must share at least
+99% of each rule set; only their exact intersection is admitted. The API 36
+emulator run on 2026-07-13 produced two exact 1,977-rule captures and checked in
+their intersection with SHA-256
+`2eda2fae24a54e1a526dfca3f79a6dce12be7d4448317174882dc98de2f2bf9a`.
+That proves deterministic profile generation and journey reachability, not
+latency, frame, or memory performance. Stable resource-ID selectors and safe
+drawing insets keep the synthetic journeys independent of localized labels and
+system-bar overlap.
 
 Fixture bootstrap is a benchmark-variant-only exported `ContentProvider`
 protected by an Aurora signature permission requested by the same-signed test
@@ -498,7 +521,7 @@ checks debug, release, benchmark target, and macrobenchmark test outputs.
 ./gradlew :feature:conversations:connectedDebugAndroidTest
 ./gradlew :benchmark:connectedDebugAndroidTest
 ./gradlew :macrobenchmark:connectedBenchmarkAndroidTest -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.enabledRules=BaselineProfile
-./scripts/update-baseline-profile.sh --verify-twice
+./scripts/update-baseline-profile.sh --verify-twice --device SERIAL
 ./gradlew :app:assembleRelease :macrobenchmark:connectedBenchmarkAndroidTest
 ./gradlew verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions verifyApkContents
 ./gradlew --no-parallel checkLicense generateLicenseReport cyclonedxBom
@@ -509,6 +532,11 @@ launch the exact debug APK, copy it to
 `/sdcard/Download/AuroraSMS-debug.apk`, and compare local/device SHA-256. Real
 provider-history UI evidence requires owner acceptance of Android's role/read
 permission UI; tests never bypass it. No carrier message is required.
+
+The 2026-07-13 finalization deliberately deferred that physical install/copy
+step because the owner needed uninterrupted access to the working SMS app. No
+Phase 3 finalization command installed, launched, or changed the SMS role on the
+physical device; the row remains open until a new owner-approved test window.
 
 ## Stop conditions
 
