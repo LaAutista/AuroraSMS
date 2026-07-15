@@ -8,6 +8,7 @@ import android.graphics.ImageDecoder
 import android.os.Build
 import android.os.StrictMode
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -15,13 +16,14 @@ import java.util.LinkedHashMap
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.aurorasms.core.telephony.MmsAttachmentContent
 import org.aurorasms.core.telephony.MmsAttachmentDescriptor
@@ -30,7 +32,6 @@ import org.aurorasms.core.telephony.MmsAttachmentReadResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
 import org.aurorasms.feature.conversations.AttachmentPreviewResult
 import org.aurorasms.feature.conversations.BoundedPreviewLoader
-import org.aurorasms.feature.conversations.MAXIMUM_CONCURRENT_PREVIEW_DECODES
 import org.aurorasms.feature.conversations.MAXIMUM_PREVIEW_CACHE_BYTES
 import org.aurorasms.feature.conversations.MAXIMUM_PREVIEW_CACHE_ENTRIES
 import org.aurorasms.feature.conversations.MAXIMUM_PREVIEW_EDGE_PIXELS
@@ -42,21 +43,22 @@ import org.aurorasms.feature.conversations.StaticAttachmentPreview
 class AndroidBoundedPreviewLoader(
     private val repository: MmsAttachmentRepository,
     private val applicationScope: CoroutineScope,
+    private val decodeGate: BoundedMediaDecodeGate = BoundedMediaDecodeGate(),
 ) : BoundedPreviewLoader {
-    private val decodePermits = Semaphore(MAXIMUM_CONCURRENT_PREVIEW_DECODES)
     private val mutex = Mutex()
     private val entries = LinkedHashMap<MmsAttachmentId, StaticAttachmentPreview>(4, 0.75f, true)
-    private val inFlight = mutableMapOf<MmsAttachmentId, CompletableDeferred<AttachmentPreviewResult>>()
+    private val inFlight = mutableMapOf<MmsAttachmentId, InFlightPreviewLoad>()
     private var retainedAllocationBytes = 0
+    @Volatile
     private var epoch = 0L
 
     override suspend fun load(descriptor: MmsAttachmentDescriptor): AttachmentPreviewResult {
         val id = descriptor.id
         var cached: StaticAttachmentPreview? = null
-        var pending: Deferred<AttachmentPreviewResult>? = null
-        var owned: CompletableDeferred<AttachmentPreviewResult>? = null
+        var pending: InFlightPreviewLoad? = null
+        var ownsPending = false
         var saturated = false
-        val batchEpoch = mutex.withLock {
+        mutex.withLock {
             cached = entries[id]
             if (cached == null) {
                 pending = inFlight[id]
@@ -64,32 +66,25 @@ class AndroidBoundedPreviewLoader(
                     if (inFlight.size >= MAXIMUM_PENDING_PREVIEW_LOADS) {
                         saturated = true
                     } else {
-                        owned = CompletableDeferred()
-                        pending = owned
-                        inFlight[id] = checkNotNull(owned)
+                        val batchEpoch = epoch
+                        val promise = CompletableDeferred<AttachmentPreviewResult>()
+                        val producer = applicationScope.launch(start = CoroutineStart.LAZY) {
+                            produce(batchEpoch, id, descriptor, promise)
+                        }
+                        pending = InFlightPreviewLoad(batchEpoch, promise, producer)
+                        inFlight[id] = checkNotNull(pending)
+                        ownsPending = true
                     }
                 }
             }
-            epoch
         }
         cached?.let { return AttachmentPreviewResult.Ready(it) }
         if (saturated) return AttachmentPreviewResult.Unavailable
-        checkNotNull(pending)
-
-        owned?.let { promise ->
-            applicationScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                try {
-                    val result = decodePermits.withPermit { decode(descriptor) }
-                    complete(batchEpoch, id, promise, result)
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    withContext(NonCancellable) {
-                        complete(batchEpoch, id, promise, AttachmentPreviewResult.Unavailable)
-                    }
-                    throw cancelled
-                }
-            }
-        }
-        return checkNotNull(pending).await()
+        val requested = checkNotNull(pending)
+        if (ownsPending) requested.producer.start()
+        val result = requested.promise.await()
+        val remainsCurrent = mutex.withLock { requested.epoch == epoch }
+        return if (remainsCurrent) result else AttachmentPreviewResult.Unavailable
     }
 
     override suspend fun clear() {
@@ -97,39 +92,122 @@ class AndroidBoundedPreviewLoader(
             epoch += 1L
             entries.clear()
             retainedAllocationBytes = 0
-            inFlight.values.toList().also { inFlight.clear() }
+            val loads = inFlight.values.toList()
+            inFlight.clear()
+            loads
         }
-        stale.forEach { it.complete(AttachmentPreviewResult.Unavailable) }
+        stale.forEach { load -> load.producer.cancel() }
+        stale.forEach { load -> load.promise.complete(AttachmentPreviewResult.Unavailable) }
     }
 
     internal suspend fun retainedEntryCount(): Int = mutex.withLock { entries.size }
 
     internal suspend fun retainedBytes(): Int = mutex.withLock { retainedAllocationBytes }
 
-    private suspend fun decode(descriptor: MmsAttachmentDescriptor): AttachmentPreviewResult =
-        when (val result = repository.read(descriptor.id) { content -> decodeContent(content) }) {
-            is MmsAttachmentReadResult.Success -> result.value
-            MmsAttachmentReadResult.NotFound -> AttachmentPreviewResult.NotFound
-            MmsAttachmentReadResult.RoleRequired -> AttachmentPreviewResult.RoleRequired
-            MmsAttachmentReadResult.PermissionDenied -> AttachmentPreviewResult.PermissionDenied
-            MmsAttachmentReadResult.UnsupportedType -> AttachmentPreviewResult.UnsupportedType
-            MmsAttachmentReadResult.Unavailable -> AttachmentPreviewResult.Unavailable
-        }
+    internal suspend fun pendingLoadCount(): Int = mutex.withLock { inFlight.size }
 
-    private fun decodeContent(content: MmsAttachmentContent): AttachmentPreviewResult {
+    private suspend fun produce(
+        batchEpoch: Long,
+        id: MmsAttachmentId,
+        descriptor: MmsAttachmentDescriptor,
+        promise: CompletableDeferred<AttachmentPreviewResult>,
+    ) {
+        try {
+            val producerContext = currentCoroutineContext()
+            val result = decodeGate.withPermit {
+                producerContext.ensureActive()
+                val stillCurrent = mutex.withLock {
+                    inFlight[id]?.promise === promise && batchEpoch == epoch
+                }
+                if (stillCurrent) {
+                    decode(descriptor) {
+                        producerContext.ensureActive()
+                        if (batchEpoch != epoch) {
+                            throw kotlinx.coroutines.CancellationException("Obsolete preview generation")
+                        }
+                    }
+                } else {
+                    AttachmentPreviewResult.Unavailable
+                }
+            }
+            val mayPublish = producerContext.isActive
+            withContext(NonCancellable) {
+                complete(batchEpoch, id, promise, result, mayPublish)
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            withContext(NonCancellable) {
+                complete(
+                    batchEpoch,
+                    id,
+                    promise,
+                    AttachmentPreviewResult.Unavailable,
+                    mayPublish = false,
+                )
+            }
+            throw cancelled
+        } catch (failure: Throwable) {
+            withContext(NonCancellable) {
+                complete(
+                    batchEpoch,
+                    id,
+                    promise,
+                    AttachmentPreviewResult.Unavailable,
+                    mayPublish = false,
+                )
+            }
+            throw failure
+        }
+    }
+
+    private suspend fun decode(
+        descriptor: MmsAttachmentDescriptor,
+        ensureProducerActive: () -> Unit,
+    ): AttachmentPreviewResult {
+        return try {
+            when (
+                val result = repository.read(descriptor.id) { content ->
+                    decodeContent(content, ensureProducerActive)
+                }
+            ) {
+                is MmsAttachmentReadResult.Success -> result.value
+                MmsAttachmentReadResult.NotFound -> AttachmentPreviewResult.NotFound
+                MmsAttachmentReadResult.RoleRequired -> AttachmentPreviewResult.RoleRequired
+                MmsAttachmentReadResult.PermissionDenied -> AttachmentPreviewResult.PermissionDenied
+                MmsAttachmentReadResult.UnsupportedType -> AttachmentPreviewResult.UnsupportedType
+                MmsAttachmentReadResult.Unavailable -> AttachmentPreviewResult.Unavailable
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: IOException) {
+            AttachmentPreviewResult.Unavailable
+        } catch (_: SecurityException) {
+            AttachmentPreviewResult.Unavailable
+        } catch (_: RuntimeException) {
+            AttachmentPreviewResult.Unavailable
+        }
+    }
+
+    private fun decodeContent(
+        content: MmsAttachmentContent,
+        ensureProducerActive: () -> Unit,
+    ): AttachmentPreviewResult {
         StrictMode.noteSlowCall("aurora-static-preview-decode")
+        ensureProducerActive()
         val encodedLengthBytes = content.encodedLengthBytes
         if (encodedLengthBytes != null && encodedLengthBytes > MAXIMUM_PREVIEW_ENCODED_BYTES) {
             return AttachmentPreviewResult.EncodedInputTooLarge
         }
         val encoded = try {
-            content.stream.readBounded(MAXIMUM_PREVIEW_ENCODED_BYTES)
+            content.stream.readBounded(MAXIMUM_PREVIEW_ENCODED_BYTES, ensureProducerActive)
                 ?: return AttachmentPreviewResult.EncodedInputTooLarge
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (_: IOException) {
             return AttachmentPreviewResult.Unavailable
         } catch (_: RuntimeException) {
             return AttachmentPreviewResult.Unavailable
         }
+        ensureProducerActive()
         val format = detectEncodedImageFormat(encoded) ?: return AttachmentPreviewResult.Malformed
         if (!declaredMimeMatchesFormat(content.descriptor.type.mimeType, format)) {
             return AttachmentPreviewResult.Malformed
@@ -142,6 +220,7 @@ class AndroidBoundedPreviewLoader(
             return AttachmentPreviewResult.SourceDimensionsTooLarge
         }
 
+        ensureProducerActive()
         val bitmap = try {
             if (Build.VERSION.SDK_INT >= 28) {
                 decodeWithImageDecoder(encoded, bounds.outWidth, bounds.outHeight)
@@ -167,6 +246,7 @@ class AndroidBoundedPreviewLoader(
             bitmap.width.toLong() * bitmap.height.toLong() > MAXIMUM_PREVIEW_PIXELS ||
             allocationBytes !in 1..MAXIMUM_PREVIEW_CACHE_BYTES
         ) {
+            bitmap.recycle()
             return AttachmentPreviewResult.SourceDimensionsTooLarge
         }
         return AttachmentPreviewResult.Ready(
@@ -185,21 +265,25 @@ class AndroidBoundedPreviewLoader(
         id: MmsAttachmentId,
         promise: CompletableDeferred<AttachmentPreviewResult>,
         result: AttachmentPreviewResult,
+        mayPublish: Boolean,
     ) {
         val accepted = mutex.withLock {
-            val stillOwned = inFlight[id] === promise
+            val stillOwned = inFlight[id]?.promise === promise
             if (stillOwned) inFlight.remove(id)
-            val mayPublish = stillOwned && batchEpoch == epoch
-            if (mayPublish && result is AttachmentPreviewResult.Ready) {
+            val acceptedResult = mayPublish && stillOwned && batchEpoch == epoch
+            if (acceptedResult && result is AttachmentPreviewResult.Ready) {
                 entries.put(id, result.preview)?.let { replaced ->
                     retainedAllocationBytes -= replaced.allocationBytes
                 }
                 retainedAllocationBytes += result.preview.allocationBytes
                 trimCache()
             }
-            mayPublish
+            promise.complete(if (acceptedResult) result else AttachmentPreviewResult.Unavailable)
+            acceptedResult
         }
-        promise.complete(if (accepted) result else AttachmentPreviewResult.Unavailable)
+        if (!accepted && result is AttachmentPreviewResult.Ready) {
+            result.preview.image.asAndroidBitmap().recycle()
+        }
     }
 
     private fun trimCache() {
@@ -216,12 +300,22 @@ class AndroidBoundedPreviewLoader(
     }
 }
 
-private fun java.io.InputStream.readBounded(maximumBytes: Int): ByteArray? {
+private data class InFlightPreviewLoad(
+    val epoch: Long,
+    val promise: CompletableDeferred<AttachmentPreviewResult>,
+    val producer: Job,
+)
+
+private fun java.io.InputStream.readBounded(
+    maximumBytes: Int,
+    ensureActive: () -> Unit,
+): ByteArray? {
     val initialCapacity = minOf(maximumBytes, 32 * 1_024)
     val output = ByteArrayOutputStream(initialCapacity)
     val buffer = ByteArray(8 * 1_024)
     var total = 0
     while (true) {
+        ensureActive()
         val read = read(buffer)
         if (read < 0) break
         if (read == 0) continue

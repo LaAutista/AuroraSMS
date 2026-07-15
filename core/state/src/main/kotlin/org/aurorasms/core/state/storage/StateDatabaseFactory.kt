@@ -47,7 +47,7 @@ object StateDatabaseFactory {
             DATABASE_NAME,
         )
             .openHelperFactory(NonDeletingStateOpenHelperFactory)
-            .addMigrations(STATE_MIGRATION_1_2, STATE_MIGRATION_2_3)
+            .addMigrations(STATE_MIGRATION_1_2, STATE_MIGRATION_2_3, STATE_MIGRATION_3_4)
             .addCallback(DraftIdentityEnforcement.callback)
             .addCallback(AppearanceSelectionEnforcement.callback)
             .addCallback(AppearanceOverrideSequenceEnforcement.callback)

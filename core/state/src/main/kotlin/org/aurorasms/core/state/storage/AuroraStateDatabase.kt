@@ -12,6 +12,8 @@ import androidx.room.RoomDatabase
         AppearanceSelectionEntity::class,
         AppearanceScreenOverrideEntity::class,
         AppearanceConversationOverrideEntity::class,
+        AppearanceScreenWallpaperEntity::class,
+        AppearanceConversationWallpaperEntity::class,
         AppearanceOverrideSequenceEntity::class,
     ],
     version = AuroraStateDatabase.VERSION,
@@ -25,6 +27,6 @@ abstract class AuroraStateDatabase : RoomDatabase() {
     internal abstract fun appearanceOverrideDao(): AppearanceOverrideDao
 
     companion object {
-        const val VERSION: Int = 3
+        const val VERSION: Int = 4
     }
 }

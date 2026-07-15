@@ -13,10 +13,14 @@ enum class AppearanceStorageOperation {
     DELETE,
     SET_OVERRIDE,
     RESET_OVERRIDE,
+    SET_WALLPAPER,
+    RESET_WALLPAPER,
+    WALLPAPER_MEDIA_REFERENCES,
 }
 
 enum class AppearanceLimit {
     PROFILE_COUNT,
+    WALLPAPER_MEDIA_COUNT,
 }
 
 sealed interface AppearanceRepositoryResult<out T> {
@@ -90,4 +94,43 @@ interface AppearanceProfileRepository {
         scope: AppearanceScope,
         expectedRevision: AppearanceOverrideRevision?,
     ): AppearanceRepositoryResult<Unit>
+}
+
+/** Durable target-specific static-wallpaper assignments, independent from profile references. */
+interface AppearanceWallpaperRepository {
+    /** Observes only the requested scope; the first row-or-null is authoritative for that scope. */
+    fun observeWallpaper(scope: AppearanceScope): Flow<AppearanceWallpaperAssignment?>
+
+    /**
+     * Creates or updates one static private-media assignment using optimistic target revision.
+     * A null [expectedRevision] means the caller observed inherited state and requires no row.
+     */
+    suspend fun setWallpaper(
+        scope: AppearanceScope,
+        mediaId: AppearanceWallpaperMediaId,
+        dimPermill: Int,
+        focalXPermill: Int,
+        focalYPermill: Int,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<AppearanceWallpaperMutation>
+
+    /** Revision-checks and removes only this wallpaper assignment. */
+    suspend fun resetWallpaper(
+        scope: AppearanceScope,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<AppearanceWallpaperMutation>
+
+    /**
+     * Returns the exact bounded media-ID set that would remain after a successful set, without
+     * changing durable state. The target's current revision is checked in the same validated read
+     * transaction as the full assignment snapshot.
+     */
+    suspend fun prospectiveMediaIdsForSet(
+        scope: AppearanceScope,
+        mediaId: AppearanceWallpaperMediaId,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<Set<AppearanceWallpaperMediaId>>
+
+    /** Returns at most 128 validated distinct IDs for conservative app-private media GC. */
+    suspend fun referencedMediaIds(): AppearanceRepositoryResult<Set<AppearanceWallpaperMediaId>>
 }

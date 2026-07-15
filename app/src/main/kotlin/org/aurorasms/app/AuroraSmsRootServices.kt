@@ -4,6 +4,7 @@ package org.aurorasms.app
 
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.SerializedDraftWriter
+import org.aurorasms.app.appearance.wallpaper.WallpaperController
 import org.aurorasms.core.index.MessageIndex
 import org.aurorasms.core.index.conversation.ConversationRepository
 import org.aurorasms.core.index.timeline.ThreadTimelineRepository
@@ -22,6 +23,8 @@ internal interface AuroraSmsRootServices {
     val subscriptionRepository: SubscriptionRepository
     val mmsAttachmentRepository: MmsAttachmentRepository
     val previewLoader: BoundedPreviewLoader
+    val wallpaperController: WallpaperController?
+        get() = null
 
     fun createDraftWriter(
         identity: DraftIdentity,
@@ -49,6 +52,8 @@ internal class AppContainerAuroraSmsRootServices(
         get() = container.mmsAttachmentRepository
     override val previewLoader: BoundedPreviewLoader
         get() = container.previewLoader
+    override val wallpaperController: WallpaperController
+        get() = container.wallpaperController
 
     override fun createDraftWriter(
         identity: DraftIdentity,

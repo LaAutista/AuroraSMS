@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -94,6 +95,7 @@ fun ThreadScreen(
     onAnchorRestored: () -> Unit,
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
     onDraftChanged: (String) -> Unit,
+    timelineBackground: @Composable BoxScope.() -> Unit = {},
 ) {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -137,18 +139,21 @@ fun ThreadScreen(
                 when (state) {
                     ThreadUiState.Loading -> LoadingPane()
                     is ThreadUiState.Failed -> FailurePane(onRetry)
-                    is ThreadUiState.Ready -> ThreadReady(
-                        state = state,
-                        attachmentRepository = attachmentRepository,
-                        previewLoader = previewLoader,
-                        onLoadOlder = onLoadOlder,
-                        onLoadNewer = onLoadNewer,
-                        onAtNewestChanged = onAtNewestChanged,
-                        onAcceptPending = onAcceptPending,
-                        onViewportChanged = onViewportChanged,
-                        onAnchorRestored = onAnchorRestored,
-                        onToggleMessageExpansion = onToggleMessageExpansion,
-                    )
+                    is ThreadUiState.Ready -> {
+                        timelineBackground()
+                        ThreadReady(
+                            state = state,
+                            attachmentRepository = attachmentRepository,
+                            previewLoader = previewLoader,
+                            onLoadOlder = onLoadOlder,
+                            onLoadNewer = onLoadNewer,
+                            onAtNewestChanged = onAtNewestChanged,
+                            onAcceptPending = onAcceptPending,
+                            onViewportChanged = onViewportChanged,
+                            onAnchorRestored = onAnchorRestored,
+                            onToggleMessageExpansion = onToggleMessageExpansion,
+                        )
+                    }
                 }
             }
             Composer(
@@ -407,14 +412,18 @@ private fun ThreadReady(
 
     Column(modifier = Modifier.fillMaxSize()) {
         if (!state.coverage.verifiedComplete) {
-            Text(
-                text = stringResource(R.string.index_incomplete),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                color = MaterialTheme.colorScheme.secondary,
-                style = MaterialTheme.typography.bodySmall,
-            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp,
+            ) {
+                Text(
+                    text = stringResource(R.string.index_incomplete),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.secondary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
         if (state.window.pendingNewer) {
             Button(
@@ -433,7 +442,16 @@ private fun ThreadReady(
         }
         if (items.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.no_messages))
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 1.dp,
+                ) {
+                    Text(
+                        text = stringResource(R.string.no_messages),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    )
+                }
             }
         } else {
             LazyColumn(
@@ -450,7 +468,20 @@ private fun ThreadReady(
                                 .fillMaxWidth()
                                 .padding(12.dp),
                             contentAlignment = Alignment.Center,
-                        ) { CircularProgressIndicator(modifier = Modifier.size(24.dp)) }
+                        ) {
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.surface,
+                                tonalElevation = 1.dp,
+                            ) {
+                                Box(
+                                    modifier = Modifier.size(48.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                }
+                            }
+                        }
                     }
                 }
                 items(
@@ -514,13 +545,20 @@ private fun MessageBubble(
         horizontalAlignment = if (incoming) Alignment.Start else Alignment.End,
     ) {
         if (senderChanged) {
-            Text(
-                text = contact?.displayNameOrAddress ?: checkNotNull(message.senderAddress).value,
+            Surface(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.labelMedium,
-            )
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp,
+            ) {
+                Text(
+                    text = contact?.displayNameOrAddress ?: checkNotNull(message.senderAddress).value,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
         }
         Surface(
             modifier = Modifier

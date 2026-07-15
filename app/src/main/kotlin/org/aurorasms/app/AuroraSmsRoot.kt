@@ -14,6 +14,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -31,6 +32,12 @@ import org.aurorasms.app.appearance.ScopedAppearanceKind
 import org.aurorasms.app.appearance.ThemeStudioRoute
 import org.aurorasms.app.appearance.profileFor
 import org.aurorasms.app.appearance.profileNameFor
+import org.aurorasms.app.appearance.wallpaper.AppWallpaperObservation
+import org.aurorasms.app.appearance.wallpaper.ManagedWallpaperSurface
+import org.aurorasms.app.appearance.wallpaper.ScopedWallpaperDialog
+import org.aurorasms.app.appearance.wallpaper.WallpaperApplyControllerResult
+import org.aurorasms.app.appearance.wallpaper.WallpaperControllerError
+import org.aurorasms.app.appearance.wallpaper.resolveWallpaperCandidates
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.DraftWriteStatus
 import org.aurorasms.core.index.SearchAnchor
@@ -311,13 +318,25 @@ private fun InboxRoute(
     )
     val inboxOverride = inboxOverrideObservation.overrideFor(inboxScope)
     val globalThreadOverride = globalThreadOverrideObservation.overrideFor(globalThreadScope)
+    val wallpaperController = services.wallpaperController
+    val globalWallpaperFlow = remember(wallpaperController, globalThreadScope) {
+        wallpaperController?.observe(globalThreadScope)
+            ?: flowOf(AppWallpaperObservation.unavailable())
+    }
+    val globalWallpaperObservation by globalWallpaperFlow.collectAsStateWithLifecycle(
+        initialValue = wallpaperController
+            ?.let { AppWallpaperObservation.loading(globalThreadScope) }
+            ?: AppWallpaperObservation.unavailable(),
+    )
     var editorScopeCode by rememberSaveable { mutableStateOf<String?>(null) }
+    var wallpaperEditorScopeCode by rememberSaveable { mutableStateOf<String?>(null) }
     var observedDismissalGeneration by rememberSaveable {
         mutableStateOf(scopedEditorDismissalGeneration)
     }
     LaunchedEffect(scopedEditorDismissalGeneration) {
         if (shouldDismissScopedEditor(observedDismissalGeneration, scopedEditorDismissalGeneration)) {
             editorScopeCode = null
+            wallpaperEditorScopeCode = null
             observedDismissalGeneration = scopedEditorDismissalGeneration
         }
     }
@@ -338,9 +357,13 @@ private fun InboxRoute(
             onOpenConversation = onOpenConversation,
             onOpenSearch = onOpenSearch,
             onOpenAppearance = onOpenAppearance,
-            onOpenInboxAppearance = { editorScopeCode = AppearanceScreenScope.INBOX.storageCode },
+            onOpenInboxAppearance = {
+                editorScopeCode = AppearanceScreenScope.INBOX.storageCode
+                wallpaperEditorScopeCode = null
+            },
             onOpenConversationDefaults = {
                 editorScopeCode = AppearanceScreenScope.GLOBAL_THREAD.storageCode
+                wallpaperEditorScopeCode = null
             },
             onOpenDiagnostics = onOpenDiagnostics,
             onRequestContactsPermission = onRequestContactsPermission,
@@ -361,27 +384,92 @@ private fun InboxRoute(
                 -> AppAppearanceOverrideObservation.unavailable()
             }
             val currentOverride = currentObservation.overrideFor(target)
-            ScopedAppearanceDialog(
-                kind = when (target.screen) {
+            val kind = when (target.screen) {
                     AppearanceScreenScope.INBOX -> ScopedAppearanceKind.INBOX
                     AppearanceScreenScope.GLOBAL_THREAD -> ScopedAppearanceKind.GLOBAL_THREADS
                     AppearanceScreenScope.ARCHIVE,
                     AppearanceScreenScope.SETTINGS,
                     AppearanceScreenScope.SPAM_BLOCKED,
                     -> return@let
-                },
-                privateRestorationKey = target.privateScopedAppearanceRestorationKey(),
-                profiles = appearance.profiles,
-                profileSnapshotReady = appearance.profileSnapshotReady,
-                overrideSnapshotReady = currentObservation.isReadyFor(target),
-                inheritedProfile = appearance.activeProfile,
-                inheritedName = activeName,
-                currentOverride = currentOverride,
-                onApply = { profileId, expectedRevision ->
-                    appearanceController.applyOverride(target, profileId, expectedRevision)
-                },
-                onDismiss = { editorScopeCode = null },
-            )
+                }
+            val wallpaperPageOpen = wallpaperEditorScopeCode == target.screen.storageCode
+            if (wallpaperPageOpen && target.screen == AppearanceScreenScope.GLOBAL_THREAD) {
+                val currentWallpaper = globalWallpaperObservation.assignmentFor(target)
+                ScopedWallpaperDialog(
+                    privateRestorationKey = target.privateScopedAppearanceRestorationKey(),
+                    currentAssignment = currentWallpaper,
+                    assignmentSnapshotReady = globalWallpaperObservation.isReadyFor(target),
+                    controller = wallpaperController ?: return@let,
+                    onApply = { source, dim, focalX, focalY, expectedRevision ->
+                        if (wallpaperEditorScopeCode != target.screen.storageCode) {
+                            WallpaperApplyControllerResult.Failed(
+                                WallpaperControllerError.STALE_ASSIGNMENT,
+                            )
+                        } else if (source != null) {
+                            wallpaperController.apply(
+                                scope = target,
+                                source = source,
+                                dimPermill = dim,
+                                focalXPermill = focalX,
+                                focalYPermill = focalY,
+                                expectedRevision = expectedRevision,
+                            )
+                        } else {
+                            val existingMediaId = currentWallpaper?.mediaId
+                                ?: return@ScopedWallpaperDialog WallpaperApplyControllerResult.Failed(
+                                    WallpaperControllerError.SAVE_FAILED,
+                                )
+                            wallpaperController.applyExisting(
+                                scope = target,
+                                mediaIdToken = existingMediaId,
+                                dimPermill = dim,
+                                focalXPermill = focalX,
+                                focalYPermill = focalY,
+                                expectedRevision = expectedRevision,
+                            )
+                        }
+                    },
+                    onReset = { expectedRevision ->
+                        if (wallpaperEditorScopeCode != target.screen.storageCode) {
+                            WallpaperApplyControllerResult.Failed(
+                                WallpaperControllerError.STALE_ASSIGNMENT,
+                            )
+                        } else {
+                            wallpaperController.reset(target, expectedRevision)
+                        }
+                    },
+                    onBack = { wallpaperEditorScopeCode = null },
+                    onDismiss = {
+                        wallpaperEditorScopeCode = null
+                        editorScopeCode = null
+                    },
+                )
+            } else {
+                ScopedAppearanceDialog(
+                    kind = kind,
+                    privateRestorationKey = target.privateScopedAppearanceRestorationKey(),
+                    profiles = appearance.profiles,
+                    profileSnapshotReady = appearance.profileSnapshotReady,
+                    overrideSnapshotReady = currentObservation.isReadyFor(target),
+                    inheritedProfile = appearance.activeProfile,
+                    inheritedName = activeName,
+                    currentOverride = currentOverride,
+                    onApply = { profileId, expectedRevision ->
+                        appearanceController.applyOverride(target, profileId, expectedRevision)
+                    },
+                    onOpenWallpaper = if (
+                        target.screen == AppearanceScreenScope.GLOBAL_THREAD && wallpaperController != null
+                    ) {
+                        { wallpaperEditorScopeCode = target.screen.storageCode }
+                    } else {
+                        null
+                    },
+                    onDismiss = {
+                        wallpaperEditorScopeCode = null
+                        editorScopeCode = null
+                    },
+                )
+            }
         }
     }
 }
@@ -490,6 +578,16 @@ private fun ThreadRoute(
         initialValue = AppAppearanceOverrideObservation.loading(globalThreadScope),
     )
     val globalThreadOverride = globalThreadOverrideObservation.overrideFor(globalThreadScope)
+    val wallpaperController = services.wallpaperController
+    val globalWallpaperFlow = remember(wallpaperController, globalThreadScope) {
+        wallpaperController?.observe(globalThreadScope)
+            ?: flowOf(AppWallpaperObservation.unavailable())
+    }
+    val globalWallpaperObservation by globalWallpaperFlow.collectAsStateWithLifecycle(
+        initialValue = wallpaperController
+            ?.let { AppWallpaperObservation.loading(globalThreadScope) }
+            ?: AppWallpaperObservation.unavailable(),
+    )
     val conversationScope = remember(route.providerThreadId, threadState) {
         trustedConversationAppearanceScope(route.providerThreadId, threadState)
     }
@@ -511,7 +609,24 @@ private fun ThreadRoute(
         conversationOverrideObservation::isReadyFor,
     ) == true
     val privateRestorationKey = conversationScope?.privateScopedAppearanceRestorationKey()
+    val conversationWallpaperFlow = remember(wallpaperController, conversationScope) {
+        if (wallpaperController != null && conversationScope != null) {
+            wallpaperController.observe(conversationScope)
+        } else {
+            flowOf(AppWallpaperObservation.unavailable())
+        }
+    }
+    val conversationWallpaperObservation by conversationWallpaperFlow.collectAsStateWithLifecycle(
+        initialValue = conversationScope
+            ?.takeIf { wallpaperController != null }
+            ?.let(AppWallpaperObservation::loading)
+            ?: AppWallpaperObservation.unavailable(),
+    )
     var openEditorTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var wallpaperEditorOpen by rememberSaveable(privateRestorationKey) { mutableStateOf(false) }
+    val latestConversationScope by rememberUpdatedState(conversationScope)
+    val latestPrivateRestorationKey by rememberUpdatedState(privateRestorationKey)
+    val latestOpenEditorTarget by rememberUpdatedState(openEditorTarget)
     val appearanceEditorOpen = privateRestorationKey != null && openEditorTarget == privateRestorationKey
     LaunchedEffect(threadState, privateRestorationKey) {
         if (
@@ -522,6 +637,7 @@ private fun ThreadRoute(
             )
         ) {
             openEditorTarget = null
+            wallpaperEditorOpen = false
         }
     }
     var observedDismissalGeneration by rememberSaveable(privateRestorationKey) {
@@ -530,10 +646,24 @@ private fun ThreadRoute(
     LaunchedEffect(scopedEditorDismissalGeneration) {
         if (shouldDismissScopedEditor(observedDismissalGeneration, scopedEditorDismissalGeneration)) {
             openEditorTarget = null
+            wallpaperEditorOpen = false
             observedDismissalGeneration = scopedEditorDismissalGeneration
         }
     }
     val conversationProfile = appearance.profileFor(conversationOverride, globalThreadProfile)
+    val effectiveProfileReadyForWallpaper = appearance.profileSnapshotReady &&
+        globalThreadOverrideObservation.isReadyFor(globalThreadScope) &&
+        (
+            conversationScope == null ||
+                conversationOverrideObservation.isReadyFor(conversationScope)
+            )
+    val wallpaperCandidates = resolveWallpaperCandidates(
+        conversationScope = conversationScope,
+        conversationObservation = conversationWallpaperObservation,
+        globalScope = globalThreadScope,
+        globalObservation = globalWallpaperObservation,
+        highContrast = !effectiveProfileReadyForWallpaper || conversationProfile.highContrast,
+    )
 
     AuroraMaterialTheme(profile = conversationProfile) {
         ThreadScreen(
@@ -546,6 +676,15 @@ private fun ThreadRoute(
             conversationAppearanceAvailable = conversationScope != null,
             onOpenConversationAppearance = {
                 openEditorTarget = privateRestorationKey.takeIf { conversationScope != null }
+                wallpaperEditorOpen = false
+            },
+            timelineBackground = {
+                wallpaperController?.let { controller ->
+                    ManagedWallpaperSurface(
+                        controller = controller,
+                        candidates = wallpaperCandidates,
+                    )
+                }
             },
             isDialable = ::isConservativeDialAddress,
             onDial = { address -> launchSystemDialer(context, address) },
@@ -562,7 +701,7 @@ private fun ThreadRoute(
                 if (writer.submit(content)) savedBody = body
             },
         )
-        if (appearanceEditorOpen) {
+        if (appearanceEditorOpen && !wallpaperEditorOpen) {
             ScopedAppearanceDialog(
                 kind = ScopedAppearanceKind.CONVERSATION,
                 privateRestorationKey = privateRestorationKey,
@@ -579,7 +718,92 @@ private fun ThreadRoute(
                         expectedRevision,
                     )
                 },
-                onDismiss = { openEditorTarget = null },
+                onOpenWallpaper = wallpaperController?.let {
+                    { wallpaperEditorOpen = true }
+                },
+                onDismiss = {
+                    wallpaperEditorOpen = false
+                    openEditorTarget = null
+                },
+            )
+        }
+        if (appearanceEditorOpen && wallpaperEditorOpen && wallpaperController != null) {
+            val editorScope = conversationScope
+            val currentWallpaper = conversationWallpaperObservation.assignmentFor(editorScope)
+            ScopedWallpaperDialog(
+                privateRestorationKey = privateRestorationKey,
+                currentAssignment = currentWallpaper,
+                assignmentSnapshotReady = conversationWallpaperObservation.isReadyFor(editorScope),
+                controller = wallpaperController,
+                onApply = { source, dim, focalX, focalY, expectedRevision ->
+                    val currentScope = conversationScope
+                    if (
+                        currentScope != editorScope ||
+                        openEditorTarget != privateRestorationKey
+                    ) {
+                        WallpaperApplyControllerResult.Failed(
+                            WallpaperControllerError.STALE_ASSIGNMENT,
+                        )
+                    } else if (source != null) {
+                        wallpaperController.apply(
+                            scope = currentScope,
+                            source = source,
+                            dimPermill = dim,
+                            focalXPermill = focalX,
+                            focalYPermill = focalY,
+                            expectedRevision = expectedRevision,
+                            targetStillCurrent = {
+                                latestConversationScope == editorScope &&
+                                    latestPrivateRestorationKey == privateRestorationKey &&
+                                    latestOpenEditorTarget == privateRestorationKey
+                            },
+                        )
+                    } else {
+                        val existingMediaId = currentWallpaper?.mediaId
+                            ?: return@ScopedWallpaperDialog WallpaperApplyControllerResult.Failed(
+                                WallpaperControllerError.SAVE_FAILED,
+                            )
+                        wallpaperController.applyExisting(
+                            scope = currentScope,
+                            mediaIdToken = existingMediaId,
+                            dimPermill = dim,
+                            focalXPermill = focalX,
+                            focalYPermill = focalY,
+                            expectedRevision = expectedRevision,
+                            targetStillCurrent = {
+                                latestConversationScope == editorScope &&
+                                    latestPrivateRestorationKey == privateRestorationKey &&
+                                    latestOpenEditorTarget == privateRestorationKey
+                            },
+                        )
+                    }
+                },
+                onReset = { expectedRevision ->
+                    val currentScope = conversationScope
+                    if (
+                        currentScope != editorScope ||
+                        openEditorTarget != privateRestorationKey
+                    ) {
+                        WallpaperApplyControllerResult.Failed(
+                            WallpaperControllerError.STALE_ASSIGNMENT,
+                        )
+                    } else {
+                        wallpaperController.reset(
+                            scope = currentScope,
+                            expectedRevision = expectedRevision,
+                            targetStillCurrent = {
+                                latestConversationScope == editorScope &&
+                                    latestPrivateRestorationKey == privateRestorationKey &&
+                                    latestOpenEditorTarget == privateRestorationKey
+                            },
+                        )
+                    }
+                },
+                onBack = { wallpaperEditorOpen = false },
+                onDismiss = {
+                    wallpaperEditorOpen = false
+                    openEditorTarget = null
+                },
             )
         }
     }

@@ -2,14 +2,24 @@
 
 package org.aurorasms.feature.conversations
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlin.math.absoluteValue
 import kotlinx.coroutines.delay
 import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.core.index.IndexRunState
@@ -25,6 +35,7 @@ import org.aurorasms.core.telephony.MmsAttachmentId
 import org.aurorasms.core.telephony.MmsAttachmentListResult
 import org.aurorasms.core.telephony.MmsAttachmentReadResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -103,6 +114,90 @@ class ConversationUiStateTest {
         compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
         compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).performClick()
         compose.runOnIdle { check(openCount == 1) }
+    }
+
+    @Test
+    fun timelineBackgroundIsReadyOnlyAndDrawnBehindTimelineOutsideHeaderAndComposer() {
+        val threadState = mutableStateOf<ThreadUiState>(ThreadUiState.Loading)
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = threadState.value,
+                    composer = ComposerUiState(body = "Synthetic draft", saving = false, failed = false),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                    timelineBackground = {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(SYNTHETIC_TIMELINE_BACKGROUND_COLOR)
+                                .testTag(SYNTHETIC_TIMELINE_BACKGROUND_TAG),
+                        )
+                    },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(SYNTHETIC_TIMELINE_BACKGROUND_TAG).assertDoesNotExist()
+        compose.runOnIdle {
+            threadState.value = ThreadUiState.Failed(
+                failure = ConversationLoadFailure.STORAGE,
+                coverage = readyThreadState().coverage,
+            )
+        }
+        compose.onNodeWithTag(SYNTHETIC_TIMELINE_BACKGROUND_TAG).assertDoesNotExist()
+
+        compose.runOnIdle { threadState.value = readyThreadState() }
+        compose.onNodeWithTag(SYNTHETIC_TIMELINE_BACKGROUND_TAG).assertIsDisplayed()
+        compose.onNodeWithTag(THREAD_LIST_TEST_TAG).assertIsDisplayed()
+
+        val screenNode = compose.onNodeWithTag(THREAD_SCREEN_TEST_TAG).fetchSemanticsNode()
+        val backgroundNode = compose.onNodeWithTag(SYNTHETIC_TIMELINE_BACKGROUND_TAG).fetchSemanticsNode()
+        val listNode = compose.onNodeWithTag(THREAD_LIST_TEST_TAG).fetchSemanticsNode()
+        val bubbleNode = compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).fetchSemanticsNode()
+        val composerNode = compose.onNodeWithTag(COMPOSER_TEST_TAG).fetchSemanticsNode()
+        val headerTitleNode = compose.onNodeWithText("Conversation").fetchSemanticsNode()
+        val backgroundBounds = backgroundNode.boundsInRoot
+        val listBounds = listNode.boundsInRoot
+
+        assertTrue(backgroundBounds.top >= headerTitleNode.boundsInRoot.bottom)
+        assertTrue(backgroundBounds.bottom <= composerNode.boundsInRoot.top)
+        assertTrue((backgroundBounds.left - listBounds.left).absoluteValue < 1f)
+        assertTrue((backgroundBounds.top - listBounds.top).absoluteValue < 1f)
+        assertTrue((backgroundBounds.right - listBounds.right).absoluteValue < 1f)
+        assertTrue((backgroundBounds.bottom - listBounds.bottom).absoluteValue < 1f)
+
+        val capture = compose.onNodeWithTag(THREAD_SCREEN_TEST_TAG).captureToImage().toPixelMap()
+        val rootBounds = screenNode.boundsInRoot
+        fun capturedColorAt(rootX: Float, rootY: Float): Color = capture[
+            (rootX - rootBounds.left).toInt().coerceIn(0, capture.width - 1),
+            (rootY - rootBounds.top).toInt().coerceIn(0, capture.height - 1),
+        ]
+
+        val exposedBackground = capturedColorAt(
+            rootX = backgroundBounds.right - 2f,
+            rootY = backgroundBounds.center.y,
+        )
+        assertTrue(exposedBackground.isSyntheticTimelineBackground())
+
+        val bubbleCenter = bubbleNode.boundsInRoot.center
+        val bubbleColor = capturedColorAt(bubbleCenter.x, bubbleCenter.y)
+        assertTrue(!bubbleColor.isSyntheticTimelineBackground())
     }
 
     @Test
@@ -214,3 +309,9 @@ private object RejectingPreviewLoader : BoundedPreviewLoader {
 
     override suspend fun clear() = Unit
 }
+
+private fun Color.isSyntheticTimelineBackground(): Boolean =
+    red > 0.95f && green < 0.05f && blue > 0.95f && alpha > 0.95f
+
+private const val SYNTHETIC_TIMELINE_BACKGROUND_TAG = "synthetic-timeline-background"
+private val SYNTHETIC_TIMELINE_BACKGROUND_COLOR = Color.Magenta

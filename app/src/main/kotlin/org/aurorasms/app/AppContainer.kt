@@ -37,10 +37,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.aurorasms.app.contacts.AppContactCacheController
 import org.aurorasms.app.appearance.AppearanceController
+import org.aurorasms.app.appearance.wallpaper.ManagedWallpaperStore
+import org.aurorasms.app.appearance.wallpaper.WallpaperController
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.SerializedDraftWriter
 import org.aurorasms.app.index.ForegroundIndexReadGate
 import org.aurorasms.app.preview.AndroidBoundedPreviewLoader
+import org.aurorasms.app.preview.BoundedMediaDecodeGate
 import org.aurorasms.core.index.AnchorWindowResult
 import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.app.index.AppIndexCoordinator
@@ -115,8 +118,14 @@ import org.aurorasms.core.state.AppearanceOverrideRevision
 import org.aurorasms.core.state.AppearanceRepositoryResult
 import org.aurorasms.core.state.AppearanceRevision
 import org.aurorasms.core.state.AppearanceScope
+import org.aurorasms.core.state.AppearanceScreenScope
 import org.aurorasms.core.state.AppearanceSnapshot
 import org.aurorasms.core.state.AppearanceStorageOperation
+import org.aurorasms.core.state.AppearanceWallpaperAssignment
+import org.aurorasms.core.state.AppearanceWallpaperMediaId
+import org.aurorasms.core.state.AppearanceWallpaperMutation
+import org.aurorasms.core.state.AppearanceWallpaperRepository
+import org.aurorasms.core.state.AppearanceWallpaperRevision
 import org.aurorasms.core.state.Draft
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftIdentity
@@ -172,9 +181,11 @@ class AppContainer(
     } else {
         AndroidMmsAttachmentRepository(application, defaultSmsRoleState)
     }
+    private val boundedMediaDecodeGate = BoundedMediaDecodeGate()
     val previewLoader: BoundedPreviewLoader = AndroidBoundedPreviewLoader(
         repository = mmsAttachmentRepository,
         applicationScope = applicationScope,
+        decodeGate = boundedMediaDecodeGate,
     )
     private val indexRuntimeState = MutableStateFlow<IndexRuntimeState>(IndexRuntimeState.Opening)
     private val indexOpenMutex = Mutex()
@@ -210,9 +221,15 @@ class AppContainer(
     val draftRepository: DraftRepository = DeferredDraftRepository(stateRuntimeState)
     val appearanceProfileRepository: AppearanceProfileRepository =
         DeferredAppearanceProfileRepository(stateRuntimeState)
+    private val appearanceWallpaperRepository: AppearanceWallpaperRepository =
+        DeferredAppearanceWallpaperRepository(stateRuntimeState)
     val appearanceController = AppearanceController(
         repository = appearanceProfileRepository,
         scope = applicationScope,
+    )
+    internal val wallpaperController = WallpaperController(
+        repository = appearanceWallpaperRepository,
+        store = ManagedWallpaperStore(application, boundedMediaDecodeGate),
     )
     @Volatile
     private var stateDatabase: AuroraStateDatabase? = null
@@ -287,6 +304,7 @@ class AppContainer(
             stateRuntimeState.value = StateRuntimeState.Ready(
                 draftRepository = EmptyBenchmarkDraftRepository,
                 appearanceProfileRepository = EmptyBenchmarkAppearanceProfileRepository,
+                appearanceWallpaperRepository = EmptyBenchmarkAppearanceWallpaperRepository,
             )
             _stateStorageStatus.value = StateStorageStatus.Ready
         } else {
@@ -294,11 +312,14 @@ class AppContainer(
                 when (val result = StateDatabaseFactory.open(application)) {
                     is StateDatabaseOpenResult.Opened -> {
                         stateDatabase = result.database
+                        val appearanceRepository = RoomAppearanceProfileRepository(result.database)
                         stateRuntimeState.value = StateRuntimeState.Ready(
                             draftRepository = RoomDraftRepository(result.database),
-                            appearanceProfileRepository = RoomAppearanceProfileRepository(result.database),
+                            appearanceProfileRepository = appearanceRepository,
+                            appearanceWallpaperRepository = appearanceRepository,
                         )
                         _stateStorageStatus.value = StateStorageStatus.Ready
+                        wallpaperController.reconcileManagedFiles()
                     }
                     is StateDatabaseOpenResult.Failed -> {
                         stateRuntimeState.value = StateRuntimeState.Failed(result.reason)
@@ -634,6 +655,51 @@ private object EmptyBenchmarkAppearanceProfileRepository : AppearanceProfileRepo
         AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.RESET_OVERRIDE)
 }
 
+private object EmptyBenchmarkAppearanceWallpaperRepository : AppearanceWallpaperRepository {
+    override fun observeWallpaper(scope: AppearanceScope): Flow<AppearanceWallpaperAssignment?> =
+        flowOf(null)
+
+    override suspend fun setWallpaper(
+        scope: AppearanceScope,
+        mediaId: AppearanceWallpaperMediaId,
+        dimPermill: Int,
+        focalXPermill: Int,
+        focalYPermill: Int,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<AppearanceWallpaperMutation> =
+        if (scope.isUnsupportedWallpaperScreen()) {
+            AppearanceRepositoryResult.CorruptData
+        } else {
+            AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.SET_WALLPAPER)
+        }
+
+    override suspend fun resetWallpaper(
+        scope: AppearanceScope,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<AppearanceWallpaperMutation> =
+        if (scope.isUnsupportedWallpaperScreen()) {
+            AppearanceRepositoryResult.CorruptData
+        } else {
+            AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.RESET_WALLPAPER)
+        }
+
+    override suspend fun prospectiveMediaIdsForSet(
+        scope: AppearanceScope,
+        mediaId: AppearanceWallpaperMediaId,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<Set<AppearanceWallpaperMediaId>> =
+        if (scope.isUnsupportedWallpaperScreen()) {
+            AppearanceRepositoryResult.CorruptData
+        } else {
+            AppearanceRepositoryResult.StorageFailure(
+                AppearanceStorageOperation.WALLPAPER_MEDIA_REFERENCES,
+            )
+        }
+
+    override suspend fun referencedMediaIds(): AppearanceRepositoryResult<Set<AppearanceWallpaperMediaId>> =
+        AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.WALLPAPER_MEDIA_REFERENCES)
+}
+
 sealed interface IndexStorageStatus {
     data object Opening : IndexStorageStatus
     data class Ready(val recovered: Boolean) : IndexStorageStatus
@@ -719,6 +785,7 @@ private sealed interface StateRuntimeState {
     data class Ready(
         val draftRepository: DraftRepository,
         val appearanceProfileRepository: AppearanceProfileRepository,
+        val appearanceWallpaperRepository: AppearanceWallpaperRepository,
     ) : StateRuntimeState
     data class Failed(val reason: StateDatabaseOpenFailureReason) : StateRuntimeState
 }
@@ -827,6 +894,86 @@ private class DeferredAppearanceProfileRepository(
     override fun toString(): String = "DeferredAppearanceProfileRepository(content=REDACTED)"
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
+private class DeferredAppearanceWallpaperRepository(
+    private val runtimeState: StateFlow<StateRuntimeState>,
+) : AppearanceWallpaperRepository {
+    override fun observeWallpaper(scope: AppearanceScope): Flow<AppearanceWallpaperAssignment?> =
+        if (scope.isUnsupportedWallpaperScreen()) {
+            flowOf(null)
+        } else {
+            runtimeState.flatMapLatest { state ->
+                when (state) {
+                    is StateRuntimeState.Ready ->
+                        state.appearanceWallpaperRepository.observeWallpaper(scope)
+                    StateRuntimeState.Opening,
+                    is StateRuntimeState.Failed,
+                    -> emptyFlow()
+                }
+            }
+                .conflate()
+        }
+
+    override suspend fun setWallpaper(
+        scope: AppearanceScope,
+        mediaId: AppearanceWallpaperMediaId,
+        dimPermill: Int,
+        focalXPermill: Int,
+        focalYPermill: Int,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<AppearanceWallpaperMutation> =
+        if (scope.isUnsupportedWallpaperScreen()) {
+            AppearanceRepositoryResult.CorruptData
+        } else {
+            runtimeState.awaitReadyAppearanceWallpaperRepository()
+            ?.setWallpaper(
+                scope = scope,
+                mediaId = mediaId,
+                dimPermill = dimPermill,
+                focalXPermill = focalXPermill,
+                focalYPermill = focalYPermill,
+                expectedRevision = expectedRevision,
+            )
+            ?: AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.SET_WALLPAPER)
+        }
+
+    override suspend fun resetWallpaper(
+        scope: AppearanceScope,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<AppearanceWallpaperMutation> =
+        if (scope.isUnsupportedWallpaperScreen()) {
+            AppearanceRepositoryResult.CorruptData
+        } else {
+            runtimeState.awaitReadyAppearanceWallpaperRepository()
+            ?.resetWallpaper(scope, expectedRevision)
+            ?: AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.RESET_WALLPAPER)
+        }
+
+    override suspend fun referencedMediaIds(): AppearanceRepositoryResult<Set<AppearanceWallpaperMediaId>> =
+        runtimeState.awaitReadyAppearanceWallpaperRepository()
+            ?.referencedMediaIds()
+            ?: AppearanceRepositoryResult.StorageFailure(
+                AppearanceStorageOperation.WALLPAPER_MEDIA_REFERENCES,
+            )
+
+    override suspend fun prospectiveMediaIdsForSet(
+        scope: AppearanceScope,
+        mediaId: AppearanceWallpaperMediaId,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<Set<AppearanceWallpaperMediaId>> =
+        if (scope.isUnsupportedWallpaperScreen()) {
+            AppearanceRepositoryResult.CorruptData
+        } else {
+            runtimeState.awaitReadyAppearanceWallpaperRepository()
+                ?.prospectiveMediaIdsForSet(scope, mediaId, expectedRevision)
+                ?: AppearanceRepositoryResult.StorageFailure(
+                    AppearanceStorageOperation.WALLPAPER_MEDIA_REFERENCES,
+                )
+        }
+
+    override fun toString(): String = "DeferredAppearanceWallpaperRepository(content=REDACTED)"
+}
+
 private class StateStorageUnavailableException : IllegalStateException("State storage unavailable")
 
 private fun IndexSignal.requiresDurableAmbiguousLedger(): Boolean = when (this) {
@@ -884,6 +1031,18 @@ private suspend fun StateFlow<StateRuntimeState>.awaitReadyAppearanceProfileRepo
     }
     return (state as? StateRuntimeState.Ready)?.appearanceProfileRepository
 }
+
+private suspend fun StateFlow<StateRuntimeState>.awaitReadyAppearanceWallpaperRepository():
+    AppearanceWallpaperRepository? {
+    val state = when (val current = value) {
+        StateRuntimeState.Opening -> first { it !is StateRuntimeState.Opening }
+        else -> current
+    }
+    return (state as? StateRuntimeState.Ready)?.appearanceWallpaperRepository
+}
+
+private fun AppearanceScope.isUnsupportedWallpaperScreen(): Boolean =
+    this is AppearanceScope.Screen && screen != AppearanceScreenScope.GLOBAL_THREAD
 
 private class SentPartTracker {
     private val sentParts = mutableMapOf<MessageId, BooleanArray>()

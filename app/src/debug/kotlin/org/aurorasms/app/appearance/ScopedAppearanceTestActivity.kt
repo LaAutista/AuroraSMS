@@ -16,11 +16,13 @@ import org.aurorasms.core.designsystem.AuroraPalette
 
 /** Debug-only host for scoped appearance behavior without SMS role or provider data. */
 class ScopedAppearanceTestActivity : ComponentActivity() {
+    private var appearanceKind by mutableStateOf(ScopedAppearanceKind.CONVERSATION)
     private var currentOverride by mutableStateOf(AppAppearanceOverride(profileId = 7L, revision = 3L))
     private var privateRestorationKey by mutableStateOf(SYNTHETIC_TARGET_A)
     private var profiles by mutableStateOf(testProfiles())
     private var profileSnapshotReady by mutableStateOf(true)
     private var overrideSnapshotReady by mutableStateOf(true)
+    private var wallpaperActionAvailable by mutableStateOf(false)
 
     @Volatile
     var latestAppliedProfileId: Long? = null
@@ -36,6 +38,10 @@ class ScopedAppearanceTestActivity : ComponentActivity() {
 
     @Volatile
     var dismissRequestCount: Int = 0
+        private set
+
+    @Volatile
+    var wallpaperOpenRequestCount: Int = 0
         private set
 
     @Volatile
@@ -55,7 +61,7 @@ class ScopedAppearanceTestActivity : ComponentActivity() {
             AuroraMaterialTheme {
                 if (visible) {
                     ScopedAppearanceDialog(
-                        kind = ScopedAppearanceKind.CONVERSATION,
+                        kind = appearanceKind,
                         privateRestorationKey = privateRestorationKey,
                         profiles = profiles,
                         profileSnapshotReady = profileSnapshotReady,
@@ -69,6 +75,11 @@ class ScopedAppearanceTestActivity : ComponentActivity() {
                             latestExpectedRevision = expectedRevision
                             if (suspendApply) awaitCancellation()
                             nextResult
+                        },
+                        onOpenWallpaper = if (wallpaperActionAvailable) {
+                            { wallpaperOpenRequestCount += 1 }
+                        } else {
+                            null
                         },
                         onDismiss = {
                             dismissRequestCount += 1
@@ -99,6 +110,11 @@ class ScopedAppearanceTestActivity : ComponentActivity() {
 
     fun updateOverrideSnapshotReadiness(ready: Boolean) {
         overrideSnapshotReady = ready
+    }
+
+    internal fun updateWallpaperAction(kind: ScopedAppearanceKind, available: Boolean) {
+        appearanceKind = kind
+        wallpaperActionAvailable = available
     }
 
     private fun testProfiles(): List<AppAppearanceProfile> = listOf(

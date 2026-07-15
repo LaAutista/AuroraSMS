@@ -121,3 +121,55 @@ val STATE_MIGRATION_2_3: Migration = object : Migration(2, 3) {
         db.execSQL(AppearanceOverrideSequenceEnforcement.INSERT_INITIAL_SEQUENCE)
     }
 }
+
+val STATE_MIGRATION_3_4: Migration = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `appearance_screen_wallpapers` (
+                `screen_code` TEXT NOT NULL,
+                `media_kind_code` TEXT NOT NULL,
+                `media_id` TEXT NOT NULL,
+                `dim_permill` INTEGER NOT NULL,
+                `focal_x_permill` INTEGER NOT NULL,
+                `focal_y_permill` INTEGER NOT NULL,
+                `revision` INTEGER NOT NULL,
+                PRIMARY KEY(`screen_code`)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS `index_appearance_screen_wallpapers_media_kind_code_media_id`
+            ON `appearance_screen_wallpapers` (`media_kind_code`, `media_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `appearance_conversation_wallpapers` (
+                `participant_set_key` TEXT NOT NULL,
+                `provider_thread_id` INTEGER NOT NULL,
+                `media_kind_code` TEXT NOT NULL,
+                `media_id` TEXT NOT NULL,
+                `dim_permill` INTEGER NOT NULL,
+                `focal_x_permill` INTEGER NOT NULL,
+                `focal_y_permill` INTEGER NOT NULL,
+                `revision` INTEGER NOT NULL,
+                PRIMARY KEY(`participant_set_key`)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS `index_appearance_conversation_wallpapers_provider_thread_id`
+            ON `appearance_conversation_wallpapers` (`provider_thread_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS `index_appearance_conversation_wallpapers_media_kind_code_media_id`
+            ON `appearance_conversation_wallpapers` (`media_kind_code`, `media_id`)
+            """.trimIndent(),
+        )
+    }
+}

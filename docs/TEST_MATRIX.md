@@ -13,7 +13,9 @@ cold-launch gates also passed on an awake, unlocked Pixel 8. The physical check
 is intentionally Inbox-only; full process-death end-to-end and physical eligible-
 Thread modal coverage are not claimed. Representative physical-device
 performance, remaining API/OEM coverage, and carrier transport rows remain
-pending.
+pending. ADR 0007's managed private static Thread-wallpaper contract is
+accepted as the next slice; every ADR 0007 implementation row below remains
+unchecked.
 
 ## Evidence rules
 
@@ -1073,6 +1075,86 @@ after installation was `PACKAGE UPDATED`; the prior excessive-CPU exit remains
 historical evidence from before lifecycle hardening. No carrier message was
 sent.
 
+### ADR 0007 managed private static Thread wallpaper — accepted, implementation pending
+
+These rows define the next bounded slice and are not evidence that it is
+implemented. No row may be checked until its retained synthetic evidence and
+the normal host/governance/emulator/device gates are recorded.
+
+- [ ] State schema version 4 has an explicit version-3-to-version-4 migration
+  that preserves drafts, profiles, active selection, scoped profile references,
+  triggers, and the complete version-1-to-version-4 path while creating empty
+  direct global-thread/conversation wallpaper assignment tables. There is no
+  media catalog table or destructive fallback.
+- [ ] Wallpaper rows store only the stable screen code or ADR 0006 participant
+  fingerprint/current thread hint, `static_raster_v1` kind, `sha256-v1:` token,
+  focal X/Y 0..1,000, dim 350..900, and revision. Models/entities/exceptions/logs/
+  `toString` expose no picker URI, path, file name, source metadata, participant
+  value, or message data.
+- [ ] Wallpaper writes use the existing protected non-reusing appearance
+  revision sequence. Its live-row floor includes profile-reference and
+  wallpaper rows; create/update/reset/recreate, stale Apply, sequence rollback,
+  corruption, database reopen, and conversation-thread rebinding retain the ADR
+  0006 CAS/ABA guarantees.
+- [ ] Production controls and rendering exist only for `global_thread` and an
+  exact verified conversation. Resolution is conversation managed wallpaper ->
+  `global_thread` managed wallpaper -> accessible solid. Thread-ID-only,
+  pending/incomplete/truncated/changed identity, Search, Theme Studio, Inbox,
+  Archive, Settings, and Spam & Blocked cannot acquire wallpaper authority.
+- [ ] Photo Picker/SAF fallback returns one transient `content:` URI with a
+  non-empty authority and <=4,096 UTF-8 bytes. It never enters Room, files,
+  preferences, `SavedState`, logs, or analytics; Aurora takes no persistable
+  grant. Pick, preview, Cancel, Back, lost target/source, recreation loss, and
+  failed/stale Apply create no durable assignment or managed file.
+- [ ] Import accepts only JPEG and non-APNG PNG by authoritative header/chunk
+  validation. It rejects MIME contradiction, GIF, every input WebP, HEIF, AVIF,
+  APNG, truncated/corrupt data, known/unknown source >16 MiB, edge >8,192, or
+  source >40,000,000 pixels before an unbounded/full decode.
+- [ ] Every orientation form is normalized consistently on API 26 and the
+  newer decoder path; output is software sRGB/ARGB_8888 and <=2,048 pixels per
+  edge, <=4,194,304 pixels, and <=16 MiB allocation. Chooser preview is <=512
+  pixels per edge, <=262,144 pixels, and <=1 MiB allocation.
+- [ ] Explicit Apply strips metadata and encodes a static quality-95 WebP no
+  larger than 8 MiB. Its SHA-256-derived fixed name lives only under
+  `noBackupFilesDir/appearance/wallpapers/`; hash/header/dimensions/allocation
+  are revalidated before render, and source URI/bytes/metadata are not retained.
+- [ ] The durable assigned set admits at most 128 distinct referenced files and
+  256 MiB total; same-hash assignments deduplicate. A replacement at full quota
+  may use exactly one serialized unassigned <=8-MiB candidate before Room CAS,
+  with a physical ceiling of 129 files/264 MiB and never a second candidate.
+  Quota failure preserves current state, and no assigned target is LRU-evicted.
+- [ ] Import is serialized and uses bounded same-directory pending write,
+  flush/sync, digest verification, and rename before the Room CAS commit. A
+  failed, stale, rejected, or cancelled operation removes only a
+  proven-unreferenced new candidate; old media is deleted only after commit and
+  a bounded authoritative last-reference check. Healthy startup removes a
+  pending or process-death orphan; database unavailable/corrupt/over-limit means
+  cleanup deletes nothing.
+- [ ] Missing, malformed, unexpected-name/symlink, or hash-mismatched managed
+  media never publishes pixels or mutates another row. It produces explicit
+  recovery and the exact conversation -> global-thread -> solid fallback.
+- [ ] A target/token/revision/request change synchronously publishes solid
+  before any suspend/decode; late results cannot flash a previous conversation's
+  bitmap. Wallpaper work is one-at-a-time, the full cache retains only the
+  current <=16-MiB allocation, and the shared MMS/wallpaper full-decode gate
+  never exceeds two.
+- [ ] Focal/dim live preview, revision-checked Apply/reset, configuration/reopen
+  persistence, 200% font/scroll, TalkBack labels/state, RTL, short/tall,
+  landscape, and split-screen tests pass without route/state-holder/provider/
+  index/composer/draft reconstruction caused by wallpaper actions.
+- [ ] Merged manifests and APKs add no storage/media/network permission,
+  persistent-grant component, exported component, initializer, native binary,
+  private artwork, or new dependency coordinate. Backup/data-extraction rules
+  and `noBackupFilesDir` exclude all state, managed derivatives, previews, and
+  pending files.
+- [ ] Host policy/state tests, migration/repository/reopen instrumentation,
+  hostile importer/store/cleanup tests, combined decode-concurrency tests,
+  root/UI acceptance, API 26 legacy decode, API 36 connected, complete offline
+  build/lint/governance/license/SBOM/APK gates, and privacy-safe physical static
+  Thread-wallpaper journeys pass before implementation-complete is claimed.
+
+### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
+
 - [ ] Before ingestion, written artwork permission is recorded for the exact
   repository, derivative, APK/store, promotional, redistribution, and
   attribution uses. Originals remain outside Git if source redistribution is
@@ -1097,8 +1179,9 @@ sent.
   active animation unexpectedly.
 - [ ] Process recreation restores wallpaper/animation state without running a
   background decoder or restarting multiple GIFs.
-- [ ] Revoked URI, moved file, corrupt/single-frame/huge GIF, unsupported media,
-  and decode failure have safe fallbacks.
+- [ ] A future live-URI slice defines revoked-grant/moved-file behavior, and a
+  future GIF slice covers corrupt/single-frame/huge GIF, unsupported media, and
+  decode failure with safe fallbacks; ADR 0007 does not imply either feature.
 - [ ] Focal crop works on short/tall phones, landscape, split screen, foldable,
   and tablet.
 - [ ] Focal point and per-assignment dim persist through restart, rotation, and
@@ -1139,7 +1222,8 @@ sent.
 - [ ] Profile import rejects malicious fields, unsupported newer versions,
   duplicate names, missing media, executable content, and out-of-range tokens.
 - [ ] Named profile export/import round-trips every supported token and approved
-  media reference, with deterministic handling of missing/revoked media.
+  media reference, with deterministic handling of missing managed media and any
+  separately approved future revoked live reference.
 - [ ] Built-in wallpaper APK total is <=12 MiB or has an approved measured
   exception.
 - [ ] Separate physical-device performance runs cover Classic overflow, Bottom

@@ -4,7 +4,9 @@ Status: Phase 1 resolved; Phase 2 Room/KSP and Phase 3 benchmark/profile
 admissions reviewed; Phase 4 AuroraMaterial foundation and bounded durable
 active-profile/Theme Studio slice reuse the admitted graph; the scoped
 profile-reference foundation reused the same graph and passed its resolved,
-license/SBOM, manifest, and packaged-output checks, 2026-07-14
+license/SBOM, manifest, and packaged-output checks; ADR 0007 accepts a
+platform-only managed static Thread-wallpaper implementation without a new
+coordinate, 2026-07-14
 
 AuroraSMS prefers small original implementations and Android platform APIs.
 Dependencies are admitted only when they provide a necessary, maintained,
@@ -299,9 +301,23 @@ coordinate, and must be absent from release and benchmark manifests/APKs. The
 slice adds no production Activity, navigation destination, or component
 dependency.
 
-Image/GIF loading, Navigation Compose, DataStore, icon packs, fonts, and remote
-theme/media SDKs remain unapproved. Artwork remains outside dependency policy
-and behind the separate rights gate in `docs/ARTWORK_CATALOG.md`.
+ADR 0007 authorizes no new dependency. Its pending static implementation may
+reuse the admitted Activity Result/Activity Compose, Compose, coroutine, and
+Room graph plus Android platform `BitmapFactory`, `ImageDecoder`, color-space,
+WebP-compression and file APIs, `java.security.MessageDigest`, and a small
+original parser that reads only bounded JPEG APP1 and PNG `eXIf` TIFF
+orientation fields. It has no `android.media.ExifInterface` dependency. The
+bounded importer, content-addressed private-file store, and static renderer
+introduce no external coordinate, repository, transitive graph, native binary,
+manifest component, permission, initializer, or network fetcher.
+
+The ADR 0007 platform path accepts only JPEG/static-PNG source and creates its
+own static managed WebP. It is not approval for a general image pipeline,
+animated input, GIF playback, a picker helper, a Photo Picker backport-install
+component, or a media SDK. External image/GIF loading, Navigation Compose,
+DataStore, icon packs, fonts, and remote theme/media SDKs remain unapproved.
+Artwork remains outside dependency policy and behind the separate rights gate
+in `docs/ARTWORK_CATALOG.md`.
 
 ## Deferred and decision-gated dependencies
 
@@ -312,7 +328,7 @@ and behind the separate rights gate in `docs/ARTWORK_CATALOG.md`.
 | Room | 2 | Approved only as recorded above for separate index/state databases, FTS4, schema export, and explicit migrations |
 | Paging 3 | 2-3 | Confirm bounded keyset/anchor behavior and no deep OFFSET fallback |
 | DataStore | Unscheduled | Admit only if a measured ADR proves a lightweight-preference need that the Aurora state database should not own; it must never duplicate named-profile, active-selection, override, draft, message, or index ownership |
-| Image/GIF decoding library | 4 | One-visible-decoder lifecycle, bomb limits, no network fetcher, APK size, API 26 behavior |
+| External image/GIF decoding library | 4 | ADR 0007 does not admit one; any later need must prove one-visible-decoder lifecycle, bomb limits, no network fetcher, APK size, API 26 behavior, and why the bounded platform path is insufficient |
 | WorkManager | 2 or 5 | Only for a lifecycle need platform alarms/receivers cannot meet; audit manifest and background behavior |
 | Biometric | Later privacy phase | App-lock semantics and fallback wording |
 | SQLCipher | Post-V1 experiment | Startup/FTS/migration/size benchmarks on low- and mid-range devices |

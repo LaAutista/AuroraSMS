@@ -1,6 +1,7 @@
 # AuroraSMS threat model
 
-Status: Phase 0 baseline, 2026-07-12
+Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
+2026-07-14
 
 ## Security and privacy objectives
 
@@ -30,7 +31,7 @@ AuroraSMS must:
 | Contacts and photos | Sensitive personal data | Optional permission, bounded cache, invalidate on change, no serialization per message |
 | Subscription/SIM choice | Sensitive device data | Minimal access, validated fallback, no identifier logging |
 | Notification content/settings | Sensitive disclosure control | User-selectable privacy levels, lock-screen safe defaults |
-| Appearance profiles, scoped participant fingerprints/thread hints, and media URIs | Sensitive pseudonymous/private data, especially when user photos are used | Validated declarative data, target-specific access, scoped URI access, no executable themes or appearance logs |
+| Appearance profiles, scoped participant fingerprints/thread hints, temporary picker URIs, and managed wallpaper files/digests | Sensitive pseudonymous/private data, especially when user photos are used | Validated declarative data, target-specific access, transient URI capability, bounded no-backup private storage, no executable themes or appearance logs |
 | Backups/exports/shares | Critical portable data | User initiated, versioned, validated, authenticated/encrypted before shipping |
 | Signing key and release metadata | Critical supply-chain asset | Never in Git; encrypted owner-controlled offline backups |
 | Private handoff screenshots/PDF | Critical development-only personal data | Ignored local-only reference; never copied, committed, packaged, or uploaded |
@@ -45,6 +46,8 @@ Android telephony framework and Telephony provider
 Aurora telephony adapters
     | typed bounded models
 Aurora index DB (rebuildable)  <->  Aurora state DB (durable)
+                                      |
+                         private managed wallpaper store
     | repositories and paged flows
 Aurora UI / notifications / explicit user actions
     |
@@ -53,7 +56,8 @@ System picker, SAF, share targets, exports, and external recipients
 
 Additional boundaries exist at exported Android components, package/role
 manager, Contacts and Subscription providers, notification listeners/lock
-screen, persisted document URIs, dependency/build tooling, and Git/CI.
+screen, temporary picker URIs, any future persisted document URIs, the private
+managed-media directory, dependency/build tooling, and Git/CI.
 
 Carrier MMS transport is not general application Internet access. AuroraSMS
 uses documented telephony APIs and does not declare `INTERNET` in the FOSS
@@ -162,8 +166,10 @@ Controls:
 ### T5: hostile or oversized media
 
 Threats: decompression bombs, corrupt GIF frames, huge dimensions, malformed
-MMS parts, unsupported MIME, stale URIs, or multiple active decoders exhaust
-memory/CPU or crash the app.
+MMS parts, unsupported MIME, stale URIs, provider bytes changing after
+selection, corrupt managed files, orphan private files, or multiple active
+decoders exhaust storage/memory/CPU, disclose metadata, cross targets, or crash
+the app.
 
 Controls:
 
@@ -174,7 +180,24 @@ Controls:
 - pause/release animation for lifecycle, reduced motion, display-off, and battery
   conditions;
 - treat MIME and extensions as untrusted, fail closed, and offer recovery;
-- never decode MMS media while text indexing.
+- never decode MMS media while text indexing;
+- for ADR 0007 specifically, accept only bounded JPEG/static PNG; reject APNG,
+  GIF, every input WebP, HEIF, AVIF, malformed/partial data, a source above 16
+  MiB, an 8,192-pixel edge, or 40,000,000 pixels, and an output above a
+  2,048-pixel edge, 4,194,304 pixels, or 16-MiB allocation;
+- normalize orientation and color space off-main, strip source metadata, and
+  encode one static private WebP no larger than 8 MiB before persistence;
+- admit at most 128 distinct assigned managed wallpapers and 256 MiB total,
+  with no LRU eviction of an assigned target; one serialized pre-CAS sanitized
+  candidate of at most 8 MiB may temporarily raise physical storage to 129
+  files/264 MiB, but is not durable quota, is removed on rejection/cancellation,
+  and is collected as an orphan only after healthy startup validation;
+- serialize import, sync/rename the bounded final before the Room assignment
+  commit, delete old media only after an authoritative post-commit last-reference
+  check, and run pending/orphan cleanup only after a healthy bounded state
+  snapshot; and
+- share a two-permit app media-decode gate with MMS while allowing only one
+  wallpaper import/decode and one current wallpaper allocation.
 
 ### T6: notification and screen disclosure
 
@@ -210,7 +233,11 @@ Controls:
   authentication/encryption decision, schema validation, and dry-run summary;
 - no object deserialization or executable theme/import content;
 - atomic import staging and rollback; never overwrite on partial validation;
-- delete temporary share/export files after completion and again at startup.
+- delete temporary share/export files after completion and again at startup;
+- keep ADR 0007 picker access temporary and in memory, never persist its URI or
+  grant, and place only the sanitized derivative in `noBackupFilesDir`; and
+- reconcile managed pending/orphan files only when durable assignment state is
+  healthy and authoritative, deleting nothing on database failure/corruption.
 
 Backup/restore remains blocked until a dedicated format/security ADR defines
 confidentiality, authentication, key recovery, media limits, and corruption
@@ -296,6 +323,16 @@ Controls:
   but it also cannot erase a restored target; resolved-null or terminal failure
   clears that target, and invalidation publishes resolved-null before re-query;
 - independent per-screen/per-conversation media references and reset semantics;
+- for ADR 0007, limit media authority to `global_thread` and an exact verified
+  conversation; store only a redacted content digest plus assignment-local
+  focal/dim/revision, never the picker URI, source metadata, path, or file name;
+- reset to an accessible solid synchronously before reading a changed target,
+  and publish a decode only when target, media token, assignment revision, and
+  request epoch still match, so one conversation's old pixels cannot flash in
+  another;
+- treat missing, malformed, or hash-mismatched private media as unavailable and
+  advance conversation -> `global_thread` -> accessible solid without silently
+  mutating another assignment;
 - 4.5:1 body-text target, 3:1 non-text affordances, 48 dp targets, TalkBack,
   RTL, 200% font, and reduced-motion tests;
 - theme imports are declarative and never execute code.
@@ -377,7 +414,8 @@ Every applicable phase gate includes:
 - role grant, denial, loss, and reacquisition tests;
 - forged/malformed intent and URI tests;
 - process-death/reboot/time-change state tests;
-- large/corrupt media and archive parser tests;
+- large/corrupt/animated-media rejection, managed-file hash/fallback,
+  quota/atomicity/cleanup, and archive parser tests;
 - dependency/provenance/SBOM scan;
 - private-path/tracked-resource/APK inventory scan;
 - no-sensitive-log checks;

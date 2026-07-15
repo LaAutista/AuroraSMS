@@ -51,11 +51,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionThree_hasBoundedDraftAndAppearanceTables() {
+    fun schemaVersionFour_hasBoundedDraftAndAppearanceTables() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(3, AuroraStateDatabase.VERSION)
+            assertEquals(4, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -138,6 +138,45 @@ class StateSchemaCurrentTest {
                 setOf("singleton_id", "last_allocated_revision"),
                 sqlite.tableColumns("appearance_override_revision_sequence"),
             )
+            assertEquals(
+                setOf(
+                    "screen_code",
+                    "media_kind_code",
+                    "media_id",
+                    "dim_permill",
+                    "focal_x_permill",
+                    "focal_y_permill",
+                    "revision",
+                ),
+                sqlite.tableColumns("appearance_screen_wallpapers"),
+            )
+            assertEquals(
+                setOf(
+                    "participant_set_key",
+                    "provider_thread_id",
+                    "media_kind_code",
+                    "media_id",
+                    "dim_permill",
+                    "focal_x_permill",
+                    "focal_y_permill",
+                    "revision",
+                ),
+                sqlite.tableColumns("appearance_conversation_wallpapers"),
+            )
+            assertTrue(
+                sqlite.indexNames("appearance_screen_wallpapers")
+                    .contains("index_appearance_screen_wallpapers_media_kind_code_media_id"),
+            )
+            assertTrue(
+                sqlite.indexNames("appearance_conversation_wallpapers")
+                    .contains("index_appearance_conversation_wallpapers_provider_thread_id"),
+            )
+            assertTrue(
+                sqlite.indexNames("appearance_conversation_wallpapers")
+                    .contains(
+                        "index_appearance_conversation_wallpapers_media_kind_code_media_id",
+                    ),
+            )
             assertTrue(
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
@@ -174,7 +213,7 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun exportedVersionThreeStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedVersionFourStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(
@@ -204,6 +243,18 @@ class StateSchemaCurrentTest {
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
                         "AND name = 'appearance_override_revision_sequence'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_screen_wallpapers'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'appearance_conversation_wallpapers'",
                 ).use { it.moveToFirst() },
             )
         }

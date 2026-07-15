@@ -286,11 +286,14 @@ commit `83db9aa0f02cef44644f53d0bb149abe459dc20b` is committed and pushed on
 `origin/main`; GitHub Verify run `29380854714` passed its 10m59s build job with
 all project steps green.
 
-Assignment-local focal points/dim values and every wallpaper/media reference,
-picker, renderer, decoder, canonical artwork mapping, and GIF lifecycle remain
-separate acceptance work. The profile-reference foundation does not claim the
-wallpaper-specific chains merely because a named profile already has future
-wallpaper vocabulary.
+The profile-reference foundation does not claim the wallpaper-specific chains
+merely because a named profile already has future wallpaper vocabulary. ADR
+0007 accepts the next bounded, not-yet-implemented wallpaper slice: direct
+`global_thread` and verified-conversation assignments with assignment-local
+focal/dim values, a real Thread renderer, and a temporary system-picker import
+sanitized to a private content-addressed static WebP. It persists no source URI
+or grant. Inbox/other screens, canonical artwork, GIF, live external URI,
+static blur, and import/export media remain separate acceptance work.
 
 Required themes include Aurora Dark, AMOLED Black, Light, and System/Dynamic.
 Required avatar masks are circle, rounded square, squircle, and hexagon.
@@ -316,6 +319,21 @@ All defaults are replaceable. The user can independently assign a built-in,
 solid/gradient, static image, or animated GIF to the inbox, Archive, Settings,
 Spam & Blocked, global thread fallback, and each conversation. Resetting one
 assignment must not change another.
+
+ADR 0007 is a deliberately narrower first fulfillment of this final product
+requirement. It accepts JPEG/static-PNG input for `global_thread` and verified
+conversations only, sanitizes it to an app-private static WebP, and resolves
+conversation -> global thread -> accessible solid. The temporary picker URI is
+not durable. The durable assigned set retains at most 128 distinct managed files
+and 256 MiB total. To replace an assignment at full quota, the serialized
+importer may temporarily hold exactly one unassigned sanitized candidate of at
+most 8 MiB before the Room CAS, for a physical ceiling of 129 files/264 MiB.
+This is atomic-staging headroom rather than a raised durable quota; rejection or
+cancellation removes it, and healthy startup GC removes a process-death orphan.
+Each source is at most 16 MiB, 8,192 pixels per edge, and 40,000,000 pixels, and
+each derivative is at most 8 MiB, 2,048 pixels per edge, 4,194,304 pixels, and a
+16-MiB decoded allocation. Inbox, built-ins, GIF/APNG/other formats, and live
+external URI references remain unfulfilled parts of the broader requirement.
 
 Large user images are downsampled, and every source is decoded/resampled to a
 bounded device target with saved focal crops; a built-in smaller than a tall
@@ -386,6 +404,10 @@ Theme Studio with a live preview.
   thumbnails, temporary attachments, and other sensitive caches.
 - Normal data stays in credential-encrypted private storage.
 - Photo Picker/Storage Access Framework is preferred over broad storage access.
+- The first static Thread-wallpaper slice uses a temporary picker capability,
+  strips metadata into `noBackupFilesDir`, and persists only a redacted managed
+  media digest. It requests no storage/media permission and retains no source
+  URI or persistable grant.
 - Message bodies, addresses, URIs, and search terms never enter logs.
 - Provider thread IDs and participant-set fingerprints used for conversation
   appearance are sensitive pseudonymous metadata: keep them private, excluded

@@ -88,6 +88,12 @@ allowed_permissions = {
 forbidden_permissions = {
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.INTERNET",
+    "android.permission.MANAGE_EXTERNAL_STORAGE",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.READ_MEDIA_IMAGES",
+    "android.permission.READ_MEDIA_VIDEO",
+    "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
 }
 
 arguments = sys.argv[1:]
@@ -418,6 +424,6 @@ if aapt2:
         if unexpected:
             raise AssertionError(f"{apk}: unexpected packaged permissions: {sorted(unexpected)}")
         if package_name == APP_ID and apk_permissions & forbidden_permissions:
-            raise AssertionError(f"{apk}: packaged a forbidden network permission")
+            raise AssertionError(f"{apk}: packaged a forbidden permission")
         print(f"Packaged permission ledger passed: {apk}")
 PY

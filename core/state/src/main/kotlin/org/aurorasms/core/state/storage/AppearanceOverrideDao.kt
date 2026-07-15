@@ -7,6 +7,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
+import org.aurorasms.core.state.APPEARANCE_WALLPAPER_MEDIA_ENUMERATION_LIMIT
 
 @Dao
 internal interface AppearanceOverrideDao {
@@ -23,7 +24,11 @@ internal interface AppearanceOverrideDao {
         "SELECT MAX(revision) FROM (" +
             "SELECT revision FROM appearance_screen_overrides " +
             "UNION ALL " +
-            "SELECT revision FROM appearance_conversation_overrides" +
+            "SELECT revision FROM appearance_conversation_overrides " +
+            "UNION ALL " +
+            "SELECT revision FROM appearance_screen_wallpapers " +
+            "UNION ALL " +
+            "SELECT revision FROM appearance_conversation_wallpapers" +
             ")",
     )
     suspend fun maximumStoredOverrideRevision(): Long?
@@ -126,4 +131,187 @@ internal interface AppearanceOverrideDao {
         participantSetKey: String,
         expectedRevision: Long,
     ): Int
+
+    @Query(
+        "SELECT * FROM appearance_screen_wallpapers " +
+            "WHERE screen_code = :screenCode LIMIT 1",
+    )
+    fun observeScreenWallpaper(screenCode: String): Flow<AppearanceScreenWallpaperEntity?>
+
+    @Query(
+        "SELECT * FROM appearance_conversation_wallpapers " +
+            "WHERE participant_set_key = :participantSetKey LIMIT 1",
+    )
+    fun observeConversationWallpaper(
+        participantSetKey: String,
+    ): Flow<AppearanceConversationWallpaperEntity?>
+
+    @Query(
+        "SELECT * FROM appearance_screen_wallpapers " +
+            "WHERE screen_code = :screenCode LIMIT 1",
+    )
+    suspend fun findScreenWallpaper(screenCode: String): AppearanceScreenWallpaperEntity?
+
+    @Query(
+        "SELECT * FROM appearance_conversation_wallpapers " +
+            "WHERE participant_set_key = :participantSetKey LIMIT 1",
+    )
+    suspend fun findConversationWallpaper(
+        participantSetKey: String,
+    ): AppearanceConversationWallpaperEntity?
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertScreenWallpaper(entity: AppearanceScreenWallpaperEntity)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertConversationWallpaper(entity: AppearanceConversationWallpaperEntity)
+
+    @Query(
+        """
+        UPDATE appearance_screen_wallpapers
+        SET media_kind_code = :mediaKindCode,
+            media_id = :mediaId,
+            dim_permill = :dimPermill,
+            focal_x_permill = :focalXPermill,
+            focal_y_permill = :focalYPermill,
+            revision = :newRevision
+        WHERE screen_code = :screenCode
+          AND revision = :expectedRevision
+        """,
+    )
+    suspend fun updateScreenWallpaperIfRevision(
+        screenCode: String,
+        mediaKindCode: String,
+        mediaId: String,
+        dimPermill: Int,
+        focalXPermill: Int,
+        focalYPermill: Int,
+        newRevision: Long,
+        expectedRevision: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE appearance_conversation_wallpapers
+        SET provider_thread_id = :providerThreadId,
+            media_kind_code = :mediaKindCode,
+            media_id = :mediaId,
+            dim_permill = :dimPermill,
+            focal_x_permill = :focalXPermill,
+            focal_y_permill = :focalYPermill,
+            revision = :newRevision
+        WHERE participant_set_key = :participantSetKey
+          AND revision = :expectedRevision
+        """,
+    )
+    suspend fun updateConversationWallpaperIfRevision(
+        participantSetKey: String,
+        providerThreadId: Long,
+        mediaKindCode: String,
+        mediaId: String,
+        dimPermill: Int,
+        focalXPermill: Int,
+        focalYPermill: Int,
+        newRevision: Long,
+        expectedRevision: Long,
+    ): Int
+
+    @Query(
+        "DELETE FROM appearance_screen_wallpapers " +
+            "WHERE screen_code = :screenCode AND revision = :expectedRevision",
+    )
+    suspend fun deleteScreenWallpaperIfRevision(
+        screenCode: String,
+        expectedRevision: Long,
+    ): Int
+
+    @Query(
+        "DELETE FROM appearance_conversation_wallpapers " +
+            "WHERE participant_set_key = :participantSetKey AND revision = :expectedRevision",
+    )
+    suspend fun deleteConversationWallpaperIfRevision(
+        participantSetKey: String,
+        expectedRevision: Long,
+    ): Int
+
+    @Query(
+        "SELECT (" +
+            "SELECT COUNT(*) FROM appearance_screen_wallpapers " +
+            "WHERE media_kind_code = :mediaKindCode AND media_id = :mediaId" +
+            ") + (" +
+            "SELECT COUNT(*) FROM appearance_conversation_wallpapers " +
+            "WHERE media_kind_code = :mediaKindCode AND media_id = :mediaId" +
+            ")",
+    )
+    suspend fun wallpaperMediaReferenceCount(
+        mediaKindCode: String,
+        mediaId: String,
+    ): Int
+
+    @Query(
+        "SELECT media_kind_code, media_id FROM (" +
+            "SELECT media_kind_code, media_id FROM appearance_screen_wallpapers " +
+            "UNION " +
+            "SELECT media_kind_code, media_id FROM appearance_conversation_wallpapers" +
+            ") ORDER BY media_kind_code, media_id " +
+            "LIMIT $APPEARANCE_WALLPAPER_MEDIA_ENUMERATION_LIMIT",
+    )
+    suspend fun loadReferencedWallpaperMedia(): List<AppearanceWallpaperMediaRecord>
+
+    @Query(
+        """
+        SELECT
+            EXISTS(
+                SELECT 1
+                FROM appearance_screen_wallpapers
+                WHERE typeof(screen_code) != 'text'
+                   OR screen_code != 'global_thread'
+                   OR typeof(media_kind_code) != 'text'
+                   OR media_kind_code != 'static_raster_v1'
+                   OR typeof(media_id) != 'text'
+                   OR length(media_id) != 74
+                   OR substr(media_id, 1, 10) != 'sha256-v1:'
+                   OR substr(media_id, 11) GLOB '*[^0-9a-f]*'
+                   OR typeof(dim_permill) != 'integer'
+                   OR dim_permill < 350
+                   OR dim_permill > 900
+                   OR typeof(focal_x_permill) != 'integer'
+                   OR focal_x_permill < 0
+                   OR focal_x_permill > 1000
+                   OR typeof(focal_y_permill) != 'integer'
+                   OR focal_y_permill < 0
+                   OR focal_y_permill > 1000
+                   OR typeof(revision) != 'integer'
+                   OR revision <= 0
+            )
+            OR EXISTS(
+                SELECT 1
+                FROM appearance_conversation_wallpapers
+                WHERE typeof(participant_set_key) != 'text'
+                   OR length(participant_set_key) != 74
+                   OR substr(participant_set_key, 1, 10) != 'sha256-v1:'
+                   OR substr(participant_set_key, 11) GLOB '*[^0-9a-f]*'
+                   OR typeof(provider_thread_id) != 'integer'
+                   OR provider_thread_id <= 0
+                   OR typeof(media_kind_code) != 'text'
+                   OR media_kind_code != 'static_raster_v1'
+                   OR typeof(media_id) != 'text'
+                   OR length(media_id) != 74
+                   OR substr(media_id, 1, 10) != 'sha256-v1:'
+                   OR substr(media_id, 11) GLOB '*[^0-9a-f]*'
+                   OR typeof(dim_permill) != 'integer'
+                   OR dim_permill < 350
+                   OR dim_permill > 900
+                   OR typeof(focal_x_permill) != 'integer'
+                   OR focal_x_permill < 0
+                   OR focal_x_permill > 1000
+                   OR typeof(focal_y_permill) != 'integer'
+                   OR focal_y_permill < 0
+                   OR focal_y_permill > 1000
+                   OR typeof(revision) != 'integer'
+                   OR revision <= 0
+            )
+        """,
+    )
+    suspend fun invalidWallpaperAssignmentExists(): Boolean
 }

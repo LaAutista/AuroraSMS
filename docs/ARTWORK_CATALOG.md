@@ -1,7 +1,8 @@
 # Aurora artwork catalog and asset policy
 
-Status: integrity and canonical-mapping verification complete; licensing and
-runtime ingestion deferred
+Status: integrity and canonical-mapping verification complete; built-in
+licensing/runtime ingestion deferred; ADR 0007 managed private user imports do
+not cross this artwork gate
 
 ## Handling decision
 
@@ -86,8 +87,13 @@ pipeline must then:
 - All eight wallpapers are selectable for eligible screens/conversations.
 - Inbox, Archive, Settings, Spam & Blocked, global thread fallback, and each
   conversation retain independent assignments.
-- Static image and GIF user media use picker/SAF or explicit managed import,
-  bounded metadata/decode, focal crop, dim, and reset-to-inherited.
+- ADR 0007's first user-media slice uses the system picker as a temporary read,
+  accepts only bounded JPEG/static PNG, strips metadata into a private static
+  WebP, and stores no source URI or grant. It applies only to `global_thread`
+  and verified conversations.
+- GIF, live external URI, and other-format user media remain deferred and
+  require their own bounded metadata/frame/duration/decode, lifecycle, and
+  URI/grant decisions.
 - Each assignment persists its own adjustable dim value, shows a live preview,
   enforces a contrast-preserving minimum scrim, and resets dim with the scoped
   assignment rather than changing other surfaces.
@@ -113,6 +119,11 @@ owner must provide a written artwork license/permission that covers:
 
 Until then, Phase 1 uses an original non-Aurora diagnostic placeholder and
 Phase 4 artwork ingestion is blocked.
+
+An owner-selected private wallpaper imported under ADR 0007 is neither a
+repository asset nor approval to publish Aurora artwork. Its sanitized
+derivative remains in that installation's `noBackupFilesDir`, is never packaged
+or committed, and does not alter this licensing gate.
 
 The eventual approval record must identify the rights holder, evidence date
 and secure evidence location, per-asset license/attribution terms, permitted

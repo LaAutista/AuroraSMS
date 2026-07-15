@@ -1,7 +1,8 @@
 # Permission and default-SMS role ledger
 
 Status: Phase 1 source, merged manifests, and APKs locally verified against
-official Android documentation on 2026-07-12; device role checks pending
+official Android documentation on 2026-07-12; ADR 0007 records a managed-
+wallpaper decision with no new permission on 2026-07-14
 
 This ledger is the allowlist enforced against the Phase 1 source manifest,
 merged debug/release manifests, and packaged APKs. A permission not listed
@@ -160,6 +161,16 @@ Photo Picker and the Storage Access Framework are the default attachment,
 wallpaper, import, and export paths. They do not justify broad media or storage
 permissions.
 
+ADR 0007's first static Thread-wallpaper slice uses the system picker only for
+one user-selected temporary `content:` read. It does not request
+`READ_MEDIA_IMAGES`, `READ_MEDIA_VISUAL_USER_SELECTED`, legacy storage access,
+or any other permission, and it does not take a persistable URI grant. Cancel,
+Back, lost target/source, and failed Apply retain no URI. Successful Apply
+sanitizes bounded JPEG/static-PNG pixels into an app-private static WebP under
+`noBackupFilesDir`; Room retains only a redacted content digest. No Photo Picker
+backport-install service/component is added. A future live external-media
+reference requires a separate URI/grant lifecycle review before implementation.
+
 ## Explicitly forbidden or rejected permissions
 
 | Permission/capability | Decision |
@@ -169,6 +180,7 @@ permissions.
 | `MANAGE_EXTERNAL_STORAGE` | Forbidden |
 | Legacy `READ_EXTERNAL_STORAGE` / `WRITE_EXTERNAL_STORAGE` | Rejected; use picker/SAF |
 | Broad `READ_MEDIA_*` | Rejected for ordinary attachments/wallpapers |
+| `READ_MEDIA_VISUAL_USER_SELECTED` | Rejected for ADR 0007; direct system-picker use needs no media permission |
 | `READ_CALL_LOG` / `WRITE_CALL_LOG` | Outside product scope |
 | `CALL_PHONE` | Rejected; use a user-confirmed system dial intent |
 | `QUERY_ALL_PACKAGES` | Forbidden |
@@ -186,7 +198,8 @@ backup/data-extraction rule files must exclude:
   user data;
 - DataStore/preferences;
 - message/attachment thumbnails and wallpaper previews;
-- temporary imports, exports, shares, and decoded media;
+- temporary imports, exports, shares, decoded media, and managed wallpaper
+  derivatives;
 - pending-send, pending-delete, schedule, and notification state.
 
 A later user-initiated Aurora backup is an application feature, not permission

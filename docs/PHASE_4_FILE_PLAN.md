@@ -13,9 +13,11 @@ participants passed focused verification plus the complete local
 host/release/benchmark/governance/license/SBOM, API 36 connected,
 frozen-artifact, deliberately Inbox-only Pixel, and source GitHub CI gates,
 while physical 9-member Thread coverage remains pending;
-assignment-local focal/dim values, media/artwork, import/export, navigation
-variants, and the full accessibility/performance matrix remain gated follow-on
-work
+ADR 0007 now accepts managed private static wallpapers for `global_thread` and
+verified conversations as the next bounded implementation slice, but no ADR
+0007 code or verification is claimed yet; Inbox/other-screen treatment,
+built-in artwork, GIF/live-URI media, import/export, navigation variants, and
+the full accessibility/performance matrix remain gated follow-on work
 
 ## Outcome
 
@@ -43,6 +45,14 @@ It is a profile-resolution and route-preserving assignment foundation only. It
 does not add wallpaper/media references, assignment-local focal/dim values,
 artwork, pickers, decoders, GIF lifecycle, or final
 accessibility/performance claims.
+
+ADR 0007 defines the next accepted, not-yet-implemented slice. It adds a real
+Thread-only static wallpaper consumer for `global_thread` and verified
+conversation targets. The system picker URI is temporary process memory; Apply
+sanitizes bounded JPEG/static-PNG input into an app-private content-addressed
+WebP under `noBackupFilesDir`, and Room retains only the managed token plus
+assignment-local focal/dim values and revision. It adds no durable URI/grant,
+media catalog, storage permission, external decoder, artwork, or animation.
 
 ## Foundation acceptance criteria
 
@@ -104,8 +114,11 @@ eligible screen profile reference [ADR 0006; focused verification complete]
   -> accessible solid fallback
 ```
 
-Missing, revoked, corrupt, unsupported, or unlicensed media always falls
-forward through this chain. It never produces an unbounded retry loop or a
+Missing, corrupt, unsupported, or unlicensed media always falls forward through
+this chain. ADR 0007's managed static source has no durable external URI to
+revoke; its missing/hash-mismatched private derivative falls from conversation
+to `global_thread` to an accessible solid. Future live-URI media must define its
+own revocation behavior. No failure produces an unbounded retry loop or a
 blank/unreadable messaging surface.
 
 ## Foundation files
@@ -513,14 +526,74 @@ all project steps green.
 
 ## Remaining follow-on slices
 
-### 1. Scoped wallpaper assignments and local treatment
+### 1. ADR 0007 managed private static Thread wallpaper — accepted next slice
 
-- Add independent wallpaper/media references for eligible screens, the global
-  thread fallback, and conversations on top of the profile-reference resolver.
-- Add assignment-local focal points and dim values with real renderer consumers,
-  live preview, revision-checked apply/reset, and no dead stored controls.
-- Prove revoked/missing/corrupt media advances through the wallpaper-specific
-  canonical/theme/solid chains without changing any profile-reference scope.
+- Add direct wallpaper assignments only for `global_thread` and an ADR
+  0006-verified conversation. The first resolver is conversation managed WebP
+  -> `global_thread` managed WebP -> accessible solid; it does not claim an
+  active-theme or canonical-artwork wallpaper.
+- Use the system Photo Picker/SAF fallback only as a temporary `content:` read
+  capability. Never persist the URI or take a persistable grant. Explicit Apply
+  revalidates and sanitizes JPEG/static-PNG input to a content-addressed private
+  WebP under `noBackupFilesDir/appearance/wallpapers/`.
+- Enforce the accepted source bounds (16 MiB, 8,192-pixel edge, 40,000,000
+  pixels), output bounds (2,048-pixel edge, 4,194,304 pixels, 16-MiB decoded
+  allocation), 8-MiB derivative bound, one wallpaper decode, and shared
+  two-decode app media gate. Reject GIF, every input WebP, HEIF, AVIF, APNG, and
+  malformed/partial media.
+- Add assignment-local focal X/Y 0..1,000 and dim 350..900 permill with real
+  Thread renderer and live-preview consumers, revision-checked Apply/reset, and
+  no dead stored controls.
+- Keep assignment rows authoritative; add no media catalog table. A bounded
+  distinct-token snapshot supports deduplication, last-reference deletion, and
+  startup cleanup. Admit at most 128 distinct assigned files and 256 MiB total.
+  A serialized replacement may stage exactly one unassigned sanitized candidate
+  of at most 8 MiB before the Room CAS, so the private directory may momentarily
+  reach 129 files/264 MiB. This is atomic-staging headroom, not a raised durable
+  quota; rejection/cancellation removes the candidate, and healthy startup GC
+  removes one left orphaned by a process death.
+- Write/sync/rename a same-directory pending derivative before the Room CAS
+  transaction; delete an old file only after commit and proof that no assignment
+  references it. With an unavailable/corrupt/over-limit database, cleanup
+  deletes nothing.
+- Prove missing/corrupt/hash-mismatched managed media advances through
+  conversation -> global-thread -> solid without changing profile references,
+  another wallpaper assignment, provider/index state, or the current route.
+- Keep Inbox and all other screen wallpaper controls/renderers absent until
+  their separate surface/contrast treatment is accepted.
+
+The anticipated implementation boundary is:
+
+```text
+docs/adr/0007-managed-private-static-thread-wallpapers.md
+core/state/src/main/kotlin/org/aurorasms/core/state/AppearanceWallpaper.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/AppearanceProfileRepository.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/AppearanceWallpaperEntity.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/AppearanceOverrideDao.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/RoomAppearanceProfileRepository.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/AuroraStateDatabase.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/StateDatabaseFactory.kt
+core/state/src/main/kotlin/org/aurorasms/core/state/storage/StateDatabaseMigrations.kt
+core/state/src/test/kotlin/org/aurorasms/core/state/AppearanceWallpaperContractTest.kt
+core/state/src/test/kotlin/org/aurorasms/core/state/storage/AppearanceWallpaperEntityTest.kt
+core/state/src/androidTest/kotlin/org/aurorasms/core/state/AppearanceWallpaperRepositoryInstrumentedTest.kt
+core/state/src/androidTest/kotlin/org/aurorasms/core/state/StateMigration3To4Test.kt
+app/src/main/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperImportPolicy.kt
+app/src/main/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpaperStore.kt
+app/src/main/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperController.kt
+app/src/main/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperSurface.kt
+app/src/main/kotlin/org/aurorasms/app/preview/BoundedMediaDecodeGate.kt
+app/src/main/kotlin/org/aurorasms/app/preview/AndroidBoundedPreviewLoader.kt
+app/src/main/kotlin/org/aurorasms/app/AppContainer.kt
+app/src/main/kotlin/org/aurorasms/app/AuroraSmsRootServices.kt
+app/src/main/kotlin/org/aurorasms/app/AuroraSmsRoot.kt
+app/src/main/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialog.kt
+app/src/test/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperImportPolicyTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpaperStoreTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialogTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/AuroraSmsRootAcceptanceTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/DefaultSmsManifestContractTest.kt
+```
 
 ### 2. Import and export
 
@@ -553,10 +626,13 @@ settings, and visual review. Originals remain outside Git unless source
 redistribution is granted. Camera ICON and all private reference material are
 never runtime assets.
 
-Local static/GIF assignments require bounded metadata reads, hostile-media
-limits, persisted URI handling, static chooser thumbnails, and exactly one
-visible animation. Background, covered, display-off, battery-saver, and
-reduced-motion states pause decoding. No decoder may fetch from a network.
+ADR 0007 local static Thread assignments use a temporary picker capability and
+managed private import, not persisted URI handling. GIF and any future live-URI
+assignment remain separate: they require bounded metadata/frame/duration reads,
+their own URI/grant decision if applicable, static chooser thumbnails, and
+exactly one visible animation. Background, covered, display-off,
+battery-saver, and reduced-motion states pause that future animation. No decoder
+may fetch from a network.
 
 ### 5. Accessibility and performance gate
 
@@ -594,10 +670,14 @@ transitive test artifact to the compile classpath; it introduces no new resolved
 artifact/version, checksum, license, or production coordinate. The lock,
 resolved-graph, license/SBOM, manifest, and packaged-output checks passed.
 
-No image loader, GIF decoder, navigation library, DataStore, icon pack, font,
-remote theme service, or media SDK is approved by this plan. Any later
-coordinate requires the full dependency-admission record before source code
-uses it.
+ADR 0007 approves only the small platform-backed static importer/renderer
+described above, using the already admitted Activity/Compose/coroutine/Room
+graph, Android platform bitmap/image/color-space/WebP APIs, SHA-256, and an
+original parser limited to bounded JPEG APP1 and PNG `eXIf` TIFF orientation
+fields. It does not use `android.media.ExifInterface`. No external image loader,
+GIF decoder, navigation library, DataStore, icon pack, font, remote theme
+service, or media SDK is approved by this plan. Any later coordinate requires
+the full dependency-admission record before source code uses it.
 
 ## Validation sequence
 
@@ -644,6 +724,17 @@ network permission/path, reading message/provider data from the design system,
 running more than one animated decoder, allowing unbounded media/profile input,
 or weakening any Phase 1-3 role, transport, index, privacy, or performance
 invariant.
+
+For ADR 0007, also stop before persisting a picker/source URI, taking a durable
+URI grant, adding a storage/media permission, admitting a non-JPEG/non-PNG
+source or APNG, exceeding any accepted byte/dimension/pixel/allocation quota,
+exceeding the 128-file/256-MiB durable assigned quota or the single-candidate
+129-file/264-MiB physical staging ceiling, writing the assignment before the
+verified final derivative exists,
+deleting a file without an authoritative bounded post-commit reference
+snapshot, retaining source metadata, rendering a stale target's bitmap while a
+new target loads, exposing an Inbox/built-in/GIF/live-URI control, or adding a
+media catalog table.
 
 For the scoped-profile-reference foundation, also stop before storing raw
 participant addresses or a reversible participant serialization, resolving a

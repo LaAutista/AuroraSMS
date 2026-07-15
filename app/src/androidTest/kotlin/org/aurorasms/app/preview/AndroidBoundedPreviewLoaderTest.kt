@@ -6,7 +6,10 @@ import android.graphics.Bitmap
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +33,7 @@ import org.aurorasms.core.telephony.MmsAttachmentReadResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
 import org.aurorasms.feature.conversations.AttachmentPreviewResult
 import org.aurorasms.feature.conversations.MAXIMUM_PREVIEW_ENCODED_BYTES
+import org.aurorasms.feature.conversations.MAXIMUM_PENDING_PREVIEW_LOADS
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -124,6 +128,94 @@ class AndroidBoundedPreviewLoaderTest {
             scope.cancel()
         }
     }
+
+    @Test
+    fun clearCancelsOldGenerationJobsInsteadOfBuildingAGateBacklog() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val repository = BlockingUnavailableRepository()
+        val loader = AndroidBoundedPreviewLoader(repository, scope)
+        try {
+            repeat(4) { generation ->
+                val results = (0L until MAXIMUM_PENDING_PREVIEW_LOADS.toLong()).map { offset ->
+                    async(Dispatchers.Default) {
+                        loader.load(descriptor(100L + generation * 10L + offset, "image/png"))
+                    }
+                }
+                withTimeout(5_000L) {
+                    while (
+                        repository.active.get() < 2 ||
+                        loader.pendingLoadCount() < MAXIMUM_PENDING_PREVIEW_LOADS
+                    ) {
+                        delay(10L)
+                    }
+                }
+                loader.clear()
+                assertTrue(
+                    withTimeout(5_000L) { results.awaitAll() }
+                        .all { it == AttachmentPreviewResult.Unavailable },
+                )
+                withTimeout(5_000L) {
+                    while (repository.active.get() != 0) delay(10L)
+                }
+            }
+            assertEquals(8, repository.totalReads.get())
+            assertEquals(2, repository.maximumActive.get())
+        } finally {
+            repository.release.complete(Unit)
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun providerFailuresCompleteTheSharedPromiseInsteadOfStrandingWaiters() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            listOf(
+                IOException("synthetic"),
+                IllegalStateException("synthetic"),
+            ).forEachIndexed { index, failure ->
+                val target = descriptor(200L + index, "image/png")
+                val loader = AndroidBoundedPreviewLoader(
+                    ThrowingAttachmentRepository(failure),
+                    scope,
+                )
+                assertEquals(
+                    AttachmentPreviewResult.Unavailable,
+                    withTimeout(5_000L) { loader.load(target) },
+                )
+            }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun clearInterruptsBoundedStreamReadsAndReleasesTheSharedDecodePermit() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val blocked = descriptor(210L, "image/png")
+        val valid = descriptor(211L, "image/png")
+        val repository = CancellationProbeRepository(blocked, valid, syntheticPng())
+        val loader = AndroidBoundedPreviewLoader(
+            repository = repository,
+            applicationScope = scope,
+            decodeGate = BoundedMediaDecodeGate(permits = 1),
+        )
+        try {
+            val obsolete = async(Dispatchers.Default) { loader.load(blocked) }
+            assertTrue(repository.firstReadEntered.await(5, TimeUnit.SECONDS))
+
+            loader.clear()
+            assertEquals(AttachmentPreviewResult.Unavailable, obsolete.await())
+            repository.releaseFirstRead.countDown()
+
+            assertTrue(withTimeout(5_000L) { loader.load(valid) } is AttachmentPreviewResult.Ready)
+            assertEquals(1L, repository.secondReadEntered.count)
+        } finally {
+            repository.releaseFirstRead.countDown()
+            repository.releaseSecondRead.countDown()
+            scope.cancel()
+        }
+    }
 }
 
 private class ByteArrayAttachmentRepository(
@@ -185,6 +277,87 @@ private class BlockingUnavailableRepository : MmsAttachmentRepository {
             MmsAttachmentReadResult.Unavailable
         } finally {
             active.decrementAndGet()
+        }
+    }
+}
+
+private class ThrowingAttachmentRepository(
+    private val failure: Exception,
+) : MmsAttachmentRepository {
+    override suspend fun listStaticImages(providerMessageId: ProviderMessageId): MmsAttachmentListResult =
+        error("Not used")
+
+    override suspend fun <T> read(
+        id: MmsAttachmentId,
+        reader: MmsAttachmentContentReader<T>,
+    ): MmsAttachmentReadResult<T> = throw failure
+}
+
+private class CancellationProbeRepository(
+    private val blockedDescriptor: MmsAttachmentDescriptor,
+    private val validDescriptor: MmsAttachmentDescriptor,
+    private val validBytes: ByteArray,
+) : MmsAttachmentRepository {
+    val firstReadEntered = CountDownLatch(1)
+    val releaseFirstRead = CountDownLatch(1)
+    val secondReadEntered = CountDownLatch(1)
+    val releaseSecondRead = CountDownLatch(1)
+
+    override suspend fun listStaticImages(providerMessageId: ProviderMessageId): MmsAttachmentListResult =
+        error("Not used")
+
+    override suspend fun <T> read(
+        id: MmsAttachmentId,
+        reader: MmsAttachmentContentReader<T>,
+    ): MmsAttachmentReadResult<T> {
+        val content = if (id == blockedDescriptor.id) {
+            MmsAttachmentContent(
+                descriptor = blockedDescriptor,
+                encodedLengthBytes = null,
+                stream = CancellationProbeInputStream(
+                    firstReadEntered,
+                    releaseFirstRead,
+                    secondReadEntered,
+                    releaseSecondRead,
+                ),
+            )
+        } else {
+            check(id == validDescriptor.id)
+            MmsAttachmentContent(
+                descriptor = validDescriptor,
+                encodedLengthBytes = validBytes.size.toLong(),
+                stream = ByteArrayInputStream(validBytes),
+            )
+        }
+        return content.stream.use {
+            MmsAttachmentReadResult.Success(reader.read(content))
+        }
+    }
+}
+
+private class CancellationProbeInputStream(
+    private val firstReadEntered: CountDownLatch,
+    private val releaseFirstRead: CountDownLatch,
+    private val secondReadEntered: CountDownLatch,
+    private val releaseSecondRead: CountDownLatch,
+) : InputStream() {
+    private var readCount = 0
+
+    override fun read(): Int = error("Bulk read expected")
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        return when (readCount++) {
+            0 -> {
+                firstReadEntered.countDown()
+                check(releaseFirstRead.await(5, TimeUnit.SECONDS))
+                buffer[offset] = 0
+                1
+            }
+            else -> {
+                secondReadEntered.countDown()
+                check(releaseSecondRead.await(5, TimeUnit.SECONDS))
+                -1
+            }
         }
     }
 }

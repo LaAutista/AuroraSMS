@@ -131,6 +131,7 @@ internal fun ScopedAppearanceDialog(
     inheritedName: String,
     currentOverride: AppAppearanceOverride?,
     onApply: suspend (profileId: Long?, expectedRevision: Long?) -> ScopedAppearanceControllerResult,
+    onOpenWallpaper: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val durableProfileId = currentOverride?.profileId
@@ -279,6 +280,25 @@ internal fun ScopedAppearanceDialog(
                     }
                 }
                 ScopedAppearancePreview(previewProfile)
+                if (kind != ScopedAppearanceKind.INBOX && onOpenWallpaper != null) {
+                    OutlinedButton(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = MINIMUM_SCOPE_CONTROL_SIZE)
+                            .testTag(SCOPED_APPEARANCE_WALLPAPER_TEST_TAG),
+                        enabled = !applying && editorReady && !dirty,
+                        onClick = onOpenWallpaper,
+                    ) {
+                        Text(stringResource(R.string.appearance_scope_wallpaper))
+                    }
+                    if (dirty) {
+                        Text(
+                            text = stringResource(R.string.appearance_scope_wallpaper_profile_dirty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 OutlinedButton(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -420,6 +440,7 @@ const val SCOPED_APPEARANCE_INHERITED_OPTION_TEST_TAG: String =
     "aurora-scoped-appearance-inherited-option"
 const val SCOPED_APPEARANCE_PROFILE_OPTION_PREFIX: String = "aurora-scoped-appearance-profile-"
 const val SCOPED_APPEARANCE_PREVIEW_TEST_TAG: String = "aurora-scoped-appearance-preview"
+const val SCOPED_APPEARANCE_WALLPAPER_TEST_TAG: String = "aurora-scoped-appearance-wallpaper"
 const val SCOPED_APPEARANCE_RESET_TEST_TAG: String = "aurora-scoped-appearance-reset"
 const val SCOPED_APPEARANCE_APPLY_TEST_TAG: String = "aurora-scoped-appearance-apply"
 const val SCOPED_APPEARANCE_CANCEL_TEST_TAG: String = "aurora-scoped-appearance-cancel"
