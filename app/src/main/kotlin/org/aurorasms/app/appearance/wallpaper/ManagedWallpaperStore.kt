@@ -27,7 +27,12 @@ import java.io.FilterOutputStream
 import java.io.IOException
 import java.io.OutputStream
 import java.nio.ByteBuffer
+import java.nio.file.DirectoryIteratorException
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.NoSuchFileException
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 import kotlin.math.floor
@@ -35,7 +40,6 @@ import kotlin.math.min
 import kotlin.math.sqrt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -75,7 +79,8 @@ internal sealed interface WallpaperInspectionResult {
 }
 
 internal sealed interface WallpaperImportResult {
-    data class Ready(
+    /** Redacted candidate lease; only the media store can perform authoritative deletion. */
+    class Ready(
         val mediaId: String,
         val created: Boolean,
     ) : WallpaperImportResult {
@@ -109,16 +114,63 @@ internal enum class DurableWallpaperQuotaResult {
     INVALID_STATE,
 }
 
+internal enum class ManagedWallpaperReconcileResult {
+    COMPLETE,
+    INVALID_REFERENCE_SET,
+    UNSAFE_DIRECTORY,
+    STORAGE_FAILURE,
+}
+
+internal enum class WallpaperPersistenceCheckpoint {
+    APPEARANCE_DIRECTORY_CREATED,
+    APPEARANCE_PARENT_SYNCED,
+    WALLPAPER_DIRECTORY_CREATED,
+    WALLPAPER_PARENT_SYNCED,
+    PENDING_FILE_SYNCED,
+    PENDING_VERIFIED,
+    FINAL_PUBLISHED,
+    FINAL_DIRECTORY_SYNCED,
+}
+
+internal fun interface WallpaperPersistenceProbe {
+    suspend fun onCheckpoint(checkpoint: WallpaperPersistenceCheckpoint)
+}
+
+/** Test-only fault boundaries around individual filesystem operations; carries no path or media data. */
+internal enum class WallpaperPersistenceFaultPoint {
+    BEFORE_APPEARANCE_PARENT_SYNC,
+    BEFORE_WALLPAPER_PARENT_SYNC,
+    BEFORE_PENDING_WRITE,
+    BEFORE_PENDING_FLUSH,
+    BEFORE_PENDING_FILE_SYNC,
+    BEFORE_FINAL_PUBLISH,
+    BEFORE_FINAL_VERIFY,
+    BEFORE_MANAGED_ENTRY_DELETE,
+}
+
+internal fun interface WallpaperPersistenceFaultInjector {
+    fun onFaultPoint(point: WallpaperPersistenceFaultPoint)
+}
+
 internal interface WallpaperMediaStore {
     suspend fun inspect(source: Uri): WallpaperInspectionResult
 
-    suspend fun import(source: Uri): WallpaperImportResult
+    suspend fun import(
+        source: Uri,
+        referencedMediaIds: Set<String>,
+        onCandidateCreated: (WallpaperImportResult.Ready) -> Unit = {},
+    ): WallpaperImportResult
 
     suspend fun load(mediaId: String, preview: Boolean = false): WallpaperLoadResult
 
-    suspend fun delete(mediaId: String): Boolean
+    suspend fun deleteIfUnreferenced(
+        mediaId: String,
+        referencedMediaIds: Set<String>,
+    ): Boolean
 
-    suspend fun reconcile(referencedMediaIds: Set<String>): Boolean
+    suspend fun reconcile(
+        referencedMediaIds: Set<String>,
+    ): ManagedWallpaperReconcileResult
 
     suspend fun validateDurableQuota(
         prospectiveMediaIds: Set<String>,
@@ -129,12 +181,20 @@ internal interface WallpaperMediaStore {
 internal class ManagedWallpaperStore(
     context: Context,
     private val decodeGate: BoundedMediaDecodeGate,
+    private val persistenceProbe: WallpaperPersistenceProbe = WallpaperPersistenceProbe {},
+    private val persistenceFaultInjector: WallpaperPersistenceFaultInjector =
+        WallpaperPersistenceFaultInjector {},
 ) : WallpaperMediaStore {
-    private val resolver = context.applicationContext.contentResolver
-    private val directory = File(context.applicationContext.noBackupFilesDir, WALLPAPER_DIRECTORY)
-    private val mutex = Mutex()
+    private val applicationContext = context.applicationContext
+    private val resolver = applicationContext.contentResolver
+    private val noBackupRoot = applicationContext.noBackupFilesDir
+    private val appearanceDirectory = File(noBackupRoot, APPEARANCE_DIRECTORY_NAME)
+    private val directory = File(appearanceDirectory, WALLPAPER_DIRECTORY_NAME)
+    private companion object {
+        val namespaceMutex = Mutex()
+    }
 
-    override suspend fun inspect(source: Uri): WallpaperInspectionResult = mutex.withLock {
+    override suspend fun inspect(source: Uri): WallpaperInspectionResult = namespaceMutex.withLock {
         var ownedBitmap: Bitmap? = null
         try {
             val result = withContext(Dispatchers.IO) {
@@ -165,10 +225,15 @@ internal class ManagedWallpaperStore(
         }
     }
 
-    override suspend fun import(source: Uri): WallpaperImportResult = mutex.withLock {
-        var cancellationOwnedFile: WallpaperImportResult.Ready? = null
-        try {
-            val result = withContext(Dispatchers.IO) {
+    override suspend fun import(
+        source: Uri,
+        referencedMediaIds: Set<String>,
+        onCandidateCreated: (WallpaperImportResult.Ready) -> Unit,
+    ): WallpaperImportResult = namespaceMutex.withLock {
+        withContext(Dispatchers.IO) {
+            if (validatedReferenceFileNames(referencedMediaIds) == null) {
+                return@withContext WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+            }
             val content = when (val result = readSource(source)) {
                 is SourceReadResult.Ready -> result
                 is SourceReadResult.Failed -> return@withContext WallpaperImportResult.Failed(result.reason)
@@ -185,57 +250,37 @@ internal class ManagedWallpaperStore(
                             return@withPermit WallpaperImportResult.Failed(encoded.reason)
                         }
                     }
-                    persistDerivative(derivative).also { persisted ->
-                        if (persisted is WallpaperImportResult.Ready && persisted.created) {
-                            cancellationOwnedFile = persisted
-                        }
-                    }
+                    persistDerivative(
+                        bytes = derivative,
+                        referencedMediaIds = referencedMediaIds,
+                        onCandidateCreated = onCandidateCreated,
+                    )
                 } finally {
                     decoded.recycle()
                 }
             }
-            }
-            cancellationOwnedFile = null
-            result
-        } catch (cancelled: CancellationException) {
-            cancellationOwnedFile?.let { orphan ->
-                withContext(NonCancellable + Dispatchers.IO) {
-                    deleteManagedFile(orphan.mediaId)
-                }
-            }
-            throw cancelled
         }
     }
 
     override suspend fun load(
         mediaId: String,
         preview: Boolean,
-    ): WallpaperLoadResult = mutex.withLock {
+    ): WallpaperLoadResult = namespaceMutex.withLock {
         var ownedBitmap: Bitmap? = null
         try {
             val result = withContext(Dispatchers.IO) {
             val fileName = wallpaperDerivativeFileName(mediaId) ?: return@withContext WallpaperLoadResult.Unavailable
-            val root = validatedDirectory(create = false) ?: return@withContext WallpaperLoadResult.Unavailable
+            val root = when (val access = validatedDirectory(create = false)) {
+                is ManagedDirectoryAccess.Ready -> access.root
+                else -> return@withContext WallpaperLoadResult.Unavailable
+            }
             val file = File(root, fileName)
             if (!file.isSafeRegularChildOf(root)) return@withContext WallpaperLoadResult.Unavailable
-            val length = file.length()
-            if (length !in 1..MAXIMUM_WALLPAPER_DERIVATIVE_BYTES.toLong()) {
-                return@withContext WallpaperLoadResult.Unavailable
-            }
-            val bytes = try {
-                file.inputStream().use { it.readBounded(MAXIMUM_WALLPAPER_DERIVATIVE_BYTES) }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: IOException) {
-                null
-            } catch (_: SecurityException) {
-                null
-            } catch (_: RuntimeException) {
-                null
-            } ?: return@withContext WallpaperLoadResult.Unavailable
-            if (!wallpaperDerivativeMatches(mediaId, bytes)) {
-                return@withContext WallpaperLoadResult.Unavailable
-            }
+            val identity = file.managedFileIdentity()
+                ?.takeIf { it.linkCount == 1L }
+                ?: return@withContext WallpaperLoadResult.Unavailable
+            val bytes = file.readVerifiedDerivative(mediaId, identity)
+                ?: return@withContext WallpaperLoadResult.Unavailable
             decodeGate.withPermit {
                 val decoded = decodeTrustedDerivative(bytes, preview)
                     ?: return@withPermit WallpaperLoadResult.Unavailable
@@ -256,45 +301,83 @@ internal class ManagedWallpaperStore(
         }
     }
 
-    override suspend fun delete(mediaId: String): Boolean = mutex.withLock {
-        withContext(Dispatchers.IO) { deleteManagedFile(mediaId) }
+    override suspend fun deleteIfUnreferenced(
+        mediaId: String,
+        referencedMediaIds: Set<String>,
+    ): Boolean = namespaceMutex.withLock {
+        withContext(Dispatchers.IO) {
+            deleteManagedFileIfUnreferenced(mediaId, referencedMediaIds)
+        }
     }
 
     /** Reconciles only after the caller has obtained a validated, complete durable reference set. */
-    override suspend fun reconcile(referencedMediaIds: Set<String>): Boolean = mutex.withLock {
+    override suspend fun reconcile(
+        referencedMediaIds: Set<String>,
+    ): ManagedWallpaperReconcileResult = namespaceMutex.withLock {
         withContext(Dispatchers.IO) {
-            if (referencedMediaIds.size > MAXIMUM_WALLPAPER_FILE_COUNT) return@withContext false
-            val expectedNames = referencedMediaIds.mapTo(HashSet()) { mediaId ->
-                wallpaperDerivativeFileName(mediaId) ?: return@withContext false
+            if (validatedReferenceFileNames(referencedMediaIds) == null) {
+                return@withContext ManagedWallpaperReconcileResult.INVALID_REFERENCE_SET
             }
-            val root = validatedDirectory(create = false) ?: return@withContext true
-            val children = root.listFiles() ?: return@withContext false
-            var complete = true
-            children.forEach { child ->
-                coroutineContext.ensureActive()
-                if (Files.isSymbolicLink(child.toPath())) return@forEach
-                if (!child.isFile) return@forEach
-                if (child.name.startsWith(PENDING_FILE_PREFIX) || child.name !in expectedNames) {
-                    val deleted = runCatching { child.delete() }.getOrDefault(false)
-                    if (!deleted && child.exists()) complete = false
+            val root = when (val access = validatedDirectory(create = false)) {
+                ManagedDirectoryAccess.Absent -> {
+                    return@withContext ManagedWallpaperReconcileResult.COMPLETE
+                }
+                is ManagedDirectoryAccess.Ready -> access.root
+                ManagedDirectoryAccess.Unsafe -> {
+                    return@withContext ManagedWallpaperReconcileResult.UNSAFE_DIRECTORY
+                }
+                ManagedDirectoryAccess.Unavailable -> {
+                    return@withContext ManagedWallpaperReconcileResult.STORAGE_FAILURE
                 }
             }
-            complete
+            val snapshot = when (val scan = snapshotManagedDirectory(root)) {
+                is ManagedDirectorySnapshot.Ready -> scan.entries
+                ManagedDirectorySnapshot.Unsafe -> {
+                    return@withContext ManagedWallpaperReconcileResult.UNSAFE_DIRECTORY
+                }
+                ManagedDirectorySnapshot.Unavailable -> {
+                    return@withContext ManagedWallpaperReconcileResult.STORAGE_FAILURE
+                }
+            }
+            val deletions = snapshot.filter { entry ->
+                when (val classification = entry.classification) {
+                    is ManagedWallpaperFileClassification.Final -> {
+                        classification.mediaId !in referencedMediaIds
+                    }
+                    is ManagedWallpaperFileClassification.Pending -> true
+                    ManagedWallpaperFileClassification.Unexpected -> false
+                }
+            }
+            deletions.forEach { entry ->
+                coroutineContext.ensureActive()
+                if (!deleteExactManagedEntry(entry)) {
+                    return@withContext ManagedWallpaperReconcileResult.STORAGE_FAILURE
+                }
+            }
+            if (deletions.isNotEmpty() && !syncDirectory(root)) {
+                return@withContext ManagedWallpaperReconcileResult.STORAGE_FAILURE
+            }
+            ManagedWallpaperReconcileResult.COMPLETE
         }
     }
 
     override suspend fun validateDurableQuota(
         prospectiveMediaIds: Set<String>,
-    ): DurableWallpaperQuotaResult = mutex.withLock {
+    ): DurableWallpaperQuotaResult = namespaceMutex.withLock {
         withContext(Dispatchers.IO) {
             if (prospectiveMediaIds.size > MAXIMUM_WALLPAPER_FILE_COUNT) {
                 return@withContext DurableWallpaperQuotaResult.LIMIT_EXCEEDED
             }
+            if (canonicalReferenceFileNames(prospectiveMediaIds) == null) {
+                return@withContext DurableWallpaperQuotaResult.INVALID_STATE
+            }
             if (prospectiveMediaIds.isEmpty()) {
                 return@withContext DurableWallpaperQuotaResult.WITHIN_LIMIT
             }
-            val root = validatedDirectory(create = false)
-                ?: return@withContext DurableWallpaperQuotaResult.INVALID_STATE
+            val root = when (val access = validatedDirectory(create = false)) {
+                is ManagedDirectoryAccess.Ready -> access.root
+                else -> return@withContext DurableWallpaperQuotaResult.INVALID_STATE
+            }
             var totalBytes = 0L
             prospectiveMediaIds.forEach { mediaId ->
                 coroutineContext.ensureActive()
@@ -305,34 +388,38 @@ internal class ManagedWallpaperStore(
                     return@withContext DurableWallpaperQuotaResult.INVALID_STATE
                 }
                 val length = file.length()
-                if (
-                    length !in 1..MAXIMUM_WALLPAPER_DERIVATIVE_BYTES.toLong() ||
-                    totalBytes > MAXIMUM_WALLPAPER_TOTAL_BYTES - length
-                ) {
+                if (length <= 0L) {
+                    return@withContext DurableWallpaperQuotaResult.INVALID_STATE
+                }
+                if (length > MAXIMUM_WALLPAPER_DERIVATIVE_BYTES.toLong()) {
                     return@withContext DurableWallpaperQuotaResult.LIMIT_EXCEEDED
                 }
-                val bytes = try {
-                    file.inputStream().use { input ->
-                        input.readBounded(MAXIMUM_WALLPAPER_DERIVATIVE_BYTES)
-                    }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: IOException) {
-                    null
-                } catch (_: SecurityException) {
-                    null
-                } catch (_: RuntimeException) {
-                    null
-                } ?: return@withContext DurableWallpaperQuotaResult.INVALID_STATE
-                if (bytes.size.toLong() != length || !wallpaperDerivativeMatches(mediaId, bytes)) {
+                val identity = file.managedFileIdentity()
+                    ?.takeIf { it.linkCount == 1L }
+                    ?: return@withContext DurableWallpaperQuotaResult.INVALID_STATE
+                val bytes = file.readVerifiedDerivative(mediaId, identity)
+                    ?: return@withContext DurableWallpaperQuotaResult.INVALID_STATE
+                if (
+                    bytes.size.toLong() != length ||
+                    totalBytes > Long.MAX_VALUE - bytes.size.toLong()
+                ) {
                     return@withContext DurableWallpaperQuotaResult.INVALID_STATE
                 }
                 totalBytes += bytes.size
-                if (totalBytes > MAXIMUM_WALLPAPER_TOTAL_BYTES) {
-                    return@withContext DurableWallpaperQuotaResult.LIMIT_EXCEEDED
-                }
             }
-            DurableWallpaperQuotaResult.WITHIN_LIMIT
+            when (
+                evaluateWallpaperQuota(
+                    limit = WallpaperQuotaLimit.DURABLE,
+                    currentFileCount = prospectiveMediaIds.size.toLong(),
+                    currentTotalBytes = totalBytes,
+                    additionalFileCount = 0L,
+                    additionalBytes = 0L,
+                )
+            ) {
+                WallpaperQuotaResult.WITHIN_LIMIT -> DurableWallpaperQuotaResult.WITHIN_LIMIT
+                WallpaperQuotaResult.LIMIT_EXCEEDED -> DurableWallpaperQuotaResult.LIMIT_EXCEEDED
+                WallpaperQuotaResult.INVALID_STATE -> DurableWallpaperQuotaResult.INVALID_STATE
+            }
         }
     }
 
@@ -573,66 +660,98 @@ internal class ManagedWallpaperStore(
         }
     }
 
-    private suspend fun persistDerivative(bytes: ByteArray): WallpaperImportResult {
+    private suspend fun persistDerivative(
+        bytes: ByteArray,
+        referencedMediaIds: Set<String>,
+        onCandidateCreated: (WallpaperImportResult.Ready) -> Unit,
+    ): WallpaperImportResult {
         val mediaId = wallpaperMediaId(bytes)
         val fileName = wallpaperDerivativeFileName(mediaId)
             ?: return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
-        val root = validatedDirectory(create = true)
-            ?: return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+        if (validatedReferenceFileNames(referencedMediaIds) == null) {
+            return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+        }
+        val root = when (val access = validatedDirectoryForPersistence()) {
+            is ManagedDirectoryAccess.Ready -> access.root
+            else -> return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+        }
+        val entries = when (val snapshot = snapshotManagedDirectory(root)) {
+            is ManagedDirectorySnapshot.Ready -> snapshot.entries
+            else -> return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+        }
+        val finalEntries = ArrayList<ManagedDirectoryEntry>(entries.size)
+        val onDiskMediaIds = HashSet<String>(entries.size)
+        var totalBytes = 0L
+        entries.forEach { entry ->
+            when (val classification = entry.classification) {
+                is ManagedWallpaperFileClassification.Final -> {
+                    if (classification.mediaId !in referencedMediaIds) {
+                        return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+                    }
+                    val length = entry.file.length()
+                    if (
+                        length !in 1..MAXIMUM_WALLPAPER_DERIVATIVE_BYTES.toLong() ||
+                        totalBytes > Long.MAX_VALUE - length
+                    ) {
+                        return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+                    }
+                    totalBytes += length
+                    onDiskMediaIds += classification.mediaId
+                    finalEntries += entry
+                }
+                is ManagedWallpaperFileClassification.Pending,
+                ManagedWallpaperFileClassification.Unexpected -> {
+                    return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+                }
+            }
+        }
+        if (onDiskMediaIds != referencedMediaIds) {
+            return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+        }
         val finalFile = File(root, fileName)
-        if (finalFile.exists()) {
-            if (!finalFile.isSafeRegularChildOf(root)) {
-                return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
-            }
-            val existing = try {
-                finalFile.inputStream().use { it.readBounded(MAXIMUM_WALLPAPER_DERIVATIVE_BYTES) }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: IOException) {
-                null
-            } catch (_: SecurityException) {
-                null
-            } catch (_: RuntimeException) {
-                null
-            }
-            return if (existing != null && wallpaperDerivativeMatches(mediaId, existing)) {
+        val existingEntry = finalEntries.firstOrNull { entry ->
+            (entry.classification as ManagedWallpaperFileClassification.Final).mediaId == mediaId
+        }
+        if (existingEntry != null) {
+            val existing = existingEntry.file.readVerifiedDerivative(
+                mediaId = mediaId,
+                expectedIdentity = existingEntry.identity,
+            )
+            return if (existing != null) {
                 WallpaperImportResult.Ready(mediaId = mediaId, created = false)
             } else {
                 WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
             }
         }
-        val children = root.listFiles()
-            ?: return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
-        val regularFiles = children.filter { child ->
-            !Files.isSymbolicLink(child.toPath()) && child.isFile &&
-                !child.name.startsWith(PENDING_FILE_PREFIX)
+        if (mediaId in referencedMediaIds) {
+            return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
         }
-        var totalBytes = 0L
-        regularFiles.forEach { file ->
-            val length = file.length()
-            if (
-                length !in 1..MAXIMUM_WALLPAPER_DERIVATIVE_BYTES.toLong() ||
-                totalBytes > MAXIMUM_WALLPAPER_STAGED_TOTAL_BYTES - length
-            ) {
+        when (
+            evaluateWallpaperQuota(
+                limit = WallpaperQuotaLimit.STAGED,
+                currentFileCount = finalEntries.size.toLong(),
+                currentTotalBytes = totalBytes,
+                additionalFileCount = 1L,
+                additionalBytes = bytes.size.toLong(),
+            )
+        ) {
+            WallpaperQuotaResult.WITHIN_LIMIT -> Unit
+            WallpaperQuotaResult.LIMIT_EXCEEDED -> {
+                return WallpaperImportResult.Failed(WallpaperMediaFailure.QUOTA_EXCEEDED)
+            }
+            WallpaperQuotaResult.INVALID_STATE -> {
                 return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
             }
-            totalBytes += length
-        }
-        if (
-            regularFiles.size >= MAXIMUM_WALLPAPER_STAGED_FILE_COUNT ||
-            totalBytes > MAXIMUM_WALLPAPER_STAGED_TOTAL_BYTES - bytes.size
-        ) {
-            return WallpaperImportResult.Failed(WallpaperMediaFailure.QUOTA_EXCEEDED)
         }
 
-        val pending = File(root, "$PENDING_FILE_PREFIX${UUID.randomUUID()}")
+        var pending: PendingFileLease? = null
+        var finalOwnedIdentity: ManagedFileIdentity? = null
+        var candidateLeased = false
         try {
-            FileOutputStream(pending).use { output ->
-                output.write(bytes)
-                output.flush()
-                output.fd.sync()
-            }
-            val verifiedPending = pending.inputStream().use { input ->
+            pending = writeExclusivePending(root, bytes)
+                ?: return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+            persistenceProbe.onCheckpoint(WallpaperPersistenceCheckpoint.PENDING_FILE_SYNCED)
+            val verifiedPending = pending.file.inputStream().use { input ->
                 input.readBounded(MAXIMUM_WALLPAPER_DERIVATIVE_BYTES)
             }
             if (
@@ -642,41 +761,546 @@ internal class ManagedWallpaperStore(
             ) {
                 return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
             }
-            if (!pending.renameTo(finalFile)) {
+            persistenceProbe.onCheckpoint(WallpaperPersistenceCheckpoint.PENDING_VERIFIED)
+            val pendingIdentity = pending.identity
+            if (
+                pendingIdentity.linkCount != 1L ||
+                pending.file.managedFileIdentity() != pendingIdentity
+            ) {
                 return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
             }
+            persistenceFaultInjector.onFaultPoint(
+                WallpaperPersistenceFaultPoint.BEFORE_FINAL_PUBLISH,
+            )
+            if (!Files.notExists(finalFile.toPath(), NOFOLLOW_LINKS)) {
+                return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+            }
+            Os.rename(pending.file.absolutePath, finalFile.absolutePath)
+            finalOwnedIdentity = pendingIdentity
+            pending = null
+            persistenceFaultInjector.onFaultPoint(
+                WallpaperPersistenceFaultPoint.BEFORE_FINAL_VERIFY,
+            )
+            val verifiedFinal = finalFile.readVerifiedDerivative(
+                mediaId = mediaId,
+                expectedIdentity = pendingIdentity,
+            )
+            if (verifiedFinal == null || !verifiedFinal.contentEquals(bytes)) {
+                return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+            }
+            val candidate = WallpaperImportResult.Ready(mediaId = mediaId, created = true)
+            onCandidateCreated(candidate)
+            candidateLeased = true
+            persistenceProbe.onCheckpoint(WallpaperPersistenceCheckpoint.FINAL_PUBLISHED)
             if (!syncDirectory(root)) {
-                runCatching { finalFile.delete() }
                 return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
             }
-            return WallpaperImportResult.Ready(mediaId = mediaId, created = true)
+            persistenceProbe.onCheckpoint(WallpaperPersistenceCheckpoint.FINAL_DIRECTORY_SYNCED)
+            return candidate
         } catch (_: IOException) {
+            return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
+        } catch (_: ErrnoException) {
             return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
         } catch (_: SecurityException) {
             return WallpaperImportResult.Failed(WallpaperMediaFailure.STORAGE_FAILURE)
         } finally {
-            if (pending.exists()) runCatching { pending.delete() }
+            pending?.let { pendingLease ->
+                if (deletePendingIfOwned(pendingLease.file, pendingLease.identity)) {
+                    syncDirectory(root)
+                }
+            }
+            val ownedIdentity = finalOwnedIdentity
+            if (
+                ownedIdentity != null &&
+                !candidateLeased &&
+                deleteFinalIfOwned(finalFile, ownedIdentity)
+            ) {
+                syncDirectory(root)
+            }
         }
     }
 
-    private fun deleteManagedFile(mediaId: String): Boolean {
+    private fun deleteManagedFileIfUnreferenced(
+        mediaId: String,
+        referencedMediaIds: Set<String>,
+    ): Boolean {
         val fileName = wallpaperDerivativeFileName(mediaId) ?: return false
-        val root = validatedDirectory(create = false) ?: return false
-        val file = File(root, fileName)
-        if (!file.isSafeRegularChildOf(root)) return false
-        return runCatching { file.delete() }.getOrDefault(false)
+        if (validatedReferenceFileNames(referencedMediaIds) == null) return false
+        if (mediaId in referencedMediaIds) return true
+        val root = when (val access = validatedDirectory(create = false)) {
+            ManagedDirectoryAccess.Absent -> return true
+            is ManagedDirectoryAccess.Ready -> access.root
+            else -> return false
+        }
+        val entries = when (val snapshot = snapshotManagedDirectory(root)) {
+            is ManagedDirectorySnapshot.Ready -> snapshot.entries
+            else -> return false
+        }
+        val entry = entries.firstOrNull { child -> child.file.name == fileName } ?: return true
+        val classification = entry.classification as? ManagedWallpaperFileClassification.Final
+            ?: return false
+        if (classification.mediaId != mediaId || !deleteExactManagedEntry(entry)) return false
+        return syncDirectory(root)
     }
 
-    private fun validatedDirectory(create: Boolean): File? {
-        if (!directory.exists() && create && !directory.mkdirs()) return null
-        if (!directory.exists()) return null
-        if (!directory.isDirectory || Files.isSymbolicLink(directory.toPath())) return null
-        val noBackupRoot = directory.parentFile?.parentFile ?: return null
-        return directory.takeIf { candidate ->
-            runCatching { candidate.canonicalFile.toPath().startsWith(noBackupRoot.canonicalFile.toPath()) }
-                .getOrDefault(false)
+    private fun validatedReferenceFileNames(referencedMediaIds: Set<String>): Set<String>? {
+        if (referencedMediaIds.size > MAXIMUM_WALLPAPER_FILE_COUNT) return null
+        return canonicalReferenceFileNames(referencedMediaIds)
+    }
+
+    private fun canonicalReferenceFileNames(referencedMediaIds: Set<String>): Set<String>? {
+        return referencedMediaIds.mapTo(HashSet(referencedMediaIds.size)) { mediaId ->
+            wallpaperDerivativeFileName(mediaId) ?: return null
         }
     }
+
+    private suspend fun validatedDirectoryForPersistence(): ManagedDirectoryAccess {
+        return try {
+            when (validateDirectoryComponent(noBackupRoot, parent = null, create = false)) {
+                is DirectoryComponentAccess.Ready -> Unit
+                DirectoryComponentAccess.Unsafe -> return ManagedDirectoryAccess.Unsafe
+                else -> return ManagedDirectoryAccess.Unavailable
+            }
+            val appearance = when (
+                val access = validateDirectoryComponent(
+                    appearanceDirectory,
+                    noBackupRoot,
+                    create = true,
+                )
+            ) {
+                is DirectoryComponentAccess.Ready -> access
+                DirectoryComponentAccess.Unsafe -> return ManagedDirectoryAccess.Unsafe
+                else -> return ManagedDirectoryAccess.Unavailable
+            }
+            if (appearance.created) {
+                persistenceProbe.onCheckpoint(
+                    WallpaperPersistenceCheckpoint.APPEARANCE_DIRECTORY_CREATED,
+                )
+            }
+            persistenceFaultInjector.onFaultPoint(
+                WallpaperPersistenceFaultPoint.BEFORE_APPEARANCE_PARENT_SYNC,
+            )
+            if (!syncDirectory(noBackupRoot)) return ManagedDirectoryAccess.Unavailable
+            if (appearance.created) {
+                persistenceProbe.onCheckpoint(
+                    WallpaperPersistenceCheckpoint.APPEARANCE_PARENT_SYNCED,
+                )
+            }
+            val wallpapers = when (
+                val access = validateDirectoryComponent(
+                    directory,
+                    appearanceDirectory,
+                    create = true,
+                )
+            ) {
+                is DirectoryComponentAccess.Ready -> access
+                DirectoryComponentAccess.Unsafe -> return ManagedDirectoryAccess.Unsafe
+                else -> return ManagedDirectoryAccess.Unavailable
+            }
+            if (wallpapers.created) {
+                persistenceProbe.onCheckpoint(
+                    WallpaperPersistenceCheckpoint.WALLPAPER_DIRECTORY_CREATED,
+                )
+            }
+            persistenceFaultInjector.onFaultPoint(
+                WallpaperPersistenceFaultPoint.BEFORE_WALLPAPER_PARENT_SYNC,
+            )
+            if (!syncDirectory(appearanceDirectory)) return ManagedDirectoryAccess.Unavailable
+            if (wallpapers.created) {
+                persistenceProbe.onCheckpoint(
+                    WallpaperPersistenceCheckpoint.WALLPAPER_PARENT_SYNCED,
+                )
+            }
+            ManagedDirectoryAccess.Ready(directory)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: IOException) {
+            ManagedDirectoryAccess.Unavailable
+        } catch (_: ErrnoException) {
+            ManagedDirectoryAccess.Unavailable
+        } catch (_: SecurityException) {
+            ManagedDirectoryAccess.Unavailable
+        }
+    }
+
+    private fun validatedDirectory(create: Boolean): ManagedDirectoryAccess {
+        when (validateDirectoryComponent(noBackupRoot, parent = null, create = false)) {
+            is DirectoryComponentAccess.Ready -> Unit
+            DirectoryComponentAccess.Unsafe -> return ManagedDirectoryAccess.Unsafe
+            else -> return ManagedDirectoryAccess.Unavailable
+        }
+        when (validateDirectoryComponent(appearanceDirectory, noBackupRoot, create)) {
+            DirectoryComponentAccess.Missing -> return ManagedDirectoryAccess.Absent
+            is DirectoryComponentAccess.Ready -> Unit
+            DirectoryComponentAccess.Unsafe -> return ManagedDirectoryAccess.Unsafe
+            DirectoryComponentAccess.Unavailable -> return ManagedDirectoryAccess.Unavailable
+        }
+        return when (validateDirectoryComponent(directory, appearanceDirectory, create)) {
+            DirectoryComponentAccess.Missing -> ManagedDirectoryAccess.Absent
+            is DirectoryComponentAccess.Ready -> ManagedDirectoryAccess.Ready(directory)
+            DirectoryComponentAccess.Unsafe -> ManagedDirectoryAccess.Unsafe
+            DirectoryComponentAccess.Unavailable -> ManagedDirectoryAccess.Unavailable
+        }
+    }
+
+    private fun validateDirectoryComponent(
+        component: File,
+        parent: File?,
+        create: Boolean,
+    ): DirectoryComponentAccess {
+        fun inspect(): DirectoryComponentAccess = try {
+            val attributes = Files.readAttributes(
+                component.toPath(),
+                BasicFileAttributes::class.java,
+                NOFOLLOW_LINKS,
+            )
+            if (attributes.isSymbolicLink || !attributes.isDirectory) {
+                DirectoryComponentAccess.Unsafe
+            } else if (
+                parent != null &&
+                component.canonicalFile.parentFile != parent.canonicalFile
+            ) {
+                DirectoryComponentAccess.Unsafe
+            } else {
+                DirectoryComponentAccess.Ready(component)
+            }
+        } catch (_: NoSuchFileException) {
+            DirectoryComponentAccess.Missing
+        } catch (_: IOException) {
+            DirectoryComponentAccess.Unavailable
+        } catch (_: SecurityException) {
+            DirectoryComponentAccess.Unavailable
+        }
+
+        val initial = inspect()
+        if (initial !is DirectoryComponentAccess.Missing || !create) return initial
+        var created = false
+        try {
+            Files.createDirectory(component.toPath())
+            created = true
+        } catch (_: FileAlreadyExistsException) {
+            Unit
+        } catch (_: IOException) {
+            return DirectoryComponentAccess.Unavailable
+        } catch (_: SecurityException) {
+            return DirectoryComponentAccess.Unavailable
+        }
+        return when (val createdAccess = inspect()) {
+            is DirectoryComponentAccess.Ready -> DirectoryComponentAccess.Ready(
+                directory = createdAccess.directory,
+                created = created,
+            )
+            else -> createdAccess
+        }
+    }
+
+    private fun snapshotManagedDirectory(root: File): ManagedDirectorySnapshot {
+        val entries = ArrayList<ManagedDirectoryEntry>(MAXIMUM_WALLPAPER_STAGED_FILE_COUNT)
+        return try {
+            Files.newDirectoryStream(root.toPath()).use { stream ->
+                for (path in stream) {
+                    if (entries.size >= MAXIMUM_WALLPAPER_STAGED_FILE_COUNT) {
+                        return ManagedDirectorySnapshot.Unsafe
+                    }
+                    val attributes = Files.readAttributes(
+                        path,
+                        BasicFileAttributes::class.java,
+                        NOFOLLOW_LINKS,
+                    )
+                    if (attributes.isSymbolicLink || !attributes.isRegularFile) {
+                        return ManagedDirectorySnapshot.Unsafe
+                    }
+                    val classification = classifyManagedWallpaperFileName(
+                        path.fileName?.toString() ?: return ManagedDirectorySnapshot.Unsafe,
+                    )
+                    if (classification is ManagedWallpaperFileClassification.Unexpected) {
+                        return ManagedDirectorySnapshot.Unsafe
+                    }
+                    val stat = Os.lstat(path.toFile().absolutePath)
+                    if (!OsConstants.S_ISREG(stat.st_mode)) {
+                        return ManagedDirectorySnapshot.Unsafe
+                    }
+                    entries += ManagedDirectoryEntry(
+                        file = path.toFile(),
+                        classification = classification,
+                        identity = ManagedFileIdentity(
+                            device = stat.st_dev,
+                            inode = stat.st_ino,
+                            linkCount = stat.st_nlink,
+                        ),
+                    )
+                }
+            }
+            if (entries.all { entry -> entry.identity.linkCount == 1L }) {
+                ManagedDirectorySnapshot.Ready(entries)
+            } else {
+                ManagedDirectorySnapshot.Unsafe
+            }
+        } catch (_: DirectoryIteratorException) {
+            ManagedDirectorySnapshot.Unavailable
+        } catch (_: ErrnoException) {
+            ManagedDirectorySnapshot.Unavailable
+        } catch (_: IOException) {
+            ManagedDirectorySnapshot.Unavailable
+        } catch (_: SecurityException) {
+            ManagedDirectorySnapshot.Unavailable
+        }
+    }
+
+    private fun File.managedFileIdentity(): ManagedFileIdentity? = try {
+        val stat = Os.lstat(absolutePath)
+        if (!OsConstants.S_ISREG(stat.st_mode)) {
+            null
+        } else {
+            ManagedFileIdentity(
+                device = stat.st_dev,
+                inode = stat.st_ino,
+                linkCount = stat.st_nlink,
+            )
+        }
+    } catch (_: ErrnoException) {
+        null
+    } catch (_: SecurityException) {
+        null
+    }
+
+    private fun deleteExactManagedEntry(entry: ManagedDirectoryEntry): Boolean = try {
+        persistenceFaultInjector.onFaultPoint(
+            WallpaperPersistenceFaultPoint.BEFORE_MANAGED_ENTRY_DELETE,
+        )
+        val attributes = Files.readAttributes(
+            entry.file.toPath(),
+            BasicFileAttributes::class.java,
+            NOFOLLOW_LINKS,
+        )
+        if (attributes.isSymbolicLink || !attributes.isRegularFile) return false
+        if (classifyManagedWallpaperFileName(entry.file.name)::class != entry.classification::class) {
+            return false
+        }
+        if (
+            entry.identity.linkCount != 1L ||
+            entry.file.managedFileIdentity() != entry.identity
+        ) {
+            return false
+        }
+        Files.delete(entry.file.toPath())
+        true
+    } catch (_: NoSuchFileException) {
+        true
+    } catch (_: IOException) {
+        false
+    } catch (_: SecurityException) {
+        false
+    }
+
+    private suspend fun writeExclusivePending(root: File, bytes: ByteArray): PendingFileLease? {
+        repeat(MAXIMUM_PENDING_NAME_ATTEMPTS) {
+            val pending = File(root, "$PENDING_FILE_PREFIX${UUID.randomUUID()}")
+            val descriptor = try {
+                Os.open(
+                    pending.absolutePath,
+                    OsConstants.O_WRONLY or
+                        OsConstants.O_CREAT or
+                        OsConstants.O_EXCL or
+                        OsConstants.O_NOFOLLOW or
+                        closeOnExecOpenFlag(),
+                    OWNER_READ_WRITE_MODE,
+                )
+            } catch (failure: ErrnoException) {
+                if (failure.errno == OsConstants.EEXIST) return@repeat
+                throw failure
+            }
+            var completed = false
+            var ownedIdentity: ManagedFileIdentity? = null
+            var output: FileOutputStream? = null
+            try {
+                val stat = Os.fstat(descriptor)
+                if (!OsConstants.S_ISREG(stat.st_mode) || stat.st_nlink != 1L) {
+                    throw IOException("Exclusive pending file is not a private regular file")
+                }
+                val identity = ManagedFileIdentity(
+                    device = stat.st_dev,
+                    inode = stat.st_ino,
+                    linkCount = stat.st_nlink,
+                )
+                ownedIdentity = identity
+                val openedOutput = FileOutputStream(descriptor)
+                output = openedOutput
+                openedOutput.use { pendingOutput ->
+                    persistenceFaultInjector.onFaultPoint(
+                        WallpaperPersistenceFaultPoint.BEFORE_PENDING_WRITE,
+                    )
+                    pendingOutput.write(bytes)
+                    persistenceFaultInjector.onFaultPoint(
+                        WallpaperPersistenceFaultPoint.BEFORE_PENDING_FLUSH,
+                    )
+                    pendingOutput.flush()
+                    persistenceFaultInjector.onFaultPoint(
+                        WallpaperPersistenceFaultPoint.BEFORE_PENDING_FILE_SYNC,
+                    )
+                    pendingOutput.fd.sync()
+                }
+                completed = true
+                return PendingFileLease(pending, identity)
+            } finally {
+                if (output == null) {
+                    runCatching { Os.close(descriptor) }
+                }
+                val identity = ownedIdentity
+                if (
+                    !completed &&
+                    identity != null &&
+                    deletePendingIfOwned(pending, identity)
+                ) {
+                    syncDirectory(root)
+                }
+            }
+        }
+        return null
+    }
+
+    private fun deleteFinalIfOwned(
+        finalFile: File,
+        expectedIdentity: ManagedFileIdentity,
+    ): Boolean {
+        if (
+            classifyManagedWallpaperFileName(finalFile.name) !is
+            ManagedWallpaperFileClassification.Final
+        ) {
+            return false
+        }
+        val currentIdentity = finalFile.managedFileIdentity() ?: return false
+        if (
+            currentIdentity.device != expectedIdentity.device ||
+            currentIdentity.inode != expectedIdentity.inode ||
+            currentIdentity.linkCount != 1L
+        ) {
+            return false
+        }
+        return try {
+            Files.deleteIfExists(finalFile.toPath())
+        } catch (_: IOException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    private suspend fun File.readVerifiedDerivative(
+        mediaId: String,
+        expectedIdentity: ManagedFileIdentity,
+    ): ByteArray? {
+        if (expectedIdentity.linkCount != 1L) return null
+        if (managedFileIdentity() != expectedIdentity) return null
+        val attributes = try {
+            Files.readAttributes(
+                toPath(),
+                BasicFileAttributes::class.java,
+                NOFOLLOW_LINKS,
+            )
+        } catch (_: IOException) {
+            return null
+        } catch (_: SecurityException) {
+            return null
+        }
+        if (attributes.isSymbolicLink || !attributes.isRegularFile) return null
+        val length = attributes.size()
+        if (length !in 1..MAXIMUM_WALLPAPER_DERIVATIVE_BYTES.toLong()) return null
+        val bytes = try {
+            inputStream().use { input -> input.readBounded(MAXIMUM_WALLPAPER_DERIVATIVE_BYTES) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: IOException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        } catch (_: RuntimeException) {
+            null
+        } ?: return null
+        if (managedFileIdentity() != expectedIdentity) return null
+        return bytes.takeIf { candidate ->
+            candidate.size.toLong() == length && wallpaperDerivativeMatches(mediaId, candidate)
+        }
+    }
+
+    private fun deletePendingIfOwned(
+        pending: File,
+        expectedIdentity: ManagedFileIdentity,
+    ): Boolean {
+        if (classifyManagedWallpaperFileName(pending.name) !is ManagedWallpaperFileClassification.Pending) {
+            return false
+        }
+        if (
+            expectedIdentity.linkCount != 1L ||
+            pending.managedFileIdentity() != expectedIdentity
+        ) {
+            return false
+        }
+        return try {
+            val attributes = Files.readAttributes(
+                pending.toPath(),
+                BasicFileAttributes::class.java,
+                NOFOLLOW_LINKS,
+            )
+            if (!attributes.isSymbolicLink && attributes.isRegularFile) {
+                Files.deleteIfExists(pending.toPath())
+            } else {
+                false
+            }
+        } catch (_: NoSuchFileException) {
+            false
+        } catch (_: IOException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+}
+
+private sealed interface ManagedDirectoryAccess {
+    data object Absent : ManagedDirectoryAccess
+    class Ready(val root: File) : ManagedDirectoryAccess
+    data object Unsafe : ManagedDirectoryAccess
+    data object Unavailable : ManagedDirectoryAccess
+}
+
+private sealed interface DirectoryComponentAccess {
+    data object Missing : DirectoryComponentAccess
+    class Ready(
+        val directory: File,
+        val created: Boolean = false,
+    ) : DirectoryComponentAccess
+    data object Unsafe : DirectoryComponentAccess
+    data object Unavailable : DirectoryComponentAccess
+}
+
+private class ManagedDirectoryEntry(
+    val file: File,
+    val classification: ManagedWallpaperFileClassification,
+    val identity: ManagedFileIdentity,
+) {
+    override fun toString(): String = "ManagedDirectoryEntry(REDACTED)"
+}
+
+private data class ManagedFileIdentity(
+    val device: Long,
+    val inode: Long,
+    val linkCount: Long,
+) {
+    override fun toString(): String = "ManagedFileIdentity(REDACTED)"
+}
+
+private class PendingFileLease(
+    val file: File,
+    val identity: ManagedFileIdentity,
+) {
+    override fun toString(): String = "PendingFileLease(REDACTED)"
+}
+
+private sealed interface ManagedDirectorySnapshot {
+    class Ready(val entries: List<ManagedDirectoryEntry>) : ManagedDirectorySnapshot
+    data object Unsafe : ManagedDirectorySnapshot
+    data object Unavailable : ManagedDirectorySnapshot
 }
 
 private sealed interface SourceReadResult {
@@ -1117,9 +1741,12 @@ private fun syncDirectory(directory: File): Boolean {
     return try {
         descriptor = Os.open(
             directory.absolutePath,
-            OsConstants.O_RDONLY,
+            OsConstants.O_RDONLY or
+                OsConstants.O_NOFOLLOW or
+                closeOnExecOpenFlag(),
             0,
         )
+        if (!OsConstants.S_ISDIR(Os.fstat(descriptor).st_mode)) return false
         Os.fsync(descriptor)
         true
     } catch (_: ErrnoException) {
@@ -1133,14 +1760,26 @@ private fun syncDirectory(directory: File): Boolean {
 
 private fun divideRoundUp(value: Int, divisor: Int): Int = (value + divisor - 1) / divisor
 
+private fun closeOnExecOpenFlag(): Int =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        OsConstants.O_CLOEXEC
+    } else {
+        // O_CLOEXEC was added to the public SDK in API 27. The descriptor is still
+        // closed deterministically on API 26; Android app processes do not exec here.
+        0
+    }
+
 internal fun ImageBitmap.recycleWallpaperBitmap() {
     runCatching {
         asAndroidBitmap().takeUnless(Bitmap::isRecycled)?.recycle()
     }
 }
 
-private const val WALLPAPER_DIRECTORY: String = "appearance/wallpapers"
+private const val APPEARANCE_DIRECTORY_NAME: String = "appearance"
+private const val WALLPAPER_DIRECTORY_NAME: String = "wallpapers"
 private const val PENDING_FILE_PREFIX: String = ".pending-"
+private const val MAXIMUM_PENDING_NAME_ATTEMPTS: Int = 8
+private const val OWNER_READ_WRITE_MODE: Int = 0x180
 private const val WALLPAPER_WEBP_QUALITY: Int = 95
 private const val JPEG_MARKER_TEM: Int = 0x01
 private const val JPEG_MARKER_RST_FIRST: Int = 0xd0

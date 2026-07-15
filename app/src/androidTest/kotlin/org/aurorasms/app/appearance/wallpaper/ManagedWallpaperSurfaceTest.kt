@@ -345,7 +345,11 @@ private class ControlledWallpaperMediaStore : WallpaperMediaStore {
     override suspend fun inspect(source: Uri): WallpaperInspectionResult =
         WallpaperInspectionResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
 
-    override suspend fun import(source: Uri): WallpaperImportResult =
+    override suspend fun import(
+        source: Uri,
+        referencedMediaIds: Set<String>,
+        onCandidateCreated: (WallpaperImportResult.Ready) -> Unit,
+    ): WallpaperImportResult =
         WallpaperImportResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
 
     override suspend fun load(mediaId: String, preview: Boolean): WallpaperLoadResult {
@@ -365,9 +369,14 @@ private class ControlledWallpaperMediaStore : WallpaperMediaStore {
         }
     }
 
-    override suspend fun delete(mediaId: String): Boolean = true
+    override suspend fun deleteIfUnreferenced(
+        mediaId: String,
+        referencedMediaIds: Set<String>,
+    ): Boolean = true
 
-    override suspend fun reconcile(referencedMediaIds: Set<String>): Boolean = true
+    override suspend fun reconcile(
+        referencedMediaIds: Set<String>,
+    ): ManagedWallpaperReconcileResult = ManagedWallpaperReconcileResult.COMPLETE
 
     override suspend fun validateDurableQuota(
         prospectiveMediaIds: Set<String>,
