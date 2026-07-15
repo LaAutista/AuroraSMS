@@ -288,12 +288,14 @@ all project steps green.
 
 The profile-reference foundation does not claim the wallpaper-specific chains
 merely because a named profile already has future wallpaper vocabulary. ADR
-0007 accepts the next bounded, not-yet-implemented wallpaper slice: direct
+0007's landed bounded wallpaper implementation adds direct
 `global_thread` and verified-conversation assignments with assignment-local
 focal/dim values, a real Thread renderer, and a temporary system-picker import
 sanitized to a private content-addressed static WebP. It persists no source URI
-or grant. Inbox/other screens, canonical artwork, GIF, live external URI,
-static blur, and import/export media remain separate acceptance work.
+or grant. Its complete picker, hostile-limit, crash-cleanup, concurrency,
+accessibility/form-factor, and physical wallpaper acceptance remains pending.
+Inbox/other screens, canonical artwork, GIF, live external URI, static blur, and
+import/export media remain separate acceptance work.
 
 Required themes include Aurora Dark, AMOLED Black, Light, and System/Dynamic.
 Required avatar masks are circle, rounded square, squircle, and hexagon.

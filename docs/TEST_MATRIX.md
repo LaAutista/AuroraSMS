@@ -13,9 +13,13 @@ cold-launch gates also passed on an awake, unlocked Pixel 8. The physical check
 is intentionally Inbox-only; full process-death end-to-end and physical eligible-
 Thread modal coverage are not claimed. Representative physical-device
 performance, remaining API/OEM coverage, and carrier transport rows remain
-pending. ADR 0007's managed private static Thread-wallpaper contract is
-accepted as the next slice; every ADR 0007 implementation row below remains
-unchecked.
+pending. ADR 0007's bounded managed private static Thread-wallpaper
+implementation is frozen at source commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be`;
+its host/governance, focused API 26, complete API 36, and Pixel artifact/package/
+role/permission/cold-launch gates passed. The manual Photo Picker, hostile-limit,
+process-death, accessibility/form-factor, combined MMS decode-concurrency, and
+physical static-Thread-wallpaper journeys remain outstanding and are not
+claimed.
 
 ## Evidence rules
 
@@ -1075,18 +1079,20 @@ after installation was `PACKAGE UPDATED`; the prior excessive-CPU exit remains
 historical evidence from before lifecycle hardening. No carrier message was
 sent.
 
-### ADR 0007 managed private static Thread wallpaper — accepted, implementation pending
+### ADR 0007 managed private static Thread wallpaper — bounded implementation landed; acceptance outstanding
 
-These rows define the next bounded slice and are not evidence that it is
-implemented. No row may be checked until its retained synthetic evidence and
-the normal host/governance/emulator/device gates are recorded.
+Source commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be` is committed and pushed
+on `origin/main`. Checked rows are backed by the retained synthetic and
+privacy-safe artifact evidence below. Compound rows remain unchecked whenever
+any named boundary or journey has not run; this section does not claim the
+complete ADR 0007 acceptance slice.
 
 - [ ] State schema version 4 has an explicit version-3-to-version-4 migration
   that preserves drafts, profiles, active selection, scoped profile references,
   triggers, and the complete version-1-to-version-4 path while creating empty
   direct global-thread/conversation wallpaper assignment tables. There is no
   media catalog table or destructive fallback.
-- [ ] Wallpaper rows store only the stable screen code or ADR 0006 participant
+- [x] Wallpaper rows store only the stable screen code or ADR 0006 participant
   fingerprint/current thread hint, `static_raster_v1` kind, `sha256-v1:` token,
   focal X/Y 0..1,000, dim 350..900, and revision. Models/entities/exceptions/logs/
   `toString` expose no picker URI, path, file name, source metadata, participant
@@ -1096,7 +1102,7 @@ the normal host/governance/emulator/device gates are recorded.
   wallpaper rows; create/update/reset/recreate, stale Apply, sequence rollback,
   corruption, database reopen, and conversation-thread rebinding retain the ADR
   0006 CAS/ABA guarantees.
-- [ ] Production controls and rendering exist only for `global_thread` and an
+- [x] Production controls and rendering exist only for `global_thread` and an
   exact verified conversation. Resolution is conversation managed wallpaper ->
   `global_thread` managed wallpaper -> accessible solid. Thread-ID-only,
   pending/incomplete/truncated/changed identity, Search, Theme Studio, Inbox,
@@ -1142,7 +1148,7 @@ the normal host/governance/emulator/device gates are recorded.
   persistence, 200% font/scroll, TalkBack labels/state, RTL, short/tall,
   landscape, and split-screen tests pass without route/state-holder/provider/
   index/composer/draft reconstruction caused by wallpaper actions.
-- [ ] Merged manifests and APKs add no storage/media/network permission,
+- [x] Merged manifests and APKs add no storage/media/network permission,
   persistent-grant component, exported component, initializer, native binary,
   private artwork, or new dependency coordinate. Backup/data-extraction rules
   and `noBackupFilesDir` exclude all state, managed derivatives, previews, and
@@ -1152,6 +1158,84 @@ the normal host/governance/emulator/device gates are recorded.
   root/UI acceptance, API 26 legacy decode, API 36 connected, complete offline
   build/lint/governance/license/SBOM/APK gates, and privacy-safe physical static
   Thread-wallpaper journeys pass before implementation-complete is claimed.
+
+#### ADR 0007 bounded implementation evidence — automated/install gates 2026-07-14
+
+The complete offline host gate was:
+
+```text
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease :app:lintBenchmark :app:assembleBenchmark :macrobenchmark:check :macrobenchmark:assembleBenchmark verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions verifyApkContents checkLicense generateLicenseReport --offline --no-daemon --no-parallel --console=plain
+```
+
+It was `BUILD SUCCESSFUL` in 1m06s: 886 actionable tasks, 91 executed,
+2 from cache, and 793 up-to-date. Unit tests, debug/release lint and assembly,
+benchmark/macrobenchmark checks, clean-room/private-asset/dependency checks,
+merged-manifest and APK permission/content checks, license checks, and the
+license report passed. The separately required `cyclonedxBom` invocation was
+`BUILD SUCCESSFUL` in 7s with all 15 tasks up-to-date.
+
+The complete connected command pinned to API 36 was:
+
+```text
+ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline --no-daemon --no-parallel --console=plain
+```
+
+It was `BUILD SUCCESSFUL` in 58s: 456 actionable tasks, 9 executed and 447
+up-to-date. App 40, core index 31, notifications 3, state 40, telephony 15,
+feature conversations 4, and the bounded benchmark guards passed. The
+explicitly physical-only MainActivity scoped-modal smoke and opt-in scale
+benchmark were skipped as designed.
+
+The focused legacy-decoder command ran
+`ManagedWallpaperStoreTest` on the Android 8.0/API 26 `AuroraSMS_API26` AVD;
+all 5 tests passed. The same class passed 5/5 on API 36. Retained coverage
+includes JPEG and PNG EXIF orientation, pixel-exact legacy transforms for all
+eight orientations, ARGB_8888/sRGB normalization, static PNG happy-path import/
+deduplication/load/reconcile, and fail-closed invalid-scheme, MIME-mismatch,
+APNG, GIF, and truncated-input cases. The compound every-orientation/new-decoder
+row remains unchecked because every orientation was not exercised through the
+API 28+ `ImageDecoder` path. The compound Apply/derivative row also remains
+unchecked until retained tests exercise metadata removal, the exact quality-95
+and 8-MiB encoder boundary, exact no-backup name/location, and tampered managed
+header/hash/dimension/allocation rejection.
+
+Repository instrumentation passed 10/10 and covers shared protected sequence
+allocation, independent reset, last-reference reporting, conversation rebinding,
+prospective CAS/quota projection, unsupported-scope rejection, corrupt-row
+fail-closed enumeration/reset, the 129th-media overflow sentinel, and sequence
+rollback below a live-row floor. Migration/schema/reopen instrumentation also
+passed in the complete API 36 matrix. Controller and resource-owner unit tests
+cover conversation -> global-thread -> solid resolution, high-contrast solid,
+stale-target rejection, exact prospective quota ordering, failure cleanup, and
+late resource handoff/disposal. These tests do not substitute for the still-open
+real-filesystem quota, crash-cleanup, combined MMS/wallpaper concurrency, or
+physical picker journeys. The version-3-to-version-4 migration passed and the
+existing version-1-to-version-3 chain remains covered, but a retained direct
+version-1-to-version-4 chain test has not run; the compound migration row remains
+unchecked. The compound CAS/ABA row likewise remains unchecked until a wallpaper
+target is reset and recreated and the pre-reset revision is proven stale, plus
+the controller's late target-current rejection branches are exercised.
+
+The exact debug APK built from source commit
+`c957995e74c7ba76ed25d1b7c4d23c05f42852be` is 13,993,426 bytes with SHA-256
+`188c6d6d692116dc3dedc33dae03f65e66d32fd154ea4860aa24a996456b09df`.
+It installed successfully on API 36 Pixel 8 serial `192.168.68.51:38677`; the
+copy at `/sdcard/Download/AuroraSMS-debug.apk` has the exact same size and hash.
+The installed package is version `0.4.2-phase4` (`versionCode=3`, target 36),
+remained the default-SMS role holder, and retained granted `READ_SMS`, `SEND_SMS`,
+`RECEIVE_SMS`, `RECEIVE_MMS`, and `POST_NOTIFICATIONS` permissions. A clean
+MainActivity launch reported `Status: ok`, launch state `COLD`, `TotalTime: 1000`,
+`WaitTime: 1003`, PID 13329, and resumed/focused MainActivity. Its error-only PID
+log contained only Android's benign ashmem-pinning deprecation. No screenshot,
+message/address export, physical wallpaper selection, or carrier send occurred.
+
+GitHub Verify
+[run 29389036364](https://github.com/LaAutista/AuroraSMS/actions/runs/29389036364)
+passed its build job in 13m39s with every project step green: wrapper identity,
+clean-room/dependency checks, test/lint/assembly, merged-manifest/APK checks,
+license inventory, aggregate CycloneDX SBOM, and governance-report upload. Its
+only annotation was the GitHub-hosted Node 20 deprecation and forced Node 24 for
+pinned actions, not a project failure.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 

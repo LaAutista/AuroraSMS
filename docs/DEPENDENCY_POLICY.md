@@ -301,8 +301,8 @@ coordinate, and must be absent from release and benchmark manifests/APKs. The
 slice adds no production Activity, navigation destination, or component
 dependency.
 
-ADR 0007 authorizes no new dependency. Its pending static implementation may
-reuse the admitted Activity Result/Activity Compose, Compose, coroutine, and
+ADR 0007 authorizes no new dependency. Its landed static implementation reuses
+the admitted Activity Result/Activity Compose, Compose, coroutine, and
 Room graph plus Android platform `BitmapFactory`, `ImageDecoder`, color-space,
 WebP-compression and file APIs, `java.security.MessageDigest`, and a small
 original parser that reads only bounded JPEG APP1 and PNG `eXIf` TIFF

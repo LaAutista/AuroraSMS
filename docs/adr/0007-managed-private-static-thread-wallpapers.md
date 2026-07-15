@@ -1,7 +1,8 @@
 # ADR 0007: managed private static Thread wallpapers
 
-Status: accepted as the next bounded Phase 4 implementation slice on
-2026-07-14; implementation and verification are pending
+Status: accepted on 2026-07-14; the bounded implementation landed at source
+commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be` with selected automated and
+artifact gates passing; complete acceptance remains pending
 
 ## Context
 

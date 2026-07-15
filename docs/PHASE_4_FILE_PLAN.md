@@ -13,11 +13,13 @@ participants passed focused verification plus the complete local
 host/release/benchmark/governance/license/SBOM, API 36 connected,
 frozen-artifact, deliberately Inbox-only Pixel, and source GitHub CI gates,
 while physical 9-member Thread coverage remains pending;
-ADR 0007 now accepts managed private static wallpapers for `global_thread` and
-verified conversations as the next bounded implementation slice, but no ADR
-0007 code or verification is claimed yet; Inbox/other-screen treatment,
-built-in artwork, GIF/live-URI media, import/export, navigation variants, and
-the full accessibility/performance matrix remain gated follow-on work
+ADR 0007's bounded managed private static wallpaper implementation for
+`global_thread` and verified conversations landed at source commit
+`c957995e74c7ba76ed25d1b7c4d23c05f42852be` and passed selected automated and
+artifact gates, while complete acceptance remains pending; Inbox/other-screen
+treatment, built-in artwork, GIF/live-URI media, import/export, navigation
+variants, and the full accessibility/performance matrix remain gated follow-on
+work
 
 ## Outcome
 
@@ -46,7 +48,7 @@ does not add wallpaper/media references, assignment-local focal/dim values,
 artwork, pickers, decoders, GIF lifecycle, or final
 accessibility/performance claims.
 
-ADR 0007 defines the next accepted, not-yet-implemented slice. It adds a real
+ADR 0007 defines the landed bounded slice. It adds a real
 Thread-only static wallpaper consumer for `global_thread` and verified
 conversation targets. The system picker URI is temporary process memory; Apply
 sanitizes bounded JPEG/static-PNG input into an app-private content-addressed
@@ -524,9 +526,9 @@ benign ashmem-pinning deprecation. This content-free Inbox smoke is not physical
 `origin/main`; GitHub Verify run `29380854714` passed its 10m59s build job with
 all project steps green.
 
-## Remaining follow-on slices
+## ADR 0007 landed slice and remaining follow-ons
 
-### 1. ADR 0007 managed private static Thread wallpaper — accepted next slice
+### 1. ADR 0007 managed private static Thread wallpaper — bounded implementation landed; acceptance pending
 
 - Add direct wallpaper assignments only for `global_thread` and an ADR
   0006-verified conversation. The first resolver is conversation managed WebP
@@ -562,7 +564,7 @@ all project steps green.
 - Keep Inbox and all other screen wallpaper controls/renderers absent until
   their separate surface/contrast treatment is accepted.
 
-The anticipated implementation boundary is:
+The implemented boundary is:
 
 ```text
 docs/adr/0007-managed-private-static-thread-wallpapers.md
