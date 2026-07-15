@@ -4,7 +4,7 @@ Status: accepted on 2026-07-14; the bounded implementation landed at source
 commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be`, followed by acceptance
 hardening at `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` and renderer isolation
 at `e5aa4dfb1c695046c136d07e6b0c549e77e278ee`; crash-safe managed-store and
-quota hardening landed at source commit `27a16ad`. Its focused host, API 26,
+quota hardening landed at source commit `f0f1ff9`. Its focused host, API 26,
 API 36, physical filesystem, complete connected, release/governance,
 license/SBOM, and exact APK handoff gates pass, while complete picker/UI,
 accessibility/form-factor, carrier, and overall acceptance remain pending
