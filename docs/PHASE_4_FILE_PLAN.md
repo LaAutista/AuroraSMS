@@ -18,7 +18,7 @@ ADR 0007's bounded managed private static wallpaper implementation for
 `c957995e74c7ba76ed25d1b7c4d23c05f42852be`, followed by acceptance hardening
 at `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` and renderer isolation at
 `e5aa4dfb1c695046c136d07e6b0c549e77e278ee`; its crash-safe managed-store and
-quota protocol landed at `27a16ad` and passed focused host, API 26/API 36/Pixel
+quota protocol landed at `f0f1ff9` and passed focused host, API 26/API 36/Pixel
 filesystem, complete connected, release/governance, license/SBOM, and exact APK
 handoff gates. Complete picker/static-wallpaper UI acceptance remains pending;
 Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
@@ -737,7 +737,7 @@ remains bounded to `MAXIMUM_RETAINED_ROUTES`. Full process-death end-to-end and
 physical eligible-Thread modal coverage are not claimed. No carrier message is
 sent by this slice.
 
-For crash/quota source commit `27a16ad`, focused host tests passed 32/32
+For crash/quota source commit `f0f1ff9`, focused host tests passed 32/32
 (controller 20, file policy 7, quota 5). `ManagedWallpaperStoreTest` 15 plus
 `ManagedWallpaperCrashProtocolTest` 14 passed 29/29 on API 26 and API 36
 emulators and on the API 36 Pixel 8. The complete API 36 connected matrix passed

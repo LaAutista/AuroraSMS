@@ -151,7 +151,7 @@ SHA-256, and a privacy-safe cold launch resumed MainActivity without an app
 crash. Physical eligible-Thread modal coverage remains follow-on work.
 
 ADR 0007's managed private static Thread-wallpaper store is now crash-safe and
-quota-bounded at source commit `27a16ad`. Its app-private namespace uses a
+quota-bounded at source commit `f0f1ff9`. Its app-private namespace uses a
 process-wide mutation lock, durable parent and leaf-directory synchronization,
 exclusive no-follow pending files, verified same-directory atomic publication,
 fresh bounded Room authority for cleanup, and fail-closed two-pass startup

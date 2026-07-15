@@ -292,7 +292,7 @@ merely because a named profile already has future wallpaper vocabulary. ADR
 `global_thread` and verified-conversation assignments with assignment-local
 focal/dim values, a real Thread renderer, and a temporary system-picker import
 sanitized to a private content-addressed static WebP. It persists no source URI
-or grant. Source commit `27a16ad` completes the bounded managed-file quota and
+or grant. Source commit `f0f1ff9` completes the bounded managed-file quota and
 crash protocol: durable exclusive/no-follow staging and atomic publication,
 fresh Room-authoritative cleanup, and fail-closed two-pass reconciliation. Its
 complete picker/static-wallpaper UI journey, accessibility/form-factor,

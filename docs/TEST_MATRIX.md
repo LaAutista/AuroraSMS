@@ -15,7 +15,7 @@ Thread modal coverage are not claimed. Representative physical-device
 performance, remaining API/OEM coverage, and carrier transport rows remain
 pending. ADR 0007's bounded managed private static Thread-wallpaper
 implementation now includes crash-safe managed-store and quota hardening at
-source commit `27a16ad`. Focused host, API 26/API 36 emulator, physical Pixel 8
+source commit `f0f1ff9`. Focused host, API 26/API 36 emulator, physical Pixel 8
 filesystem, complete API 36 connected, release/governance, license/SBOM, and
 exact Pixel APK handoff gates passed. The physical managed-store test was
 non-UI filesystem coverage only. The manual Photo Picker/static-wallpaper UI
@@ -1083,7 +1083,7 @@ sent.
 
 ### ADR 0007 managed private static Thread wallpaper — bounded implementation landed; acceptance outstanding
 
-Current crash/quota source commit `27a16ad` is committed; initial implementation
+Current crash/quota source commit `f0f1ff9` is committed; initial implementation
 commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be`, acceptance hardening commit
 `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2`, and renderer-isolation commit
 `e5aa4dfb1c695046c136d07e6b0c549e77e278ee` remain part of the retained evidence
@@ -1456,7 +1456,7 @@ physical-device wallpaper journey, or a completed application.
 
 #### ADR 0007 crash-safe managed-store follow-up evidence — 2026-07-15
 
-Source commit `27a16ad` makes the app-private single-process namespace
+Source commit `f0f1ff9` makes the app-private single-process namespace
 authoritative under one process-wide mutex. It durably creates parent
 directories; creates pending leaves with `O_EXCL|O_NOFOLLOW`; writes, flushes,
 syncs, and verifies digest plus exact device/inode/single-link identity;
