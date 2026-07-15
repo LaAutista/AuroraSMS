@@ -197,10 +197,15 @@ Controls:
   candidate of at most 8 MiB may temporarily raise physical storage to 129
   files/264 MiB, but is not durable quota, is removed on rejection/cancellation,
   and is collected as an orphan only after healthy startup validation;
-- serialize import, sync/rename the bounded final before the Room assignment
-  commit, delete old media only after an authoritative post-commit last-reference
-  check, and run pending/orphan cleanup only after a healthy bounded state
-  snapshot; and
+- keep the app-private single-process namespace behind one process-wide mutex;
+  durably create parent directories, use `O_EXCL|O_NOFOLLOW` pending leaves,
+  sync and verify exact device/inode/single-link identity plus content, recheck
+  final absence, atomically rename, reverify, deliver a synchronous cleanup
+  lease, and sync the leaf directory before Room CAS;
+- delete a failed/new or replaced/old candidate only after a fresh bounded Room
+  reference check, and reconcile with a fail-closed two-pass scan so any unsafe
+  entry or unavailable/corrupt/over-limit authority causes zero partial
+  deletion; and
 - share a two-permit app media-decode gate with MMS while allowing only one
   wallpaper import/decode and one current wallpaper allocation.
 

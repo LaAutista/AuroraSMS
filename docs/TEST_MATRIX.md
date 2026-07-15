@@ -14,14 +14,14 @@ is intentionally Inbox-only; full process-death end-to-end and physical eligible
 Thread modal coverage are not claimed. Representative physical-device
 performance, remaining API/OEM coverage, and carrier transport rows remain
 pending. ADR 0007's bounded managed private static Thread-wallpaper
-implementation is frozen at source commit `e5aa4dfb1c695046c136d07e6b0c549e77e278ee`;
-its host/governance and complete API 36 gates passed. Retained focused API 26
-managed-store and Pixel artifact/package/role/permission evidence applies to
-the preceding `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` build; a current-source
-Pixel handoff has not run because only the API 36 emulator was connected. The
-manual Photo Picker, managed-file crash/quota protocol, process-death,
-accessibility/form-factor, and physical static-Thread-wallpaper journeys remain
-outstanding and are not claimed.
+implementation now includes crash-safe managed-store and quota hardening at
+source commit `27a16ad`. Focused host, API 26/API 36 emulator, physical Pixel 8
+filesystem, complete API 36 connected, release/governance, license/SBOM, and
+exact Pixel APK handoff gates passed. The physical managed-store test was
+non-UI filesystem coverage only. The manual Photo Picker/static-wallpaper UI
+journey, broader process-death UX, accessibility/form-factor/performance,
+carrier, and compound implementation-complete rows remain outstanding; the app
+is not complete or gold.
 
 ## Evidence rules
 
@@ -1083,13 +1083,13 @@ sent.
 
 ### ADR 0007 managed private static Thread wallpaper — bounded implementation landed; acceptance outstanding
 
-Current source commit `e5aa4dfb1c695046c136d07e6b0c549e77e278ee` is committed;
-initial implementation commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be`
-and hardening commit `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` remain part of
-the retained evidence chain. Checked rows are backed by the synthetic and
-privacy-safe artifact evidence below. Compound rows remain unchecked whenever
-any named boundary or journey has not run; this section does not claim the
-complete ADR 0007 acceptance slice.
+Current crash/quota source commit `27a16ad` is committed; initial implementation
+commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be`, acceptance hardening commit
+`975009f2b2c99cf389fb8020b270fd7c5bbf0bb2`, and renderer-isolation commit
+`e5aa4dfb1c695046c136d07e6b0c549e77e278ee` remain part of the retained evidence
+chain. Checked rows are backed by the synthetic and privacy-safe artifact
+evidence below. Compound rows remain unchecked whenever any named boundary or
+journey has not run; this section does not claim complete ADR 0007 acceptance.
 
 - [x] State schema version 4 has an explicit version-3-to-version-4 migration
   that preserves drafts, profiles, active selection, scoped profile references,
@@ -1132,18 +1132,19 @@ complete ADR 0007 acceptance slice.
   larger than 8 MiB. Its SHA-256-derived fixed name lives only under
   `noBackupFilesDir/appearance/wallpapers/`; hash/header/dimensions/allocation
   are revalidated before render, and source URI/bytes/metadata are not retained.
-- [ ] The durable assigned set admits at most 128 distinct referenced files and
+- [x] The durable assigned set admits at most 128 distinct referenced files and
   256 MiB total; same-hash assignments deduplicate. A replacement at full quota
   may use exactly one serialized unassigned <=8-MiB candidate before Room CAS,
   with a physical ceiling of 129 files/264 MiB and never a second candidate.
   Quota failure preserves current state, and no assigned target is LRU-evicted.
-- [ ] Import is serialized and uses bounded same-directory pending write,
-  flush/sync, digest verification, and rename before the Room CAS commit. A
-  failed, stale, rejected, or cancelled operation removes only a
-  proven-unreferenced new candidate; old media is deleted only after commit and
-  a bounded authoritative last-reference check. Healthy startup removes a
-  pending or process-death orphan; database unavailable/corrupt/over-limit means
-  cleanup deletes nothing.
+- [x] The app-private single-process namespace has one process-wide mutation
+  mutex. Import durably creates parents; uses `O_EXCL|O_NOFOLLOW` pending write,
+  flush/sync, digest and exact device/inode/single-link verification; rechecks
+  final absence; atomically renames and reverifies; delivers a synchronous
+  cleanup lease; and syncs the leaf directory before Room CAS. Failed/stale/
+  rejected/cancelled and old-file cleanup uses fresh bounded Room authority.
+  Startup uses a fail-closed two-pass scan: unsafe namespace or unavailable/
+  corrupt/over-limit authority causes zero partial deletion.
 - [ ] Missing, malformed, unexpected-name/symlink, or hash-mismatched managed
   media never publishes pixels or mutates another row. It produces explicit
   recovery and the exact conversation -> global-thread -> solid fallback.
@@ -1448,9 +1449,52 @@ Only the API 26 and API 36 emulators were connected, so this source snapshot has
 no claimed physical-device install, Download copy, picker journey, screenshot,
 carrier send, or role/grant recheck.
 
-This evidence checks only the hostile-importer row above. It does not claim the
-complete picker lifecycle, managed-file crash/quota protocol, full wallpaper
-acceptance, physical-device wallpaper journey, or completed application.
+By itself, this evidence checked only the hostile-importer row above; the
+subsequent evidence below separately checks the managed-file crash/quota rows.
+It did not claim complete picker lifecycle, full wallpaper acceptance, a
+physical-device wallpaper journey, or a completed application.
+
+#### ADR 0007 crash-safe managed-store follow-up evidence — 2026-07-15
+
+Source commit `27a16ad` makes the app-private single-process namespace
+authoritative under one process-wide mutex. It durably creates parent
+directories; creates pending leaves with `O_EXCL|O_NOFOLLOW`; writes, flushes,
+syncs, and verifies digest plus exact device/inode/single-link identity;
+immediately rechecks final absence; atomically publishes with same-directory
+`Os.rename`; and reverifies exact identity/content. The store delivers the
+candidate cleanup lease synchronously before any suspendable post-publication
+checkpoint and syncs the leaf directory before import returns for Room CAS.
+Candidate and old-file cleanup reacquire fresh bounded Room authority. Startup
+reconciliation validates every direct entry in a no-deletion first pass, then
+removes only exact pending or conforming unreferenced finals; any unsafe entry,
+invalid/over-limit authority, or storage failure causes zero partial deletion.
+
+The focused host matrix passed 32/32: `WallpaperControllerTest` 20,
+`ManagedWallpaperFilePolicyTest` 7, and `WallpaperQuotaPolicyTest` 5. The
+combined device matrix passed 29/29 (`ManagedWallpaperStoreTest` 15 plus
+`ManagedWallpaperCrashProtocolTest` 14) independently on the API 26 emulator,
+API 36 emulator, and physical Pixel 8/API 36. It covers exact 128/256-MiB durable
+and 129/264-MiB staging bounds, second-candidate rejection, cancellation/Room
+commit ambiguity, persistence checkpoints, no-clobber publication, identity
+verification, owned cleanup, crash orphans, and fail-closed two-pass recovery.
+
+The complete API 36 connected matrix was `BUILD SUCCESSFUL` in 1m16s. The app
+ran 71 tests with one intentional physical-only skip and zero failures; all
+benchmark, core, and feature suites also passed. The complete 886-task offline
+host/release/benchmark/governance/APK gate was `BUILD SUCCESSFUL` in 1m24s, and
+the separate license/SBOM command was `BUILD SUCCESSFUL` in 9s.
+
+The resulting debug APK is 13,993,426 bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`. The
+exact APK installed and cold-launched on the Pixel 8, and its
+`/sdcard/Download/AuroraSMS-debug.apk` copy matched that hash and size.
+
+This evidence checks exactly the durable quota and crash-safe import/reconcile
+rows above. The physical 29-test run was non-UI app-private filesystem coverage;
+it does not prove the Photo Picker or static-wallpaper UI journey. The compound
+overall row, manual wallpaper journey, carrier behavior,
+accessibility/form-factor/performance, broader Phase 4 work, and completed/gold
+application all remain unclaimed.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 

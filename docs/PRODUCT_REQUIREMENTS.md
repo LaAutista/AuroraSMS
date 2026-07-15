@@ -292,10 +292,14 @@ merely because a named profile already has future wallpaper vocabulary. ADR
 `global_thread` and verified-conversation assignments with assignment-local
 focal/dim values, a real Thread renderer, and a temporary system-picker import
 sanitized to a private content-addressed static WebP. It persists no source URI
-or grant. Its complete picker, managed-file crash/quota protocol, concurrency,
-accessibility/form-factor, and physical wallpaper acceptance remains pending.
-Inbox/other screens, canonical artwork, GIF, live external URI, static blur, and
-import/export media remain separate acceptance work.
+or grant. Source commit `27a16ad` completes the bounded managed-file quota and
+crash protocol: durable exclusive/no-follow staging and atomic publication,
+fresh Room-authoritative cleanup, and fail-closed two-pass reconciliation. Its
+complete picker/static-wallpaper UI journey, accessibility/form-factor,
+performance, and carrier acceptance remain pending; the physical filesystem
+protocol run is not UI-journey evidence. Inbox/other screens, canonical artwork,
+GIF, live external URI, static blur, and import/export media remain separate
+acceptance work. The product is not complete or gold.
 
 Required themes include Aurora Dark, AMOLED Black, Light, and System/Dynamic.
 Required avatar masks are circle, rounded square, squircle, and hexagon.

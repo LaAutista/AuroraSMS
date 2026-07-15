@@ -17,11 +17,13 @@ ADR 0007's bounded managed private static wallpaper implementation for
 `global_thread` and verified conversations landed at source commit
 `c957995e74c7ba76ed25d1b7c4d23c05f42852be`, followed by acceptance hardening
 at `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` and renderer isolation at
-`e5aa4dfb1c695046c136d07e6b0c549e77e278ee`; selected automated and artifact
-gates pass, while complete acceptance remains pending; Inbox/other-screen
-treatment, built-in artwork, GIF/live-URI media, import/export, navigation
-variants, and the full accessibility/performance matrix remain gated follow-on
-work
+`e5aa4dfb1c695046c136d07e6b0c549e77e278ee`; its crash-safe managed-store and
+quota protocol landed at `27a16ad` and passed focused host, API 26/API 36/Pixel
+filesystem, complete connected, release/governance, license/SBOM, and exact APK
+handoff gates. Complete picker/static-wallpaper UI acceptance remains pending;
+Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
+import/export, navigation variants, and the full accessibility/performance and
+carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold
 
 ## Outcome
 
@@ -561,10 +563,17 @@ all project steps green.
   reach 129 files/264 MiB. This is atomic-staging headroom, not a raised durable
   quota; rejection/cancellation removes the candidate, and healthy startup GC
   removes one left orphaned by a process death.
-- Write/sync/rename a same-directory pending derivative before the Room CAS
-  transaction; delete an old file only after commit and proof that no assignment
-  references it. With an unavailable/corrupt/over-limit database, cleanup
-  deletes nothing.
+- Guard the app-private single-process namespace with one process-wide mutex;
+  durably create parents, create the pending leaf with `O_EXCL|O_NOFOLLOW`,
+  write/flush/sync and verify exact content/device/inode/single-link identity,
+  immediately recheck final absence, atomically rename in the same directory,
+  and reverify. Deliver the candidate cleanup lease synchronously before a
+  suspendable checkpoint and sync the leaf directory before import return/Room
+  CAS.
+- Delete a candidate or replaced file only after fresh bounded Room authority
+  proves it unreferenced. Reconcile with a validation-only first pass and a
+  deletion second pass; any unsafe entry or unavailable/corrupt/over-limit
+  authority causes zero partial deletion.
 - Prove missing/corrupt/hash-mismatched managed media advances through
   conversation -> global-thread -> solid without changing profile references,
   another wallpaper assignment, provider/index state, or the current route.
@@ -588,8 +597,10 @@ core/state/src/test/kotlin/org/aurorasms/core/state/storage/AppearanceWallpaperE
 core/state/src/androidTest/kotlin/org/aurorasms/core/state/AppearanceWallpaperRepositoryInstrumentedTest.kt
 core/state/src/androidTest/kotlin/org/aurorasms/core/state/StateMigration3To4Test.kt
 app/src/main/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperImportPolicy.kt
+app/src/main/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpaperFilePolicy.kt
 app/src/main/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpaperStore.kt
 app/src/main/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperController.kt
+app/src/main/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperQuotaPolicy.kt
 app/src/main/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperSurface.kt
 app/src/main/kotlin/org/aurorasms/app/preview/BoundedMediaDecodeGate.kt
 app/src/main/kotlin/org/aurorasms/app/preview/AndroidBoundedPreviewLoader.kt
@@ -597,7 +608,11 @@ app/src/main/kotlin/org/aurorasms/app/AppContainer.kt
 app/src/main/kotlin/org/aurorasms/app/AuroraSmsRootServices.kt
 app/src/main/kotlin/org/aurorasms/app/AuroraSmsRoot.kt
 app/src/main/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialog.kt
+app/src/test/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpaperFilePolicyTest.kt
+app/src/test/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperControllerTest.kt
 app/src/test/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperImportPolicyTest.kt
+app/src/test/kotlin/org/aurorasms/app/appearance/wallpaper/WallpaperQuotaPolicyTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpaperCrashProtocolTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpaperStoreTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialogTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/AuroraSmsRootAcceptanceTest.kt
@@ -722,6 +737,19 @@ remains bounded to `MAXIMUM_RETAINED_ROUTES`. Full process-death end-to-end and
 physical eligible-Thread modal coverage are not claimed. No carrier message is
 sent by this slice.
 
+For crash/quota source commit `27a16ad`, focused host tests passed 32/32
+(controller 20, file policy 7, quota 5). `ManagedWallpaperStoreTest` 15 plus
+`ManagedWallpaperCrashProtocolTest` 14 passed 29/29 on API 26 and API 36
+emulators and on the API 36 Pixel 8. The complete API 36 connected matrix passed
+in 1m16s with 71 app tests, one intentional physical-only skip, zero failures,
+and all benchmark/core/feature suites green. The 886-task offline
+release/governance gate passed in 1m24s and the separate license/SBOM gate in
+9s. The 13,993,426-byte debug APK installed and cold-launched on the Pixel; its
+Download copy matched SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+The physical 29-test run exercised only non-UI app-private filesystem behavior;
+it is not Photo Picker or static-wallpaper UI-journey evidence.
+
 ## Stop conditions
 
 Stop and update this plan before adding an external dependency, ingesting any
@@ -741,11 +769,13 @@ source, an unsupported JPEG process/precision, or APNG, exceeding any accepted
 byte/dimension/pixel/allocation quota,
 exceeding the 128-file/256-MiB durable assigned quota or the single-candidate
 129-file/264-MiB physical staging ceiling, writing the assignment before the
-verified final derivative exists,
-deleting a file without an authoritative bounded post-commit reference
-snapshot, retaining source metadata, rendering a stale target's bitmap while a
-new target loads, exposing an Inbox/built-in/GIF/live-URI control, or adding a
-media catalog table.
+verified final derivative and leaf entry are durable, bypassing the process-wide
+namespace mutex, following a managed path component, publishing without
+exclusive pending creation/exact identity verification/final-absence recheck,
+or partially deleting during a failed first reconciliation scan. Also stop
+before deleting a file without fresh bounded Room authority, retaining source
+metadata, rendering a stale target's bitmap while a new target loads, exposing
+an Inbox/built-in/GIF/live-URI control, or adding a media catalog table.
 
 For the scoped-profile-reference foundation, also stop before storing raw
 participant addresses or a reversible participant serialization, resolving a

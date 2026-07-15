@@ -3,8 +3,11 @@
 Status: accepted on 2026-07-14; the bounded implementation landed at source
 commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be`, followed by acceptance
 hardening at `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` and renderer isolation
-at `e5aa4dfb1c695046c136d07e6b0c549e77e278ee`; selected automated and artifact
-gates pass, while complete acceptance remains pending
+at `e5aa4dfb1c695046c136d07e6b0c549e77e278ee`; crash-safe managed-store and
+quota hardening landed at source commit `27a16ad`. Its focused host, API 26,
+API 36, physical filesystem, complete connected, release/governance,
+license/SBOM, and exact APK handoff gates pass, while complete picker/UI,
+accessibility/form-factor, carrier, and overall acceptance remain pending
 
 ## Context
 
@@ -192,32 +195,41 @@ directory may therefore momentarily contain at most 129 managed files and 264
 MiB, but this is atomic-staging headroom, not a higher durable quota. A second
 unassigned candidate is never admitted concurrently.
 
+The namespace is app-private and single-process. Every store instance shares
+one process-wide mutation mutex, so import, deletion, and reconciliation cannot
+interleave through separately constructed stores. The fixed appearance and
+wallpaper components must be no-follow directories; creating either component
+is followed by parent-directory synchronization before publication continues.
+
 One serialized importer owns mutation ordering:
 
-1. Revalidate the transient source and produce the bounded derivative into a
-   same-directory `.pending-*` file through a counting stream.
-2. Flush and sync the completed file, compute/verify its digest, then rename it
-   on the same filesystem to the derived final name. If that verified final
-   already exists, discard the duplicate pending file.
-3. Recheck that the post-Apply durable assigned set remains within 128 files and
-   256 MiB. The one serialized candidate may use only the staging headroom
-   described above until the compare-and-set resolves.
-4. In one Room transaction, revision-check the exact target and insert or
-   replace its assignment. The final file must exist and verify before this
-   commit, so a committed row is never created first and left pointing at a
-   not-yet-written file.
-5. After a successful replacement/reset commit, delete the old final only when
-   the bounded authoritative snapshot proves no assignment references it. A
-   failed, stale, rejected, or cancelled operation removes only a newly created
-   candidate that the authoritative snapshot proves unreferenced.
+1. Obtain a fresh bounded authoritative Room reference set, validate the
+   namespace, enforce durable quota, and produce the bounded derivative.
+2. Create a generated same-directory `.pending-*` leaf with
+   `O_EXCL|O_NOFOLLOW`, write and flush all bytes, sync it, then verify its
+   digest, exact device/inode identity, regular-file type, and single link.
+3. Immediately recheck that the derived final is absent, publish it atomically
+   with same-directory `Os.rename`, and reverify the same identity and complete
+   content. The private namespace and process-wide mutex make this
+   absence-check/publication sequence exclusive to AuroraSMS.
+4. Deliver the exact candidate cleanup lease synchronously before any
+   suspendable post-publication checkpoint, then sync the wallpaper directory
+   before returning the import for the Room compare-and-set.
+5. In one Room transaction, revision-check the exact target and insert or
+   replace its assignment. After success, delete the old final only when a fresh
+   bounded authoritative snapshot proves it unreferenced. Failure, staleness,
+   rejection, or cancellation removes only the leased exact candidate when
+   fresh authority still proves it unreferenced.
 
-A crash may leave a pending file or the one unassigned staged final, but not a
-committed assignment to an unfinished file. On startup, only after the state
-database has opened and validated successfully, reconciliation obtains the
-bounded distinct token snapshot, removes pending files, and removes conforming
-final files that are not referenced. If the database is unavailable, corrupt,
-over-limit, or cannot produce an authoritative snapshot, reconciliation deletes
-nothing.
+A crash may leave a pending file or one unassigned staged final, but not a
+committed assignment to an unfinished file. Startup reconciliation first scans
+and validates every direct entry without deleting anything. Symlinks,
+subdirectories, unexpected names, malformed candidates, multiple links, too
+many entries, invalid references, or storage failure make the pass fail closed
+with zero partial deletion. Only a successful first pass permits removal of
+exact pending leaves and conforming unreferenced finals, followed by
+leaf-directory synchronization. Database unavailable/corrupt/over-limit or an
+unsafe namespace likewise deletes nothing.
 
 A referenced file that is missing, malformed, renamed, or hash-mismatched is
 not silently replaced and does not cause another assignment to be selected.
@@ -276,8 +288,10 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
 - A staged candidate is intentionally less durable than an applied assignment;
   configuration/process loss may require another pick.
 - The new state migration, direct assignment rows, shared revision floor,
-  managed-file protocol, quota, decoder, renderer, and UI require focused host
-  and device tests before any implementation-complete claim.
+  decoder, renderer, picker/UI, accessibility/form-factor, and physical user
+  journey still require their named gates before an implementation-complete
+  claim; the managed-file crash/quota protocol itself has passed its focused
+  host and device matrix.
 - Inbox treatment, canonical built-ins, GIF lifecycle, live URI references,
   and import/export media remain independently reviewable slices.
 
