@@ -111,6 +111,7 @@ class ConversationProjectionTest {
         assertEquals(3, exact.summary.indexedParticipantCount)
         assertEquals(3, exact.summary.participants.size)
         assertEquals(IndexRunState.SCANNING, exact.coverage.state)
+        assertNull(exact.verifiedIdentity)
         assertTrue(
             inbox.loadConversation(ProviderThreadId(999L)) is ConversationLookupResult.Missing,
         )
@@ -184,6 +185,69 @@ class ConversationProjectionTest {
         )
         val complete = (inbox.loadInbox() as ConversationPageResult.Page).page
         assertTrue(complete.coverage.verifiedComplete)
+    }
+
+    @Test
+    fun verifiedExactIdentityExtendsBeyondTheEightParticipantPreview() = runBlocking {
+        val generation = database.indexSyncDao().startGeneration(10L)
+        val participants = (9 downTo 1).map { index -> "+1555000000$index" }
+        database.indexedMessageDao().commitScanningProjectionBatch(
+            generationId = generation,
+            projections = listOf(
+                projection(
+                    providerId = 30L,
+                    threadId = 300L,
+                    timestampMillis = 300L,
+                    body = "bounded group",
+                    participants = participants,
+                    fingerprintSeed = 'e',
+                ),
+            ),
+            smsCheckpoint = checkpoint(generation, 1, providerId = 30L, count = 1L, exhausted = true),
+            mmsCheckpoint = checkpoint(generation, 2, count = 0L, exhausted = true),
+            nowMillis = 20L,
+            targetBatchSize = 500,
+        )
+
+        val repository = RoomConversationRepository(database)
+        val scanning = repository.loadConversation(
+            ProviderThreadId(300L),
+        ) as ConversationLookupResult.Found
+        assertEquals(8, scanning.summary.participants.size)
+        assertEquals(9, scanning.summary.indexedParticipantCount)
+        assertNull(scanning.verifiedIdentity)
+
+        assertEquals(1, database.indexSyncDao().markVerifying(generation, 30L))
+        assertNotNull(
+            database.indexSyncDao().finishVerifiedGeneration(
+                generationId = generation,
+                nowMillis = 40L,
+                smsProviderCount = 1L,
+                mmsProviderCount = 0L,
+            ),
+        )
+
+        val complete = repository.loadConversation(
+            ProviderThreadId(300L),
+        ) as ConversationLookupResult.Found
+        assertTrue(complete.coverage.verifiedComplete)
+        assertEquals(8, complete.summary.participants.size)
+        assertEquals(9, complete.summary.indexedParticipantCount)
+        val identity = requireNotNull(complete.verifiedIdentity)
+        assertEquals(300L, identity.providerThreadId.value)
+        assertEquals(generation, identity.generationId)
+        assertEquals(participants.sorted(), identity.participants.map { it.value })
+        assertEquals(
+            9,
+            database.conversationDao().verifiedIdentityParticipants(generation, 300L).size,
+        )
+
+        assertEquals(1, database.indexSyncDao().markPendingChanges(generation, 50L))
+        val pending = repository.loadConversation(
+            ProviderThreadId(300L),
+        ) as ConversationLookupResult.Found
+        assertFalse(pending.coverage.verifiedComplete)
+        assertNull(pending.verifiedIdentity)
     }
 }
 

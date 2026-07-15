@@ -22,6 +22,7 @@ sealed interface ConversationLookupResult {
     data class Found(
         val summary: ConversationSummary,
         val coverage: IndexCoverage,
+        val verifiedIdentity: VerifiedConversationIdentity? = null,
     ) : ConversationLookupResult {
         override fun toString(): String = "ConversationLookupResult.Found(coverage=$coverage, REDACTED)"
     }

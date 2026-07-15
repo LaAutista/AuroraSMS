@@ -14,6 +14,7 @@ import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.core.index.storage.AuroraIndexDatabase
 import org.aurorasms.core.index.storage.GenerationStateCode
 import org.aurorasms.core.index.storage.IndexedConversationEntity
+import org.aurorasms.core.index.storage.IndexedConversationParticipantEntity
 import org.aurorasms.core.index.storage.toIndexRunState
 import org.aurorasms.core.index.storage.toIndexedMessageDirection
 import org.aurorasms.core.index.storage.toIndexedProviderKind
@@ -152,7 +153,17 @@ class RoomConversationRepository(
                 providerThreadIds = listOf(providerThreadId.value),
                 perThreadLimit = MAXIMUM_PARTICIPANT_PREVIEW,
             ).map { ParticipantAddress(it.address) }
-            ConversationLookupResult.Found(entity.toSummary(participants), coverage)
+            val verifiedIdentity = loadVerifiedIdentity(
+                requestedThreadId = providerThreadId,
+                generationId = generation.generationId,
+                entity = entity,
+                coverage = coverage,
+            )
+            ConversationLookupResult.Found(
+                summary = entity.toSummary(participants),
+                coverage = coverage,
+                verifiedIdentity = verifiedIdentity,
+            )
         }
     } catch (cancelled: CancellationException) {
         throw cancelled
@@ -160,11 +171,74 @@ class RoomConversationRepository(
         ConversationLookupResult.StorageUnavailable(safeCoverage())
     }
 
+    private suspend fun loadVerifiedIdentity(
+        requestedThreadId: ProviderThreadId,
+        generationId: Long,
+        entity: IndexedConversationEntity,
+        coverage: IndexCoverage,
+    ): VerifiedConversationIdentity? {
+        if (!coverage.verifiedComplete) return null
+        return try {
+            projectVerifiedConversationIdentity(
+                requestedThreadId = requestedThreadId,
+                generationId = generationId,
+                entity = entity,
+                coverage = coverage,
+                rows = conversationDao.verifiedIdentityParticipants(
+                    generationId = generationId,
+                    providerThreadId = requestedThreadId.value,
+                ),
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            null
+        }
+    }
+
     private suspend fun safeCoverage(): IndexCoverage = try {
         val generation = syncDao.latestGeneration() ?: return IndexCoverage.NOT_STARTED
         generation.toCoverage(syncDao.checkpoints(generation.generationId), messageDao.count())
     } catch (_: SQLiteException) {
         IndexCoverage.NOT_STARTED
+    }
+}
+
+internal fun projectVerifiedConversationIdentity(
+    requestedThreadId: ProviderThreadId,
+    generationId: Long,
+    entity: IndexedConversationEntity,
+    coverage: IndexCoverage,
+    rows: List<IndexedConversationParticipantEntity>,
+): VerifiedConversationIdentity? {
+    if (
+        generationId <= 0L ||
+        coverage.generationId != generationId ||
+        !coverage.verifiedComplete ||
+        entity.providerThreadId != requestedThreadId.value ||
+        entity.lastSeenGeneration != generationId ||
+        entity.participantsTruncated ||
+        entity.indexedParticipantCount !in 1..MAXIMUM_VERIFIED_CONVERSATION_PARTICIPANTS ||
+        rows.size != entity.indexedParticipantCount ||
+        rows.any { row ->
+            row.providerThreadId != requestedThreadId.value || row.lastSeenGeneration != generationId
+        }
+    ) {
+        return null
+    }
+    return try {
+        val participants = rows
+            .map { row -> ParticipantAddress(row.address) }
+            .distinct()
+            .sortedBy(ParticipantAddress::value)
+        if (participants.size != rows.size) return null
+        VerifiedConversationIdentity(
+            providerThreadId = requestedThreadId,
+            generationId = generationId,
+            participants = participants,
+        )
+    } catch (_: IllegalArgumentException) {
+        null
     }
 }
 

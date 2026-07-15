@@ -8,6 +8,7 @@ import androidx.room.Query
 import androidx.room.Transaction
 import org.aurorasms.core.index.MAXIMUM_ANCHOR_HALF_WINDOW
 import org.aurorasms.core.index.conversation.MAXIMUM_CONVERSATION_PAGE_SIZE
+import org.aurorasms.core.index.conversation.MAXIMUM_VERIFIED_CONVERSATION_PARTICIPANTS
 import org.aurorasms.core.index.timeline.MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS
 import org.aurorasms.core.index.timeline.MAXIMUM_TIMELINE_FULL_BODY_CHARACTERS
 import org.aurorasms.core.index.timeline.MAXIMUM_TIMELINE_FULL_SUBJECT_CHARACTERS
@@ -157,6 +158,36 @@ abstract class ConversationDao {
         require(providerThreadIds.all { it > 0L })
         require(perThreadLimit in 1..8)
         return participantPreviewsQuery(generationId, providerThreadIds.distinct(), perThreadLimit)
+    }
+
+    @Query(
+        """
+        SELECT * FROM indexed_conversation_participants
+        INDEXED BY index_indexed_conversation_participants_last_seen_generation_provider_thread_id_address
+        WHERE last_seen_generation = :generationId
+          AND provider_thread_id = :providerThreadId
+        ORDER BY address ASC
+        LIMIT :limit
+        """,
+    )
+    protected abstract suspend fun verifiedIdentityParticipantsQuery(
+        generationId: Long,
+        providerThreadId: Long,
+        limit: Int,
+    ): List<IndexedConversationParticipantEntity>
+
+    /** Reads one exact thread, plus one sentinel row used to fail closed above the identity bound. */
+    suspend fun verifiedIdentityParticipants(
+        generationId: Long,
+        providerThreadId: Long,
+    ): List<IndexedConversationParticipantEntity> {
+        require(generationId > 0L)
+        require(providerThreadId > 0L)
+        return verifiedIdentityParticipantsQuery(
+            generationId = generationId,
+            providerThreadId = providerThreadId,
+            limit = MAXIMUM_VERIFIED_CONVERSATION_PARTICIPANTS + 1,
+        )
     }
 
     @Query("SELECT * FROM indexed_conversations WHERE provider_thread_id = :providerThreadId AND last_seen_generation = :generationId LIMIT 1")

@@ -513,6 +513,17 @@ private fun ThreadRoute(
     val privateRestorationKey = conversationScope?.privateScopedAppearanceRestorationKey()
     var openEditorTarget by rememberSaveable { mutableStateOf<String?>(null) }
     val appearanceEditorOpen = privateRestorationKey != null && openEditorTarget == privateRestorationKey
+    LaunchedEffect(threadState, privateRestorationKey) {
+        if (
+            shouldClearConversationScopedEditorTarget(
+                openEditorTarget = openEditorTarget,
+                currentPrivateRestorationKey = privateRestorationKey,
+                identityLookupComplete = isConversationIdentityLookupComplete(threadState),
+            )
+        ) {
+            openEditorTarget = null
+        }
+    }
     var observedDismissalGeneration by rememberSaveable(privateRestorationKey) {
         mutableStateOf(scopedEditorDismissalGeneration)
     }
@@ -579,19 +590,19 @@ internal fun trustedConversationAppearanceScope(
     state: ThreadUiState,
 ): AppearanceScope.Conversation? {
     val ready = state as? ThreadUiState.Ready ?: return null
-    val summary = ready.conversation ?: return null
+    if (!ready.verifiedConversationIdentityResolved) return null
+    val identity = ready.verifiedConversationIdentity ?: return null
     if (
         !ready.coverage.verifiedComplete ||
-        summary.providerThreadId != providerThreadId ||
-        summary.participantsTruncated ||
-        summary.indexedParticipantCount != summary.participants.size
+        identity.providerThreadId != providerThreadId ||
+        identity.generationId != ready.coverage.generationId
     ) {
         return null
     }
     return runCatching {
         AppearanceScope.Conversation(
-            participantSetKey = AppearanceParticipantSetKey.fromParticipants(summary.participants),
-            providerThreadId = providerThreadId,
+            participantSetKey = AppearanceParticipantSetKey.fromParticipants(identity.participants),
+            providerThreadId = identity.providerThreadId,
         )
     }.getOrNull()
 }
@@ -605,6 +616,20 @@ internal fun shouldDismissScopedEditor(
     observedGeneration: Long,
     currentGeneration: Long,
 ): Boolean = observedGeneration != currentGeneration
+
+internal fun shouldClearConversationScopedEditorTarget(
+    openEditorTarget: String?,
+    currentPrivateRestorationKey: String?,
+    identityLookupComplete: Boolean,
+): Boolean = identityLookupComplete &&
+    openEditorTarget != null &&
+    openEditorTarget != currentPrivateRestorationKey
+
+internal fun isConversationIdentityLookupComplete(state: ThreadUiState): Boolean = when (state) {
+    ThreadUiState.Loading -> false
+    is ThreadUiState.Failed -> true
+    is ThreadUiState.Ready -> state.verifiedConversationIdentityResolved
+}
 
 /** App-private SavedState key only. The returned value must never be logged, displayed, or exported. */
 internal fun AppearanceScope.privateScopedAppearanceRestorationKey(): String = when (this) {

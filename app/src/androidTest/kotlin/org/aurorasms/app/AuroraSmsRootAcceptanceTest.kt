@@ -20,11 +20,13 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -47,12 +49,14 @@ import org.aurorasms.core.index.SearchHit
 import org.aurorasms.core.index.SearchPage
 import org.aurorasms.core.index.SearchRequest
 import org.aurorasms.core.index.SearchResult
+import org.aurorasms.core.index.conversation.ConversationInvalidation
 import org.aurorasms.core.index.conversation.ConversationLookupResult
 import org.aurorasms.core.index.conversation.ConversationPage
 import org.aurorasms.core.index.conversation.ConversationPageRequest
 import org.aurorasms.core.index.conversation.ConversationPageResult
 import org.aurorasms.core.index.conversation.ConversationRepository
 import org.aurorasms.core.index.conversation.ConversationSummary
+import org.aurorasms.core.index.conversation.VerifiedConversationIdentity
 import org.aurorasms.core.index.timeline.ThreadTimelineRepository
 import org.aurorasms.core.index.timeline.TimelineContentResult
 import org.aurorasms.core.index.timeline.TimelinePageRequest
@@ -67,6 +71,7 @@ import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.state.AppearanceOverride
 import org.aurorasms.core.state.AppearanceOverrideRevision
 import org.aurorasms.core.state.AppearancePalette
+import org.aurorasms.core.state.AppearanceParticipantSetKey
 import org.aurorasms.core.state.AppearanceProfile
 import org.aurorasms.core.state.AppearanceProfileEdit
 import org.aurorasms.core.state.AppearanceProfileId
@@ -223,23 +228,52 @@ class AuroraSmsRootAcceptanceTest {
             compose.onNodeWithTag(SCOPED_APPEARANCE_SELECTOR_TEST_TAG).assertTextContains(EVENING_NAME)
             assertEquals(anchorLoadsBeforeModal, fixture.index.anchorLoadCount.get())
             assertEquals(timelineLoadsBeforeModal, fixture.timeline.latestLoadCount.get())
+            assertEquals(
+                AppearanceProfileId(DAYLIGHT_ID),
+                fixture.appearance.overrideFor(SYNTHETIC_CONVERSATION_SCOPE)?.profileId,
+            )
 
             val anchorLoadsBeforeRecreation = fixture.index.anchorLoadCount.get()
+            val recreationLookup = fixture.conversations.deferNextExactLookup()
             scenario.recreate()
 
-            waitForTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG)
-            compose.onNodeWithTag(SCOPED_APPEARANCE_SELECTOR_TEST_TAG).assertTextContains(EVENING_NAME)
+            compose.waitUntil(TIMEOUT_MILLIS) { recreationLookup.requested }
+            waitForTag(THREAD_SCREEN_TEST_TAG)
+            waitForTag(THREAD_LIST_TEST_TAG)
+            compose.onNodeWithTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG).assertDoesNotExist()
+            compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
             compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
             compose.waitUntil(TIMEOUT_MILLIS) {
                 fixture.index.anchorLoadCount.get() == anchorLoadsBeforeRecreation + 1
             }
             assertEquals(0, fixture.timeline.latestLoadCount.get())
+            assertEquals(
+                AppearanceProfileId(DAYLIGHT_ID),
+                fixture.appearance.overrideFor(SYNTHETIC_CONVERSATION_SCOPE)?.profileId,
+            )
+
+            recreationLookup.release()
+
+            waitForTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG)
+            compose.onNodeWithTag(SCOPED_APPEARANCE_SELECTOR_TEST_TAG).assertTextContains(EVENING_NAME)
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
+            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            assertEquals(anchorLoadsBeforeRecreation + 1, fixture.index.anchorLoadCount.get())
+            assertEquals(0, fixture.timeline.latestLoadCount.get())
+            assertEquals(
+                AppearanceProfileId(DAYLIGHT_ID),
+                fixture.appearance.overrideFor(SYNTHETIC_CONVERSATION_SCOPE)?.profileId,
+            )
 
             compose.onNodeWithTag(SCOPED_APPEARANCE_APPLY_TEST_TAG).performClick()
             waitForDialogToClose()
             assertEquals(anchorLoadsBeforeRecreation + 1, fixture.index.anchorLoadCount.get())
             assertEquals(0, fixture.timeline.latestLoadCount.get())
+            assertEquals(
+                AppearanceProfileId(EVENING_ID),
+                fixture.appearance.overrideFor(SYNTHETIC_CONVERSATION_SCOPE)?.profileId,
+            )
             compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
             compose.onNodeWithTag(THREAD_LIST_TEST_TAG).performScrollToIndex(THREAD_REENTRY_STALE_INDEX)
@@ -257,6 +291,36 @@ class AuroraSmsRootAcceptanceTest {
             }
             waitForTag(THREAD_LIST_TEST_TAG)
             compose.onNodeWithText(SYNTHETIC_EXACT_ANCHOR).assertIsDisplayed()
+        }
+    }
+
+    @Test
+    fun nineParticipantIdentityIsEligibleAndInvalidationDismissesItsOpenEditor() {
+        val fixture = SyntheticFixture()
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+            waitForTag(INBOX_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(org.aurorasms.feature.conversations.INBOX_SEARCH_ACTION_TEST_TAG)
+                .performClick()
+            waitForTag(SEARCH_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(SEARCH_FIELD_TEST_TAG).performTextReplacement(SYNTHETIC_QUERY)
+            waitForTag(SEARCH_HIT_TEST_TAG)
+            compose.onNodeWithTag(SEARCH_HIT_TEST_TAG).performClick()
+
+            waitForTag(THREAD_SCREEN_TEST_TAG)
+            waitForTag(THREAD_MORE_ACTION_TEST_TAG)
+            compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+            waitForTag(THREAD_APPEARANCE_ACTION_TEST_TAG)
+            compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).performClick()
+            waitForTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG)
+
+            fixture.conversations.invalidateVerifiedIdentity()
+
+            waitForDialogToClose()
+            compose.onNodeWithTag(THREAD_SCREEN_TEST_TAG).assertIsDisplayed()
+            compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
+            compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).assertDoesNotExist()
         }
     }
 
@@ -367,8 +431,14 @@ private class SyntheticConversationRepository : ConversationRepository {
     val inboxLoadCount = AtomicInteger()
     private val inbox = (1..30).map(::syntheticInboxSummary)
     private val thread = syntheticThreadSummary()
+    private val mutableInvalidations = MutableSharedFlow<ConversationInvalidation>(extraBufferCapacity = 1)
 
-    override val invalidations: Flow<org.aurorasms.core.index.conversation.ConversationInvalidation> = emptyFlow()
+    @Volatile
+    private var verifiedIdentityAvailable = true
+    private val deferredLookupLock = Any()
+    private var nextDeferredExactLookup: DeferredExactConversationLookup? = null
+
+    override val invalidations: Flow<ConversationInvalidation> = mutableInvalidations
 
     override suspend fun loadInbox(request: ConversationPageRequest): ConversationPageResult {
         inboxLoadCount.incrementAndGet()
@@ -382,12 +452,46 @@ private class SyntheticConversationRepository : ConversationRepository {
         )
     }
 
-    override suspend fun loadConversation(providerThreadId: ProviderThreadId): ConversationLookupResult =
-        if (providerThreadId == SYNTHETIC_THREAD_ID) {
-            ConversationLookupResult.Found(thread, COMPLETE_COVERAGE)
-        } else {
-            ConversationLookupResult.Missing(COMPLETE_COVERAGE)
+    override suspend fun loadConversation(providerThreadId: ProviderThreadId): ConversationLookupResult {
+        if (providerThreadId != SYNTHETIC_THREAD_ID) {
+            return ConversationLookupResult.Missing(COMPLETE_COVERAGE)
         }
+        synchronized(deferredLookupLock) {
+            nextDeferredExactLookup.also { nextDeferredExactLookup = null }
+        }?.awaitRelease()
+        return ConversationLookupResult.Found(
+            summary = thread,
+            coverage = COMPLETE_COVERAGE,
+            verifiedIdentity = SYNTHETIC_VERIFIED_IDENTITY.takeIf { verifiedIdentityAvailable },
+        )
+    }
+
+    fun deferNextExactLookup(): DeferredExactConversationLookup = synchronized(deferredLookupLock) {
+        check(nextDeferredExactLookup == null)
+        DeferredExactConversationLookup().also { nextDeferredExactLookup = it }
+    }
+
+    fun invalidateVerifiedIdentity() {
+        verifiedIdentityAvailable = false
+        check(mutableInvalidations.tryEmit(ConversationInvalidation))
+    }
+}
+
+private class DeferredExactConversationLookup {
+    private val requestObserved = CompletableDeferred<Unit>()
+    private val releaseSignal = CompletableDeferred<Unit>()
+
+    val requested: Boolean
+        get() = requestObserved.isCompleted
+
+    suspend fun awaitRelease() {
+        requestObserved.complete(Unit)
+        releaseSignal.await()
+    }
+
+    fun release() {
+        check(releaseSignal.complete(Unit))
+    }
 }
 
 private class SyntheticMessageIndex : MessageIndex {
@@ -643,8 +747,8 @@ private fun syntheticThreadSummary(): ConversationSummary = ConversationSummary(
     latestRead = true,
     indexedMessageCount = ANCHOR_WINDOW_SIZE.toLong(),
     indexedUnreadCount = 0L,
-    participants = listOf(SYNTHETIC_PARTICIPANT),
-    indexedParticipantCount = 1,
+    participants = SYNTHETIC_VERIFIED_PARTICIPANTS.take(8),
+    indexedParticipantCount = SYNTHETIC_VERIFIED_PARTICIPANTS.size,
     participantsTruncated = false,
 )
 
@@ -693,7 +797,19 @@ private val COMPLETE_COVERAGE = IndexCoverage(
 )
 
 private val SYNTHETIC_THREAD_ID = ProviderThreadId(9_001L)
-private val SYNTHETIC_PARTICIPANT = ParticipantAddress("synthetic-thread@example.invalid")
+private val SYNTHETIC_VERIFIED_PARTICIPANTS = (1..9).map { index ->
+    ParticipantAddress("synthetic-thread-${index.toString().padStart(2, '0')}@example.invalid")
+}
+private val SYNTHETIC_PARTICIPANT = SYNTHETIC_VERIFIED_PARTICIPANTS.first()
+private val SYNTHETIC_VERIFIED_IDENTITY = VerifiedConversationIdentity(
+    providerThreadId = SYNTHETIC_THREAD_ID,
+    generationId = checkNotNull(COMPLETE_COVERAGE.generationId),
+    participants = SYNTHETIC_VERIFIED_PARTICIPANTS,
+)
+private val SYNTHETIC_CONVERSATION_SCOPE = AppearanceScope.Conversation(
+    participantSetKey = AppearanceParticipantSetKey.fromParticipants(SYNTHETIC_VERIFIED_PARTICIPANTS),
+    providerThreadId = SYNTHETIC_THREAD_ID,
+)
 private const val ANCHOR_WINDOW_SIZE = 51
 private const val ANCHOR_POSITION = 25
 private const val INBOX_ANCHOR_INDEX = 15

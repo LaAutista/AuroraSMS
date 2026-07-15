@@ -11,6 +11,7 @@ import org.aurorasms.core.designsystem.AuroraPalette
 import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.core.index.IndexRunState
 import org.aurorasms.core.index.conversation.ConversationSummary
+import org.aurorasms.core.index.conversation.VerifiedConversationIdentity
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
@@ -19,8 +20,10 @@ import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.feature.conversations.BoundedThreadWindow
+import org.aurorasms.feature.conversations.ConversationLoadFailure
 import org.aurorasms.feature.conversations.ThreadUiState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -65,16 +68,31 @@ class ScopedAppearanceResolutionTest {
     }
 
     @Test
-    fun conversationScopeRequiresCompleteExactBoundedParticipants() {
+    fun conversationScopeRequiresCompleteExactVerifiedIdentity() {
         val providerThreadId = ProviderThreadId(41L)
+        val verifiedParticipants = (1..9).map { index ->
+            ParticipantAddress("verified-$index@example.invalid")
+        }
         val ready = readyState(
             summary = summary(
-                providerThreadId = providerThreadId,
-                participants = listOf(ParticipantAddress("+15550000001")),
+                providerThreadId = ProviderThreadId(99L),
+                participants = verifiedParticipants.take(8),
+                indexedParticipantCount = verifiedParticipants.size,
+                participantsTruncated = false,
             ),
+            verifiedIdentity = identityFor(providerThreadId, verifiedParticipants),
         )
 
         assertNotNull(trustedConversationAppearanceScope(providerThreadId, ready))
+        assertNull(
+            trustedConversationAppearanceScope(
+                providerThreadId,
+                ready.copy(
+                    verifiedConversationIdentity = null,
+                    verifiedConversationIdentityResolved = false,
+                ),
+            ),
+        )
         assertNull(
             trustedConversationAppearanceScope(
                 providerThreadId,
@@ -84,19 +102,24 @@ class ScopedAppearanceResolutionTest {
         assertNull(
             trustedConversationAppearanceScope(
                 providerThreadId,
-                ready.copy(conversation = ready.conversation?.copy(participantsTruncated = true)),
+                ready.copy(verifiedConversationIdentity = null),
             ),
         )
         assertNull(
             trustedConversationAppearanceScope(
                 providerThreadId,
-                ready.copy(conversation = ready.conversation?.copy(indexedParticipantCount = 2)),
+                ready.copy(coverage = ready.coverage.copy(generationId = 2L)),
             ),
         )
         assertNull(
             trustedConversationAppearanceScope(
                 providerThreadId,
-                ready.copy(conversation = ready.conversation?.copy(providerThreadId = ProviderThreadId(42L))),
+                ready.copy(
+                    verifiedConversationIdentity = identityFor(
+                        providerThreadId = ProviderThreadId(42L),
+                        participants = verifiedParticipants,
+                    ),
+                ),
             ),
         )
     }
@@ -107,7 +130,8 @@ class ScopedAppearanceResolutionTest {
         val first = trustedConversationAppearanceScope(
             providerThreadId,
             readyState(
-                summary(
+                summary(providerThreadId, listOf(ParticipantAddress("+15550000001"))),
+                identityFor(
                     providerThreadId,
                     listOf(ParticipantAddress("+15550000001")),
                 ),
@@ -116,7 +140,8 @@ class ScopedAppearanceResolutionTest {
         val second = trustedConversationAppearanceScope(
             providerThreadId,
             readyState(
-                summary(
+                summary(providerThreadId, listOf(ParticipantAddress("+15550000001"))),
+                identityFor(
                     providerThreadId,
                     listOf(ParticipantAddress("+15550000002")),
                 ),
@@ -129,6 +154,71 @@ class ScopedAppearanceResolutionTest {
         assertTrue(
             checkNotNull(first).privateScopedAppearanceRestorationKey() !=
                 checkNotNull(second).privateScopedAppearanceRestorationKey(),
+        )
+    }
+
+    @Test
+    fun openConversationEditorClearsOnlyAfterCompletedTargetChangeOrLoss() {
+        val original = "conversation:original"
+        val providerThreadId = ProviderThreadId(41L)
+        val unresolvedReady = readyState(
+            summary = summary(providerThreadId, listOf(ParticipantAddress("+15550000001"))),
+            verifiedIdentity = null,
+            identityResolved = false,
+        )
+        val resolvedMissingReady = unresolvedReady.copy(
+            verifiedConversationIdentityResolved = true,
+        )
+
+        assertFalse(isConversationIdentityLookupComplete(ThreadUiState.Loading))
+        assertFalse(isConversationIdentityLookupComplete(unresolvedReady))
+        assertTrue(isConversationIdentityLookupComplete(resolvedMissingReady))
+        assertTrue(
+            isConversationIdentityLookupComplete(
+                ThreadUiState.Failed(ConversationLoadFailure.STORAGE, VERIFIED_COVERAGE),
+            ),
+        )
+        assertFalse(
+            shouldClearConversationScopedEditorTarget(
+                openEditorTarget = original,
+                currentPrivateRestorationKey = null,
+                identityLookupComplete = isConversationIdentityLookupComplete(unresolvedReady),
+            ),
+        )
+        assertTrue(
+            shouldClearConversationScopedEditorTarget(
+                openEditorTarget = original,
+                currentPrivateRestorationKey = null,
+                identityLookupComplete = isConversationIdentityLookupComplete(resolvedMissingReady),
+            ),
+        )
+        assertFalse(
+            shouldClearConversationScopedEditorTarget(
+                openEditorTarget = original,
+                currentPrivateRestorationKey = original,
+                identityLookupComplete = true,
+            ),
+        )
+        assertTrue(
+            shouldClearConversationScopedEditorTarget(
+                openEditorTarget = original,
+                currentPrivateRestorationKey = "conversation:changed",
+                identityLookupComplete = true,
+            ),
+        )
+        assertTrue(
+            shouldClearConversationScopedEditorTarget(
+                openEditorTarget = original,
+                currentPrivateRestorationKey = null,
+                identityLookupComplete = true,
+            ),
+        )
+        assertFalse(
+            shouldClearConversationScopedEditorTarget(
+                openEditorTarget = null,
+                currentPrivateRestorationKey = null,
+                identityLookupComplete = true,
+            ),
         )
     }
 
@@ -145,10 +235,19 @@ class ScopedAppearanceResolutionTest {
         focalYPermill = 500,
     )
 
-    private fun readyState(summary: ConversationSummary): ThreadUiState.Ready = ThreadUiState.Ready(
+    private fun readyState(
+        summary: ConversationSummary,
+        verifiedIdentity: VerifiedConversationIdentity? = identityFor(
+            summary.providerThreadId,
+            summary.participants,
+        ),
+        identityResolved: Boolean = true,
+    ): ThreadUiState.Ready = ThreadUiState.Ready(
         window = BoundedThreadWindow.EMPTY,
         coverage = VERIFIED_COVERAGE,
         conversation = summary,
+        verifiedConversationIdentity = verifiedIdentity,
+        verifiedConversationIdentityResolved = identityResolved,
         activeSubscription = null,
         contacts = emptyMap(),
         loadingOlder = false,
@@ -158,6 +257,8 @@ class ScopedAppearanceResolutionTest {
     private fun summary(
         providerThreadId: ProviderThreadId,
         participants: List<ParticipantAddress>,
+        indexedParticipantCount: Int = participants.size,
+        participantsTruncated: Boolean = false,
     ): ConversationSummary = ConversationSummary(
         providerThreadId = providerThreadId,
         latestLocalRowId = 1L,
@@ -176,8 +277,18 @@ class ScopedAppearanceResolutionTest {
         indexedMessageCount = 1L,
         indexedUnreadCount = 0L,
         participants = participants,
-        indexedParticipantCount = participants.size,
-        participantsTruncated = false,
+        indexedParticipantCount = indexedParticipantCount,
+        participantsTruncated = participantsTruncated,
+    )
+
+    private fun identityFor(
+        providerThreadId: ProviderThreadId,
+        participants: List<ParticipantAddress>,
+        generationId: Long = 1L,
+    ): VerifiedConversationIdentity = VerifiedConversationIdentity(
+        providerThreadId = providerThreadId,
+        generationId = generationId,
+        participants = participants,
     )
 
     private companion object {

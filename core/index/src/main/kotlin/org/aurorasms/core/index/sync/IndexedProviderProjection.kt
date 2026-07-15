@@ -2,6 +2,7 @@
 
 package org.aurorasms.core.index.sync
 
+import org.aurorasms.core.index.conversation.MAXIMUM_VERIFIED_CONVERSATION_PARTICIPANTS
 import org.aurorasms.core.index.storage.IndexedMessageEntity
 import org.aurorasms.core.model.ParticipantAddress
 
@@ -35,4 +36,5 @@ data class IndexedProviderProjection(
     }
 }
 
-const val MAXIMUM_INDEXED_CONVERSATION_PARTICIPANTS: Int = 100
+const val MAXIMUM_INDEXED_CONVERSATION_PARTICIPANTS: Int =
+    MAXIMUM_VERIFIED_CONVERSATION_PARTICIPANTS

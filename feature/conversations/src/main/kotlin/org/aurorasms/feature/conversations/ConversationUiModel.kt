@@ -7,6 +7,7 @@ import org.aurorasms.core.index.SearchCursor
 import org.aurorasms.core.index.SearchHit
 import org.aurorasms.core.index.SearchValidationFailure
 import org.aurorasms.core.index.conversation.ConversationSummary
+import org.aurorasms.core.index.conversation.VerifiedConversationIdentity
 import org.aurorasms.core.index.timeline.TimelineMessage
 import org.aurorasms.core.index.timeline.TimelineMessageContent
 import org.aurorasms.core.model.ParticipantAddress
@@ -47,6 +48,8 @@ sealed interface ThreadUiState {
         val window: BoundedThreadWindow,
         val coverage: IndexCoverage,
         val conversation: ConversationSummary?,
+        val verifiedConversationIdentity: VerifiedConversationIdentity? = null,
+        val verifiedConversationIdentityResolved: Boolean = false,
         val activeSubscription: ActiveSubscription?,
         val contacts: Map<ParticipantAddress, ResolvedContact>,
         val loadingOlder: Boolean,
@@ -59,6 +62,9 @@ sealed interface ThreadUiState {
         val expansionFailed: Boolean = false,
     ) : ThreadUiState {
         init {
+            require(verifiedConversationIdentity == null || verifiedConversationIdentityResolved) {
+                "A verified conversation identity requires a completed identity lookup"
+            }
             require(expandedContent == null || expandedContent.providerMessageId == expandedMessageId)
             require(
                 window.retainedTextUnits + expandedContent.retainedTextUnits() <=
@@ -68,7 +74,10 @@ sealed interface ThreadUiState {
 
         override fun toString(): String =
             "ThreadUiState.Ready(itemCount=${window.items.size}, contactCount=${contacts.size}, " +
-                "hasConversation=${conversation != null}, hasSubscription=${activeSubscription != null}, " +
+                "hasConversation=${conversation != null}, " +
+                "hasVerifiedConversationIdentity=${verifiedConversationIdentity != null}, " +
+                "verifiedConversationIdentityResolved=$verifiedConversationIdentityResolved, " +
+                "hasSubscription=${activeSubscription != null}, " +
                 "loadingOlder=$loadingOlder, loadingNewer=$loadingNewer, " +
                 "hasExpandedContent=${expandedContent != null}, expansionFailed=$expansionFailed, " +
                 "coverage=$coverage, REDACTED)"

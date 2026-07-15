@@ -18,6 +18,7 @@ import org.aurorasms.core.index.SearchHit
 import org.aurorasms.core.index.conversation.ConversationLookupResult
 import org.aurorasms.core.index.conversation.ConversationRepository
 import org.aurorasms.core.index.conversation.ConversationSummary
+import org.aurorasms.core.index.conversation.VerifiedConversationIdentity
 import org.aurorasms.core.index.timeline.MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS
 import org.aurorasms.core.index.timeline.ThreadTimelineRepository
 import org.aurorasms.core.index.timeline.TimelineContentResult
@@ -53,6 +54,8 @@ class ThreadStateHolder(
     private var visibleItems: List<TimelineMessage> = emptyList()
     private var lastContactRequest = emptyList<ParticipantAddress>()
     private var conversationSummary: ConversationSummary? = null
+    private var verifiedConversationIdentity: VerifiedConversationIdentity? = null
+    private var verifiedConversationIdentityResolved = false
     private var activeSubscription: ActiveSubscription? = null
     private val observerJobs: List<Job>
 
@@ -60,6 +63,17 @@ class ThreadStateHolder(
         observerJobs = listOf(
             scope.launch {
                 conversationRepository.invalidations.collect {
+                    verifiedConversationIdentity = null
+                    verifiedConversationIdentityResolved = true
+                    val beforeReload = _state.value as? ThreadUiState.Ready
+                    if (beforeReload != null) {
+                        publish(
+                            beforeReload.copy(
+                                verifiedConversationIdentity = null,
+                                verifiedConversationIdentityResolved = true,
+                            ),
+                        )
+                    }
                     loadMetadata()
                     val current = _state.value as? ThreadUiState.Ready ?: return@collect
                     if (userAtNewest) requestNewer(current, visibleAnchor = null, allowTailCursor = true) else publish(
@@ -90,6 +104,8 @@ class ThreadStateHolder(
                         window = BoundedThreadWindow.fromLatest(result.page),
                         coverage = result.page.coverage,
                         conversation = conversationSummary,
+                        verifiedConversationIdentity = verifiedConversationIdentity,
+                        verifiedConversationIdentityResolved = verifiedConversationIdentityResolved,
                         activeSubscription = activeSubscription,
                         contacts = emptyMap(),
                         loadingOlder = false,
@@ -276,6 +292,8 @@ class ThreadStateHolder(
                             ),
                             coverage = result.coverage,
                             conversation = conversationSummary,
+                            verifiedConversationIdentity = verifiedConversationIdentity,
+                            verifiedConversationIdentityResolved = verifiedConversationIdentityResolved,
                             activeSubscription = activeSubscription,
                             contacts = emptyMap(),
                             loadingOlder = false,
@@ -367,17 +385,26 @@ class ThreadStateHolder(
     private fun loadMetadata() {
         metadataJob?.cancel()
         metadataJob = scope.launch {
-            val summary = try {
-                when (val result = conversationRepository.loadConversation(providerThreadId)) {
-                    is ConversationLookupResult.Found -> result.summary
-                    is ConversationLookupResult.Missing,
-                    is ConversationLookupResult.StorageUnavailable,
-                    -> null
-                }
+            val lookup = try {
+                conversationRepository.loadConversation(providerThreadId)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: RuntimeException) {
                 null
+            }
+            val summary = when (lookup) {
+                is ConversationLookupResult.Found -> lookup.summary
+                is ConversationLookupResult.Missing,
+                is ConversationLookupResult.StorageUnavailable,
+                null,
+                -> null
+            }
+            val identity = when (lookup) {
+                is ConversationLookupResult.Found -> lookup.verifiedIdentity
+                is ConversationLookupResult.Missing,
+                is ConversationLookupResult.StorageUnavailable,
+                null,
+                -> null
             }
             val subscription = try {
                 summary?.latestSubscriptionId?.let { subscriptionRepository.findActive(it) }
@@ -387,6 +414,8 @@ class ThreadStateHolder(
                 null
             }
             conversationSummary = summary
+            verifiedConversationIdentity = identity
+            verifiedConversationIdentityResolved = true
             activeSubscription = subscription
             lastContactRequest = emptyList()
             val current = _state.value as? ThreadUiState.Ready
@@ -394,6 +423,8 @@ class ThreadStateHolder(
                 publish(
                     current.copy(
                         conversation = summary,
+                        verifiedConversationIdentity = identity,
+                        verifiedConversationIdentityResolved = true,
                         activeSubscription = subscription,
                     ),
                 )
