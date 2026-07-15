@@ -2,8 +2,9 @@
 
 Status: accepted on 2026-07-14; the bounded implementation landed at source
 commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be`, followed by acceptance
-hardening at `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2`; selected automated and
-artifact gates pass, while complete acceptance remains pending
+hardening at `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` and renderer isolation
+at `e5aa4dfb1c695046c136d07e6b0c549e77e278ee`; selected automated and artifact
+gates pass, while complete acceptance remains pending
 
 ## Context
 

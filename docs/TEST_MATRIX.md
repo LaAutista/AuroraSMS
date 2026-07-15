@@ -14,13 +14,14 @@ is intentionally Inbox-only; full process-death end-to-end and physical eligible
 Thread modal coverage are not claimed. Representative physical-device
 performance, remaining API/OEM coverage, and carrier transport rows remain
 pending. ADR 0007's bounded managed private static Thread-wallpaper
-implementation is frozen at source commit `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2`;
-its host/governance, focused API 26, complete API 36, and Pixel artifact/package/
-role/permission gates passed. A repeated cold launch for that exact build was
-deferred when the wireless ADB endpoint went offline after verification. The
+implementation is frozen at source commit `e5aa4dfb1c695046c136d07e6b0c549e77e278ee`;
+its host/governance and complete API 36 gates passed. Retained focused API 26
+managed-store and Pixel artifact/package/role/permission evidence applies to
+the preceding `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` build; a current-source
+Pixel handoff has not run because only the API 36 emulator was connected. The
 manual Photo Picker, remaining hostile limits, process-death, accessibility/
-form-factor, renderer request-epoch, and physical static-Thread-wallpaper
-journeys remain outstanding and are not claimed.
+form-factor, and physical static-Thread-wallpaper journeys remain outstanding
+and are not claimed.
 
 ## Evidence rules
 
@@ -1082,13 +1083,13 @@ sent.
 
 ### ADR 0007 managed private static Thread wallpaper — bounded implementation landed; acceptance outstanding
 
-Current source commit `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` is committed
-and pushed on `origin/main`; initial implementation commit
-`c957995e74c7ba76ed25d1b7c4d23c05f42852be` remains part of the retained
-evidence chain. Checked rows are backed by the synthetic and privacy-safe
-artifact evidence below. Compound rows remain unchecked whenever any named
-boundary or journey has not run; this section does not claim the complete ADR
-0007 acceptance slice.
+Current source commit `e5aa4dfb1c695046c136d07e6b0c549e77e278ee` is committed;
+initial implementation commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be`
+and hardening commit `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` remain part of
+the retained evidence chain. Checked rows are backed by the synthetic and
+privacy-safe artifact evidence below. Compound rows remain unchecked whenever
+any named boundary or journey has not run; this section does not claim the
+complete ADR 0007 acceptance slice.
 
 - [x] State schema version 4 has an explicit version-3-to-version-4 migration
   that preserves drafts, profiles, active selection, scoped profile references,
@@ -1142,7 +1143,7 @@ boundary or journey has not run; this section does not claim the complete ADR
 - [ ] Missing, malformed, unexpected-name/symlink, or hash-mismatched managed
   media never publishes pixels or mutates another row. It produces explicit
   recovery and the exact conversation -> global-thread -> solid fallback.
-- [ ] A target/token/revision/request change synchronously publishes solid
+- [x] A target/token/revision/request change synchronously publishes solid
   before any suspend/decode; late results cannot flash a previous conversation's
   bitmap. Wallpaper work is one-at-a-time, the full cache retains only the
   current <=16-MiB allocation, and the shared MMS/wallpaper full-decode gate
@@ -1289,9 +1290,10 @@ two MMS repository reads, runs wallpaper inspection undispatched through its
 source read, and proves the saturated shared gate is its first suspension; the
 wallpaper proceeds only after a permit is released. Saver instrumentation
 round-trips only schema, private target key, expected revision, dim, and focal
-integers, with no `content:` URI or managed-media token. These results do not
-exercise picker lifecycle or renderer synchronous-solid/request-epoch behavior,
-so their compound rows remain unchecked.
+integers, with no `content:` URI or managed-media token. At this source
+snapshot, these results did not exercise picker lifecycle or renderer
+synchronous-solid/request-epoch behavior. The renderer follow-up below closes
+only the latter compound row; picker lifecycle remains unchecked.
 
 The exact-source complete offline host command above was `BUILD SUCCESSFUL` in
 13s: 886 actionable tasks, 28 executed, 2 from cache, and 856 up-to-date. Its
@@ -1326,6 +1328,48 @@ passed its build job in 14m22s with wrapper identity, clean-room/dependency,
 test/lint/assembly, manifest/APK, license, aggregate CycloneDX, and governance
 report steps green. Its only annotation was the GitHub-hosted Node 20
 deprecation and forced Node 24 for pinned actions, not a project failure.
+
+#### ADR 0007 renderer-isolation follow-up evidence — 2026-07-15
+
+Source commit `e5aa4dfb1c695046c136d07e6b0c549e77e278ee` closes an
+equal-candidate target gap in the Thread renderer. Before this change, a new
+thread target inheriting the same `global_thread` candidate produced a
+structurally equal candidate list, so the renderer had no local target-change
+key. The root now creates a fresh opaque `WallpaperRenderRequestEpoch` whenever
+the route entry or verified private restoration target changes. The epoch
+contains no route, participant, media-token, or other target data and keys both
+the complete owned renderer state and its load effect.
+
+`ManagedWallpaperSurfaceTest` passed 4/4 on API 36. It uses only synthetic solid
+pixels and a controlled store to prove that target/token changes, same-media
+revision/focal/dim changes, and an equal inherited-global target-epoch change
+leave the theme solid published and the old bitmap already recycled while the
+replacement load is suspended at its first controlled handoff. A deliberately
+non-cooperative old load completes late;
+its bitmap is recycled and never appears over the new target. A failed new load
+remains solid, a successful new load publishes only its own pixels, and surface
+disposal recycles the current bitmap. The retained `WallpaperResourceOwnerTest`
+separately counts replacement, disposal, and late handoff releases exactly
+once.
+
+Combined with the retained serialized managed-store/allocation boundary and
+the real-client test that saturates both shared MMS decode permits before
+wallpaper inspection, this evidence checks the compound synchronous-solid,
+late-result, one-current-cache, and shared-gate row. It does not add or claim a
+user-visible same-target retry action.
+
+The complete API 36 matrix was `BUILD SUCCESSFUL` in 1m03s. App 53, benchmark
+4, core index 31, notifications 3, state 42, telephony 15, and feature
+conversations 4 passed; the physical-only scoped-modal smoke and opt-in scale
+benchmark were skipped as designed. The complete host/release/governance command
+and `cyclonedxBom` also passed; the latter was `BUILD SUCCESSFUL` in 12s with all
+15 tasks up-to-date.
+
+The exact debug APK from this source commit is 13,993,426 bytes with SHA-256
+`b651ad9141c7f45ec81f25d19ce9e82dd9af944c593047e0c76bf390eadf957f`.
+Only the API 36 emulator was connected, so this source commit has no claimed
+Pixel install, Download copy, role/grant recheck, cold launch, physical
+wallpaper selection, screenshot, message/address export, or carrier send.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 
