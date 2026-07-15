@@ -21,8 +21,22 @@ class WallpaperImportPolicyTest {
         assertNull(wallpaperSourceFormat(byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte())))
         assertEquals(WallpaperSourceFormat.PNG, wallpaperSourceFormat(staticPngEnvelope()))
         assertNull(wallpaperSourceFormat(animatedPngEnvelope()))
+        assertNull(wallpaperSourceFormat(animationChunkPngEnvelope("fcTL")))
+        assertNull(wallpaperSourceFormat(animationChunkPngEnvelope("fdAT")))
+        assertNull(wallpaperSourceFormat("GIF87a".encodeToByteArray()))
         assertNull(wallpaperSourceFormat("GIF89a".encodeToByteArray()))
-        assertNull(wallpaperSourceFormat("RIFF0000WEBPVP8 ".encodeToByteArray()))
+        assertNull(wallpaperSourceFormat(webpEnvelope(webpChunk("VP8 ", byteArrayOf(0x01)))))
+        assertNull(wallpaperSourceFormat(webpEnvelope(webpChunk("VP8L", byteArrayOf(0x2f)))))
+        assertNull(
+            wallpaperSourceFormat(
+                webpEnvelope(
+                    webpChunk("VP8X", ByteArray(10)),
+                    webpChunk("VP8 ", byteArrayOf(0x01)),
+                ),
+            ),
+        )
+        assertNull(wallpaperSourceFormat(isoBaseMediaEnvelope("heic")))
+        assertNull(wallpaperSourceFormat(isoBaseMediaEnvelope("avif")))
     }
 
     @Test
@@ -32,6 +46,30 @@ class WallpaperImportPolicyTest {
         assertTrue(wallpaperMimeMatches("IMAGE/PNG; charset=binary", WallpaperSourceFormat.PNG))
         assertFalse(wallpaperMimeMatches("image/png", WallpaperSourceFormat.JPEG))
         assertFalse(wallpaperMimeMatches("application/octet-stream", WallpaperSourceFormat.PNG))
+        assertFalse(
+            wallpaperMimeMatches(
+                "image/png" + " ".repeat(MAXIMUM_DECLARED_MIME_TYPE_CHARACTERS),
+                WallpaperSourceFormat.PNG,
+            ),
+        )
+    }
+
+    @Test
+    fun pngPolicyRejectsCorruptAndMisorderedChunksBeforeDecode() {
+        val corruptIdatCrc = staticPngEnvelope().copyOf().apply {
+            val idatTypeOffset = indexOfAscii("IDAT")
+            check(idatTypeOffset >= 0)
+            this[idatTypeOffset + 4] = (this[idatTypeOffset + 4].toInt() xor 0x01).toByte()
+        }
+        assertNull(wallpaperSourceFormat(corruptIdatCrc))
+
+        val repeatedHeader = PNG_SIGNATURE + pngChunk("IHDR", minimalPngHeader()) +
+            pngChunk("IHDR", minimalPngHeader()) + pngChunk("IDAT", byteArrayOf(0x78, 0x01)) +
+            pngChunk("IEND")
+        assertNull(wallpaperSourceFormat(repeatedHeader))
+
+        val trailingBytes = staticPngEnvelope() + byteArrayOf(0x00)
+        assertNull(wallpaperSourceFormat(trailingBytes))
     }
 
     @Test
@@ -116,6 +154,10 @@ class WallpaperImportPolicyTest {
         PNG_SIGNATURE + pngChunk("IHDR", minimalPngHeader()) +
             pngChunk("acTL") + pngChunk("IDAT", byteArrayOf(0x78, 0x01)) + pngChunk("IEND")
 
+    private fun animationChunkPngEnvelope(chunk: String): ByteArray =
+        PNG_SIGNATURE + pngChunk("IHDR", minimalPngHeader()) +
+            pngChunk(chunk) + pngChunk("IDAT", byteArrayOf(0x78, 0x01)) + pngChunk("IEND")
+
     private fun staticWebpEnvelope(): ByteArray =
         webpEnvelope(webpChunk("VP8 ", byteArrayOf(0x01, 0x02)))
 
@@ -136,6 +178,19 @@ class WallpaperImportPolicyTest {
         (value ushr 16).toByte(),
         (value ushr 24).toByte(),
     )
+
+    private fun isoBaseMediaEnvelope(brand: String): ByteArray =
+        byteArrayOf(0, 0, 0, 20) + "ftyp".encodeToByteArray() +
+            brand.encodeToByteArray() + byteArrayOf(0, 0, 0, 0) + brand.encodeToByteArray()
+
+    private fun ByteArray.indexOfAscii(value: String): Int {
+        val needle = value.encodeToByteArray()
+        return indices.firstOrNull { offset ->
+            offset <= size - needle.size && needle.indices.all { index ->
+                this[offset + index] == needle[index]
+            }
+        } ?: -1
+    }
 
     private fun minimalPngHeader(): ByteArray = byteArrayOf(
         0, 0, 0, 1,

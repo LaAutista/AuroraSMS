@@ -13,6 +13,7 @@ internal const val MAXIMUM_WALLPAPER_STAGED_FILE_COUNT: Int = MAXIMUM_WALLPAPER_
 internal const val MAXIMUM_WALLPAPER_STAGED_TOTAL_BYTES: Long =
     MAXIMUM_WALLPAPER_TOTAL_BYTES + MAXIMUM_WALLPAPER_DERIVATIVE_BYTES
 internal const val MAXIMUM_TRANSIENT_URI_BYTES: Int = 4_096
+internal const val MAXIMUM_DECLARED_MIME_TYPE_CHARACTERS: Int = 256
 internal const val MAXIMUM_WALLPAPER_EDGE_PIXELS: Int = 2_048
 internal const val MAXIMUM_WALLPAPER_PIXELS: Long = 4_194_304L
 internal const val MAXIMUM_WALLPAPER_ALLOCATION_BYTES: Int = 16 * 1_024 * 1_024
@@ -30,7 +31,7 @@ internal enum class WallpaperSourceFormat {
 }
 
 internal fun wallpaperSourceFormat(bytes: ByteArray): WallpaperSourceFormat? = when {
-    bytes.startsWith(0xff, 0xd8, 0xff) && bytes.hasTerminalJpegEndMarker() ->
+    bytes.isPotentiallySupportedBaselineJpeg() ->
         WallpaperSourceFormat.JPEG
     bytes.startsWith(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a) ->
         WallpaperSourceFormat.PNG.takeIf { bytes.isStructurallyValidStaticPng() }
@@ -41,6 +42,9 @@ internal fun wallpaperMimeMatches(
     declaredMimeType: String?,
     format: WallpaperSourceFormat,
 ): Boolean {
+    if (declaredMimeType != null && declaredMimeType.length > MAXIMUM_DECLARED_MIME_TYPE_CHARACTERS) {
+        return false
+    }
     val declared = declaredMimeType
         ?.substringBefore(';')
         ?.trim()
@@ -114,20 +118,20 @@ internal fun ByteArray.isStaticWebp(): Boolean {
     return sawImagePayload && offset == size
 }
 
-private fun ByteArray.hasTerminalJpegEndMarker(): Boolean =
-    size >= 4 && this[size - 2].unsigned() == 0xff && this[size - 1].unsigned() == 0xd9
-
 private fun ByteArray.isStructurallyValidStaticPng(): Boolean {
     if (size < PNG_SIGNATURE_BYTES + PNG_CHUNK_OVERHEAD_BYTES) return false
     var offset = PNG_SIGNATURE_BYTES
     var firstChunk = true
     var sawImageData = false
+    var chunkCount = 0
     while (offset + PNG_CHUNK_OVERHEAD_BYTES <= size) {
+        if (++chunkCount > MAXIMUM_PNG_CHUNKS) return false
         val length = readUnsignedInt(offset)
         if (length < 0L || length > Int.MAX_VALUE) return false
         val chunkEnd = offset.toLong() + PNG_CHUNK_OVERHEAD_BYTES + length
         if (chunkEnd > size.toLong()) return false
         val typeOffset = offset + 4
+        if (!hasValidPngChunkType(typeOffset)) return false
         val payloadEnd = offset + 8 + length.toInt()
         val storedCrc = readUnsignedInt(payloadEnd)
         val actualCrc = CRC32().apply {
@@ -137,7 +141,16 @@ private fun ByteArray.isStructurallyValidStaticPng(): Boolean {
         if (firstChunk && (!asciiAt(typeOffset, "IHDR") || length != PNG_IHDR_BYTES)) return false
         if (!firstChunk && asciiAt(typeOffset, "IHDR")) return false
         firstChunk = false
-        if (asciiAt(typeOffset, "acTL")) return false
+        if (
+            asciiAt(typeOffset, "acTL") ||
+            asciiAt(typeOffset, "fcTL") ||
+            asciiAt(typeOffset, "fdAT") ||
+            asciiAt(typeOffset, "iCCP") ||
+            asciiAt(typeOffset, "zTXt") ||
+            asciiAt(typeOffset, "iTXt")
+        ) {
+            return false
+        }
         if (asciiAt(typeOffset, "IDAT")) sawImageData = true
         if (asciiAt(typeOffset, "IEND")) {
             return length == 0L && sawImageData && chunkEnd == size.toLong()
@@ -173,6 +186,15 @@ private fun ByteArray.asciiAt(offset: Int, value: String): Boolean =
         this[offset + index].toInt() == value[index].code
     }
 
+private fun ByteArray.hasValidPngChunkType(offset: Int): Boolean {
+    if (offset < 0 || offset > size - PNG_TYPE_BYTES) return false
+    repeat(PNG_TYPE_BYTES) { index ->
+        val value = this[offset + index].unsigned()
+        if (value !in 'A'.code..'Z'.code && value !in 'a'.code..'z'.code) return false
+    }
+    return this[offset + PNG_RESERVED_TYPE_INDEX].unsigned() in 'A'.code..'Z'.code
+}
+
 private fun Byte.unsigned(): Int = toInt() and 0xff
 
 private fun String.isLowercaseHex(): Boolean = all { it in '0'..'9' || it in 'a'..'f' }
@@ -189,6 +211,9 @@ private const val SHA_256_HEX_CHARACTERS: Int = 64
 private const val PNG_SIGNATURE_BYTES: Int = 8
 private const val PNG_CHUNK_OVERHEAD_BYTES: Int = 12
 private const val PNG_IHDR_BYTES: Long = 13L
+private const val MAXIMUM_PNG_CHUNKS: Int = 4_096
+private const val PNG_TYPE_BYTES: Int = 4
+private const val PNG_RESERVED_TYPE_INDEX: Int = 2
 private const val RIFF_SIZE_PREFIX_BYTES: Int = 8
 private const val WEBP_RIFF_HEADER_BYTES: Int = 12
 private const val WEBP_CHUNK_HEADER_BYTES: Int = 8

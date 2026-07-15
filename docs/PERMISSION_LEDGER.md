@@ -166,10 +166,14 @@ one user-selected temporary `content:` read. It does not request
 `READ_MEDIA_IMAGES`, `READ_MEDIA_VISUAL_USER_SELECTED`, legacy storage access,
 or any other permission, and it does not take a persistable URI grant. Cancel,
 Back, lost target/source, and failed Apply retain no URI. Successful Apply
-sanitizes bounded JPEG/static-PNG pixels into an app-private static WebP under
-`noBackupFilesDir`; Room retains only a redacted content digest. No Photo Picker
-backport-install service/component is added. A future live external-media
-reference requires a separate URI/grant lifecycle review before implementation.
+sanitizes bounded 8-bit Huffman baseline sequential-DCT (`SOF0`) JPEG with at
+most four components and complete scan coverage, or CRC-valid non-APNG PNG with
+at most 4,096 chunks, no `iCCP`/`zTXt`/`iTXt` ancillary chunks, and a complete
+zlib scanline stream, into an app-private static
+WebP under `noBackupFilesDir`; Room retains only a redacted content digest. No
+Photo Picker backport-install service/component is added. A future live
+external-media reference requires a separate URI/grant lifecycle review before
+implementation.
 
 ## Explicitly forbidden or rejected permissions
 

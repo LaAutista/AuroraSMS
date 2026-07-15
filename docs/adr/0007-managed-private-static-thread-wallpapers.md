@@ -80,7 +80,7 @@ exact target and expected assignment revision, reopens and revalidates the
 source, and only then begins the managed import. If temporary URI access is no
 longer available, Apply fails without changing the current assignment.
 
-### Admit only bounded JPEG and static PNG input
+### Admit only bounded baseline JPEG and static PNG input
 
 The source contract is fixed for this slice:
 
@@ -100,19 +100,26 @@ The source contract is fixed for this slice:
 | Concurrent app media decodes, including MMS | 2 |
 
 Reported size and MIME are advisory. AuroraSMS performs an authoritative
-bounded read, identifies the encoded header, and accepts only JPEG or PNG. A
-specific declared MIME that contradicts the header fails closed. GIF, every
-WebP source, HEIF, AVIF, unknown input, and malformed/truncated input are
-rejected. PNG chunk inspection rejects `acTL`, so APNG cannot enter as a
-nominally static PNG.
+bounded read and accepts only 8-bit Huffman baseline sequential-DCT JPEG
+(`SOF0`) with at most four components and complete scan coverage, or a CRC-valid
+non-APNG PNG with at most 4,096 chunks, no `iCCP`/`zTXt`/`iTXt` ancillary
+chunks, and a zlib stream containing every required scanline. A specific
+declared MIME that contradicts the header fails closed.
+Progressive, extended sequential, arithmetic, lossless,
+differential/hierarchical, and non-8-bit JPEG are unsupported. GIF, every WebP
+source, HEIF, AVIF, unknown input, and malformed/truncated input are rejected.
+PNG chunk inspection validates structure and CRCs, rejects `acTL`, `fcTL`,
+`fdAT`, `iCCP`, `zTXt`, and `iTXt`, caps the chunk walk at 4,096, and requires
+the complete bounded zlib scanline stream before decode.
 
 Bounds are inspected before full decode and rechecked by the decoder. Decode,
 orientation normalization, resampling, hashing, and compression run off the
 main thread. API 26-27 uses a small in-app parser that reads only the bounded
-JPEG APP1 or PNG `eXIf` TIFF orientation scalar from the already-bounded
-in-memory bytes and handles all eight orientation forms; newer platform decode
-must produce the same oriented result. The parser bounds every segment, chunk,
-IFD, entry, and offset before access and admits no general metadata surface.
+accepted-JPEG APP1 or PNG `eXIf` TIFF orientation scalar from the
+already-bounded in-memory bytes and handles all eight orientation forms; newer
+platform decode must produce the same oriented result. The parser bounds every
+segment, chunk, IFD, entry, and offset before access and admits no general
+metadata surface.
 Output is software sRGB/ARGB_8888 and must pass the edge, pixel, and allocation
 bounds after every transform. I/O, security, malformed-data, runtime,
 cancellation, and allocation failures are typed failures with redacted
@@ -248,8 +255,9 @@ also live under `noBackupFilesDir`.
 
 Implementation uses only the already admitted Activity/Compose/coroutine/Room
 graph, Android platform `BitmapFactory`, `ImageDecoder`, color-space and WebP
-APIs, `java.security.MessageDigest`, and the original bounded JPEG APP1/PNG
-`eXIf` TIFF orientation parser described above. It has no
+APIs, `java.security.MessageDigest`, and original bounded parsers for baseline
+JPEG entropy completeness, static-PNG structure/zlib completeness, and JPEG
+APP1/PNG `eXIf` TIFF orientation described above. It has no
 `android.media.ExifInterface` dependency, and no image or GIF library is
 admitted.
 
@@ -287,8 +295,10 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
   for this slice.
 - Add Inbox at the same time: transparent list treatment needs its own measured
   contrast and readability review.
-- Accept GIF, animated WebP, HEIF, AVIF, or APNG: expands format, lifecycle,
-  frame/duration, API-26, and memory behavior beyond the static contract.
+- Accept progressive, extended sequential, arithmetic, lossless,
+  differential/hierarchical, or non-8-bit JPEG, or accept GIF, animated WebP,
+  HEIF, AVIF, or APNG: expands format, lifecycle, parser, frame/duration,
+  API-26, and memory behavior beyond the reviewed static contract.
 - Import built-in Aurora artwork: remains prohibited until the exact written
   rights record is accepted.
 - Auto-evict the oldest wallpaper at quota: silently changes another target's

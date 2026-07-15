@@ -292,7 +292,7 @@ merely because a named profile already has future wallpaper vocabulary. ADR
 `global_thread` and verified-conversation assignments with assignment-local
 focal/dim values, a real Thread renderer, and a temporary system-picker import
 sanitized to a private content-addressed static WebP. It persists no source URI
-or grant. Its complete picker, hostile-limit, crash-cleanup, concurrency,
+or grant. Its complete picker, managed-file crash/quota protocol, concurrency,
 accessibility/form-factor, and physical wallpaper acceptance remains pending.
 Inbox/other screens, canonical artwork, GIF, live external URI, static blur, and
 import/export media remain separate acceptance work.
@@ -323,19 +323,26 @@ Spam & Blocked, global thread fallback, and each conversation. Resetting one
 assignment must not change another.
 
 ADR 0007 is a deliberately narrower first fulfillment of this final product
-requirement. It accepts JPEG/static-PNG input for `global_thread` and verified
-conversations only, sanitizes it to an app-private static WebP, and resolves
-conversation -> global thread -> accessible solid. The temporary picker URI is
-not durable. The durable assigned set retains at most 128 distinct managed files
-and 256 MiB total. To replace an assignment at full quota, the serialized
-importer may temporarily hold exactly one unassigned sanitized candidate of at
-most 8 MiB before the Room CAS, for a physical ceiling of 129 files/264 MiB.
+requirement. It accepts only 8-bit Huffman baseline sequential-DCT (`SOF0`)
+JPEG with at most four components and complete scan coverage, or CRC-valid
+non-APNG PNG with at most 4,096 chunks, no `iCCP`/`zTXt`/`iTXt` ancillary
+chunks, and a complete zlib scanline stream, for `global_thread`
+and verified conversations. It sanitizes accepted pixels to an app-private
+static WebP and resolves conversation -> global thread -> accessible solid.
+Progressive, extended sequential, arithmetic, lossless,
+differential/hierarchical, and non-8-bit JPEG remain unsupported. The temporary
+picker URI is not durable. The durable assigned set retains at most 128
+distinct managed files and 256 MiB total. To replace an assignment at full
+quota, the serialized importer may temporarily hold exactly one unassigned
+sanitized candidate of at most 8 MiB before the Room CAS, for a physical ceiling
+of 129 files/264 MiB.
 This is atomic-staging headroom rather than a raised durable quota; rejection or
 cancellation removes it, and healthy startup GC removes a process-death orphan.
 Each source is at most 16 MiB, 8,192 pixels per edge, and 40,000,000 pixels, and
 each derivative is at most 8 MiB, 2,048 pixels per edge, 4,194,304 pixels, and a
-16-MiB decoded allocation. Inbox, built-ins, GIF/APNG/other formats, and live
-external URI references remain unfulfilled parts of the broader requirement.
+16-MiB decoded allocation. Inbox, built-ins, GIF/APNG/other formats or JPEG
+processes, and live external URI references remain unfulfilled parts of the
+broader requirement.
 
 Large user images are downsampled, and every source is decoded/resampled to a
 bounded device target with saved focal crops; a built-in smaller than a tall

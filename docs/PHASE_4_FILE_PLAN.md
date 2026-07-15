@@ -53,7 +53,8 @@ accessibility/performance claims.
 ADR 0007 defines the landed bounded slice. It adds a real
 Thread-only static wallpaper consumer for `global_thread` and verified
 conversation targets. The system picker URI is temporary process memory; Apply
-sanitizes bounded JPEG/static-PNG input into an app-private content-addressed
+sanitizes bounded 8-bit Huffman baseline sequential-DCT (`SOF0`) JPEG or the
+reviewed bounded static-PNG subset into an app-private content-addressed
 WebP under `noBackupFilesDir`, and Room retains only the managed token plus
 assignment-local focal/dim values and revision. It adds no durable URI/grant,
 media catalog, storage permission, external decoder, artwork, or animation.
@@ -538,13 +539,17 @@ all project steps green.
   active-theme or canonical-artwork wallpaper.
 - Use the system Photo Picker/SAF fallback only as a temporary `content:` read
   capability. Never persist the URI or take a persistable grant. Explicit Apply
-  revalidates and sanitizes JPEG/static-PNG input to a content-addressed private
-  WebP under `noBackupFilesDir/appearance/wallpapers/`.
+  revalidates and sanitizes 8-bit Huffman baseline sequential-DCT (`SOF0`) JPEG
+  with at most four components and complete scan coverage, or CRC-valid non-APNG
+  PNG with at most 4,096 chunks, no `iCCP`/`zTXt`/`iTXt` ancillary chunks, and a
+  complete zlib scanline stream, to a content-addressed
+  private WebP under `noBackupFilesDir/appearance/wallpapers/`.
 - Enforce the accepted source bounds (16 MiB, 8,192-pixel edge, 40,000,000
   pixels), output bounds (2,048-pixel edge, 4,194,304 pixels, 16-MiB decoded
   allocation), 8-MiB derivative bound, one wallpaper decode, and shared
-  two-decode app media gate. Reject GIF, every input WebP, HEIF, AVIF, APNG, and
-  malformed/partial media.
+  two-decode app media gate. Reject progressive, extended sequential,
+  arithmetic, lossless, differential/hierarchical, and non-8-bit JPEG; GIF;
+  every input WebP; HEIF; AVIF; APNG; and malformed/partial media.
 - Add assignment-local focal X/Y 0..1,000 and dim 350..900 permill with real
   Thread renderer and live-preview consumers, revision-checked Apply/reset, and
   no dead stored controls.
@@ -677,11 +682,12 @@ resolved-graph, license/SBOM, manifest, and packaged-output checks passed.
 ADR 0007 approves only the small platform-backed static importer/renderer
 described above, using the already admitted Activity/Compose/coroutine/Room
 graph, Android platform bitmap/image/color-space/WebP APIs, SHA-256, and an
-original parser limited to bounded JPEG APP1 and PNG `eXIf` TIFF orientation
-fields. It does not use `android.media.ExifInterface`. No external image loader,
-GIF decoder, navigation library, DataStore, icon pack, font, remote theme
-service, or media SDK is approved by this plan. Any later coordinate requires
-the full dependency-admission record before source code uses it.
+original bounded parser for baseline-JPEG entropy completeness, static-PNG
+structure/zlib completeness, and JPEG APP1/PNG `eXIf` TIFF orientation fields.
+It does not use `android.media.ExifInterface`. No external image loader, GIF
+decoder, navigation library, DataStore, icon pack, font, remote theme service,
+or media SDK is approved by this plan. Any later coordinate requires the full
+dependency-admission record before source code uses it.
 
 ## Validation sequence
 
@@ -731,7 +737,8 @@ invariant.
 
 For ADR 0007, also stop before persisting a picker/source URI, taking a durable
 URI grant, adding a storage/media permission, admitting a non-JPEG/non-PNG
-source or APNG, exceeding any accepted byte/dimension/pixel/allocation quota,
+source, an unsupported JPEG process/precision, or APNG, exceeding any accepted
+byte/dimension/pixel/allocation quota,
 exceeding the 128-file/256-MiB durable assigned quota or the single-candidate
 129-file/264-MiB physical staging ceiling, writing the assignment before the
 verified final derivative exists,
