@@ -150,11 +150,24 @@ opening a Thread or applying an assignment; aggregate appearance state remained
 SHA-256, and a privacy-safe cold launch resumed MainActivity without an app
 crash. Physical eligible-Thread modal coverage remains follow-on work.
 
-Assignment-local focal/dim controls, import/export, navigation variants,
-wallpapers, GIF lifecycle, full accessibility/performance coverage, and
-approved canonical artwork remain Phase 4 follow-on gates. Artwork is still
-blocked on the exact written publication/derivative/distribution terms in
-`docs/ARTWORK_CATALOG.md`.
+ADR 0007's managed private static Thread-wallpaper store is now crash-safe and
+quota-bounded at source commit `27a16ad`. Its app-private namespace uses a
+process-wide mutation lock, durable parent and leaf-directory synchronization,
+exclusive no-follow pending files, verified same-directory atomic publication,
+fresh bounded Room authority for cleanup, and fail-closed two-pass startup
+reconciliation. Focused policy/controller tests passed 32/32; the combined
+managed-store/crash protocol passed 29/29 on API 26, API 36, and a Pixel 8. The
+complete local connected, release/governance, license/SBOM, APK install,
+cold-launch, and exact Download-copy gates also passed. The physical 29-test run
+was non-UI app-private filesystem evidence; it does not prove the Photo Picker
+or user-visible static-wallpaper journey.
+
+The complete Photo Picker/static-wallpaper UI journey, import/export,
+navigation variants, GIF lifecycle, carrier coverage, full
+accessibility/form-factor/performance coverage, and approved canonical artwork
+remain Phase 4 or release follow-on gates. Artwork is still blocked on the exact
+written publication/derivative/distribution terms in `docs/ARTWORK_CATALOG.md`.
+AuroraSMS is therefore not complete or gold yet.
 
 Phase 3 does not change the existing carrier MMS limitations. Earlier Phase
 1/2 functional evidence covers a Pixel 8 on Android 16/API 36. Phase 3 profile
