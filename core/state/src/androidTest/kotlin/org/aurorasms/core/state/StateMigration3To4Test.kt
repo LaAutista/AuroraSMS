@@ -67,6 +67,8 @@ class StateMigration3To4Test {
         ).use { database ->
             assertEquals("synthetic migration body", database.queryString("SELECT body FROM drafts"))
             assertEquals("Synthetic migrated profile", database.queryString("SELECT name FROM appearance_profiles"))
+            assertEquals(7L, database.queryLong("SELECT active_profile_id FROM appearance_selection"))
+            assertEquals(2L, database.queryLong("SELECT snapshot_revision FROM appearance_selection"))
             assertEquals(1L, database.queryLong("SELECT COUNT(*) FROM appearance_screen_overrides"))
             assertEquals(1L, database.queryLong("SELECT COUNT(*) FROM appearance_conversation_overrides"))
             assertEquals(2L, database.queryLong("SELECT last_allocated_revision FROM appearance_override_revision_sequence"))

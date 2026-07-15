@@ -66,8 +66,53 @@ internal fun wallpaperMediaId(bytes: ByteArray): String =
 internal fun wallpaperDerivativeMatches(mediaId: String, bytes: ByteArray): Boolean =
     bytes.isStaticWebp() && wallpaperMediaId(bytes) == mediaId
 
-internal fun ByteArray.isStaticWebp(): Boolean =
-    size >= 16 && asciiAt(0, "RIFF") && asciiAt(8, "WEBP")
+internal fun ByteArray.isStaticWebp(): Boolean {
+    if (size < WEBP_RIFF_HEADER_BYTES + WEBP_CHUNK_HEADER_BYTES) return false
+    if (!asciiAt(0, "RIFF") || !asciiAt(8, "WEBP")) return false
+    val declaredRiffBytes = readUnsignedIntLittleEndian(4) ?: return false
+    if (declaredRiffBytes != size.toLong() - RIFF_SIZE_PREFIX_BYTES) return false
+
+    var offset = WEBP_RIFF_HEADER_BYTES
+    var sawExtendedHeader = false
+    var sawImagePayload = false
+    while (offset < size) {
+        if (offset > size - WEBP_CHUNK_HEADER_BYTES) return false
+        val payloadBytes = readUnsignedIntLittleEndian(offset + 4) ?: return false
+        if (payloadBytes > Int.MAX_VALUE.toLong()) return false
+        val payloadOffset = offset + WEBP_CHUNK_HEADER_BYTES
+        val payloadEnd = payloadOffset.toLong() + payloadBytes
+        val paddedEnd = payloadEnd + (payloadBytes and 1L)
+        if (payloadEnd < payloadOffset.toLong() || paddedEnd > size.toLong()) return false
+
+        when {
+            asciiAt(offset, "VP8X") -> {
+                if (
+                    offset != WEBP_RIFF_HEADER_BYTES ||
+                    sawExtendedHeader ||
+                    payloadBytes != WEBP_VP8X_PAYLOAD_BYTES.toLong()
+                ) {
+                    return false
+                }
+                val featureFlags = this[payloadOffset].unsigned()
+                if (
+                    featureFlags and WEBP_VP8X_ANIMATION_FLAG != 0 ||
+                    featureFlags and WEBP_VP8X_RESERVED_FLAGS != 0 ||
+                    (1..3).any { index -> this[payloadOffset + index].unsigned() != 0 }
+                ) {
+                    return false
+                }
+                sawExtendedHeader = true
+            }
+            asciiAt(offset, "ANIM") || asciiAt(offset, "ANMF") -> return false
+            asciiAt(offset, "VP8 ") || asciiAt(offset, "VP8L") -> {
+                if (sawImagePayload) return false
+                sawImagePayload = true
+            }
+        }
+        offset = paddedEnd.toInt()
+    }
+    return sawImagePayload && offset == size
+}
 
 private fun ByteArray.hasTerminalJpegEndMarker(): Boolean =
     size >= 4 && this[size - 2].unsigned() == 0xff && this[size - 1].unsigned() == 0xd9
@@ -110,6 +155,14 @@ private fun ByteArray.readUnsignedInt(offset: Int): Long {
         (this[offset + 3].toLong() and 0xffL)
 }
 
+private fun ByteArray.readUnsignedIntLittleEndian(offset: Int): Long? {
+    if (offset < 0 || size < offset + 4) return null
+    return (this[offset].unsigned().toLong()) or
+        (this[offset + 1].unsigned().toLong() shl 8) or
+        (this[offset + 2].unsigned().toLong() shl 16) or
+        (this[offset + 3].unsigned().toLong() shl 24)
+}
+
 private fun ByteArray.startsWith(vararg expected: Int): Boolean =
     size >= expected.size && expected.indices.all { index ->
         this[index].toInt() and 0xff == expected[index]
@@ -136,4 +189,10 @@ private const val SHA_256_HEX_CHARACTERS: Int = 64
 private const val PNG_SIGNATURE_BYTES: Int = 8
 private const val PNG_CHUNK_OVERHEAD_BYTES: Int = 12
 private const val PNG_IHDR_BYTES: Long = 13L
+private const val RIFF_SIZE_PREFIX_BYTES: Int = 8
+private const val WEBP_RIFF_HEADER_BYTES: Int = 12
+private const val WEBP_CHUNK_HEADER_BYTES: Int = 8
+private const val WEBP_VP8X_PAYLOAD_BYTES: Int = 10
+private const val WEBP_VP8X_ANIMATION_FLAG: Int = 0x02
+private const val WEBP_VP8X_RESERVED_FLAGS: Int = 0xc1
 private val LOWERCASE_HEX: CharArray = "0123456789abcdef".toCharArray()

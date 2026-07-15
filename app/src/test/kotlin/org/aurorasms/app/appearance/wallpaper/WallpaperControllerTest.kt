@@ -162,6 +162,76 @@ class WallpaperControllerTest {
     }
 
     @Test
+    fun applyRejectsTargetThatChangesAfterProspectiveQuotaValidation() = runTest {
+        val calls = mutableListOf<String>()
+        val importedId = mediaId('c')
+        val repository = FakeWallpaperRepository(calls).apply {
+            projectionResult = AppearanceRepositoryResult.Success(setOf(importedId))
+            referencedResult = AppearanceRepositoryResult.Success(emptySet())
+        }
+        val store = FakeWallpaperMediaStore(calls).apply {
+            importResult = WallpaperImportResult.Ready(
+                mediaId = importedId.toPrivateStorageToken(),
+                created = true,
+            )
+        }
+        val controller = WallpaperController(repository, store)
+        var targetChecks = 0
+
+        val result = controller.apply(
+            scope = conversationScope,
+            source = InertTestUri(),
+            dimPermill = 700,
+            focalXPermill = 125,
+            focalYPermill = 875,
+            expectedRevision = 4L,
+            targetStillCurrent = { ++targetChecks == 1 },
+        )
+
+        assertEquals(
+            WallpaperApplyControllerResult.Failed(WallpaperControllerError.STALE_ASSIGNMENT),
+            result,
+        )
+        assertEquals(2, targetChecks)
+        assertEquals(listOf("import", "projection", "quota", "references", "delete"), calls)
+        assertEquals(0, repository.setCalls)
+        assertEquals(1, store.quotaCalls)
+        assertEquals(listOf(importedId.toPrivateStorageToken()), store.deletedMediaIds)
+    }
+
+    @Test
+    fun applyExistingRejectsTargetThatChangesAfterProspectiveQuotaValidation() = runTest {
+        val calls = mutableListOf<String>()
+        val existingId = mediaId('d')
+        val repository = FakeWallpaperRepository(calls).apply {
+            projectionResult = AppearanceRepositoryResult.Success(setOf(existingId))
+        }
+        val store = FakeWallpaperMediaStore(calls)
+        val controller = WallpaperController(repository, store)
+        var targetChecks = 0
+
+        val result = controller.applyExisting(
+            scope = globalScope,
+            mediaIdToken = existingId.toPrivateStorageToken(),
+            dimPermill = 650,
+            focalXPermill = 500,
+            focalYPermill = 500,
+            expectedRevision = 9L,
+            targetStillCurrent = { ++targetChecks == 1 },
+        )
+
+        assertEquals(
+            WallpaperApplyControllerResult.Failed(WallpaperControllerError.STALE_ASSIGNMENT),
+            result,
+        )
+        assertEquals(2, targetChecks)
+        assertEquals(listOf("projection", "quota"), calls)
+        assertEquals(0, repository.setCalls)
+        assertEquals(1, store.quotaCalls)
+        assertTrue(store.deletedMediaIds.isEmpty())
+    }
+
+    @Test
     fun prospectiveAndDurableQuotaFailuresCleanNewImportWithoutSettingWallpaper() = runTest {
         val failures = listOf(
             ProjectionFailure(

@@ -29,10 +29,15 @@ public final class WallpaperTestContentProvider extends ContentProvider {
     @Override
     public String getType(Uri uri) {
         String path = uri.getLastPathSegment();
-        if ("valid.png".equals(path) || "rotated.png".equals(path) || "animated.png".equals(path)) {
+        if (
+                "valid.png".equals(path)
+                        || "rotated.png".equals(path)
+                        || "animated.png".equals(path)
+                        || "maximum-noise.png".equals(path)
+        ) {
             return "image/png";
         }
-        if ("rotated.jpeg".equals(path)) return "image/jpeg";
+        if ("rotated.jpeg".equals(path) || "metadata.jpeg".equals(path)) return "image/jpeg";
         if ("truncated.jpeg".equals(path)) return "image/jpeg";
         if ("truncated.png".equals(path)) return "image/png";
         if ("mismatch.png".equals(path)) return "image/jpeg";
@@ -47,6 +52,8 @@ public final class WallpaperTestContentProvider extends ContentProvider {
         String path = uri.getLastPathSegment();
         if ("valid.png".equals(path) || "mismatch.png".equals(path)) {
             bytes = syntheticBitmap(Bitmap.CompressFormat.PNG, 100);
+        } else if ("maximum-noise.png".equals(path)) {
+            bytes = maximumNoisePng();
         } else if ("rotated.png".equals(path)) {
             bytes = orientedPng();
         } else if ("animated.png".equals(path)) {
@@ -55,6 +62,8 @@ public final class WallpaperTestContentProvider extends ContentProvider {
             bytes = "GIF89a".getBytes(StandardCharsets.US_ASCII);
         } else if ("rotated.jpeg".equals(path)) {
             bytes = orientedJpeg();
+        } else if ("metadata.jpeg".equals(path)) {
+            bytes = metadataJpeg();
         } else if ("truncated.jpeg".equals(path)) {
             byte[] complete = syntheticBitmap(Bitmap.CompressFormat.JPEG, 95);
             bytes = slice(complete, 0, complete.length - 2);
@@ -137,6 +146,38 @@ public final class WallpaperTestContentProvider extends ContentProvider {
         );
     }
 
+    private static byte[] metadataJpeg() throws FileNotFoundException {
+        byte[] encoded = syntheticBitmap(Bitmap.CompressFormat.JPEG, 95);
+        byte[] comment = METADATA_SENTINEL.getBytes(StandardCharsets.US_ASCII);
+        byte[] exif = concat(
+            "Exif".getBytes(StandardCharsets.US_ASCII),
+            new byte[] {0, 0},
+            new byte[] {
+                'I', 'I', 42, 0,
+                8, 0, 0, 0,
+                1, 0,
+                0x12, 0x01, 3, 0,
+                1, 0, 0, 0,
+                1, 0, 0, 0,
+                0, 0, 0, 0,
+            },
+            METADATA_SENTINEL.getBytes(StandardCharsets.US_ASCII)
+        );
+        byte[] xmp = concat(
+            "http://ns.adobe.com/xap/1.0/".getBytes(StandardCharsets.US_ASCII),
+            new byte[] {0},
+            ("<x:xmpmeta>" + METADATA_SENTINEL + "</x:xmpmeta>")
+                .getBytes(StandardCharsets.US_ASCII)
+        );
+        return concat(
+            slice(encoded, 0, 2),
+            jpegSegment(0xfe, comment),
+            jpegSegment(0xe1, exif),
+            jpegSegment(0xe1, xmp),
+            slice(encoded, 2, encoded.length)
+        );
+    }
+
     private static byte[] orientedPng() throws FileNotFoundException {
         int[] pixels = new int[] {
             0xffff0000, 0xff00ff00,
@@ -187,6 +228,47 @@ public final class WallpaperTestContentProvider extends ContentProvider {
         }
     }
 
+    private static byte[] maximumNoisePng() throws FileNotFoundException {
+        int[] pixels = new int[MAXIMUM_FIXTURE_EDGE * MAXIMUM_FIXTURE_EDGE];
+        int state = 0x51f15e5d;
+        for (int index = 0; index < pixels.length; index++) {
+            state ^= state << 13;
+            state ^= state >>> 17;
+            state ^= state << 5;
+            pixels[index] = 0xff000000 | (state & 0x00ffffff);
+        }
+        Bitmap bitmap = Bitmap.createBitmap(
+            pixels,
+            MAXIMUM_FIXTURE_EDGE,
+            MAXIMUM_FIXTURE_EDGE,
+            Bitmap.Config.ARGB_8888
+        );
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                throw new FileNotFoundException("Unable to encode maximum-noise fixture");
+            }
+            return output.toByteArray();
+        } catch (IOException impossible) {
+            throw new AssertionError(impossible);
+        } finally {
+            bitmap.recycle();
+        }
+    }
+
+    private static byte[] jpegSegment(int marker, byte[] payload) throws FileNotFoundException {
+        int segmentLength = payload.length + 2;
+        if (segmentLength > 0xffff) throw new FileNotFoundException("JPEG fixture segment too large");
+        return concat(
+            new byte[] {
+                (byte) 0xff,
+                (byte) marker,
+                (byte) (segmentLength >>> 8),
+                (byte) segmentLength,
+            },
+            payload
+        );
+    }
+
     private static byte[] pngChunk(String type) {
         return pngChunk(type, new byte[0]);
     }
@@ -231,4 +313,8 @@ public final class WallpaperTestContentProvider extends ContentProvider {
         }
         return result;
     }
+
+    public static final String METADATA_SENTINEL =
+        "AURORA_PRIVATE_METADATA_SENTINEL_34_0522_-118_2437";
+    private static final int MAXIMUM_FIXTURE_EDGE = 2_048;
 }

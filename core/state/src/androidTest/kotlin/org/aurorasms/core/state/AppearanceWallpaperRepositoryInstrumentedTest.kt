@@ -118,6 +118,77 @@ class AppearanceWallpaperRepositoryInstrumentedTest {
     }
 
     @Test
+    fun resetAndRecreateNeverLetThePreResetRevisionRegainAuthority() = runBlocking {
+        val database = openStateDatabase()
+        val repository = RoomAppearanceProfileRepository(database)
+        try {
+            val scope = AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD)
+            val originalMedia = wallpaperMediaId(32)
+            val recreatedMedia = wallpaperMediaId(33)
+            val original = checkNotNull(
+                repository.setWallpaper(
+                    scope = scope,
+                    mediaId = originalMedia,
+                    dimPermill = 500,
+                    focalXPermill = 250,
+                    focalYPermill = 750,
+                    expectedRevision = null,
+                ).successValue().assignment,
+            )
+
+            val reset = repository.resetWallpaper(scope, original.revision).successValue()
+            assertNull(reset.assignment)
+            assertEquals(originalMedia, reset.mediaIdNowUnreferenced)
+            assertNull(repository.observeWallpaper(scope).first())
+
+            val recreated = checkNotNull(
+                repository.setWallpaper(
+                    scope = scope,
+                    mediaId = recreatedMedia,
+                    dimPermill = 700,
+                    focalXPermill = 750,
+                    focalYPermill = 250,
+                    expectedRevision = null,
+                ).successValue().assignment,
+            )
+            assertTrue(recreated.revision.value > original.revision.value)
+
+            assertEquals(
+                AppearanceRepositoryResult.StaleWrite,
+                repository.prospectiveMediaIdsForSet(
+                    scope = scope,
+                    mediaId = originalMedia,
+                    expectedRevision = original.revision,
+                ),
+            )
+            assertEquals(
+                AppearanceRepositoryResult.StaleWrite,
+                repository.setWallpaper(
+                    scope = scope,
+                    mediaId = originalMedia,
+                    dimPermill = 500,
+                    focalXPermill = 250,
+                    focalYPermill = 750,
+                    expectedRevision = original.revision,
+                ),
+            )
+            assertEquals(
+                AppearanceRepositoryResult.StaleWrite,
+                repository.resetWallpaper(scope, original.revision),
+            )
+            assertEquals(recreated, repository.observeWallpaper(scope).first { it != null })
+            assertEquals(
+                recreated.revision.value,
+                database.longValue(
+                    "SELECT last_allocated_revision FROM appearance_override_revision_sequence",
+                ),
+            )
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun conversationRebindsByFingerprintAndSurvivesProfileDeletion() = runBlocking {
         val database = openStateDatabase()
         val repository = RoomAppearanceProfileRepository(database)

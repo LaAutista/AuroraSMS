@@ -36,7 +36,7 @@ class WallpaperImportPolicyTest {
 
     @Test
     fun derivativeIdentityIsStrictAndRedactedAtTheBoundary() {
-        val bytes = "RIFF0000WEBPVP8 derivative".encodeToByteArray()
+        val bytes = staticWebpEnvelope()
         val mediaId = wallpaperMediaId(bytes)
         assertTrue(wallpaperDerivativeMatches(mediaId, bytes))
         assertEquals(
@@ -45,6 +45,34 @@ class WallpaperImportPolicyTest {
         )
         assertNull(wallpaperDerivativeFileName("sha256-v1:ABC"))
         assertFalse(wallpaperDerivativeMatches(mediaId, bytes + 0x01))
+    }
+
+    @Test
+    fun derivativeContainerRejectsAnimationAndMalformedRiff() {
+        assertTrue(staticWebpEnvelope().isStaticWebp())
+        assertFalse(
+            webpEnvelope(
+                webpChunk("VP8X", byteArrayOf(0x02) + ByteArray(9)),
+                webpChunk("VP8 ", byteArrayOf(0x01)),
+            ).isStaticWebp(),
+        )
+        assertFalse(
+            webpEnvelope(webpChunk("ANIM", ByteArray(6)), webpChunk("VP8 ", byteArrayOf(0x01)))
+                .isStaticWebp(),
+        )
+        assertFalse(
+            webpEnvelope(webpChunk("ANMF", ByteArray(16)), webpChunk("VP8 ", byteArrayOf(0x01)))
+                .isStaticWebp(),
+        )
+        assertFalse((staticWebpEnvelope() + 0x00).isStaticWebp())
+
+        val oversizedChunk = staticWebpEnvelope().copyOf().apply {
+            this[16] = 0xff.toByte()
+            this[17] = 0xff.toByte()
+            this[18] = 0xff.toByte()
+            this[19] = 0x7f
+        }
+        assertFalse(oversizedChunk.isStaticWebp())
     }
 
     @Test
@@ -87,6 +115,27 @@ class WallpaperImportPolicyTest {
     private fun animatedPngEnvelope(): ByteArray =
         PNG_SIGNATURE + pngChunk("IHDR", minimalPngHeader()) +
             pngChunk("acTL") + pngChunk("IDAT", byteArrayOf(0x78, 0x01)) + pngChunk("IEND")
+
+    private fun staticWebpEnvelope(): ByteArray =
+        webpEnvelope(webpChunk("VP8 ", byteArrayOf(0x01, 0x02)))
+
+    private fun webpEnvelope(vararg chunks: ByteArray): ByteArray {
+        val payload = "WEBP".encodeToByteArray() + chunks.fold(byteArrayOf()) { bytes, chunk ->
+            bytes + chunk
+        }
+        return "RIFF".encodeToByteArray() + littleEndianInt(payload.size) + payload
+    }
+
+    private fun webpChunk(type: String, payload: ByteArray): ByteArray =
+        type.encodeToByteArray() + littleEndianInt(payload.size) + payload +
+            if (payload.size % 2 == 0) byteArrayOf() else byteArrayOf(0)
+
+    private fun littleEndianInt(value: Int): ByteArray = byteArrayOf(
+        value.toByte(),
+        (value ushr 8).toByte(),
+        (value ushr 16).toByte(),
+        (value ushr 24).toByte(),
+    )
 
     private fun minimalPngHeader(): ByteArray = byteArrayOf(
         0, 0, 0, 1,

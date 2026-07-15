@@ -3,6 +3,8 @@
 package org.aurorasms.app.preview
 
 import android.graphics.Bitmap
+import android.net.Uri
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -13,6 +15,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -21,6 +24,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.aurorasms.app.appearance.wallpaper.ManagedWallpaperStore
+import org.aurorasms.app.appearance.wallpaper.WallpaperInspectionResult
 import org.aurorasms.core.model.MmsAttachmentType
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
@@ -35,6 +40,7 @@ import org.aurorasms.feature.conversations.AttachmentPreviewResult
 import org.aurorasms.feature.conversations.MAXIMUM_PREVIEW_ENCODED_BYTES
 import org.aurorasms.feature.conversations.MAXIMUM_PENDING_PREVIEW_LOADS
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -125,6 +131,50 @@ class AndroidBoundedPreviewLoaderTest {
             assertEquals(3, repository.totalReads.get())
             assertEquals(2, repository.maximumActive.get())
         } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun twoMmsReadsPreventWallpaperFromBecomingAThirdSharedDecode() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val gate = BoundedMediaDecodeGate(permits = 2)
+        val repository = BlockingUnavailableRepository()
+        val loader = AndroidBoundedPreviewLoader(repository, scope, gate)
+        val store = ManagedWallpaperStore(
+            context = ApplicationProvider.getApplicationContext(),
+            decodeGate = gate,
+        )
+        try {
+            val mmsLoads = (30L..31L).map { partId ->
+                async(Dispatchers.Default) { loader.load(descriptor(partId, "image/png")) }
+            }
+            withTimeout(5_000L) {
+                while (repository.active.get() < 2) delay(10L)
+            }
+
+            // Matching IO plus undispatched start runs through source read inline, making the
+            // saturated shared gate the first suspension point.
+            val wallpaper = async(
+                context = Dispatchers.IO,
+                start = CoroutineStart.UNDISPATCHED,
+            ) {
+                store.inspect(
+                    Uri.parse("content://org.aurorasms.app.wallpaper.testprovider/valid.png"),
+                )
+            }
+            assertFalse("Wallpaper must wait behind both MMS decodes", wallpaper.isCompleted)
+            assertEquals(2, repository.maximumActive.get())
+
+            repository.release.complete(Unit)
+            assertTrue(mmsLoads.awaitAll().all { it == AttachmentPreviewResult.Unavailable })
+
+            val inspection = withTimeout(5_000L) { wallpaper.await() }
+            assertTrue(inspection is WallpaperInspectionResult.Ready)
+            (inspection as? WallpaperInspectionResult.Ready)?.release()
+            Unit
+        } finally {
+            repository.release.complete(Unit)
             scope.cancel()
         }
     }
