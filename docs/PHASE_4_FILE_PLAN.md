@@ -15,8 +15,9 @@ frozen-artifact, deliberately Inbox-only Pixel, and source GitHub CI gates,
 while physical 9-member Thread coverage remains pending;
 ADR 0007's bounded managed private static wallpaper implementation for
 `global_thread` and verified conversations landed at source commit
-`c957995e74c7ba76ed25d1b7c4d23c05f42852be` and passed selected automated and
-artifact gates, while complete acceptance remains pending; Inbox/other-screen
+`c957995e74c7ba76ed25d1b7c4d23c05f42852be`, followed by acceptance hardening
+at `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2`; selected automated and artifact
+gates pass, while complete acceptance remains pending; Inbox/other-screen
 treatment, built-in artwork, GIF/live-URI media, import/export, navigation
 variants, and the full accessibility/performance matrix remain gated follow-on
 work

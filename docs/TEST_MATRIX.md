@@ -14,12 +14,13 @@ is intentionally Inbox-only; full process-death end-to-end and physical eligible
 Thread modal coverage are not claimed. Representative physical-device
 performance, remaining API/OEM coverage, and carrier transport rows remain
 pending. ADR 0007's bounded managed private static Thread-wallpaper
-implementation is frozen at source commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be`;
+implementation is frozen at source commit `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2`;
 its host/governance, focused API 26, complete API 36, and Pixel artifact/package/
-role/permission/cold-launch gates passed. The manual Photo Picker, hostile-limit,
-process-death, accessibility/form-factor, combined MMS decode-concurrency, and
-physical static-Thread-wallpaper journeys remain outstanding and are not
-claimed.
+role/permission gates passed. A repeated cold launch for that exact build was
+deferred when the wireless ADB endpoint went offline after verification. The
+manual Photo Picker, remaining hostile limits, process-death, accessibility/
+form-factor, renderer request-epoch, and physical static-Thread-wallpaper
+journeys remain outstanding and are not claimed.
 
 ## Evidence rules
 
@@ -1081,13 +1082,15 @@ sent.
 
 ### ADR 0007 managed private static Thread wallpaper — bounded implementation landed; acceptance outstanding
 
-Source commit `c957995e74c7ba76ed25d1b7c4d23c05f42852be` is committed and pushed
-on `origin/main`. Checked rows are backed by the retained synthetic and
-privacy-safe artifact evidence below. Compound rows remain unchecked whenever
-any named boundary or journey has not run; this section does not claim the
-complete ADR 0007 acceptance slice.
+Current source commit `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` is committed
+and pushed on `origin/main`; initial implementation commit
+`c957995e74c7ba76ed25d1b7c4d23c05f42852be` remains part of the retained
+evidence chain. Checked rows are backed by the synthetic and privacy-safe
+artifact evidence below. Compound rows remain unchecked whenever any named
+boundary or journey has not run; this section does not claim the complete ADR
+0007 acceptance slice.
 
-- [ ] State schema version 4 has an explicit version-3-to-version-4 migration
+- [x] State schema version 4 has an explicit version-3-to-version-4 migration
   that preserves drafts, profiles, active selection, scoped profile references,
   triggers, and the complete version-1-to-version-4 path while creating empty
   direct global-thread/conversation wallpaper assignment tables. There is no
@@ -1097,7 +1100,7 @@ complete ADR 0007 acceptance slice.
   focal X/Y 0..1,000, dim 350..900, and revision. Models/entities/exceptions/logs/
   `toString` expose no picker URI, path, file name, source metadata, participant
   value, or message data.
-- [ ] Wallpaper writes use the existing protected non-reusing appearance
+- [x] Wallpaper writes use the existing protected non-reusing appearance
   revision sequence. Its live-row floor includes profile-reference and
   wallpaper rows; create/update/reset/recreate, stale Apply, sequence rollback,
   corruption, database reopen, and conversation-thread rebinding retain the ADR
@@ -1192,12 +1195,12 @@ all 5 tests passed. The same class passed 5/5 on API 36. Retained coverage
 includes JPEG and PNG EXIF orientation, pixel-exact legacy transforms for all
 eight orientations, ARGB_8888/sRGB normalization, static PNG happy-path import/
 deduplication/load/reconcile, and fail-closed invalid-scheme, MIME-mismatch,
-APNG, GIF, and truncated-input cases. The compound every-orientation/new-decoder
-row remains unchecked because every orientation was not exercised through the
-API 28+ `ImageDecoder` path. The compound Apply/derivative row also remains
-unchecked until retained tests exercise metadata removal, the exact quality-95
-and 8-MiB encoder boundary, exact no-backup name/location, and tampered managed
-header/hash/dimension/allocation rejection.
+APNG, GIF, and truncated-input cases. At this source snapshot, the compound
+every-orientation/new-decoder row remained unchecked because every orientation
+was not exercised through the API 28+ `ImageDecoder` path. The compound Apply/
+derivative row also remained unchecked pending metadata, exact quality-95/
+encoder-boundary, no-backup placement, and tamper evidence. The 2026-07-15
+follow-up below closes most, but not all, of that compound row.
 
 Repository instrumentation passed 10/10 and covers shared protected sequence
 allocation, independent reset, last-reference reporting, conversation rebinding,
@@ -1207,14 +1210,12 @@ rollback below a live-row floor. Migration/schema/reopen instrumentation also
 passed in the complete API 36 matrix. Controller and resource-owner unit tests
 cover conversation -> global-thread -> solid resolution, high-contrast solid,
 stale-target rejection, exact prospective quota ordering, failure cleanup, and
-late resource handoff/disposal. These tests do not substitute for the still-open
-real-filesystem quota, crash-cleanup, combined MMS/wallpaper concurrency, or
-physical picker journeys. The version-3-to-version-4 migration passed and the
-existing version-1-to-version-3 chain remains covered, but a retained direct
-version-1-to-version-4 chain test has not run; the compound migration row remains
-unchecked. The compound CAS/ABA row likewise remains unchecked until a wallpaper
-target is reset and recreated and the pre-reset revision is proven stale, plus
-the controller's late target-current rejection branches are exercised.
+late resource handoff/disposal. At this source snapshot, these tests did not
+substitute for real-filesystem quota, crash-cleanup, combined MMS/wallpaper
+concurrency, or physical picker journeys. Version 3-to-4 and the version 1-to-3
+chain were covered, but the direct version-1-to-version-4 and reset/recreate ABA
+tests had not yet run. The 2026-07-15 follow-up below supplies that missing
+migration and CAS/ABA evidence and checks those two compound rows.
 
 The exact debug APK built from source commit
 `c957995e74c7ba76ed25d1b7c4d23c05f42852be` is 13,993,426 bytes with SHA-256
@@ -1236,6 +1237,95 @@ clean-room/dependency checks, test/lint/assembly, merged-manifest/APK checks,
 license inventory, aggregate CycloneDX SBOM, and governance-report upload. Its
 only annotation was the GitHub-hosted Node 20 deprecation and forced Node 24 for
 pinned actions, not a project failure.
+
+#### ADR 0007 acceptance follow-up evidence — 2026-07-15
+
+Source commit `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` hardens managed
+derivative verification and adds the retained acceptance evidence in this
+subsection. The pre-fix WebP predicate admitted any byte sequence with RIFF and
+WEBP magic, including animated or malformed containers. The replacement parser
+validates the exact RIFF length, bounded padded chunk traversal, the VP8X
+reserved and animation flags, rejects `ANIM`/`ANMF`, and requires exactly one
+`VP8 `/`VP8L` image payload before the platform decoder revalidates pixels.
+
+Focused host tests passed `WallpaperControllerTest` 8/8 and
+`WallpaperImportPolicyTest` 6/6. Focused API 36 app instrumentation passed 19
+tests across the managed store, real MMS preview loader/shared decode gate, and
+SavedState saver; focused wallpaper repository plus direct migration
+instrumentation passed 12/12. A tightened migration-only rerun passed both the
+direct version-1-to-version-4 and version-3-to-version-4 cases.
+
+The direct migration preserved the version-1 draft body, subject, and
+timestamps; seeded the canonical selection; created empty screen and
+conversation wallpaper tables; retained required triggers; passed foreign-key
+validation; and created no media-catalog table. The retained version-3 fixture
+additionally preserved the named profile, active profile/snapshot revision,
+both scoped profile references, and the protected revision sequence. Together
+these results check the compound migration row.
+
+Wallpaper repository instrumentation now resets and recreates one target,
+proves the recreated revision is greater, and proves the pre-reset revision is
+stale for prospective projection, set, and reset without disturbing the
+recreated assignment or sequence. Controller tests additionally reject both a
+new import and existing managed media when the target changes after prospective
+quota validation; a new uncommitted derivative is cleaned only after an
+authoritative unreferenced check. Together with retained create/update,
+rollback, corruption, reopen, and conversation-rebinding coverage, these
+results check the compound CAS/ABA row.
+
+Managed-store instrumentation now proves the exact no-backup directory and
+content-addressed filename, removal of synthetic JPEG COM/EXIF/XMP metadata,
+animated/malformed-container and hash-tamper rejection, edge-bound rejection,
+a real 2,048-square high-entropy encoder path at the exact 16-MiB allocation
+ceiling, and acceptance of an installed exact-8-MiB static container with
+rejection at 8 MiB plus two bytes. These are partial compound-row results: the
+exact 8-MiB fixture is padded and installed rather than emitted by the real
+encoder, quality 95 is not independently captured, and the one-pixel compound
+overage is not an isolated allocation-only rejection. The Apply/derivative row
+therefore remains unchecked.
+
+The final combined real-client test deterministically holds both permits inside
+two MMS repository reads, runs wallpaper inspection undispatched through its
+source read, and proves the saturated shared gate is its first suspension; the
+wallpaper proceeds only after a permit is released. Saver instrumentation
+round-trips only schema, private target key, expected revision, dim, and focal
+integers, with no `content:` URI or managed-media token. These results do not
+exercise picker lifecycle or renderer synchronous-solid/request-epoch behavior,
+so their compound rows remain unchecked.
+
+The exact-source complete offline host command above was `BUILD SUCCESSFUL` in
+13s: 886 actionable tasks, 28 executed, 2 from cache, and 856 up-to-date. Its
+unit, lint, debug/release/benchmark assembly, macrobenchmark, clean-room,
+private-asset, dependency, permission/APK-content, license, and report gates all
+passed. The required `cyclonedxBom` invocation was `BUILD SUCCESSFUL` in 7s
+with all 15 tasks up-to-date.
+
+The complete API 36 command above was `BUILD SUCCESSFUL` in 59s: 456 actionable
+tasks, 9 executed, and 447 up-to-date. App 49, benchmark 4, core index 31,
+notifications 3, state 42, telephony 15, and feature conversations 4 passed.
+The physical-only scoped-modal smoke and opt-in scale benchmark were skipped as
+designed. The focused `ManagedWallpaperStoreTest` also passed 10/10 with zero
+failures, errors, or skips on a wiped Android 8.0/API 26 `AuroraSMS_API26` AVD;
+that disposable emulator was shut down after the run.
+
+The exact debug APK from source commit
+`975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` is 13,993,426 bytes with SHA-256
+`4b24e1595755af250bb0d89a703708d94bb9d539d10a66e9c17d0f4213472197`.
+It installed successfully on Pixel 8 serial `192.168.68.51:38677`; the copy at
+`/sdcard/Download/AuroraSMS-debug.apk` has the same size and hash. The installed
+package is version `0.4.2-phase4` (`versionCode=3`, target 36), remained the
+default-SMS role holder, and retained granted `READ_SMS`, `SEND_SMS`,
+`RECEIVE_SMS`, `RECEIVE_MMS`, and `POST_NOTIFICATIONS`. The wireless ADB
+endpoint went offline immediately before the planned cold-launch repeat, so no
+new launch or PID-log result is claimed for this commit. No screenshot,
+message/address export, physical wallpaper selection, or carrier send occurred.
+
+GitHub Verify
+[run 29398649372](https://github.com/LaAutista/AuroraSMS/actions/runs/29398649372)
+passed its build job in 14m22s with wrapper identity, clean-room/dependency,
+test/lint/assembly, manifest/APK, license, aggregate CycloneDX, and governance
+report steps green. Its only annotation was the GitHub-hosted Node 20
+deprecation and forced Node 24 for pinned actions, not a project failure.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 
