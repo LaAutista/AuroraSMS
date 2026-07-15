@@ -37,6 +37,7 @@ import org.aurorasms.app.appearance.wallpaper.ManagedWallpaperSurface
 import org.aurorasms.app.appearance.wallpaper.ScopedWallpaperDialog
 import org.aurorasms.app.appearance.wallpaper.WallpaperApplyControllerResult
 import org.aurorasms.app.appearance.wallpaper.WallpaperControllerError
+import org.aurorasms.app.appearance.wallpaper.WallpaperRenderRequestEpoch
 import org.aurorasms.app.appearance.wallpaper.resolveWallpaperCandidates
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.DraftWriteStatus
@@ -664,6 +665,9 @@ private fun ThreadRoute(
         globalObservation = globalWallpaperObservation,
         highContrast = !effectiveProfileReadyForWallpaper || conversationProfile.highContrast,
     )
+    val wallpaperRenderRequestEpoch = remember(route.stateEntryId, privateRestorationKey) {
+        WallpaperRenderRequestEpoch()
+    }
 
     AuroraMaterialTheme(profile = conversationProfile) {
         ThreadScreen(
@@ -682,6 +686,7 @@ private fun ThreadRoute(
                 wallpaperController?.let { controller ->
                     ManagedWallpaperSurface(
                         controller = controller,
+                        requestEpoch = wallpaperRenderRequestEpoch,
                         candidates = wallpaperCandidates,
                     )
                 }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -29,16 +30,28 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 /**
- * Target-keyed renderer that synchronously starts from the theme solid on every candidate change.
- * A previous conversation bitmap therefore cannot survive into a new target while loading.
+ * Opaque identity for one Thread-target render request.
+ *
+ * A fresh instance invalidates an otherwise equal inherited candidate list without retaining the
+ * route, participant identity, media token, or any other private target data.
+ */
+@Immutable
+internal class WallpaperRenderRequestEpoch {
+    override fun toString(): String = "WallpaperRenderRequestEpoch(REDACTED)"
+}
+
+/**
+ * Target-keyed renderer that synchronously starts from the theme solid on every request/candidate
+ * change. A previous conversation bitmap therefore cannot survive into a new target while loading.
  */
 @Composable
 internal fun BoxScope.ManagedWallpaperSurface(
     controller: WallpaperController,
+    requestEpoch: WallpaperRenderRequestEpoch,
     candidates: List<AppWallpaperAssignment>,
 ) {
     val safeSolid = MaterialTheme.colorScheme.surface
-    key(controller, candidates) {
+    key(controller, requestEpoch, candidates) {
         var loaded by remember { mutableStateOf<LoadedWallpaper?>(null) }
         val owner = remember { WallpaperResourceOwner<LoadedWallpaper>(LoadedWallpaper::release) }
         Box(
@@ -49,7 +62,7 @@ internal fun BoxScope.ManagedWallpaperSurface(
         DisposableEffect(owner) {
             onDispose(owner::dispose)
         }
-        LaunchedEffect(controller, candidates) {
+        LaunchedEffect(controller, requestEpoch, candidates) {
             var acquired: LoadedWallpaper? = null
             try {
                 acquired = controller.loadFirstAvailable(candidates)
