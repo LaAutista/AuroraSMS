@@ -181,10 +181,15 @@ Controls:
   conditions;
 - treat MIME and extensions as untrusted, fail closed, and offer recovery;
 - never decode MMS media while text indexing;
-- for ADR 0007 specifically, accept only bounded JPEG/static PNG; reject APNG,
-  GIF, every input WebP, HEIF, AVIF, malformed/partial data, a source above 16
-  MiB, an 8,192-pixel edge, or 40,000,000 pixels, and an output above a
-  2,048-pixel edge, 4,194,304 pixels, or 16-MiB allocation;
+- for ADR 0007 specifically, accept only bounded 8-bit Huffman baseline
+  sequential-DCT (`SOF0`) JPEG with at most four components and complete scan
+  coverage, or CRC-valid non-APNG PNG with at most 4,096 chunks, no
+  `iCCP`/`zTXt`/`iTXt` ancillary chunks, and a complete zlib scanline stream;
+  reject progressive, extended sequential, arithmetic, lossless,
+  differential/hierarchical, and non-8-bit JPEG, APNG, GIF, every input WebP,
+  HEIF, AVIF, malformed/partial data, a source above 16 MiB, an 8,192-pixel
+  edge, or 40,000,000 pixels, and an output above a 2,048-pixel edge,
+  4,194,304 pixels, or 16-MiB allocation;
 - normalize orientation and color space off-main, strip source metadata, and
   encode one static private WebP no larger than 8 MiB before persistence;
 - admit at most 128 distinct assigned managed wallpapers and 256 MiB total,

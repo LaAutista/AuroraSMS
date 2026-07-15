@@ -19,9 +19,9 @@ its host/governance and complete API 36 gates passed. Retained focused API 26
 managed-store and Pixel artifact/package/role/permission evidence applies to
 the preceding `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` build; a current-source
 Pixel handoff has not run because only the API 36 emulator was connected. The
-manual Photo Picker, remaining hostile limits, process-death, accessibility/
-form-factor, and physical static-Thread-wallpaper journeys remain outstanding
-and are not claimed.
+manual Photo Picker, managed-file crash/quota protocol, process-death,
+accessibility/form-factor, and physical static-Thread-wallpaper journeys remain
+outstanding and are not claimed.
 
 ## Evidence rules
 
@@ -1116,10 +1116,14 @@ complete ADR 0007 acceptance slice.
   preferences, `SavedState`, logs, or analytics; Aurora takes no persistable
   grant. Pick, preview, Cancel, Back, lost target/source, recreation loss, and
   failed/stale Apply create no durable assignment or managed file.
-- [ ] Import accepts only JPEG and non-APNG PNG by authoritative header/chunk
-  validation. It rejects MIME contradiction, GIF, every input WebP, HEIF, AVIF,
-  APNG, truncated/corrupt data, known/unknown source >16 MiB, edge >8,192, or
-  source >40,000,000 pixels before an unbounded/full decode.
+- [x] Import authoritatively accepts only 8-bit Huffman baseline sequential-DCT
+  (`SOF0`) JPEG with at most four components and complete scan coverage, or
+  CRC-valid non-APNG PNG with at most 4,096 chunks, no
+  `iCCP`/`zTXt`/`iTXt` ancillary chunks, and a complete zlib scanline stream. It
+  rejects MIME contradiction, every other reviewed JPEG process/precision, GIF,
+  every input WebP, HEIF, AVIF, APNG, truncated/corrupt data, known/unknown
+  source >16 MiB, edge >8,192, or source >40,000,000 pixels before an
+  unbounded/full decode.
 - [ ] Every orientation form is normalized consistently on API 26 and the
   newer decoder path; output is software sRGB/ARGB_8888 and <=2,048 pixels per
   edge, <=4,194,304 pixels, and <=16 MiB allocation. Chooser preview is <=512
@@ -1370,6 +1374,83 @@ The exact debug APK from this source commit is 13,993,426 bytes with SHA-256
 Only the API 36 emulator was connected, so this source commit has no claimed
 Pixel install, Download copy, role/grant recheck, cold launch, physical
 wallpaper selection, screenshot, message/address export, or carrier send.
+
+#### ADR 0007 hostile-importer follow-up evidence — 2026-07-15
+
+The source gate now treats platform decode as a second check rather than proof
+that encoded media is complete. The accepted JPEG subset is 8-bit Huffman
+baseline sequential DCT (`SOF0`), at most four components, with every component
+covered by complete entropy scans. Progressive, extended sequential,
+arithmetic, lossless, differential/hierarchical, and non-8-bit JPEG fail closed.
+Static PNG requires valid chunk names/CRCs, at most 4,096 chunks, and a complete
+bounded zlib scanline stream; `acTL`, `fcTL`, `fdAT`, `iCCP`, `zTXt`, and
+`iTXt` are all rejected.
+
+The focused host command was:
+
+```text
+./gradlew :app:testDebugUnitTest \
+  --tests org.aurorasms.app.appearance.wallpaper.JpegCompletenessPolicyTest \
+  --tests org.aurorasms.app.appearance.wallpaper.PngCompletenessPolicyTest \
+  --tests org.aurorasms.app.appearance.wallpaper.WallpaperImportPolicyTest \
+  --tests org.aurorasms.app.preview.StaticImagePolicyTest \
+  --offline --no-daemon --no-parallel --console=plain
+```
+
+It passed 23/23 across
+`JpegCompletenessPolicyTest`, `PngCompletenessPolicyTest`,
+`WallpaperImportPolicyTest`, and `StaticImagePolicyTest`. They cover complete
+baseline entropy and restart cadence, forged end markers after premature
+entropy, malformed/oversubscribed Huffman tables, rejected JPEG
+processes/precision, complete non-interlaced and Adam7 PNG scanlines, split
+`IDAT`, invalid filters, extra/truncated zlib output, palette indices, PNG chunk
+ordering/names/CRC/count, compressed ancillary rejection, all three APNG chunk
+types, source-format signatures, MIME contradiction, and exact
+source-dimension arithmetic.
+
+The focused device commands were:
+
+```text
+ANDROID_SERIAL=emulator-5554 ./gradlew :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=org.aurorasms.app.appearance.wallpaper.ManagedWallpaperStoreTest \
+  --offline --no-daemon --no-parallel --console=plain
+ANDROID_SERIAL=emulator-5556 ./gradlew :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=org.aurorasms.app.appearance.wallpaper.ManagedWallpaperStoreTest \
+  --offline --no-daemon --no-parallel --console=plain
+```
+
+`ManagedWallpaperStoreTest` passed 15/15 with zero failures or skips on both the
+Android 8.0/API 26 `AuroraSMS_API26` AVD and the API 36 AVD. The provider-backed
+matrix accepts the exact 4,096-byte UTF-8 URI and 256-character declared MIME,
+then rejects the one-byte/one-character overages before opening media; it also
+rejects an over-limit multibyte URI and a blank authority. The exact 16-MiB
+known-length source imports, while known- and unknown-length 16-MiB-plus-one
+sources fail typed. Exact 8,192-edge and 40,000,000-pixel PNGs import; the
+8,193-edge and 40,000,009-pixel fixtures fail typed.
+
+The same device matrix rejects a disappeared provider source; real WebP; VP8,
+VP8L, and VP8X signatures; GIF87a/GIF89a; HEIF, HEIC, and AVIF signatures; valid
+progressive JPEG; synthetic extended sequential, lossless,
+differential/hierarchical, arithmetic, and non-8-bit JPEG; and PNGs containing
+genuine `acTL`, `fcTL`, or `fdAT` APNG chunks. A baseline JPEG with truncated
+entropy followed by a forged EOI, a malformed JPEG segment, and a corrupt PNG
+zlib stream all fail inside the completeness gate. Each hostile helper asserts
+the typed result before cleanup and proves that no managed or pending artifact
+was created.
+
+The complete offline host, lint, release, benchmark, governance, license, and
+APK gate was `BUILD SUCCESSFUL` in 1m10s: 886 actionable tasks, 79 executed, 7
+from cache, and 800 up-to-date. The separately required `cyclonedxBom` command
+was `BUILD SUCCESSFUL` in 7s: 18 actionable tasks, 1 executed and 17 up-to-date.
+The resulting debug APK is 13,993,426 bytes with SHA-256
+`ba99f50b9dedd159ece0b9a44c29638bae510955cf623824b70a342da9765216`.
+Only the API 26 and API 36 emulators were connected, so this source snapshot has
+no claimed physical-device install, Download copy, picker journey, screenshot,
+carrier send, or role/grant recheck.
+
+This evidence checks only the hostile-importer row above. It does not claim the
+complete picker lifecycle, managed-file crash/quota protocol, full wallpaper
+acceptance, physical-device wallpaper journey, or completed application.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 

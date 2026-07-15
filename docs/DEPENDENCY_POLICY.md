@@ -305,19 +305,23 @@ ADR 0007 authorizes no new dependency. Its landed static implementation reuses
 the admitted Activity Result/Activity Compose, Compose, coroutine, and
 Room graph plus Android platform `BitmapFactory`, `ImageDecoder`, color-space,
 WebP-compression and file APIs, `java.security.MessageDigest`, and a small
-original parser that reads only bounded JPEG APP1 and PNG `eXIf` TIFF
-orientation fields. It has no `android.media.ExifInterface` dependency. The
-bounded importer, content-addressed private-file store, and static renderer
-introduce no external coordinate, repository, transitive graph, native binary,
-manifest component, permission, initializer, or network fetcher.
+original bounded parser for baseline-JPEG entropy completeness, static-PNG
+structure/zlib completeness, and JPEG APP1/PNG `eXIf` TIFF orientation fields.
+It has no `android.media.ExifInterface` dependency. The bounded importer,
+content-addressed private-file store, and static renderer introduce no external
+coordinate, repository, transitive graph, native binary, manifest component,
+permission, initializer, or network fetcher.
 
-The ADR 0007 platform path accepts only JPEG/static-PNG source and creates its
-own static managed WebP. It is not approval for a general image pipeline,
-animated input, GIF playback, a picker helper, a Photo Picker backport-install
-component, or a media SDK. External image/GIF loading, Navigation Compose,
-DataStore, icon packs, fonts, and remote theme/media SDKs remain unapproved.
-Artwork remains outside dependency policy and behind the separate rights gate
-in `docs/ARTWORK_CATALOG.md`.
+The ADR 0007 platform path accepts only 8-bit Huffman baseline sequential-DCT
+(`SOF0`) JPEG with at most four components and complete scan coverage, or
+CRC-valid non-APNG PNG with at most 4,096 chunks, no
+`iCCP`/`zTXt`/`iTXt` ancillary chunks, and a complete zlib scanline stream, and creates
+its own static managed WebP. It is not approval for other JPEG processes, a
+general image pipeline, animated input, GIF playback, a picker helper, a Photo
+Picker backport-install component, or a media SDK. External image/GIF loading,
+Navigation Compose, DataStore, icon packs, fonts, and remote theme/media SDKs
+remain unapproved. Artwork remains outside dependency policy and behind the
+separate rights gate in `docs/ARTWORK_CATALOG.md`.
 
 ## Deferred and decision-gated dependencies
 

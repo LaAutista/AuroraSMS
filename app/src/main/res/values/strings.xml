@@ -98,7 +98,7 @@
     <string name="appearance_scope_wallpaper_profile_dirty">Apply or cancel profile changes before editing the wallpaper.</string>
     <string name="wallpaper_title">Thread wallpaper</string>
     <string name="wallpaper_back">Back to appearance</string>
-    <string name="wallpaper_explanation">Choose a static JPEG or PNG for this thread scope. AuroraSMS previews it without saving and stores only a private sanitized copy when you apply.</string>
+    <string name="wallpaper_explanation">Choose an 8-bit baseline JPEG or a supported static PNG for this thread scope. AuroraSMS previews it without saving and stores only a private sanitized copy when you apply.</string>
     <string name="wallpaper_choose_image">Choose image</string>
     <string name="wallpaper_change_image">Choose another image</string>
     <string name="wallpaper_no_image">No wallpaper selected</string>
@@ -120,8 +120,8 @@
     <string name="wallpaper_cancel">Cancel</string>
     <string name="wallpaper_applying">Applying wallpaper…</string>
     <string name="wallpaper_resetting">Resetting wallpaper…</string>
-    <string name="wallpaper_error_source_unavailable">That image could not be read. Choose another JPEG or PNG.</string>
-    <string name="wallpaper_error_unsupported_source">That image format is not supported. Choose a static JPEG or PNG.</string>
+    <string name="wallpaper_error_source_unavailable">That image could not be read. Choose another supported image.</string>
+    <string name="wallpaper_error_unsupported_source">That image format is not supported. AuroraSMS accepts 8-bit baseline JPEG and supported static PNG files.</string>
     <string name="wallpaper_error_source_too_large">That image is too large to process safely. Choose a smaller image.</string>
     <string name="wallpaper_error_quota_exceeded">Wallpaper storage is full. Reset an unused wallpaper before adding another.</string>
     <string name="wallpaper_error_stale_assignment">This wallpaper changed elsewhere. Go back and reopen it before applying.</string>

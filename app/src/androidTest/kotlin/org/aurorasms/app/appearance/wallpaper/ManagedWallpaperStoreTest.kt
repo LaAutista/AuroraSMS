@@ -2,6 +2,7 @@
 
 package org.aurorasms.app.appearance.wallpaper
 
+import android.content.res.AssetFileDescriptor
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
@@ -32,9 +33,13 @@ class ManagedWallpaperStoreTest {
         val source = testUri("valid.png")
 
         val inspection = store.inspect(source) as WallpaperInspectionResult.Ready
-        assertEquals(40, inspection.width)
-        assertEquals(20, inspection.height)
-        assertEquals(source, inspection.source)
+        try {
+            assertEquals(40, inspection.width)
+            assertEquals(20, inspection.height)
+            assertEquals(source, inspection.source)
+        } finally {
+            inspection.release()
+        }
 
         val first = store.import(source) as WallpaperImportResult.Ready
         val second = store.import(source) as WallpaperImportResult.Ready
@@ -43,12 +48,17 @@ class ManagedWallpaperStoreTest {
         assertEquals(first.mediaId, second.mediaId)
 
         val loaded = store.load(first.mediaId) as WallpaperLoadResult.Ready
-        assertEquals(first.mediaId, loaded.mediaId)
-        assertEquals(40, loaded.width)
-        assertEquals(20, loaded.height)
+        try {
+            assertEquals(first.mediaId, loaded.mediaId)
+            assertEquals(40, loaded.width)
+            assertEquals(20, loaded.height)
+        } finally {
+            loaded.release()
+        }
 
         assertTrue(store.reconcile(setOf(first.mediaId)))
-        assertTrue(store.load(first.mediaId) is WallpaperLoadResult.Ready)
+        val retained = store.load(first.mediaId) as WallpaperLoadResult.Ready
+        retained.release()
         assertTrue(store.reconcile(emptySet()))
         assertEquals(WallpaperLoadResult.Unavailable, store.load(first.mediaId))
     }
@@ -232,6 +242,112 @@ class ManagedWallpaperStoreTest {
     }
 
     @Test
+    fun lostSourceAndEveryUnsupportedStaticInputFailTypedWithoutManagedArtifacts() = runBlocking {
+        store.reconcile(emptySet())
+
+        assertInspectionFailure("lost.png", WallpaperMediaFailure.UNAVAILABLE)
+        assertImportFailure("lost.png", WallpaperMediaFailure.UNAVAILABLE)
+
+        listOf(
+            "actual.webp",
+            "signature-vp8.webp",
+            "signature-vp8l.webp",
+            "signature-vp8x.webp",
+            "gif87.gif",
+            "gif89.gif",
+            "signature-heif.heif",
+            "signature-heic.heic",
+            "signature-avif.avif",
+            "progressive.jpeg",
+            "extended-sequential.jpeg",
+            "lossless.jpeg",
+            "differential-hierarchical.jpeg",
+            "arithmetic.jpeg",
+            "non-eight-bit.jpeg",
+            "animated.png",
+            "apng-fctl.png",
+            "apng-fdat.png",
+        ).forEach { path ->
+            assertImportFailure(path, WallpaperMediaFailure.UNSUPPORTED_TYPE)
+        }
+    }
+
+    @Test
+    fun magicPreservingCorruptionFailsInsideTheDecoderWithoutManagedArtifacts() = runBlocking {
+        store.reconcile(emptySet())
+
+        listOf(
+            "reterminated-truncated.jpeg",
+            "malformed-segment.jpeg",
+            "corrupt-idat.png",
+        ).forEach { path ->
+            assertImportFailure(path, WallpaperMediaFailure.MALFORMED)
+        }
+    }
+
+    @Test
+    fun sourceByteLimitIsInclusiveForKnownAndUnknownLengthStreams() = runBlocking {
+        store.reconcile(emptySet())
+
+        context.contentResolver.openAssetFileDescriptor(testUri("source-exact-known.png"), "r")!!.use {
+            assertEquals(MAXIMUM_WALLPAPER_SOURCE_BYTES.toLong(), it.declaredLength)
+        }
+        assertImportReadyAndClean("source-exact-known.png")
+
+        context.contentResolver.openAssetFileDescriptor(testUri("source-over-known.png"), "r")!!.use {
+            assertEquals((MAXIMUM_WALLPAPER_SOURCE_BYTES + 1).toLong(), it.declaredLength)
+        }
+        assertInspectionFailure("source-over-known.png", WallpaperMediaFailure.INPUT_TOO_LARGE)
+        assertImportFailure("source-over-known.png", WallpaperMediaFailure.INPUT_TOO_LARGE)
+
+        context.contentResolver.openAssetFileDescriptor(testUri("source-over-unknown.png"), "r")!!.use {
+            assertEquals(AssetFileDescriptor.UNKNOWN_LENGTH, it.declaredLength)
+        }
+        assertInspectionFailure("source-over-unknown.png", WallpaperMediaFailure.INPUT_TOO_LARGE)
+        assertImportFailure("source-over-unknown.png", WallpaperMediaFailure.INPUT_TOO_LARGE)
+    }
+
+    @Test
+    fun transientUriAndDeclaredMimeLimitsAreInclusiveAndFailBeforeOpening() = runBlocking {
+        store.reconcile(emptySet())
+
+        val exactUri = paddedUri(MAXIMUM_TRANSIENT_URI_BYTES, 'a')
+        assertEquals(MAXIMUM_TRANSIENT_URI_BYTES, exactUri.toString().encodeToByteArray().size)
+        assertImportReadyAndClean(exactUri, "exact UTF-8 URI")
+
+        val overUri = paddedUri(MAXIMUM_TRANSIENT_URI_BYTES + 1, 'a')
+        assertInspectionFailure(overUri, "overlong ASCII URI", WallpaperMediaFailure.INVALID_SOURCE)
+        assertImportFailure(overUri, "overlong ASCII URI", WallpaperMediaFailure.INVALID_SOURCE)
+
+        val unicodePrefix = "${testUri("valid.png")}?padding="
+        val unicodeUri = Uri.parse(unicodePrefix + "é".repeat(2_100))
+        assertTrue(unicodeUri.toString().length <= MAXIMUM_TRANSIENT_URI_BYTES)
+        assertTrue(unicodeUri.toString().encodeToByteArray().size > MAXIMUM_TRANSIENT_URI_BYTES)
+        assertInspectionFailure(unicodeUri, "overlong UTF-8 URI", WallpaperMediaFailure.INVALID_SOURCE)
+        assertImportFailure(unicodeUri, "overlong UTF-8 URI", WallpaperMediaFailure.INVALID_SOURCE)
+
+        val blankAuthority = Uri.parse("content:///valid.png")
+        assertInspectionFailure(blankAuthority, "blank authority", WallpaperMediaFailure.INVALID_SOURCE)
+        assertImportFailure(blankAuthority, "blank authority", WallpaperMediaFailure.INVALID_SOURCE)
+
+        assertImportReadyAndClean(testUri("mime-exact.png"), "exact declared MIME")
+        assertInspectionFailure("mime-over.png", WallpaperMediaFailure.MIME_MISMATCH)
+        assertImportFailure("mime-over.png", WallpaperMediaFailure.MIME_MISMATCH)
+    }
+
+    @Test
+    fun sourceDimensionLimitsAcceptExactBoundariesAndRejectSmallestRepresentableOverages() = runBlocking {
+        store.reconcile(emptySet())
+        assertEquals(40_000_000L, 8_000L * 5_000L)
+        assertEquals(40_000_009L, 7_357L * 5_437L)
+
+        assertImportReadyAndClean("edge-exact.png")
+        assertImportFailure("edge-over.png", WallpaperMediaFailure.SOURCE_DIMENSIONS_TOO_LARGE)
+        assertImportReadyAndClean("pixels-exact.png")
+        assertImportFailure("pixels-over.png", WallpaperMediaFailure.SOURCE_DIMENSIONS_TOO_LARGE)
+    }
+
+    @Test
     fun jpegExifOrientationIsAppliedBeforeTheManagedDerivativeIsPersisted() = runBlocking {
         store.reconcile(emptySet())
 
@@ -335,6 +451,78 @@ class ManagedWallpaperStoreTest {
 
     private fun testUri(path: String): Uri =
         Uri.parse("content://org.aurorasms.app.wallpaper.testprovider/$path")
+
+    private suspend fun assertInspectionFailure(
+        path: String,
+        expected: WallpaperMediaFailure,
+    ) = assertInspectionFailure(testUri(path), path, expected)
+
+    private suspend fun assertInspectionFailure(
+        source: Uri,
+        label: String,
+        expected: WallpaperMediaFailure,
+    ) {
+        val result = store.inspect(source)
+        try {
+            assertTrue("Expected inspection failure for $label but was $result", result is WallpaperInspectionResult.Failed)
+            assertEquals(label, expected, (result as WallpaperInspectionResult.Failed).reason)
+        } finally {
+            if (result is WallpaperInspectionResult.Ready) result.release()
+        }
+        assertManagedDirectoryEmpty(label)
+    }
+
+    private suspend fun assertImportFailure(
+        path: String,
+        expected: WallpaperMediaFailure,
+    ) = assertImportFailure(testUri(path), path, expected)
+
+    private suspend fun assertImportFailure(
+        source: Uri,
+        label: String,
+        expected: WallpaperMediaFailure,
+    ) {
+        val result = store.import(source)
+        try {
+            assertTrue("Expected import failure for $label but was $result", result is WallpaperImportResult.Failed)
+            assertEquals(label, expected, (result as WallpaperImportResult.Failed).reason)
+            assertManagedDirectoryEmpty(label)
+        } finally {
+            assertTrue("Unable to clean managed fixtures after $label", store.reconcile(emptySet()))
+        }
+        assertManagedDirectoryEmpty("$label after cleanup")
+    }
+
+    private suspend fun assertImportReadyAndClean(path: String) {
+        assertImportReadyAndClean(testUri(path), path)
+    }
+
+    private suspend fun assertImportReadyAndClean(source: Uri, label: String) {
+        val result = store.import(source)
+        try {
+            assertTrue("Expected import success for $label but was $result", result is WallpaperImportResult.Ready)
+        } finally {
+            assertTrue("Unable to clean managed fixtures after $label", store.reconcile(emptySet()))
+        }
+        assertManagedDirectoryEmpty(label)
+    }
+
+    private fun paddedUri(targetUtf8Bytes: Int, padding: Char): Uri {
+        val prefix = "${testUri("valid.png")}?padding="
+        val paddingBytes = padding.toString().encodeToByteArray().size
+        val remaining = targetUtf8Bytes - prefix.encodeToByteArray().size
+        require(remaining >= 0 && remaining % paddingBytes == 0)
+        return Uri.parse(prefix + padding.toString().repeat(remaining / paddingBytes))
+    }
+
+    private fun assertManagedDirectoryEmpty(path: String) {
+        val root = File(context.noBackupFilesDir, "appearance/wallpapers")
+        if (!root.exists()) return
+        assertTrue("Managed wallpaper root is not a directory after $path", root.isDirectory)
+        val children = root.listFiles()
+            ?: throw AssertionError("Unable to enumerate managed artifacts after $path")
+        assertTrue("Managed artifact remained after $path: ${children.map(File::getName)}", children.isEmpty())
+    }
 
     private fun managedFile(mediaId: String): File = File(
         File(context.noBackupFilesDir, "appearance/wallpapers"),

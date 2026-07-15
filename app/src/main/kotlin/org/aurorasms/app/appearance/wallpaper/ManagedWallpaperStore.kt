@@ -179,10 +179,12 @@ internal class ManagedWallpaperStore(
                     is DecodeResult.Failed -> return@withPermit WallpaperImportResult.Failed(result.reason)
                 }
                 try {
-                    val derivative = encodeDerivative(decoded)
-                        ?: return@withPermit WallpaperImportResult.Failed(
-                            WallpaperMediaFailure.OUTPUT_TOO_LARGE,
-                        )
+                    val derivative = when (val encoded = encodeDerivative(decoded)) {
+                        is EncodeResult.Ready -> encoded.bytes
+                        is EncodeResult.Failed -> {
+                            return@withPermit WallpaperImportResult.Failed(encoded.reason)
+                        }
+                    }
                     persistDerivative(derivative).also { persisted ->
                         if (persisted is WallpaperImportResult.Ready && persisted.created) {
                             cancellationOwnedFile = persisted
@@ -335,26 +337,51 @@ internal class ManagedWallpaperStore(
     }
 
     private suspend fun readSource(source: Uri): SourceReadResult {
-        val serialized = source.toString()
+        val serialized = try {
+            source.toString()
+        } catch (_: OutOfMemoryError) {
+            return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+        }
         if (
+            serialized.length > MAXIMUM_TRANSIENT_URI_BYTES ||
             source.scheme != android.content.ContentResolver.SCHEME_CONTENT ||
-            source.authority.isNullOrBlank() ||
-            serialized.encodeToByteArray().size > MAXIMUM_TRANSIENT_URI_BYTES
+            source.authority.isNullOrBlank()
         ) {
+            return SourceReadResult.Failed(WallpaperMediaFailure.INVALID_SOURCE)
+        }
+        val serializedBytes = try {
+            serialized.encodeToByteArray()
+        } catch (_: OutOfMemoryError) {
+            return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+        }
+        if (serializedBytes.size > MAXIMUM_TRANSIENT_URI_BYTES) {
             return SourceReadResult.Failed(WallpaperMediaFailure.INVALID_SOURCE)
         }
         val declaredMime = try {
             resolver.getType(source)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: SecurityException) {
             return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
         } catch (_: RuntimeException) {
             return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+        } catch (_: OutOfMemoryError) {
+            return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+        }
+        if (declaredMime != null && declaredMime.length > MAXIMUM_DECLARED_MIME_TYPE_CHARACTERS) {
+            return SourceReadResult.Failed(WallpaperMediaFailure.MIME_MISMATCH)
         }
         val stream = try {
             resolver.openInputStream(source)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: IOException) {
+            return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
         } catch (_: SecurityException) {
             return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
         } catch (_: RuntimeException) {
+            return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+        } catch (_: OutOfMemoryError) {
             return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
         } ?: return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
         val bytes = try {
@@ -367,10 +394,24 @@ internal class ManagedWallpaperStore(
             return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
         } catch (_: RuntimeException) {
             return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+        } catch (_: OutOfMemoryError) {
+            return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
         } ?: return SourceReadResult.Failed(WallpaperMediaFailure.INPUT_TOO_LARGE)
-        val format = wallpaperSourceFormat(bytes)
-            ?: return SourceReadResult.Failed(WallpaperMediaFailure.UNSUPPORTED_TYPE)
-        if (!wallpaperMimeMatches(declaredMime, format)) {
+        val format = try {
+            wallpaperSourceFormat(bytes)
+        } catch (_: RuntimeException) {
+            null
+        } catch (_: OutOfMemoryError) {
+            return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+        } ?: return SourceReadResult.Failed(WallpaperMediaFailure.UNSUPPORTED_TYPE)
+        val mimeMatches = try {
+            wallpaperMimeMatches(declaredMime, format)
+        } catch (_: RuntimeException) {
+            false
+        } catch (_: OutOfMemoryError) {
+            return SourceReadResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+        }
+        if (!mimeMatches) {
             return SourceReadResult.Failed(WallpaperMediaFailure.MIME_MISMATCH)
         }
         return SourceReadResult.Ready(bytes, format)
@@ -382,8 +423,42 @@ internal class ManagedWallpaperStore(
         preview: Boolean,
     ): DecodeResult {
         StrictMode.noteSlowCall("aurora-wallpaper-source-decode")
-        val bounds = BitmapFactory.Options().also { it.inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(encoded, 0, encoded.size, bounds)
+        try {
+            when (format) {
+                WallpaperSourceFormat.JPEG -> when (encoded.jpegCompleteness()) {
+                    JpegCompleteness.COMPLETE -> Unit
+                    JpegCompleteness.SOURCE_DIMENSIONS_TOO_LARGE -> {
+                        return DecodeResult.Failed(WallpaperMediaFailure.SOURCE_DIMENSIONS_TOO_LARGE)
+                    }
+                    JpegCompleteness.INVALID -> {
+                        return DecodeResult.Failed(WallpaperMediaFailure.MALFORMED)
+                    }
+                }
+                WallpaperSourceFormat.PNG -> when (encoded.pngCompleteness()) {
+                    PngCompleteness.COMPLETE -> Unit
+                    PngCompleteness.SOURCE_DIMENSIONS_TOO_LARGE -> {
+                        return DecodeResult.Failed(WallpaperMediaFailure.SOURCE_DIMENSIONS_TOO_LARGE)
+                    }
+                    PngCompleteness.INVALID -> {
+                        return DecodeResult.Failed(WallpaperMediaFailure.MALFORMED)
+                    }
+                }
+            }
+        } catch (_: RuntimeException) {
+            return DecodeResult.Failed(WallpaperMediaFailure.MALFORMED)
+        } catch (_: OutOfMemoryError) {
+            return DecodeResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+        }
+        val bounds = try {
+            BitmapFactory.Options().also {
+                it.inJustDecodeBounds = true
+                BitmapFactory.decodeByteArray(encoded, 0, encoded.size, it)
+            }
+        } catch (_: RuntimeException) {
+            return DecodeResult.Failed(WallpaperMediaFailure.MALFORMED)
+        } catch (_: OutOfMemoryError) {
+            return DecodeResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+        }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             return DecodeResult.Failed(WallpaperMediaFailure.MALFORMED)
         }
@@ -416,22 +491,31 @@ internal class ManagedWallpaperStore(
         } else {
             target
         }
+        var ownedDuringDecode: Bitmap? = null
         val bitmap = try {
             val decoded = if (Build.VERSION.SDK_INT >= 28 && format == WallpaperSourceFormat.JPEG) {
                 decodeWithImageDecoder(encoded, target)
             } else {
                 decodeWithBitmapFactory(encoded, rawTarget, orientation)
             }
-            decoded?.toSrgbArgb8888()
+            ownedDuringDecode = decoded
+            decoded?.toSrgbArgb8888()?.also { normalized ->
+                ownedDuringDecode = normalized
+            }
         } catch (_: IOException) {
+            ownedDuringDecode?.recycle()
             null
         } catch (_: IllegalArgumentException) {
+            ownedDuringDecode?.recycle()
             null
         } catch (_: RuntimeException) {
+            ownedDuringDecode?.recycle()
             null
         } catch (_: OutOfMemoryError) {
+            ownedDuringDecode?.recycle()
             return DecodeResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
         } ?: return DecodeResult.Failed(WallpaperMediaFailure.MALFORMED)
+        ownedDuringDecode = null
         val maximumAllocation = if (preview) {
             MAXIMUM_WALLPAPER_PREVIEW_ALLOCATION_BYTES
         } else {
@@ -459,10 +543,12 @@ internal class ManagedWallpaperStore(
         return DecodeResult.Ready(bitmap)
     }
 
-    private fun encodeDerivative(bitmap: Bitmap): ByteArray? {
+    private fun encodeDerivative(bitmap: Bitmap): EncodeResult {
         StrictMode.noteSlowCall("aurora-wallpaper-derivative-encode")
-        val output = ByteArrayOutputStream(minOf(MAXIMUM_WALLPAPER_DERIVATIVE_BYTES, 64 * 1_024))
         return try {
+            val output = ByteArrayOutputStream(
+                minOf(MAXIMUM_WALLPAPER_DERIVATIVE_BYTES, 64 * 1_024),
+            )
             val format = if (Build.VERSION.SDK_INT >= 30) {
                 Bitmap.CompressFormat.WEBP_LOSSY
             } else {
@@ -470,15 +556,20 @@ internal class ManagedWallpaperStore(
                 Bitmap.CompressFormat.WEBP
             }
             if (!bitmap.compress(format, WALLPAPER_WEBP_QUALITY, BoundedOutputStream(output))) {
-                return null
+                return EncodeResult.Failed(WallpaperMediaFailure.OUTPUT_TOO_LARGE)
             }
-            output.toByteArray().takeIf { bytes ->
-                bytes.size in 1..MAXIMUM_WALLPAPER_DERIVATIVE_BYTES && bytes.isStaticWebp()
+            val bytes = output.toByteArray()
+            if (bytes.size !in 1..MAXIMUM_WALLPAPER_DERIVATIVE_BYTES || !bytes.isStaticWebp()) {
+                EncodeResult.Failed(WallpaperMediaFailure.OUTPUT_TOO_LARGE)
+            } else {
+                EncodeResult.Ready(bytes)
             }
         } catch (_: SizeLimitExceededException) {
-            null
+            EncodeResult.Failed(WallpaperMediaFailure.OUTPUT_TOO_LARGE)
         } catch (_: RuntimeException) {
-            null
+            EncodeResult.Failed(WallpaperMediaFailure.OUTPUT_TOO_LARGE)
+        } catch (_: OutOfMemoryError) {
+            EncodeResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
         }
     }
 
@@ -602,6 +693,11 @@ private sealed interface DecodeResult {
     data class Failed(val reason: WallpaperMediaFailure) : DecodeResult
 }
 
+private sealed interface EncodeResult {
+    data class Ready(val bytes: ByteArray) : EncodeResult
+    data class Failed(val reason: WallpaperMediaFailure) : EncodeResult
+}
+
 private data class BitmapTarget(val width: Int, val height: Int)
 
 private fun boundedTarget(
@@ -656,25 +752,39 @@ private fun decodeWithBitmapFactory(
             inMutable = false
         },
     ) ?: return null
-    val oriented = orientLegacyBitmap(
-        bitmap = decoded,
-        orientation = orientation,
-    )
-    val orientedTarget = boundedTarget(
-        width = oriented.width,
-        height = oriented.height,
-        maximumEdge = maxOf(target.width, target.height),
-        maximumPixels = target.width.toLong() * target.height.toLong(),
-    )
-    val scaled = if (oriented.width == orientedTarget.width && oriented.height == orientedTarget.height) {
-        oriented
-    } else {
-        oriented.scale(orientedTarget.width, orientedTarget.height, filter = true).also {
-            if (oriented !== decoded) oriented.recycle()
-            decoded.recycle()
+    var owned: Bitmap? = decoded
+    try {
+        val oriented = orientLegacyBitmap(
+            bitmap = decoded,
+            orientation = orientation,
+        )
+        owned = oriented
+        val orientedTarget = boundedTarget(
+            width = oriented.width,
+            height = oriented.height,
+            maximumEdge = maxOf(target.width, target.height),
+            maximumPixels = target.width.toLong() * target.height.toLong(),
+        )
+        val scaled = if (
+            oriented.width == orientedTarget.width &&
+            oriented.height == orientedTarget.height
+        ) {
+            oriented
+        } else {
+            oriented.scale(orientedTarget.width, orientedTarget.height, filter = true).also {
+                if (oriented !== decoded) oriented.recycle()
+                decoded.recycle()
+            }
         }
+        owned = null
+        return scaled
+    } catch (failure: RuntimeException) {
+        owned?.recycle()
+        throw failure
+    } catch (failure: OutOfMemoryError) {
+        owned?.recycle()
+        throw failure
     }
-    return scaled.toSrgbArgb8888()
 }
 
 internal fun orientLegacyBitmap(bitmap: Bitmap, orientation: Int): Bitmap {
@@ -867,15 +977,31 @@ private fun Byte.unsigned(): Int = toInt() and 0xff
 private fun Bitmap.toSrgbArgb8888(): Bitmap {
     if (config == Bitmap.Config.ARGB_8888 && colorSpace?.isSrgb == true) return this
     val normalized = createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    Canvas(normalized).drawBitmap(this, 0f, 0f, null)
-    if (normalized !== this) recycle()
-    return normalized
+    return try {
+        Canvas(normalized).drawBitmap(this, 0f, 0f, null)
+        recycle()
+        normalized
+    } catch (failure: RuntimeException) {
+        normalized.recycle()
+        throw failure
+    } catch (failure: OutOfMemoryError) {
+        normalized.recycle()
+        throw failure
+    }
 }
 
 private fun decodeTrustedDerivative(encoded: ByteArray, preview: Boolean): Bitmap? {
     StrictMode.noteSlowCall("aurora-wallpaper-render-decode")
-    val bounds = BitmapFactory.Options().also { it.inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(encoded, 0, encoded.size, bounds)
+    val bounds = try {
+        BitmapFactory.Options().also {
+            it.inJustDecodeBounds = true
+            BitmapFactory.decodeByteArray(encoded, 0, encoded.size, it)
+        }
+    } catch (_: RuntimeException) {
+        return null
+    } catch (_: OutOfMemoryError) {
+        return null
+    }
     if (
         bounds.outWidth !in 1..MAXIMUM_WALLPAPER_EDGE_PIXELS ||
         bounds.outHeight !in 1..MAXIMUM_WALLPAPER_EDGE_PIXELS ||

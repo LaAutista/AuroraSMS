@@ -45,6 +45,7 @@ class StaticImagePolicyTest {
     @Test
     fun `dimension policy rejects hostile sources and computes bounded targets`() {
         assertTrue(sourceDimensionsAreAllowed(8_000, 5_000))
+        assertTrue(sourceDimensionsAreAllowed(8_192, 1))
         assertFalse(sourceDimensionsAreAllowed(8_001, 5_000))
         assertFalse(sourceDimensionsAreAllowed(8_193, 1))
         assertFalse(sourceDimensionsAreAllowed(0, 100))

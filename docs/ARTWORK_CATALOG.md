@@ -88,9 +88,12 @@ pipeline must then:
 - Inbox, Archive, Settings, Spam & Blocked, global thread fallback, and each
   conversation retain independent assignments.
 - ADR 0007's first user-media slice uses the system picker as a temporary read,
-  accepts only bounded JPEG/static PNG, strips metadata into a private static
-  WebP, and stores no source URI or grant. It applies only to `global_thread`
-  and verified conversations.
+  accepts only bounded 8-bit Huffman baseline sequential-DCT (`SOF0`) JPEG with
+  at most four components and complete scan coverage, or CRC-valid non-APNG PNG
+  with at most 4,096 chunks, no `iCCP`/`zTXt`/`iTXt` ancillary chunks, and a
+  complete zlib scanline stream. It strips metadata into a
+  private static WebP and stores no source URI or grant. It applies only to
+  `global_thread` and verified conversations.
 - GIF, live external URI, and other-format user media remain deferred and
   require their own bounded metadata/frame/duration/decode, lifecycle, and
   URI/grant decisions.
