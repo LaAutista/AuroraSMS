@@ -138,36 +138,45 @@ internal class WallpaperController(
         expectedRevision: Long?,
         targetStillCurrent: () -> Boolean = { true },
     ): WallpaperApplyControllerResult = mutationMutex.withLock {
-        val imported = when (val result = store.import(source)) {
-            is WallpaperImportResult.Ready -> result
-            is WallpaperImportResult.Failed -> {
-                return WallpaperApplyControllerResult.Failed(result.reason.toControllerError())
-            }
-        }
+        var candidate: WallpaperImportResult.Ready? = null
         var committed = false
         try {
+            val preflightMediaIds = preflightImportLocked()
+                ?: return WallpaperApplyControllerResult.Failed(WallpaperControllerError.SAVE_FAILED)
+            val imported = when (
+                val result = store.import(
+                    source = source,
+                    referencedMediaIds = preflightMediaIds,
+                    onCandidateCreated = { created ->
+                        check(created.created)
+                        candidate = created
+                    },
+                )
+            ) {
+                is WallpaperImportResult.Ready -> result.also { ready ->
+                    if (ready.created) candidate = ready
+                }
+                is WallpaperImportResult.Failed -> {
+                    return WallpaperApplyControllerResult.Failed(result.reason.toControllerError())
+                }
+            }
             val mediaId = try {
                 AppearanceWallpaperMediaId.fromPrivateStorageToken(imported.mediaId)
             } catch (_: IllegalArgumentException) {
-                cleanupFailedImport(imported)
                 return WallpaperApplyControllerResult.Failed(WallpaperControllerError.SAVE_FAILED)
             }
             if (!targetStillCurrent()) {
-                cleanupFailedImport(imported)
                 return WallpaperApplyControllerResult.Failed(WallpaperControllerError.STALE_ASSIGNMENT)
             }
             val expected = try {
                 expectedRevision?.let(::AppearanceWallpaperRevision)
             } catch (_: IllegalArgumentException) {
-                cleanupFailedImport(imported)
                 return WallpaperApplyControllerResult.Failed(WallpaperControllerError.SAVE_FAILED)
             }
             validateProspectiveAssignment(scope, mediaId, expected)?.let { error ->
-                cleanupFailedImport(imported)
                 return WallpaperApplyControllerResult.Failed(error)
             }
             if (!targetStillCurrent()) {
-                cleanupFailedImport(imported)
                 return WallpaperApplyControllerResult.Failed(WallpaperControllerError.STALE_ASSIGNMENT)
             }
             return when (
@@ -183,16 +192,16 @@ internal class WallpaperController(
                 is AppearanceRepositoryResult.Success -> {
                     committed = true
                     result.value.mediaIdNowUnreferenced?.let { stale ->
-                        store.delete(stale.toPrivateStorageToken())
+                        withContext(NonCancellable) {
+                            deleteIfAuthoritativelyUnreferenced(stale.toPrivateStorageToken())
+                        }
                     }
                     WallpaperApplyControllerResult.Success
                 }
                 AppearanceRepositoryResult.StaleWrite -> {
-                    cleanupFailedImport(imported)
                     WallpaperApplyControllerResult.Failed(WallpaperControllerError.STALE_ASSIGNMENT)
                 }
                 is AppearanceRepositoryResult.LimitExceeded -> {
-                    cleanupFailedImport(imported)
                     WallpaperApplyControllerResult.Failed(
                         if (result.limit == AppearanceLimit.WALLPAPER_MEDIA_COUNT) {
                             WallpaperControllerError.QUOTA_EXCEEDED
@@ -202,15 +211,17 @@ internal class WallpaperController(
                     )
                 }
                 else -> {
-                    cleanupFailedImport(imported)
                     WallpaperApplyControllerResult.Failed(WallpaperControllerError.SAVE_FAILED)
                 }
             }
-        } catch (cancelled: CancellationException) {
+        } finally {
             if (!committed) {
-                withContext(NonCancellable) { cleanupFailedImport(imported) }
+                candidate?.takeIf(WallpaperImportResult.Ready::created)?.let { created ->
+                    withContext(NonCancellable) {
+                        deleteIfAuthoritativelyUnreferenced(created.mediaId)
+                    }
+                }
             }
-            throw cancelled
         }
     }
 
@@ -230,7 +241,9 @@ internal class WallpaperController(
         return when (val result = repository.resetWallpaper(scope, expected)) {
             is AppearanceRepositoryResult.Success -> {
                 result.value.mediaIdNowUnreferenced?.let { stale ->
-                    store.delete(stale.toPrivateStorageToken())
+                    withContext(NonCancellable) {
+                        deleteIfAuthoritativelyUnreferenced(stale.toPrivateStorageToken())
+                    }
                 }
                 WallpaperApplyControllerResult.Success
             }
@@ -281,7 +294,9 @@ internal class WallpaperController(
         ) {
             is AppearanceRepositoryResult.Success -> {
                 result.value.mediaIdNowUnreferenced?.let { stale ->
-                    store.delete(stale.toPrivateStorageToken())
+                    withContext(NonCancellable) {
+                        deleteIfAuthoritativelyUnreferenced(stale.toPrivateStorageToken())
+                    }
                 }
                 WallpaperApplyControllerResult.Success
             }
@@ -311,23 +326,34 @@ internal class WallpaperController(
 
     /** Must be called only after durable state opened successfully. */
     suspend fun reconcileManagedFiles(): Boolean = mutationMutex.withLock {
-        when (val result = repository.referencedMediaIds()) {
-            is AppearanceRepositoryResult.Success -> store.reconcile(
-                result.value.mapTo(HashSet()) { it.toPrivateStorageToken() },
-            )
-            else -> false
+        reconcileManagedFilesLocked() != null
+    }
+
+    private suspend fun authoritativeMediaIds(): Set<String>? =
+        when (val references = repository.referencedMediaIds()) {
+            is AppearanceRepositoryResult.Success -> references.value
+                .takeIf { it.size <= MAXIMUM_WALLPAPER_FILE_COUNT }
+                ?.mapTo(HashSet(references.value.size)) { it.toPrivateStorageToken() }
+            else -> null
+        }
+
+    private suspend fun reconcileManagedFilesLocked(): Set<String>? {
+        val references = authoritativeMediaIds() ?: return null
+        return references.takeIf {
+            store.reconcile(references) == ManagedWallpaperReconcileResult.COMPLETE
         }
     }
 
-    private suspend fun cleanupFailedImport(imported: WallpaperImportResult.Ready) {
-        if (!imported.created) return
-        val references = repository.referencedMediaIds()
-        if (
-            references is AppearanceRepositoryResult.Success &&
-            references.value.none { it.toPrivateStorageToken() == imported.mediaId }
-        ) {
-            store.delete(imported.mediaId)
+    private suspend fun preflightImportLocked(): Set<String>? {
+        val references = reconcileManagedFilesLocked() ?: return null
+        return references.takeIf {
+            store.validateDurableQuota(references) == DurableWallpaperQuotaResult.WITHIN_LIMIT
         }
+    }
+
+    private suspend fun deleteIfAuthoritativelyUnreferenced(mediaId: String) {
+        val references = authoritativeMediaIds() ?: return
+        store.deleteIfUnreferenced(mediaId, references)
     }
 
     private suspend fun validateProspectiveAssignment(

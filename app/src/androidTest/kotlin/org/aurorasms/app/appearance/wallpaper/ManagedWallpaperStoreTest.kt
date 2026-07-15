@@ -41,8 +41,8 @@ class ManagedWallpaperStoreTest {
             inspection.release()
         }
 
-        val first = store.import(source) as WallpaperImportResult.Ready
-        val second = store.import(source) as WallpaperImportResult.Ready
+        val first = store.import(source, emptySet()) as WallpaperImportResult.Ready
+        val second = store.import(source, setOf(first.mediaId)) as WallpaperImportResult.Ready
         assertTrue(first.created)
         assertFalse(second.created)
         assertEquals(first.mediaId, second.mediaId)
@@ -56,10 +56,13 @@ class ManagedWallpaperStoreTest {
             loaded.release()
         }
 
-        assertTrue(store.reconcile(setOf(first.mediaId)))
+        assertEquals(
+            ManagedWallpaperReconcileResult.COMPLETE,
+            store.reconcile(setOf(first.mediaId)),
+        )
         val retained = store.load(first.mediaId) as WallpaperLoadResult.Ready
         retained.release()
-        assertTrue(store.reconcile(emptySet()))
+        assertEquals(ManagedWallpaperReconcileResult.COMPLETE, store.reconcile(emptySet()))
         assertEquals(WallpaperLoadResult.Unavailable, store.load(first.mediaId))
     }
 
@@ -72,7 +75,7 @@ class ManagedWallpaperStoreTest {
         assertTrue(sourceBytes.containsAscii("Exif"))
         assertTrue(sourceBytes.containsAscii("http://ns.adobe.com/xap/1.0/"))
 
-        val imported = store.import(source) as WallpaperImportResult.Ready
+        val imported = store.import(source, emptySet()) as WallpaperImportResult.Ready
         val expectedName = wallpaperDerivativeFileName(imported.mediaId)!!
         val expectedDirectory = File(context.noBackupFilesDir, "appearance/wallpapers")
         val derivative = File(expectedDirectory, expectedName)
@@ -118,7 +121,7 @@ class ManagedWallpaperStoreTest {
         assertEquals(WallpaperLoadResult.Unavailable, store.load(animatedId))
 
         store.reconcile(emptySet())
-        val imported = store.import(testUri("valid.png")) as WallpaperImportResult.Ready
+        val imported = store.import(testUri("valid.png"), emptySet()) as WallpaperImportResult.Ready
         val derivative = managedFile(imported.mediaId)
         val originalBytes = derivative.readBytes()
         val hashTampered = originalBytes.copyOf().apply {
@@ -162,7 +165,10 @@ class ManagedWallpaperStoreTest {
     @Test
     fun maximumPixelEntropyImportExercisesTheRealEncoderWithinEveryOutputBound() = runBlocking {
         store.reconcile(emptySet())
-        val imported = store.import(testUri("maximum-noise.png")) as WallpaperImportResult.Ready
+        val imported = store.import(
+            testUri("maximum-noise.png"),
+            emptySet(),
+        ) as WallpaperImportResult.Ready
         val derivative = managedFile(imported.mediaId)
         assertTrue(derivative.length() > 1L * 1_024L * 1_024L)
         assertTrue(derivative.length() <= MAXIMUM_WALLPAPER_DERIVATIVE_BYTES)
@@ -361,7 +367,7 @@ class ManagedWallpaperStoreTest {
             inspection.release()
         }
 
-        val imported = store.import(testUri("rotated.jpeg")) as WallpaperImportResult.Ready
+        val imported = store.import(testUri("rotated.jpeg"), emptySet()) as WallpaperImportResult.Ready
         val loaded = store.load(imported.mediaId) as WallpaperLoadResult.Ready
         try {
             assertEquals(20, loaded.width)
@@ -400,7 +406,7 @@ class ManagedWallpaperStoreTest {
             inspection.release()
         }
 
-        val imported = store.import(testUri("rotated.png")) as WallpaperImportResult.Ready
+        val imported = store.import(testUri("rotated.png"), emptySet()) as WallpaperImportResult.Ready
         val loaded = store.load(imported.mediaId) as WallpaperLoadResult.Ready
         try {
             assertEquals(3, loaded.width)
@@ -482,13 +488,17 @@ class ManagedWallpaperStoreTest {
         label: String,
         expected: WallpaperMediaFailure,
     ) {
-        val result = store.import(source)
+        val result = store.import(source, emptySet())
         try {
             assertTrue("Expected import failure for $label but was $result", result is WallpaperImportResult.Failed)
             assertEquals(label, expected, (result as WallpaperImportResult.Failed).reason)
             assertManagedDirectoryEmpty(label)
         } finally {
-            assertTrue("Unable to clean managed fixtures after $label", store.reconcile(emptySet()))
+            assertEquals(
+                "Unable to clean managed fixtures after $label",
+                ManagedWallpaperReconcileResult.COMPLETE,
+                store.reconcile(emptySet()),
+            )
         }
         assertManagedDirectoryEmpty("$label after cleanup")
     }
@@ -498,11 +508,15 @@ class ManagedWallpaperStoreTest {
     }
 
     private suspend fun assertImportReadyAndClean(source: Uri, label: String) {
-        val result = store.import(source)
+        val result = store.import(source, emptySet())
         try {
             assertTrue("Expected import success for $label but was $result", result is WallpaperImportResult.Ready)
         } finally {
-            assertTrue("Unable to clean managed fixtures after $label", store.reconcile(emptySet()))
+            assertEquals(
+                "Unable to clean managed fixtures after $label",
+                ManagedWallpaperReconcileResult.COMPLETE,
+                store.reconcile(emptySet()),
+            )
         }
         assertManagedDirectoryEmpty(label)
     }

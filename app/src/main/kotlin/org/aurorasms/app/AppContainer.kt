@@ -318,8 +318,8 @@ class AppContainer(
                             appearanceProfileRepository = appearanceRepository,
                             appearanceWallpaperRepository = appearanceRepository,
                         )
-                        _stateStorageStatus.value = StateStorageStatus.Ready
                         wallpaperController.reconcileManagedFiles()
+                        _stateStorageStatus.value = StateStorageStatus.Ready
                     }
                     is StateDatabaseOpenResult.Failed -> {
                         stateRuntimeState.value = StateRuntimeState.Failed(result.reason)
