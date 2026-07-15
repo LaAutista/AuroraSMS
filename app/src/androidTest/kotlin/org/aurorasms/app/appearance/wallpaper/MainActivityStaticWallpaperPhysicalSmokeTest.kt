@@ -48,6 +48,8 @@ import org.junit.runner.RunWith
  * text, reads a user thumbnail, opens a conversation, reads message/contact content, or invokes a
  * carrier action. All application navigation uses exported Compose resource tags; system-picker
  * navigation uses fixed MediaProvider resource IDs plus the exact synthetic album name.
+ * Invoke it through scripts/run-physical-wallpaper-picker-smoke.sh so instrumentation cleanup
+ * removes only the test package and preserves the installed SMS app, its data, role, and grants.
  */
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = Build.VERSION_CODES.TIRAMISU)
