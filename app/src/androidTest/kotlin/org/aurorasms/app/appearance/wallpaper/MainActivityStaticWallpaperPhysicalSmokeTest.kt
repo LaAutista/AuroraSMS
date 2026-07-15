@@ -8,9 +8,14 @@ import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.graphics.Rect
+import android.icu.text.DateFormat
+import android.icu.text.DisplayContext
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.accessibility.AccessibilityNodeInfo
@@ -21,7 +26,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.ArrayDeque
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -44,10 +53,12 @@ import org.junit.runner.RunWith
 /**
  * Owner-invoked physical smoke for the real static-wallpaper Photo Picker journey.
  *
- * The test creates and addresses only its own unique MediaStore album. It never enumerates media
- * text, reads a user thumbnail, opens a conversation, reads message/contact content, or invokes a
- * carrier action. All application navigation uses exported Compose resource tags; system-picker
- * navigation uses fixed MediaProvider resource IDs plus the exact synthetic album name.
+ * The test creates one uniquely named synthetic MediaStore download. It never
+ * enumerates media text, reads or selects a user thumbnail, opens a conversation, reads
+ * message/contact content, or invokes a carrier action. All application navigation uses exported
+ * Compose resource tags; system-picker navigation uses fixed MediaProvider resources plus the
+ * localized Downloads label and an exact synthetic description reproduced from the installed
+ * picker's resource and date-formatting contract.
  * Invoke it through scripts/run-physical-wallpaper-picker-smoke.sh so instrumentation cleanup
  * removes only the test package and preserves the installed SMS app, its data, role, and grants.
  */
@@ -107,12 +118,12 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
             )
             baseline = durableBaseline
 
-            val createdFixture = insertSyntheticFixture(context.contentResolver)
+            val createdFixture = insertSyntheticFixture(context)
             fixture = createdFixture
 
             // A completed preview followed by Cancel must not cross a persistence boundary.
             openGlobalWallpaperEditor(activeAutomation)
-            chooseSyntheticFixture(activeAutomation, createdFixture.albumName)
+            chooseSyntheticFixture(activeAutomation, createdFixture)
             assertBaselineUnchanged(activeController, context, durableBaseline)
             clickAppTag(activeAutomation, SCOPED_WALLPAPER_CANCEL_TEST_TAG)
             waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_DIALOG_TEST_TAG)
@@ -122,7 +133,7 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
 
             // The same completed preview followed by in-dialog Back also remains transient.
             openGlobalWallpaperEditor(activeAutomation)
-            chooseSyntheticFixture(activeAutomation, createdFixture.albumName)
+            chooseSyntheticFixture(activeAutomation, createdFixture)
             assertBaselineUnchanged(activeController, context, durableBaseline)
             clickAppTag(activeAutomation, SCOPED_WALLPAPER_BACK_TEST_TAG)
             waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_DIALOG_TEST_TAG)
@@ -135,7 +146,7 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
 
             // Apply is the sole commit boundary.
             openGlobalWallpaperEditor(activeAutomation)
-            chooseSyntheticFixture(activeAutomation, createdFixture.albumName)
+            chooseSyntheticFixture(activeAutomation, createdFixture)
             assertBaselineUnchanged(activeController, context, durableBaseline)
             testMayHaveApplied = true
             clickAppTag(activeAutomation, SCOPED_WALLPAPER_APPLY_TEST_TAG)
@@ -148,8 +159,7 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
 
             // Return through Appearance, re-enter the wallpaper editor, and reset the commit.
             clickAppTag(activeAutomation, SCOPED_APPEARANCE_WALLPAPER_TEST_TAG)
-            waitForEnabledAppTag(activeAutomation, SCOPED_WALLPAPER_RESET_TEST_TAG).recycleSafely()
-            clickAppTag(activeAutomation, SCOPED_WALLPAPER_RESET_TEST_TAG)
+            scrollToAndClickAppTag(activeAutomation, SCOPED_WALLPAPER_RESET_TEST_TAG)
             awaitAssignment(activeController, assigned = false)
             waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_DIALOG_TEST_TAG)
             waitForAppTag(activeAutomation, SCOPED_APPEARANCE_DIALOG_TEST_TAG).recycleSafely()
@@ -199,16 +209,17 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         assumeTrue(PHYSICAL_GATE_REQUIRED, enabled)
     }
 
-    private fun insertSyntheticFixture(resolver: ContentResolver): SyntheticMediaFixture {
-        val albumName = "AuroraSMS-${UUID.randomUUID().toString().take(12)}"
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+    private fun insertSyntheticFixture(context: Context): SyntheticMediaFixture {
+        val resolver = context.contentResolver
+        val fixtureId = UUID.randomUUID()
+        val displayName = "aurora-wallpaper-smoke-${fixtureId.toString().take(12)}.png"
+        val syntheticDateTaken = SYNTHETIC_DATE_BASE_MILLIS +
+            Math.floorMod(fixtureId.leastSignificantBits, SYNTHETIC_DATE_SPAN_SECONDS) * 1_000L
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, SYNTHETIC_DISPLAY_NAME)
+            put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Images.Media.MIME_TYPE, SYNTHETIC_MIME_TYPE)
-            put(
-                MediaStore.Images.Media.RELATIVE_PATH,
-                "${Environment.DIRECTORY_PICTURES}/$albumName",
-            )
+            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
         val inserted = resolver.insert(collection, values)
@@ -221,6 +232,7 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
                     ?: failFixed(FIXTURE_COPY_FAILED)
                 output.use { destination -> input.copyTo(destination, FIXTURE_COPY_BUFFER_BYTES) }
             }
+            writeSyntheticExif(resolver, inserted, syntheticDateTaken)
             val published = resolver.update(
                 inserted,
                 ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
@@ -229,7 +241,18 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
             )
             if (published != 1) failFixed(FIXTURE_PUBLISH_FAILED)
             resolver.notifyChange(inserted, null)
-            return SyntheticMediaFixture(resolver, inserted, albumName)
+            val publishedDateTaken = readBackPublishedFixture(
+                resolver = resolver,
+                uri = inserted,
+                expectedDateTaken = syntheticDateTaken,
+            )
+            val pickerTargets = resolvePickerTargets(context, publishedDateTaken)
+            return SyntheticMediaFixture(
+                resolver = resolver,
+                uri = inserted,
+                albumName = pickerTargets.downloadsAlbumName,
+                contentDescription = pickerTargets.syntheticContentDescription,
+            )
         } catch (fixed: FixedSmokeFailure) {
             try {
                 resolver.delete(inserted, null, null)
@@ -247,6 +270,122 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         }
     }
 
+    private fun writeSyntheticExif(
+        resolver: ContentResolver,
+        uri: Uri,
+        dateTaken: Long,
+    ) {
+        val dateTime = SYNTHETIC_EXIF_FORMATTER.format(Instant.ofEpochMilli(dateTaken))
+        val written = try {
+            resolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
+                ExifInterface(descriptor.fileDescriptor).apply {
+                    setAttribute(ExifInterface.TAG_DATETIME, dateTime)
+                    setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, dateTime)
+                    setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, dateTime)
+                    setAttribute(ExifInterface.TAG_OFFSET_TIME, SYNTHETIC_EXIF_OFFSET)
+                    setAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL, SYNTHETIC_EXIF_OFFSET)
+                    setAttribute(ExifInterface.TAG_OFFSET_TIME_DIGITIZED, SYNTHETIC_EXIF_OFFSET)
+                    saveAttributes()
+                }
+                true
+            } == true
+        } catch (_: Throwable) {
+            false
+        }
+        if (!written) failFixed(FIXTURE_EXIF_WRITE_FAILED)
+    }
+
+    private fun readBackPublishedFixture(
+        resolver: ContentResolver,
+        uri: Uri,
+        expectedDateTaken: Long,
+    ): Long {
+        val timeoutAt = SystemClock.uptimeMillis() + FIXTURE_READBACK_TIMEOUT_MILLIS
+        do {
+            val verifiedDate = try {
+                resolver.query(
+                    uri,
+                    arrayOf(
+                        MediaStore.Images.Media.DATE_TAKEN,
+                        MediaStore.Images.Media.MIME_TYPE,
+                        MediaStore.Images.Media.IS_PENDING,
+                        MediaStore.Images.Media.IS_DOWNLOAD,
+                        MediaStore.Images.Media.SIZE,
+                    ),
+                    null,
+                    null,
+                    null,
+                )?.use { cursor ->
+                    if (cursor.count != 1 || !cursor.moveToFirst()) return@use null
+                    val dateTaken = cursor.getLong(
+                        cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_TAKEN),
+                    )
+                    val mimeType = cursor.getString(
+                        cursor.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE),
+                    )
+                    val pending = cursor.getInt(
+                        cursor.getColumnIndexOrThrow(MediaStore.Images.Media.IS_PENDING),
+                    )
+                    val download = cursor.getInt(
+                        cursor.getColumnIndexOrThrow(MediaStore.Images.Media.IS_DOWNLOAD),
+                    )
+                    val size = cursor.getLong(
+                        cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE),
+                    )
+                    dateTaken.takeIf {
+                        it == expectedDateTaken &&
+                            mimeType == SYNTHETIC_MIME_TYPE &&
+                            pending == 0 &&
+                            download == 1 &&
+                            size > 0L
+                    }
+                }
+            } catch (_: Throwable) {
+                null
+            }
+            if (verifiedDate != null) return verifiedDate
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        failFixed(FIXTURE_READBACK_FAILED)
+    }
+
+    private fun resolvePickerTargets(
+        context: Context,
+        publishedDateTaken: Long,
+    ): PickerTargets {
+        val pickerContext = try {
+            context.createPackageContext(PHOTO_PICKER_PACKAGE, 0)
+        } catch (_: Throwable) {
+            failFixed(PICKER_RESOURCE_SCHEMA_UNAVAILABLE)
+        }
+        val resources = pickerContext.resources
+        fun requiredString(name: String): Int = resources.getIdentifier(
+            name,
+            "string",
+            PHOTO_PICKER_PACKAGE,
+        ).takeIf { identifier -> identifier != 0 }
+            ?: failFixed(PICKER_RESOURCE_SCHEMA_UNAVAILABLE)
+
+        val formatter = DateFormat.getInstanceForSkeleton(
+            PICKER_CONTENT_DESCRIPTION_DATE_SKELETON,
+            Locale.getDefault(),
+        ).apply {
+            setContext(DisplayContext.CAPITALIZATION_FOR_BEGINNING_OF_SENTENCE)
+        }
+        val dateDescription = formatter.format(publishedDateTaken)
+        val photoDescription = resources.getString(requiredString(PICKER_PHOTO_STRING_NAME))
+        return PickerTargets(
+            downloadsAlbumName = resources.getString(
+                requiredString(PICKER_DOWNLOADS_STRING_NAME),
+            ),
+            syntheticContentDescription = resources.getString(
+                requiredString(PICKER_ITEM_CONTENT_DESCRIPTION_STRING_NAME),
+                photoDescription,
+                dateDescription,
+            ),
+        )
+    }
+
     private fun openGlobalWallpaperEditor(automation: UiAutomation) {
         clickAppTag(automation, INBOX_MORE_ACTION_TEST_TAG)
         clickAppTag(automation, CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG)
@@ -258,52 +397,79 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
 
     private fun chooseSyntheticFixture(
         automation: UiAutomation,
-        albumName: String,
+        fixture: SyntheticMediaFixture,
     ) {
         clickAppTag(automation, SCOPED_WALLPAPER_PICK_TEST_TAG)
         waitForPackage(automation, PHOTO_PICKER_PACKAGE)
         clickSecondPickerTab(automation)
-        clickExactSyntheticAlbum(automation, albumName)
-        clickSoleSyntheticThumbnail(automation)
+        clickExactPickerAlbum(automation, fixture.albumName)
+        clickExactSyntheticThumbnail(automation, fixture.contentDescription)
         waitForPackage(automation, TARGET_PACKAGE)
         waitForEnabledAppTag(automation, SCOPED_WALLPAPER_APPLY_TEST_TAG).recycleSafely()
     }
 
     private fun clickSecondPickerTab(automation: UiAutomation) {
-        val tabLayout = waitForPickerResource(automation, PICKER_TAB_LAYOUT_RESOURCE)
-        val clickableTabs = tabLayout.useNode(::visibleClickableDescendants)
-        if (clickableTabs.size != EXPECTED_PICKER_TAB_COUNT) {
-            clickableTabs.recycleAll()
-            failFixed(PICKER_TAB_STRUCTURE_UNEXPECTED)
-        }
-        val selected = clickableTabs[ALBUMS_TAB_INDEX]
-        val clicked = try {
-            selected.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        } finally {
-            clickableTabs.recycleAll()
-        }
-        if (!clicked) failFixed(PICKER_RESOURCE_CLICK_FAILED)
-        SystemClock.sleep(PICKER_SETTLE_MILLIS)
+        val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
+        do {
+            val tabLayout = findPickerResourceInActiveWindow(
+                automation,
+                PICKER_TAB_LAYOUT_RESOURCE,
+            )
+            if (tabLayout != null) {
+                val collection = tabLayout.collectionInfo
+                val tabItems = tabLayout.useNode(::visibleCollectionItems)
+                val albumsTab = tabItems.singleOrNull { node ->
+                    val item = node.collectionItemInfo
+                    item?.rowIndex == PICKER_TAB_ROW_INDEX &&
+                        item.columnIndex == ALBUMS_TAB_INDEX
+                }
+                val exactStructure = collection?.rowCount == EXPECTED_PICKER_TAB_ROW_COUNT &&
+                    collection.columnCount == EXPECTED_PICKER_TAB_COUNT &&
+                    tabItems.size == EXPECTED_PICKER_TAB_COUNT &&
+                    tabItems.mapNotNull { node -> node.collectionItemInfo?.columnIndex }.toSet() ==
+                    EXPECTED_PICKER_TAB_COLUMNS
+                if (exactStructure && albumsTab != null) {
+                    val clicked = try {
+                        clickNodeOrAncestor(albumsTab)
+                    } finally {
+                        tabItems.recycleAll()
+                    }
+                    if (!clicked) failFixed(PICKER_RESOURCE_CLICK_FAILED)
+                    SystemClock.sleep(PICKER_SETTLE_MILLIS)
+                    return
+                }
+                tabItems.recycleAll()
+            }
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        failFixed(PICKER_TAB_STRUCTURE_UNEXPECTED)
     }
 
-    private fun clickExactSyntheticAlbum(
+    private fun clickExactPickerAlbum(
         automation: UiAutomation,
         albumName: String,
     ) {
-        repeat(MAXIMUM_PICKER_SCROLLS) {
+        val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
+        var completedScrolls = 0
+        do {
             findExactAlbumNode(automation, albumName)?.let { album ->
-                val clicked = album.useNode(::clickNodeOrAncestor)
+                val clicked = album.useNode(::clickExactAlbumNode)
                 if (!clicked) failFixed(PICKER_RESOURCE_CLICK_FAILED)
                 return
             }
-            val recycler = waitForPickerResource(automation, PICKER_RECYCLER_RESOURCE)
-            val scrolled = recycler.useNode { node ->
-                node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            val recycler = findPickerResourceInActiveWindow(
+                automation,
+                PICKER_RECYCLER_RESOURCE,
+            )
+            if (recycler != null && completedScrolls < MAXIMUM_PICKER_SCROLLS) {
+                val scrolled = recycler.useNode { node ->
+                    node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                }
+                if (scrolled) completedScrolls += 1
             }
-            if (!scrolled) failFixed(SYNTHETIC_ALBUM_NOT_AVAILABLE)
             SystemClock.sleep(PICKER_SETTLE_MILLIS)
-        }
-        failFixed(SYNTHETIC_ALBUM_NOT_AVAILABLE)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        failFixed(PICKER_DOWNLOADS_ALBUM_NOT_AVAILABLE)
     }
 
     private fun findExactAlbumNode(
@@ -313,35 +479,89 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         val root = automation.rootInActiveWindow ?: return null
         return try {
             if (root.packageName?.toString() != PHOTO_PICKER_PACKAGE) return null
+            val activeWindowId = root.windowId
             val matches = root.findAccessibilityNodeInfosByText(albumName)
-            var accepted: AccessibilityNodeInfo? = null
+            val accepted = mutableListOf<AccessibilityNodeInfo>()
             matches.forEach { node ->
-                val exactSyntheticTarget = accepted == null &&
+                val exactSyntheticTarget = node.packageName?.toString() == PHOTO_PICKER_PACKAGE &&
+                    node.windowId == activeWindowId &&
                     node.isVisibleToUser &&
+                    node.isEnabled &&
+                    node.className?.toString() == PICKER_ALBUM_NAME_CLASS_NAME &&
                     node.viewIdResourceName == PICKER_ALBUM_NAME_RESOURCE &&
                     node.text?.toString() == albumName
-                if (exactSyntheticTarget) accepted = node else node.recycleSafely()
+                if (exactSyntheticTarget) accepted += node else node.recycleSafely()
             }
-            accepted
+            if (accepted.size == 1) accepted.removeFirst() else {
+                accepted.recycleAll()
+                null
+            }
         } finally {
             root.recycleSafely()
         }
     }
 
-    private fun clickSoleSyntheticThumbnail(automation: UiAutomation) {
+    private fun clickExactAlbumNode(albumNameNode: AccessibilityNodeInfo): Boolean {
+        val parent = albumNameNode.parent ?: return false
+        return try {
+            parent.packageName?.toString() == PHOTO_PICKER_PACKAGE &&
+                parent.windowId == albumNameNode.windowId &&
+                parent.className?.toString() == PICKER_ALBUM_ROOT_CLASS_NAME &&
+                parent.isVisibleToUser &&
+                parent.isEnabled &&
+                parent.isClickable &&
+                parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        } finally {
+            parent.recycleSafely()
+        }
+    }
+
+    private fun clickExactSyntheticThumbnail(
+        automation: UiAutomation,
+        contentDescription: String,
+    ) {
         val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
         do {
-            val thumbnails = findVisiblePickerResources(automation, PICKER_THUMBNAIL_RESOURCE)
-            if (thumbnails.size == 1) {
-                val thumbnail = thumbnails.single()
-                val clicked = thumbnail.useNode(::clickNodeOrAncestor)
+            findExactSyntheticThumbnail(automation, contentDescription)?.let { thumbnail ->
+                val clicked = thumbnail.useNode { node ->
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
                 if (!clicked) failFixed(PICKER_RESOURCE_CLICK_FAILED)
                 return
             }
-            thumbnails.recycleAll()
             SystemClock.sleep(POLL_INTERVAL_MILLIS)
         } while (SystemClock.uptimeMillis() < timeoutAt)
-        failFixed(SOLE_SYNTHETIC_THUMBNAIL_REQUIRED)
+        failFixed(EXACT_SYNTHETIC_THUMBNAIL_REQUIRED)
+    }
+
+    private fun findExactSyntheticThumbnail(
+        automation: UiAutomation,
+        contentDescription: String,
+    ): AccessibilityNodeInfo? {
+        val root = automation.rootInActiveWindow ?: return null
+        return try {
+            if (root.packageName?.toString() != PHOTO_PICKER_PACKAGE) return null
+            val activeWindowId = root.windowId
+            val matches = root.findAccessibilityNodeInfosByText(contentDescription)
+            val accepted = mutableListOf<AccessibilityNodeInfo>()
+            matches.forEach { node ->
+                val exactSyntheticTarget = node.packageName?.toString() == PHOTO_PICKER_PACKAGE &&
+                    node.windowId == activeWindowId &&
+                    node.isVisibleToUser &&
+                    node.isEnabled &&
+                    node.isClickable &&
+                    node.isFocusable &&
+                    node.className?.toString() == PICKER_ITEM_ROOT_CLASS_NAME &&
+                    node.contentDescription?.toString() == contentDescription
+                if (exactSyntheticTarget) accepted += node else node.recycleSafely()
+            }
+            if (accepted.size == 1) accepted.removeFirst() else {
+                accepted.recycleAll()
+                null
+            }
+        } finally {
+            root.recycleSafely()
+        }
     }
 
     private fun clickAppTag(
@@ -354,13 +574,92 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         if (!clicked) failFixed(APP_TAG_CLICK_FAILED)
     }
 
+    private fun scrollToAndClickAppTag(
+        automation: UiAutomation,
+        tag: String,
+    ) {
+        var observedVisible = false
+        var observedEnabled = false
+        repeat(MAXIMUM_APP_DIALOG_SCROLLS) {
+            val clicked = findAppTagInActiveWindow(automation, tag)?.useNode { node ->
+                try {
+                    node.refresh()
+                } catch (_: Throwable) {
+                    // The fresh active-window lookup remains authoritative for this attempt.
+                }
+                observedVisible = observedVisible || node.isVisibleToUser
+                observedEnabled = observedEnabled || node.isEnabled
+                node.isVisibleToUser &&
+                    node.isEnabled &&
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            } == true
+            if (clicked) return
+            if (!swipeWallpaperDialogUp(automation)) failFixed(APP_DIALOG_SWIPE_FAILED)
+            SystemClock.sleep(APP_DIALOG_SCROLL_SETTLE_MILLIS)
+        }
+        if (!observedVisible) failFixed(APP_TAG_DID_NOT_BECOME_VISIBLE)
+        if (!observedEnabled) failFixed(ENABLED_APP_TAG_NOT_AVAILABLE)
+        failFixed(APP_TAG_CLICK_FAILED)
+    }
+
+    private fun swipeWallpaperDialogUp(automation: UiAutomation): Boolean {
+        val dialogBounds = waitForAppTag(
+            automation,
+            SCOPED_WALLPAPER_DIALOG_TEST_TAG,
+        ).useNode { node ->
+            Rect().also { result -> node.getBoundsInScreen(result) }
+        }
+        val previewBounds = waitForAppTag(
+            automation,
+            SCOPED_WALLPAPER_PREVIEW_TEST_TAG,
+        ).useNode { node ->
+            Rect().also { result -> node.getBoundsInScreen(result) }
+        }
+        if (
+            dialogBounds.width() <= 0 ||
+            dialogBounds.height() <= 0 ||
+            previewBounds.width() <= 0 ||
+            previewBounds.height() <= 0
+        ) {
+            return false
+        }
+
+        // Begin on the non-interactive preview so sliders cannot consume or reinterpret the
+        // synthetic vertical gesture. Ending near the dialog top provides enough distance to
+        // expose Reset in one bounded swipe without relying on fixed screen coordinates.
+        val x = previewBounds.centerX()
+        val startY = previewBounds.bottom - (previewBounds.height() / 8)
+        val endY = dialogBounds.top + (dialogBounds.height() / 10)
+        if (startY <= endY) return false
+
+        return try {
+            val descriptor = automation.executeShellCommand(
+                "input touchscreen swipe $x $startY $x $endY $APP_DIALOG_SWIPE_DURATION_MILLIS",
+            )
+            ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                val buffer = ByteArray(SHELL_COMMAND_OUTPUT_BUFFER_BYTES)
+                while (input.read(buffer) >= 0) {
+                    // The fixed input command has no expected output; drain it to await completion.
+                }
+            }
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     private fun waitForEnabledAppTag(
         automation: UiAutomation,
         tag: String,
     ): AccessibilityNodeInfo {
         val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
         do {
-            findResourceInActiveWindow(automation, TARGET_PACKAGE, tag)?.let { node ->
+            findAppTagInActiveWindow(automation, tag)?.let { node ->
+                try {
+                    node.refresh()
+                } catch (_: Throwable) {
+                    // The fresh active-window lookup remains authoritative for this poll.
+                }
                 if (node.isEnabled) return node
                 node.recycleSafely()
             }
@@ -372,40 +671,49 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
     private fun waitForAppTag(
         automation: UiAutomation,
         tag: String,
-    ): AccessibilityNodeInfo = waitForResource(automation, TARGET_PACKAGE, tag, APP_TAG_NOT_AVAILABLE)
-
-    private fun waitForPickerResource(
-        automation: UiAutomation,
-        resource: String,
-    ): AccessibilityNodeInfo = waitForResource(
-        automation,
-        PHOTO_PICKER_PACKAGE,
-        resource,
-        PICKER_RESOURCE_NOT_AVAILABLE,
-    )
-
-    private fun waitForResource(
-        automation: UiAutomation,
-        packageName: String,
-        resource: String,
-        failure: String,
     ): AccessibilityNodeInfo {
         val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
         do {
-            findResourceInActiveWindow(automation, packageName, resource)?.let { return it }
+            findAppTagInActiveWindow(automation, tag)?.let { return it }
             SystemClock.sleep(POLL_INTERVAL_MILLIS)
         } while (SystemClock.uptimeMillis() < timeoutAt)
-        failFixed(failure)
+        failFixed(APP_TAG_NOT_AVAILABLE)
     }
 
-    private fun findResourceInActiveWindow(
+    private fun findAppTagInActiveWindow(
         automation: UiAutomation,
-        packageName: String,
+        tag: String,
+    ): AccessibilityNodeInfo? {
+        val root = automation.rootInActiveWindow ?: return null
+        if (root.packageName?.toString() != TARGET_PACKAGE) {
+            root.recycleSafely()
+            return null
+        }
+        val pending = ArrayDeque<AccessibilityNodeInfo>()
+        pending.add(root)
+        while (pending.isNotEmpty()) {
+            val node = pending.removeFirst()
+            val matches = node.packageName?.toString() == TARGET_PACKAGE &&
+                node.viewIdResourceName == tag
+            if (matches) {
+                pending.recycleAll()
+                return node
+            }
+            for (index in 0 until node.childCount) {
+                node.getChild(index)?.let(pending::addLast)
+            }
+            node.recycleSafely()
+        }
+        return null
+    }
+
+    private fun findPickerResourceInActiveWindow(
+        automation: UiAutomation,
         resource: String,
     ): AccessibilityNodeInfo? {
         val root = automation.rootInActiveWindow ?: return null
         return try {
-            if (root.packageName?.toString() != packageName) return null
+            if (root.packageName?.toString() != PHOTO_PICKER_PACKAGE) return null
             val nodes = root.findAccessibilityNodeInfosByViewId(resource)
             var accepted: AccessibilityNodeInfo? = null
             nodes.forEach { node ->
@@ -417,31 +725,13 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         }
     }
 
-    private fun findVisiblePickerResources(
-        automation: UiAutomation,
-        resource: String,
-    ): MutableList<AccessibilityNodeInfo> {
-        val root = automation.rootInActiveWindow ?: return mutableListOf()
-        return try {
-            if (root.packageName?.toString() != PHOTO_PICKER_PACKAGE) return mutableListOf()
-            root.findAccessibilityNodeInfosByViewId(resource)
-                .filterTo(mutableListOf()) { node ->
-                    val visible = node.isVisibleToUser
-                    if (!visible) node.recycleSafely()
-                    visible
-                }
-        } finally {
-            root.recycleSafely()
-        }
-    }
-
-    private fun visibleClickableDescendants(root: AccessibilityNodeInfo): MutableList<AccessibilityNodeInfo> {
+    private fun visibleCollectionItems(root: AccessibilityNodeInfo): MutableList<AccessibilityNodeInfo> {
         val pending = ArrayDeque<AccessibilityNodeInfo>()
         val accepted = mutableListOf<AccessibilityNodeInfo>()
         for (index in 0 until root.childCount) root.getChild(index)?.let(pending::addLast)
         while (pending.isNotEmpty()) {
             val node = pending.removeFirst()
-            if (node.isVisibleToUser && node.isClickable) {
+            if (node.isVisibleToUser && node.collectionItemInfo != null) {
                 accepted += node
             } else {
                 for (index in 0 until node.childCount) node.getChild(index)?.let(pending::addLast)
@@ -499,7 +789,7 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         do {
             val focusedWindowId = focusedTargetApplicationWindowId(automation)
             val inbox = if (focusedWindowId != null) {
-                findResourceInActiveWindow(automation, TARGET_PACKAGE, INBOX_SCREEN_TEST_TAG)
+                findAppTagInActiveWindow(automation, INBOX_SCREEN_TEST_TAG)
             } else {
                 null
             }
@@ -555,7 +845,7 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
     ) {
         val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
         do {
-            val found = findResourceInActiveWindow(automation, TARGET_PACKAGE, tag)
+            val found = findAppTagInActiveWindow(automation, tag)
             if (found == null) return
             found.recycleSafely()
             SystemClock.sleep(POLL_INTERVAL_MILLIS)
@@ -716,8 +1006,16 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         val resolver: ContentResolver,
         val uri: Uri,
         val albumName: String,
+        val contentDescription: String,
     ) {
         override fun toString(): String = "SyntheticMediaFixture(REDACTED)"
+    }
+
+    private class PickerTargets(
+        val downloadsAlbumName: String,
+        val syntheticContentDescription: String,
+    ) {
+        override fun toString(): String = "PickerTargets(REDACTED)"
     }
 
     private companion object {
@@ -727,18 +1025,40 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         const val PICKER_TAB_LAYOUT_RESOURCE = "$PHOTO_PICKER_PACKAGE:id/tab_layout"
         const val PICKER_RECYCLER_RESOURCE = "$PHOTO_PICKER_PACKAGE:id/picker_tab_recyclerview"
         const val PICKER_ALBUM_NAME_RESOURCE = "$PHOTO_PICKER_PACKAGE:id/album_name"
-        const val PICKER_THUMBNAIL_RESOURCE = "$PHOTO_PICKER_PACKAGE:id/icon_thumbnail"
-        const val SYNTHETIC_DISPLAY_NAME = "aurora-wallpaper-smoke.png"
+        const val PICKER_DOWNLOADS_STRING_NAME = "picker_category_downloads"
+        const val PICKER_PHOTO_STRING_NAME = "picker_photo"
+        const val PICKER_ITEM_CONTENT_DESCRIPTION_STRING_NAME = "picker_item_content_desc"
+        const val PICKER_CONTENT_DESCRIPTION_DATE_SKELETON = "MMMdyhmmss"
+        const val PICKER_ALBUM_NAME_CLASS_NAME = "android.widget.TextView"
+        const val PICKER_ALBUM_ROOT_CLASS_NAME = "android.widget.LinearLayout"
+        const val PICKER_ITEM_ROOT_CLASS_NAME = "android.widget.FrameLayout"
         const val SYNTHETIC_MIME_TYPE = "image/png"
+        const val SYNTHETIC_DATE_BASE_MILLIS = 7_258_118_400_000L
+        const val SYNTHETIC_DATE_SPAN_SECONDS = 6_311_347_200L
+        const val SYNTHETIC_EXIF_OFFSET = "+00:00"
+        const val SYNTHETIC_EXIF_PATTERN = "yyyy:MM:dd HH:mm:ss"
         const val WAIT_TIMEOUT_MILLIS = 30_000L
         const val STATE_TIMEOUT_MILLIS = 30_000L
+        const val FIXTURE_READBACK_TIMEOUT_MILLIS = 10_000L
         const val POLL_INTERVAL_MILLIS = 75L
         const val INITIAL_FOCUS_STABLE_MILLIS = 750L
         const val PICKER_SETTLE_MILLIS = 250L
         const val FIXTURE_COPY_BUFFER_BYTES = 8 * 1024
+        const val EXPECTED_PICKER_TAB_ROW_COUNT = 1
+        const val PICKER_TAB_ROW_INDEX = 0
         const val EXPECTED_PICKER_TAB_COUNT = 2
         const val ALBUMS_TAB_INDEX = 1
         const val MAXIMUM_PICKER_SCROLLS = 32
+        const val MAXIMUM_APP_DIALOG_SCROLLS = 4
+        const val APP_DIALOG_SWIPE_DURATION_MILLIS = 300L
+        const val APP_DIALOG_SCROLL_SETTLE_MILLIS = 250L
+        const val SHELL_COMMAND_OUTPUT_BUFFER_BYTES = 128
+
+        val EXPECTED_PICKER_TAB_COLUMNS: Set<Int> = setOf(0, ALBUMS_TAB_INDEX)
+
+        val SYNTHETIC_EXIF_FORMATTER: DateTimeFormatter = DateTimeFormatter
+            .ofPattern(SYNTHETIC_EXIF_PATTERN, Locale.US)
+            .withZone(ZoneOffset.UTC)
 
         val SYNTHETIC_SOURCE_URI: Uri =
             Uri.parse("content://org.aurorasms.app.wallpaper.testprovider/valid.png")
@@ -755,16 +1075,24 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         const val APP_TAG_NOT_AVAILABLE = "required content-free app resource tag was not available"
         const val ENABLED_APP_TAG_NOT_AVAILABLE = "required app resource tag did not become enabled"
         const val APP_TAG_REMAINED_AVAILABLE = "dismissed app resource tag remained available"
+        const val APP_TAG_DID_NOT_BECOME_VISIBLE =
+            "required app resource tag did not become visible"
+        const val APP_DIALOG_SWIPE_FAILED = "content-free app dialog swipe failed"
         const val APP_TAG_CLICK_FAILED = "content-free app resource-tag click failed"
         const val EXPECTED_PACKAGE_NOT_FOCUSED = "expected fixed package did not receive focus"
-        const val PICKER_RESOURCE_NOT_AVAILABLE = "required fixed Photo Picker resource was unavailable"
         const val PICKER_RESOURCE_CLICK_FAILED = "fixed Photo Picker resource click failed"
         const val PICKER_TAB_STRUCTURE_UNEXPECTED = "fixed Photo Picker tab structure was unexpected"
-        const val SYNTHETIC_ALBUM_NOT_AVAILABLE = "exact synthetic Photo Picker album was unavailable"
-        const val SOLE_SYNTHETIC_THUMBNAIL_REQUIRED = "sole synthetic Photo Picker thumbnail was unavailable"
+        const val PICKER_DOWNLOADS_ALBUM_NOT_AVAILABLE =
+            "fixed Photo Picker Downloads album was unavailable"
+        const val EXACT_SYNTHETIC_THUMBNAIL_REQUIRED =
+            "exact synthetic Photo Picker thumbnail was unavailable"
+        const val PICKER_RESOURCE_SCHEMA_UNAVAILABLE =
+            "required fixed Photo Picker string resources were unavailable"
         const val FIXTURE_INSERT_FAILED = "synthetic MediaStore fixture could not be inserted"
         const val FIXTURE_COPY_FAILED = "synthetic MediaStore fixture could not be copied"
+        const val FIXTURE_EXIF_WRITE_FAILED = "synthetic MediaStore fixture EXIF write failed"
         const val FIXTURE_PUBLISH_FAILED = "synthetic MediaStore fixture could not be published"
+        const val FIXTURE_READBACK_FAILED = "synthetic MediaStore fixture read-back was not exact"
         const val FIXTURE_DELETE_FAILED = "synthetic MediaStore fixture could not be deleted"
         const val ASSIGNMENT_CHANGED_BEFORE_APPLY = "global assignment changed before Apply"
         const val MANAGED_FILES_CHANGED_BEFORE_APPLY = "managed files changed before Apply"

@@ -53,8 +53,22 @@ if [[ ! "$SDK_LEVEL" =~ ^[0-9]+$ || "$SDK_LEVEL" -lt 33 ]]; then
 fi
 
 AUDIO_STATE="$("${ADB[@]}" shell dumpsys audio | tr -d '\r')"
-if rg --quiet 'Actual mode = MODE_(IN_CALL|IN_COMMUNICATION)' <<<"$AUDIO_STATE"; then
-    printf 'The physical smoke refuses to run while a call owns audio mode.\n' >&2
+if rg --quiet 'Actual mode = MODE_(IN_CALL|IN_COMMUNICATION|RINGTONE)' <<<"$AUDIO_STATE"; then
+    printf 'The physical smoke refuses to run while a call or ringtone owns audio mode.\n' >&2
+    exit 1
+fi
+
+TELEPHONY_CALL_STATES="$(
+    "${ADB[@]}" shell \
+        "dumpsys telephony.registry | grep -Eo 'mCallState=[0-9]+' | cut -d= -f2 | sort -u" \
+        | tr -d '\r'
+)"
+if [[ -z "$TELEPHONY_CALL_STATES" ]]; then
+    printf 'The physical smoke could not capture a content-free telephony call state.\n' >&2
+    exit 1
+fi
+if rg --quiet '^[12]$' <<<"$TELEPHONY_CALL_STATES"; then
+    printf 'The physical smoke refuses to run while telephony reports ringing or off-hook.\n' >&2
     exit 1
 fi
 
@@ -128,21 +142,26 @@ if ! rg --fixed-strings --line-regexp \
     exit 1
 fi
 
+BEFORE_TEST_PATH="$(
+    "${ADB[@]}" shell pm path "$TEST_PACKAGE" 2>/dev/null | tr -d '\r' || true
+)"
+if [[ -n "$BEFORE_TEST_PATH" ]]; then
+    printf '%s is already installed; remove or preserve it explicitly before this smoke.\n' \
+        "$TEST_PACKAGE" >&2
+    exit 1
+fi
+
 "$ROOT/gradlew" :app:assembleDebug :app:assembleDebugAndroidTest \
     --offline --no-daemon --no-parallel --console=plain
 
-if target_matches_build; then
-    printf 'The installed target APK already matches the physical-smoke build.\n'
-else
-    printf 'Updating the target APK in place without clearing app data.\n'
-    "${ADB[@]}" install -r -t "$APP_APK" >/dev/null
-fi
 if ! target_matches_build; then
     printf 'The installed target APK does not match the physical-smoke build.\n' >&2
+    printf 'Update it separately, verify preserved app state, and then rerun this script.\n' >&2
     exit 1
 fi
+printf 'The installed target APK already matches the physical-smoke build.\n'
 if [[ "$(role_state)" != "$BEFORE_ROLE" || "$(permission_state)" != "$BEFORE_PERMISSIONS" ]]; then
-    printf 'The target update changed owner role or permission state; refusing instrumentation.\n' \
+    printf 'The owner role or permission state changed during preflight; refusing instrumentation.\n' \
         >&2
     exit 1
 fi
