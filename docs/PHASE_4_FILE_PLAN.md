@@ -7,7 +7,12 @@ foundation specified by ADR 0006 passed host, governance, emulator, and physical
 install/package/role/permission gates plus real-root/modal acceptance on
 2026-07-14; the final frozen APK also passed its deliberately Inbox-only physical
 focus, exact copy/hash, and cold-launch gates on 2026-07-14; full process-death
-end-to-end and physical eligible-Thread modal coverage are not claimed;
+end-to-end and physical eligible-Thread modal coverage are not claimed; a
+follow-on exact-thread verified identity prerequisite for 1 through 100
+participants passed focused verification plus the complete local
+host/release/benchmark/governance/license/SBOM, API 36 connected,
+frozen-artifact, deliberately Inbox-only Pixel, and source GitHub CI gates,
+while physical 9-member Thread coverage remains pending;
 assignment-local focal/dim values, media/artwork, import/export, navigation
 variants, and the full accessibility/performance matrix remain gated follow-on
 work
@@ -349,11 +354,13 @@ Acceptance criteria:
   transient error state, and keep mutation controls disabled until both the
   first validated durable profile snapshot and the exact target-assignment
   query are loaded;
-- keep the fingerprint model bounded at 1 through 100 participants, while the
-  current UI exposes conversation assignment only when the maximum-8-member
-  `ConversationSummary` preview is the complete verified identity; conversations
-  with 9 through 100 indexed participants safely inherit `global_thread` until
-  a separately reviewed full-identity query exists; and
+- keep `ConversationSummary` as a display preview of at most 8 members, and derive
+  appearance identity separately with one exact-thread, exact-generation query
+  limited to 101 rows (100 plus one overflow sentinel); expose only a valid,
+  exact-distinct, value-sorted 1-through-100-member identity when coverage is
+  verified complete, the entity and every row belong to that generation/thread,
+  the declared and returned counts match, and truncation is false; reserve NFC
+  normalization and fingerprint sorting for `AppearanceParticipantSetKey`; and
 - make no appearance action query/write Telephony, mutate/rebuild the index,
   perform a carrier action, or change notifications; add no DataStore owner,
   production permission/component, network path, artwork, media reference,
@@ -388,6 +395,11 @@ app/src/test/kotlin/org/aurorasms/app/appearance/AppearanceControllerTest.kt
 core/index/schemas/org.aurorasms.core.index.storage.AuroraIndexDatabase/3.json
 core/index/src/androidTest/kotlin/org/aurorasms/core/index/IndexMigration2To3Test.kt
 core/index/src/androidTest/kotlin/org/aurorasms/core/index/IndexSchemaV1Test.kt
+core/index/src/androidTest/kotlin/org/aurorasms/core/index/ConversationProjectionTest.kt
+core/index/src/main/kotlin/org/aurorasms/core/index/conversation/ConversationRepository.kt
+core/index/src/main/kotlin/org/aurorasms/core/index/conversation/RoomConversationRepository.kt
+core/index/src/main/kotlin/org/aurorasms/core/index/conversation/VerifiedConversationIdentity.kt
+core/index/src/main/kotlin/org/aurorasms/core/index/storage/ConversationDao.kt
 core/index/src/main/kotlin/org/aurorasms/core/index/storage/AuroraIndexDatabase.kt
 core/index/src/main/kotlin/org/aurorasms/core/index/storage/IndexDatabaseFactory.kt
 core/index/src/main/kotlin/org/aurorasms/core/index/storage/IndexDatabaseMigrations.kt
@@ -395,6 +407,7 @@ core/index/src/main/kotlin/org/aurorasms/core/index/sync/IndexProjectionMapper.k
 core/index/src/main/kotlin/org/aurorasms/core/index/sync/IndexedProviderProjection.kt
 core/index/src/test/kotlin/org/aurorasms/core/index/sync/IndexProjectionMapperTest.kt
 core/index/src/test/kotlin/org/aurorasms/core/index/sync/TelephonyIndexSynchronizerTest.kt
+core/index/src/test/kotlin/org/aurorasms/core/index/conversation/VerifiedConversationIdentityTest.kt
 core/state/src/main/kotlin/org/aurorasms/core/state/AppearanceOverride.kt
 core/state/src/main/kotlin/org/aurorasms/core/state/AppearanceProfileRepository.kt
 core/state/src/main/kotlin/org/aurorasms/core/state/storage/AppearanceOverrideDao.kt
@@ -416,9 +429,12 @@ core/state/schemas/org.aurorasms.core.state.storage.AuroraStateDatabase/3-trigge
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidMmsProviderDataSource.kt
 core/telephony/src/test/kotlin/org/aurorasms/core/telephony/ProviderProjectionPolicyTest.kt
 feature/conversations/src/main/kotlin/org/aurorasms/feature/conversations/InboxScreen.kt
+feature/conversations/src/main/kotlin/org/aurorasms/feature/conversations/ConversationUiModel.kt
+feature/conversations/src/main/kotlin/org/aurorasms/feature/conversations/ThreadStateHolder.kt
 feature/conversations/src/main/kotlin/org/aurorasms/feature/conversations/ThreadScreen.kt
 feature/conversations/src/main/res/values/strings.xml
 feature/conversations/src/androidTest/kotlin/org/aurorasms/feature/conversations/ConversationUiStateTest.kt
+feature/conversations/src/test/kotlin/org/aurorasms/feature/conversations/ThreadStateHolderIdentityTest.kt
 gradle/libs.versions.toml
 docs/adr/0006-durable-scoped-profile-references.md
 docs/PHASE_4_FILE_PLAN.md
@@ -428,6 +444,72 @@ docs/TEST_MATRIX.md
 docs/THREAT_MODEL.md
 README.md
 ```
+
+## Implemented follow-on prerequisite: verified exact-thread identity
+
+The original ADR 0006 slice deliberately stopped at the eight-member
+`ConversationSummary` preview. This separately reviewed follow-on fulfills its
+bounded full-identity prerequisite without changing the preview, state schema,
+Telephony contract, assignment schema, or fingerprint algorithm:
+
+- one exact provider-thread/generation Room query orders participant rows and is
+  limited to `MAXIMUM_VERIFIED_CONVERSATION_PARTICIPANTS + 1` (101), so the extra
+  row is an overflow sentinel rather than an unbounded read;
+- the repository emits an identity only when coverage is verified complete, the
+  requested thread and generation match the conversation entity and every row,
+  `participantsTruncated` is false, the declared count is in 1 through 100, the
+  returned count matches it exactly, and addresses are valid, exact-distinct,
+  and sorted by value. NFC canonicalization/deduplication happens later during
+  `AppearanceParticipantSetKey` derivation;
+- `ConversationSummary.participants` remains an at-most-8 display/contact
+  preview. The exact 1-through-100 participant list is projected from existing
+  private rebuildable `indexed_conversation_participants.address` rows into an
+  ephemeral, redacted `VerifiedConversationIdentity`. The derived identity adds
+  no appearance/state persistence and is not placed in `SavedState`; the app
+  immediately derives the existing one-way private participant-set key from it;
+- `ThreadStateHolder` clears the identity synchronously on content-free
+  invalidation before starting the bounded re-query. The app additionally
+  requires complete coverage plus exact route-thread and generation matches;
+  missing, stale, oversized, truncated, count-mismatched, or route-mismatched
+  identity removes conversation appearance availability and clears an open
+  editor target. A timeline page may initially publish Ready while its delayed
+  exact-identity lookup is explicitly unresolved: appearance remains unavailable
+  and the restored target is retained. Resolved-null or terminal failure clears
+  that target, while invalidation publishes resolved-null before re-query so
+  stale authority is revoked immediately; and
+- the implementation adds one private index-database read but no Telephony
+  provider read, index mutation, schema migration, permission, component,
+  dependency, network path, raw-address storage beyond the existing rebuildable
+  index, or carrier action.
+
+Focused verification covers the valid, exact-distinct, value-sorted, redacted
+1-through-100 model and fail-closed projection, the Room nine-member exact
+identity beyond an eight-row preview and its pending-generation revocation,
+holder delivery/invalidation, app resolver route/generation/coverage checks,
+editor target loss, and a real-root nine-member modal-open/invalidation-dismiss
+journey. Those focused host, Room,
+app compile/lint, three-test holder, and three-test real-root emulator runs
+passed. The complete host/release/benchmark/governance/license gate then passed
+886 tasks (66 executed) in 1m05s; the separate `cyclonedxBom` run passed with
+all 15 tasks up-to-date. The full API 36 connected matrix passed 455 tasks
+(13 executed, 442 up-to-date) in 57s, including app 32, benchmark 4, core index
+31, notifications 3, state 29, telephony 15, and feature conversations 3 tests.
+The final debug APK is 13,212,416 bytes with SHA-256
+`39a07d72b7c58b91a11b152458ba971161b1edd98883f68df4fdbc6ab724235d`.
+It installed successfully on Pixel 8 serial `192.168.68.51:38677`, and the copy
+at `/sdcard/Download/AuroraSMS-debug.apk` has the same size and hash. The
+targeted `MainActivityScopedAppearancePhysicalSmokeTest` passed 1/1 in a
+17-second, 197-task build. The installed app was the sole Aurora package, its
+default-SMS role and
+`READ_SMS`, `SEND_SMS`, `RECEIVE_SMS`, `RECEIVE_MMS`, and
+`POST_NOTIFICATIONS` grants were restored, and a cold MainActivity launch
+reported `Status: ok`, state `COLD`, `TotalTime: 1112`, `WaitTime: 1114`, PID
+4191, and `topResumed` MainActivity. The error-only PID log contained only the
+benign ashmem-pinning deprecation. This content-free Inbox smoke is not physical
+9-member Thread coverage. Source commit
+`83db9aa0f02cef44644f53d0bb149abe459dc20b` is committed and pushed on
+`origin/main`; GitHub Verify run `29380854714` passed its 10m59s build job with
+all project steps green.
 
 ## Remaining follow-on slices
 

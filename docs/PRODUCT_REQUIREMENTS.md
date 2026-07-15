@@ -47,8 +47,10 @@ transport; AuroraSMS's approved runtime scope remains SMS/MMS.
 - Drafts, scheduled messages, pending sends/deletes, spam decisions, named
   appearance profiles, the active-profile selection, and scoped profile
   overrides live in a separate durable Aurora state store. Conversation
-  appearance identity stores only a versioned participant-set fingerprint plus
-  the current provider thread ID, never raw participant addresses.
+  appearance assignment storage keeps only a versioned participant-set
+  fingerprint plus the current provider thread ID, never raw participant
+  addresses; the separate private rebuildable index retains its participant
+  address rows for message indexing and exact verified projection.
 - No UI path loads an entire message history or unbounded result list.
 - Search coverage does not depend on a user manually scrolling old messages.
 - Ordinary conversations with more than one unique canonical recipient always
@@ -198,15 +200,21 @@ wallpaper chains:
   paused/pending; a fresh scan from empty checkpoints must complete under the
   stricter missing/malformed participant rules before conversation assignment
   is available;
-- the fingerprint contract accepts 1 through 100 participants, but the current
-  Thread UI has only the maximum-8-member `ConversationSummary` preview and
-  exposes assignment only when that preview is the complete verified set;
-  conversations with 9 through 100 indexed participants inherit
-  `global_thread` until a bounded full-identity query is implemented;
+- the fingerprint contract accepts 1 through 100 participants. The
+  `ConversationSummary` remains a display preview of at most 8 members; a
+  separate exact-thread and exact-generation query reads at most 101 rows (100
+  plus one overflow sentinel) and exposes a 1-through-100-member identity only
+  for verified-complete, non-truncated data whose entity/row generations, thread
+  IDs, and declared/returned counts agree exactly;
 - repository observation is target-specific, not an unbounded collection of
   every customized conversation; its first Room row-or-null is authoritative,
   while the app retains explicit loading until a positive durable profile
   revision and the exact target query both arrive;
+- an initial timeline Ready state may precede the exact conversation-identity
+  lookup. That Ready state explicitly marks identity unresolved, exposes no
+  conversation appearance scope, and preserves a restored editor target until
+  lookup completion; resolved-null or terminal failure clears the target, and
+  invalidation resolves null before re-query so stale identity is revoked;
 - Inbox More exposes Inbox appearance and `Conversation defaults`
   (`global_thread`), while Thread More exposes `Conversation appearance` only
   for the verified current conversation; future screen codes have no controls
@@ -218,7 +226,10 @@ wallpaper chains:
   baseline/selected profile IDs, and expected revision; a target mismatch is
   discarded synchronously, controls stay disabled while either the durable
   profile snapshot or exact target-assignment query is loading, and
-  in-flight/error/dismissal state is not restored as completed work;
+  in-flight/error/dismissal state is not restored as completed work. The derived
+  exact participant identity is projected from existing private rebuildable
+  index address rows, remains ephemeral/redacted, and is not added to appearance
+  persistence or `SavedState`; it is never exported or logged;
 - applying `Inherited` revision-checks and deletes only that assignment;
   revision-checked profile deletion cascades its referencing assignments so
   each target immediately inherits; and
@@ -254,6 +265,26 @@ physical acceptance: a distinct focused scoped dialog opened over the same
 MainActivity/Inbox window and Cancel returned to it without opening a Thread or
 applying an assignment. This does not claim full process-death end-to-end or
 physical eligible-Thread modal coverage.
+
+The separately reviewed exact-thread follow-on preserves that physical nonclaim
+while making conversations with 9 through 100 verified members eligible.
+Content-free invalidation clears the holder identity before re-query; the app
+requires complete coverage plus exact current route-thread and generation
+matches, closes an open editor on identity loss/change or terminal failure, and
+inherits `global_thread` for every missing, stale, oversized, truncated, or
+inconsistent result. Focused exact-model, Room, holder, resolver, and real-root
+tests passed, followed by the complete local 886-task
+host/release/benchmark/governance/license gate in 1m05s, separate SBOM run, and
+full 455-task API 36 connected matrix in 57s. The final 13,212,416-byte debug
+APK, SHA-256
+`39a07d72b7c58b91a11b152458ba971161b1edd98883f68df4fdbc6ab724235d`,
+installed successfully on the Pixel 8 and its Download copy matched exactly.
+The content-free Inbox-only physical smoke passed 1/1 in a 17-second, 197-task
+build; package, default-role, required-grant, and cold-launch checks passed
+without an app crash. This does not claim a physical 9-member Thread. Source
+commit `83db9aa0f02cef44644f53d0bb149abe459dc20b` is committed and pushed on
+`origin/main`; GitHub Verify run `29380854714` passed its 10m59s build job with
+all project steps green.
 
 Assignment-local focal points/dim values and every wallpaper/media reference,
 picker, renderer, decoder, canonical artwork mapping, and GIF lifecycle remain

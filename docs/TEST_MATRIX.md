@@ -739,8 +739,10 @@ exact copy/hash, and cold-launch evidence passed as described below.
   and greater-than-100-participant inputs are rejected before hashing.
 - [x] Conversation appearance rows store only the fingerprint, current positive
   provider thread ID, named-profile reference, and revision. Schema, entities,
-  models, exceptions, logs, and `toString` expose no raw participant address,
-  display name, participant serialization, message content, or contact ID.
+  persisted assignment models, exceptions, logs, and `toString` expose no raw
+  participant address, display name, participant serialization, message content,
+  or contact ID. This does not describe the private rebuildable index or the
+  ephemeral verified-identity projection used for immediate fingerprinting.
 - [x] A conversation assignment can be created, rebound, or resolved only from
   verified-complete, non-truncated participants. Missing, incomplete,
   truncated, malformed, or mismatched identity falls through to
@@ -780,11 +782,12 @@ exact copy/hash, and cold-launch evidence passed as described below.
 - [x] Inbox More reaches separate Inbox appearance and `Conversation defaults`
   (`global_thread`) modals. Thread More reaches `Conversation appearance` only
   when its current participant identity is verified; no private participant
-  value appears in the modal or semantics tree. The current
-  `ConversationSummary` preview is bounded to 8 participants, so indexed
-  conversations with 9 through 100 participants inherit `global_thread` until
-  a bounded full-identity query is implemented; the core fingerprint contract
-  remains 1 through 100.
+  value appears in the modal or semantics tree. `ConversationSummary` remains an
+  at-most-8-member display preview. The separately reviewed exact-thread
+  follow-on uses a maximum-101-row query (100 plus one overflow sentinel) and
+  makes 1-through-100-member conversations eligible only from a matching
+  verified-complete, non-truncated generation with exact declared/returned
+  participant count.
 - [x] Synthetic modal/controller instrumentation covers selection, inherited
   reset, Cancel, window-level Back, recreation, delayed profile/assignment
   loading, target mismatch, missing-profile reset, errors, and in-flight writes.
@@ -836,6 +839,91 @@ exact copy/hash, and cold-launch evidence passed as described below.
   Aggregate appearance state remained `0|0|0` before and after for screen-row
   count, conversation-row count, and allocation revision. No physical eligible-
   Thread modal claim is made.
+
+### Verified exact-thread identity follow-on
+
+Local, frozen-artifact, Inbox-only Pixel, and source GitHub CI verification are
+complete.
+
+This follow-on fulfills the later query prerequisite identified by ADR 0006; it
+does not retroactively expand the original frozen `0.4.2-phase4` evidence below.
+Source commit `83db9aa0f02cef44644f53d0bb149abe459dc20b` is committed and pushed
+on `origin/main`.
+
+- [x] `VerifiedConversationIdentity` accepts only a positive generation and a
+  valid, exact-distinct list of 1 through 100 participants sorted by stored
+  address value. NFC normalization, deduplication, and byte sorting occur later
+  during `AppearanceParticipantSetKey` derivation. Its `toString` exposes only
+  participant count, never thread ID, generation, or addresses.
+- [x] The exact-thread Room query is constrained by one positive provider thread,
+  one positive generation, raw address-value ordering, and limit 101. Projection
+  requires verified-complete matching coverage, matching
+  entity/thread/generation, false truncation, a declared count in 1 through 100,
+  exact row-count equality, and matching row thread/generation; overflow,
+  exact-duplicate, malformed, stale, pending, or inconsistent data
+  returns no identity.
+- [x] The existing `ConversationSummary` remains capped at 8 preview members.
+  Room instrumentation proves a verified nine-member conversation retains an
+  eight-row preview with `indexedParticipantCount == 9` and
+  `participantsTruncated == false`, while returning all nine exact participants
+  only after generation verification; pending changes then revoke the identity
+  by making coverage incomplete.
+- [x] Existing private rebuildable Room rows persist participant addresses in
+  `indexed_conversation_participants.address`. The exact-thread query projects
+  those rows into an ephemeral, redacted `VerifiedConversationIdentity`; this
+  derived object/list is not added to appearance/state persistence, logs,
+  exports, or `SavedState`. App code immediately derives the existing one-way
+  private participant-set key, and only the thread-hint/fingerprint restoration
+  token is saveable.
+- [x] `ThreadStateHolderIdentityTest` covers delivery of verified identity with a
+  bounded timeline page, an initial Ready state that remains explicitly
+  unresolved while the exact metadata lookup is delayed, and synchronous
+  resolved-null clear-before-reload on invalidation.
+  `ScopedAppearanceResolutionTest` covers nine-member eligibility with an
+  eight-member display preview, indexed count 9, and false provider/index
+  truncation, plus incomplete coverage, missing identity, exact generation/thread
+  matching, private-target changes, Loading/unresolved-Ready restoration,
+  resolved-null clearing, and terminal-loss dismissal. A restored target is not
+  cleared merely because timeline Ready beats the identity lookup.
+- [x] The focused real `AuroraSmsRoot` synthetic-service class now contains three
+  passing emulator tests. Its new journey opens conversation appearance from a
+  strict nine-member identity while the summary preview remains eight,
+  `indexedParticipantCount == 9`, and `participantsTruncated == false`; it then
+  removes the identity, observes automatic modal dismissal, and confirms the
+  conversation appearance action is unavailable.
+- [x] The consolidated host/lint/release/benchmark/governance/license run was
+  `BUILD SUCCESSFUL` in 1m05s: 886 tasks, 66 executed. The separate
+  `cyclonedxBom` run passed with all 15 tasks up-to-date.
+- [x] The full API 36 emulator `connectedDebugAndroidTest` matrix was
+  `BUILD SUCCESSFUL` in 57s: 455 tasks, 13 executed and 442 up-to-date; app 32,
+  benchmark 4, core index 31, notifications 3, state 29, telephony 15, and
+  feature conversations 3 tests.
+- [x] The final debug APK is 13,212,416 bytes with SHA-256
+  `39a07d72b7c58b91a11b152458ba971161b1edd98883f68df4fdbc6ab724235d`.
+  It installed successfully on Pixel 8 serial `192.168.68.51:38677`; the copy at
+  `/sdcard/Download/AuroraSMS-debug.apk` has the same size and SHA-256.
+- [x] `org.aurorasms.app` was the sole Aurora package. The default-SMS role was
+  restored, and `READ_SMS`, `SEND_SMS`, `RECEIVE_SMS`, `RECEIVE_MMS`, and
+  `POST_NOTIFICATIONS` were granted.
+- [x] The targeted privacy-safe `MainActivityScopedAppearancePhysicalSmokeTest`
+  passed 1/1; its 197-task run was `BUILD SUCCESSFUL` in 17s. It covers only
+  MainActivity/Inbox; it does not exercise a physical 9-member Thread.
+- [x] A cold MainActivity launch reported `Status: ok`, launch state `COLD`,
+  `TotalTime: 1112`, `WaitTime: 1114`, PID 4191, and `topResumed` MainActivity.
+  The error-only PID log contained only the benign ashmem-pinning deprecation.
+- [x] GitHub Verify
+  [run 29380854714](https://github.com/LaAutista/AuroraSMS/actions/runs/29380854714)
+  passed its build job in 10m59s with every step green: clean-room/dependency
+  checks, test/lint/assembly, manifest/APK checks, licenses, CycloneDX, and
+  reports. Its only annotation was the GitHub-hosted Node 20 deprecation and
+  forced Node 24 for pinned actions, not a project failure.
+
+Focused evidence currently consists of three host projection/model tests, two
+Room `ConversationProjectionTest` cases, three holder identity/race tests,
+the app resolver/editor unit coverage, app Android-test compilation/lint, and the
+three-test real-root class. `ThreadStateHolderIdentityTest` passed 3/3 with zero
+failures, errors, or skips; the focused runs and complete local gates passed. The
+frozen artifact, Inbox-only Pixel gate, and source GitHub CI also passed.
 
 ### Durable scoped-profile-reference evidence — automated/install gates 2026-07-14
 

@@ -275,13 +275,43 @@ Controls:
   discarded synchronously, mutation stays disabled while durable profiles or
   the exact target assignment load, and the token is never logged, displayed,
   analyzed, or exported;
-- current Thread UI assignment only for a complete verified participant preview
-  of at most 8 members; 9-through-100-member indexed conversations inherit
-  `global_thread` until a bounded full-identity query is reviewed;
+- keep `ConversationSummary` as an at-most-8-member display preview and use a
+  separate exact-thread/exact-generation query limited to 101 rows (100 plus one
+  overflow sentinel) for appearance identity. Emit a 1-through-100-member
+  identity only when verified-complete coverage, entity/row thread and generation,
+  false truncation, and declared/returned counts agree exactly;
+- acknowledge that the private rebuildable index persists participant addresses
+  in `indexed_conversation_participants.address`, while keeping the derived
+  `VerifiedConversationIdentity` object/list ephemeral and redacted between the
+  index repository, Thread holder, and immediate one-way fingerprint derivation;
+  never add that derived identity to appearance persistence or `SavedState`, or
+  log, export, analyze, or display it;
+- clear exact identity before invalidation reload, require the current complete
+  coverage generation and route thread at use, close an open scoped editor when
+  identity becomes unavailable or changes, and inherit `global_thread` on every
+  pending, stale, oversized, truncated, duplicate, count-mismatched, or terminal
+  failure;
+- distinguish timeline Ready from exact-identity lookup completion. An
+  unresolved Ready state has no identity authority and cannot expose appearance,
+  but it also cannot erase a restored target; resolved-null or terminal failure
+  clears that target, and invalidation publishes resolved-null before re-query;
 - independent per-screen/per-conversation media references and reset semantics;
 - 4.5:1 body-text target, 3:1 non-text affordances, 48 dp targets, TalkBack,
   RTL, 200% font, and reduced-motion tests;
 - theme imports are declarative and never execute code.
+
+Verification evidence for the exact-thread follow-on remains content-free. The
+final 13,212,416-byte debug APK, SHA-256
+`39a07d72b7c58b91a11b152458ba971161b1edd98883f68df4fdbc6ab724235d`,
+installed successfully on the Pixel 8 and matched its Download copy. The
+targeted privacy-safe MainActivity/Inbox smoke passed 1/1 in 17s across 197
+tasks. Sole-package, default-role, required-grant, and cold-launch checks passed;
+the error-only process log contained only the benign ashmem-pinning deprecation.
+No physical 9-member Thread or participant data was exercised. Source commit
+`83db9aa0f02cef44644f53d0bb149abe459dc20b` is pushed on `origin/main`, and its
+GitHub Verify run `29380854714` passed its 10m59s build job with all project
+steps green. Its only annotation was GitHub's hosted Node 20
+deprecation/forced-Node-24 notice for pinned actions, not a project failure.
 
 ### T11: supply-chain or build privacy regression
 

@@ -5,7 +5,12 @@ governance, emulator, and physical install/package/role/permission verification
 passed on 2026-07-14; real-root live/restoration acceptance and the final frozen
 APK's Inbox-only physical modal-focus, exact copy/hash, and cold-launch gates also
 passed on 2026-07-14; full process-death end-to-end and physical eligible-Thread
-modal coverage are not claimed
+modal coverage are not claimed. A separately reviewed follow-on now fulfills the
+bounded exact-thread identity prerequisite for 1 through 100 participants; its
+focused tests and complete local host/release/benchmark/governance/license/SBOM
+and API 36 connected gates, frozen artifact, and deliberately Inbox-only Pixel
+smoke plus source GitHub CI passed. Physical 9-member Thread coverage remains
+pending.
 
 ## Context
 
@@ -119,14 +124,57 @@ from backup, never logged or exposed through `toString`, and is not treated as
 anonymous or suitable for telemetry/export.
 
 The fingerprint contract supports 1 through 100 participants, matching the
-bounded indexed identity model. The current production Thread UI intentionally
-derives identity only from `ConversationSummary`, whose participant preview is
-capped at 8. It exposes `Conversation appearance` only when that preview is the
-verified complete participant set (`indexedParticipantCount == participants.size`)
-and is not truncated. Conversations with 9 through 100 indexed participants
-therefore inherit `global_thread` in this slice. A later bounded full-identity
-query may make those targets available without weakening the fingerprint or
-using a thread ID alone.
+bounded indexed identity model. At the time this ADR's original scoped-reference
+slice was accepted, the production Thread UI intentionally derived identity only
+from `ConversationSummary`, whose participant preview is capped at 8. That slice
+exposed `Conversation appearance` only when the preview was the complete verified
+participant set (`indexedParticipantCount == participants.size`) and was not
+truncated. Conversations with 9 through 100 indexed participants therefore
+inherited `global_thread` in the original slice pending a separately reviewed
+bounded full-identity query.
+
+### Follow-on fulfillment: verified exact-thread identity
+
+The later prerequisite is now implemented as an amendment, not retroactively
+part of the original ADR 0006 slice. `ConversationSummary` remains capped at 8
+for display/contact work. A separate Room query reads one exact provider thread
+and exact generation, orders by address, and uses a limit of 101: the supported
+maximum of 100 plus one sentinel that proves overflow without an unbounded read.
+
+The repository emits `VerifiedConversationIdentity` only when all of these
+conditions hold:
+
+- the current coverage is verified complete and its positive generation matches
+  the requested generation;
+- the requested positive provider thread matches the conversation entity, and
+  the entity plus every returned participant row belong to that generation;
+- the entity is not truncated, its declared participant count is in 1 through
+  100, and the returned row count matches it exactly; and
+- the exact addresses are valid, exact-distinct, and sorted by their stored
+  values. NFC normalization, deduplication, and byte sorting remain part of the
+  later `AppearanceParticipantSetKey` fingerprint derivation.
+
+The identity projects exact participant addresses from the existing private
+rebuildable `indexed_conversation_participants.address` rows and carries them
+only ephemerally between the index repository, `ThreadStateHolder`, and immediate
+app-layer derivation of the existing one-way `AppearanceParticipantSetKey`. Its
+`toString` is redacted; the derived identity object/list is not added to
+appearance persistence or `SavedState`, and is never logged or exported. Only
+the existing private thread-hint/fingerprint target token may participate in
+bounded editor restoration.
+
+A content-free conversation invalidation clears the holder identity before its
+bounded reload. The app accepts it only while coverage remains verified complete
+and the identity generation and provider thread exactly match the current Ready
+state and route. Missing, pending, stale-generation, oversized, truncated,
+count-mismatched, duplicate, invalid-row, or route-mismatched identity fails
+closed to `global_thread`. If that loss or a different private target is observed
+while the conversation editor is open, the editor target is cleared. Ready now
+distinguishes an unfinished delayed exact-identity lookup from a completed null
+result: unresolved Ready exposes no appearance scope but retains a restored
+editor target; resolved-null and terminal failure clear it. Invalidation
+publishes resolved-null before re-query, so stale authority is revoked
+immediately rather than being mistaken for the initial unresolved race.
 
 ### Invalidate pre-version-3 participant completeness semantically
 
@@ -255,6 +303,29 @@ assignment. Exact Download-copy/hash and cold-launch diagnostics also passed.
 This does not extend these conclusions to physical Thread behavior or full
 process death.
 
+Focused follow-on evidence covers the exact identity projection/model, the Room
+nine-member identity beyond the unchanged eight-row preview, pending-generation
+revocation, holder delivery and clear-before-reload invalidation, app resolver
+coverage/thread/generation checks, terminal editor-target clearing, and a
+real-root nine-member modal-open/invalidation-dismiss journey. Those targeted
+host, Room, app compile/lint, three-test holder, and three-test real-root emulator
+checks passed. The subsequent host/release/benchmark/governance/license gate
+passed 886 tasks (66 executed) in 1m05s; the separate `cyclonedxBom` run passed
+with all 15 tasks up-to-date. The complete API 36 connected matrix passed 455
+tasks (13 executed, 442 up-to-date) in 57s. The final debug APK is 13,212,416
+bytes with SHA-256
+`39a07d72b7c58b91a11b152458ba971161b1edd98883f68df4fdbc6ab724235d`; the
+Pixel 8 Download copy has the same size and hash. Installation, sole-package,
+default-SMS-role, required-grant, and cold-launch checks passed. The targeted
+`MainActivityScopedAppearancePhysicalSmokeTest` passed 1/1 in 17s across 197
+tasks. The cold MainActivity launch was `Status: ok`/`COLD` with
+`TotalTime: 1112`, `WaitTime: 1114`, PID 4191, and `topResumed` MainActivity;
+the error-only PID log contained only the benign ashmem-pinning deprecation.
+This is privacy-safe Inbox evidence, not physical 9-member Thread coverage.
+Source commit `83db9aa0f02cef44644f53d0bb149abe459dc20b` is committed and pushed
+on `origin/main`; GitHub Verify run `29380854714` passed its 10m59s build job
+with all project steps green.
+
 Restorable modal state is bounded to a schema version, the selected and
 baseline profile IDs, expected revision, and one private target token. For a
 screen that token contains only its stable code; for a conversation it contains
@@ -269,6 +340,9 @@ In-flight state, transient errors, dropdown state, and dismissal state are not
 restored as completed work. Only Inbox, Inbox-owned Conversation defaults, and
 verified current-conversation appearance controls are exposed now; future
 stable screen codes do not justify dead controls for routes that do not exist.
+The address-bearing `VerifiedConversationIdentity` is not part of this state; it
+must be obtained again from the exact verified index generation before the
+restored private token can regain conversation-appearance authority.
 
 ### Preserve privacy, dependency, and transport boundaries
 
@@ -304,9 +378,11 @@ changes in this slice.
   applied while durable profile state is still loading.
 - Target-specific flows keep memory and invalidation bounded even when many
   conversations eventually have assignments.
-- The current `ConversationSummary` preview limits UI assignment to verified
-  sets of at most 8 participants; the core identity contract remains bounded at
-  100 and larger current UI conversations inherit safely.
+- The `ConversationSummary` preview remains limited to 8 participants, while the
+  separately reviewed exact-thread identity path makes conversations with 9
+  through 100 verified participants eligible without expanding that display
+  model or adding exact-address persistence to appearance state or `SavedState`;
+  the source rows remain in the private rebuildable index.
 - Archive, Settings, and Spam & Blocked can later consume already-versioned
   target codes without exposing controls early.
 - Assignment-local focal/dim values, wallpaper/media references, canonical

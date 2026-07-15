@@ -93,7 +93,8 @@ a normal Inbox or unanchored Thread:
 
 - an explicit non-destructive version-2-to-version-3 state migration stores
   references from eligible screens and verified conversations to existing named
-  profiles, never copied profile tokens or raw participant addresses;
+  profiles; it never copies profile tokens or raw participant addresses into
+  appearance state;
 - a durable globally monotonic assignment-revision sequence prevents stale
   delete/recreate ABA writes, while target-specific Room flows keep observation
   bounded;
@@ -103,13 +104,45 @@ a normal Inbox or unanchored Thread:
   mutation controls wait for both the durable profile snapshot and the exact
   target-assignment query after process load, and no production Activity is
   added; and
-- the core fingerprint contract accepts 1 through 100 participants, while the
-  current `ConversationSummary` preview safely limits UI assignment to verified
-  sets of at most 8. Larger indexed conversations inherit global defaults until
-  a bounded full-identity query is added.
+- the core fingerprint contract accepts 1 through 100 participants. The
+  `ConversationSummary` display preview remains capped at 8, while a separate
+  exact-thread index read retrieves at most 101 rows (100 plus one sentinel) and
+  exposes a 1-through-100-member identity only for the matching
+  verified-complete generation, exact declared count, and non-truncated row set.
 
-The final frozen APK passed its intentionally Inbox-only physical focus gate on
-an awake, unlocked Pixel 8. The gated real-`MainActivity` smoke used only
+A follow-on exact-thread identity prerequisite now lets conversations with 9
+through 100 verified members use the same scoped appearance path without
+expanding the display preview. Its address-bearing
+`VerifiedConversationIdentity` exists only ephemerally between the index
+repository, Thread holder, and immediate one-way fingerprint derivation. It is
+projected from the existing private rebuildable index participant-address rows;
+the derived identity object/list is redacted and is not newly persisted in
+appearance state or placed in `SavedState`. Provider invalidation clears it
+before re-query. An initial timeline-ready state may
+precede the delayed exact-identity lookup: appearance stays unavailable, but a
+restored editor target is retained until that lookup completes. Resolved-null,
+terminal failure, missing, oversized, stale-generation, count-mismatched,
+truncated, or route-mismatched identity closes the editor and inherits
+`global_thread`.
+
+Focused host, Room, holder, resolver, and real-root tests passed. The final
+host/release/benchmark/governance/license gate passed 886 tasks in 1m05s, the
+separate SBOM run passed, and the full API 36 connected matrix passed 455 tasks
+in 57s. The final 13,212,416-byte debug APK
+(`39a07d72b7c58b91a11b152458ba971161b1edd98883f68df4fdbc6ab724235d`)
+was installed successfully on the Pixel 8 and copied to Download with the same
+size and SHA-256. The privacy-safe Inbox-only physical smoke passed 1/1;
+package, default-role, required-grant, and cold-launch checks also passed without
+an app crash. This is not physical 9-member Thread evidence. Source commit
+`83db9aa0f02cef44644f53d0bb149abe459dc20b` is pushed on `origin/main`; its
+[GitHub Verify run](https://github.com/LaAutista/AuroraSMS/actions/runs/29380854714)
+passed the 10m59s build job with every project step green. The only annotation
+was GitHub's hosted Node 20 deprecation/forced-Node-24 notice for pinned actions,
+not a project failure.
+
+The earlier ADR 0006 slice's final frozen APK passed its intentionally
+Inbox-only physical focus gate on an awake, unlocked Pixel 8. The gated
+real-`MainActivity` smoke used only
 package/view IDs and accessibility window metadata to prove a distinct focused
 scoped dialog, then Cancel returned to the same MainActivity/Inbox window without
 opening a Thread or applying an assignment; aggregate appearance state remained
