@@ -25,8 +25,10 @@ at `111381dff31c46380eab969dea20234cba16fe08` now passes. Synthetic API 36
 verified-conversation root rendering, focal/dim Apply, Activity recreation,
 reset/identity fallback, stale-pixel clearing, and independent real-Room
 close/reopen coverage pass at `b9350be354991e36039e8136095bc25ebd520d60`,
-while complete picker/static-wallpaper UI acceptance and cold-process renderer
-restart remain pending;
+and an exact gated API 36 AOSP Photo Picker `GLOBAL_ACTION_BACK` cancellation
+journey passes twice at `826a20dbc3e965da8f269dde1351cf4d76d28f6c`, while SAF
+fallback/cancellation, broader picker/static-wallpaper UI acceptance, and
+cold-process renderer restart remain pending;
 Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
 import/export, navigation variants, and the full accessibility/performance and
 carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold
@@ -792,6 +794,36 @@ Activity recreation and Room reopen are deliberately separate evidence: this
 does not prove a cold-process root renderer plus managed-file restart, a
 physical verified-conversation journey, SAF/system-picker cancellation,
 carrier behavior, the complete lifecycle, or gold readiness.
+
+Source commit `826a20dbc3e965da8f269dde1351cf4d76d28f6c` adds a separately gated
+API 36 AOSP Photo Picker cancellation journey using the accessibility global
+Back action. With AuroraSMS installed under its normal emulator SMS-role
+precondition, the exact
+`realGlobalThreadSystemPickerCancellationRestoresEditorAndBaseline` method passed
+independently twice in 12s and 11s. It waited for
+`StateStorageStatus.Ready`, published after the startup reconciliation attempt,
+opened the real `MainActivity` global-thread wallpaper editor, focused the exact
+MediaProvider package, and invoked `GLOBAL_ACTION_BACK` without creating a
+synthetic picker fixture or inspecting picker content. The wallpaper dialog
+returned usable with Pick enabled, Apply disabled, no loading/error state, and
+the exact global assignment object, managed-file name set, and persisted URI
+grant count unchanged. Failure cleanup attempts to dismiss a still-focused
+picker, and the physical runner now targets its original exact method so the two
+instrumentation gates cannot affect each other's pass/skip accounting.
+
+The complete follow-on API 36 connected matrix passed in 1m19s with 456 Gradle
+tasks: app 76 tests with three intentional gated skips, benchmark 3 with one
+scale-opt-in skip, index 31, notifications 3, state 43, telephony 15, and
+feature-conversations 4. The 886-task offline
+host/release/governance/license gate passed in 17s, CycloneDX passed in 7s, and
+the debug APK remained 13,993,426 bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+This proves only cancellation through the accessibility global Back action in
+the API 36 AOSP Photo Picker. It does not prove SAF fallback/cancellation, OEM
+picker behavior, an explicit picker Cancel control, selected/staged-candidate
+cancellation, URI or file-byte identity after a successful selection,
+cold-process behavior, the complete lifecycle, or gold readiness. The compound
+picker/SAF gate remains open.
 
 ## Stop conditions
 

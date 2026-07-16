@@ -12,7 +12,9 @@ license/SBOM, and exact APK handoff gates pass. The narrow physical
 verified-conversation root pixels, focal/dim Apply, Activity recreation,
 reset/identity fallback, stale-pixel clearing, and independent real-Room
 close/reopen durability pass at `b9350be354991e36039e8136095bc25ebd520d60`,
-while cold-process renderer restart, complete picker/UI,
+and gated API 36 AOSP Photo Picker `GLOBAL_ACTION_BACK` cancellation passes twice at
+`826a20dbc3e965da8f269dde1351cf4d76d28f6c`, while SAF
+fallback/cancellation, cold-process renderer restart, complete picker/UI,
 accessibility/form-factor, carrier, and overall acceptance remain pending
 
 ## Context
@@ -326,6 +328,26 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
   prove a cold-process root renderer plus managed-file restart, a physical
   verified-conversation journey, SAF/system-picker cancellation, carrier
   behavior, the complete lifecycle, or gold readiness.
+- Source commit `826a20dbc3e965da8f269dde1351cf4d76d28f6c` adds a gated API
+  36 AOSP Photo Picker cancellation journey using the accessibility global Back
+  action. With normal emulator SMS-role preconditions, the exact method passed
+  independently twice in 12s and 11s. It waits for `StateStorageStatus.Ready`,
+  published after the startup reconciliation attempt, opens the real
+  `MainActivity` global-thread editor, focuses MediaProvider, invokes
+  `GLOBAL_ACTION_BACK` without creating a synthetic picker fixture or inspecting
+  picker content, and proves the usable dialog returns with Pick enabled, Apply
+  disabled, no loading/error, and the exact
+  global assignment, managed-file name set, and persisted-grant count unchanged.
+  The follow-on full connected matrix passed in 1m19s with 456 tasks; the
+  886-task offline host/release/governance/license gate passed in 17s;
+  CycloneDX passed in 7s; and the unchanged 13,993,426-byte debug APK retained
+  SHA-256
+  `5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+  This proves only API 36 AOSP Photo Picker accessibility global-Back
+  cancellation, not SAF fallback/cancellation, OEM picker behavior, any explicit
+  Photo Picker Cancel control, selected/staged candidate handling, cold-process
+  behavior, the complete lifecycle, or gold readiness. The compound picker/SAF
+  gate remains open.
 - Inbox treatment, canonical built-ins, GIF lifecycle, live URI references,
   and import/export media remain independently reviewable slices.
 

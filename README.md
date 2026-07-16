@@ -186,9 +186,21 @@ conversation reset leaves global state untouched. This is Activity recreation
 plus an independent Room reopen; it is not cold-process
 renderer/filesystem-restart evidence.
 
-SAF/system-picker cancellation, cold-process renderer restart, the complete
-Photo Picker/static-wallpaper lifecycle, import/export, navigation variants,
-GIF lifecycle, carrier coverage, full
+Source commit `826a20dbc3e965da8f269dde1351cf4d76d28f6c` adds an explicitly
+gated API 36 AOSP Photo Picker cancellation journey using the accessibility
+global Back action. With the emulator prepared under AuroraSMS's normal SMS-role
+precondition, the exact method passed independently twice in 12s and 11s. It
+opens the real `MainActivity` global-thread wallpaper editor, focuses
+MediaProvider, invokes `GLOBAL_ACTION_BACK` without creating a synthetic picker
+fixture or inspecting picker content, and proves the usable editor returns with
+Pick enabled, Apply disabled, no loading/error, and the exact global assignment,
+managed-file name set, and persisted-grant count unchanged. The physical runner
+is pinned to its original exact method.
+
+SAF fallback/cancellation, OEM picker behavior, any explicit Photo Picker Cancel
+control, cold-process renderer restart, the complete Photo Picker/static
+wallpaper lifecycle, import/export, navigation variants, GIF lifecycle, carrier
+coverage, full
 accessibility/form-factor/performance coverage, and approved canonical artwork
 remain Phase 4 or release follow-on gates. Artwork is still blocked on the exact
 written publication/derivative/distribution terms in `docs/ARTWORK_CATALOG.md`.

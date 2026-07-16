@@ -24,9 +24,13 @@ Picker with synthetic media through editor Cancel, wallpaper Back, Apply, and
 Reset. Synthetic API 36 acceptance at
 `b9350be354991e36039e8136095bc25ebd520d60` now covers verified-conversation
 root pixels, focal/dim Apply, Activity recreation, reset and identity fallback,
-stale-pixel clearing, and independent Room close/reopen/reset durability. SAF
-fallback, system-picker cancellation, cold-process renderer restart, broader
-process-death UX, accessibility/form-factor/performance, carrier, and compound
+stale-pixel clearing, and independent Room close/reopen/reset durability. An
+exact gated API 36 AOSP Photo Picker cancellation journey using the
+accessibility global Back action at
+`826a20dbc3e965da8f269dde1351cf4d76d28f6c` also passes twice. SAF
+fallback/cancellation, OEM picker behavior, any explicit Photo Picker Cancel
+control, cold-process renderer restart, broader process-death UX,
+accessibility/form-factor/performance, carrier, and compound
 implementation-complete rows remain outstanding; the app is not complete or
 gold.
 
@@ -1571,6 +1575,55 @@ verified-conversation journey, SAF/system-picker cancellation, accessibility,
 form-factor or performance behavior, carrier behavior, the complete picker
 lifecycle, or a complete/gold application. No broad compound checkbox changes
 on this evidence alone.
+
+#### ADR 0007 API 36 Photo Picker accessibility-Back cancellation partial evidence — 2026-07-15
+
+Source commit `826a20dbc3e965da8f269dde1351cf4d76d28f6c` adds the separately gated
+`realGlobalThreadSystemPickerCancellationRestoresEditorAndBaseline` method. The
+API 36 AOSP emulator was prepared with AuroraSMS installed under its normal
+SMS-role precondition; the test does not grant itself a role or permission. Each
+run targeted the exact method and set
+`auroraEmulatorWallpaperPickerCancellation=true`:
+
+```shell
+ANDROID_SERIAL=emulator-5554 ./gradlew :app:connectedDebugAndroidTest \
+  '-Pandroid.testInstrumentationRunnerArguments.class=org.aurorasms.app.appearance.wallpaper.MainActivityStaticWallpaperPhysicalSmokeTest#realGlobalThreadSystemPickerCancellationRestoresEditorAndBaseline' \
+  -Pandroid.testInstrumentationRunnerArguments.auroraEmulatorWallpaperPickerCancellation=true \
+  --offline --no-daemon --no-parallel --console=plain
+```
+
+A valid focused result must report exactly one test with zero failures, errors,
+and skips; `BUILD SUCCESSFUL` alone is not evidence because an unmet API,
+hardware, or explicit-gate assumption can skip the method. Both recorded runs
+met the exact `1/0/0/0` result.
+
+After `StateStorageStatus` reached `Ready`, following the startup reconciliation
+attempt, the journey opened the real `MainActivity` global-thread editor,
+launched the exact MediaProvider Photo Picker, and invoked the accessibility
+global Back action. It created no synthetic picker fixture, inspected no picker
+text or thumbnail, opened no conversation, created no provider message, and
+invoked no carrier action. The wallpaper dialog
+returned with Pick enabled, Apply disabled, and no loading/error state; the exact
+assignment object, app-private managed-file name set, and persisted URI-grant
+count matched the pre-launch baseline. Failure cleanup attempts to dismiss a
+picker still in focus. The hardened exact-method journey passed independently
+twice in 12s and 11s. The physical runner now pins its original physical method,
+keeping both gate outcomes independent.
+
+The follow-on complete API 36 connected matrix passed in 1m19s with 456 Gradle
+tasks: app 76 tests with three intentional gated skips, benchmark 3 with one
+scale-opt-in skip, index 31, notifications 3, state 43, telephony 15, and
+feature-conversations 4. The complete 886-task offline
+host/release/governance/license gate passed in 17s, CycloneDX passed in 7s, and
+the unchanged 13,993,426-byte debug APK retained SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+
+This is API 36 AOSP Photo Picker accessibility global-Back evidence only. It
+does not prove SAF fallback/cancellation, OEM picker behavior, an explicit Photo
+Picker Cancel control, selected/staged-candidate cancellation, URI
+non-persistence or managed-file byte identity after selection, other assignment
+tables, grant identity, cold-process behavior, or the complete picker lifecycle.
+The compound Photo Picker/SAF row remains unchecked.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 
