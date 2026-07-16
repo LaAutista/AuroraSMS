@@ -2,6 +2,7 @@
 
 package org.aurorasms.app.appearance.wallpaper
 
+import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
 import android.content.ContentResolver
@@ -35,8 +36,10 @@ import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.aurorasms.app.AuroraSmsApplication
 import org.aurorasms.app.MainActivity
+import org.aurorasms.app.StateStorageStatus
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_CANCEL_TEST_TAG
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_DIALOG_TEST_TAG
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_WALLPAPER_TEST_TAG
@@ -51,16 +54,19 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Owner-invoked physical smoke for the real static-wallpaper Photo Picker journey.
+ * Owner-invoked gated smokes for the real static-wallpaper Photo Picker journeys.
  *
- * The test creates one uniquely named synthetic MediaStore download. It never
+ * The physical method creates one uniquely named synthetic MediaStore download. It never
  * enumerates media text, reads or selects a user thumbnail, opens a conversation, reads
  * message/contact content, or invokes a carrier action. All application navigation uses exported
  * Compose resource tags; system-picker navigation uses fixed MediaProvider resources plus the
  * localized Downloads label and an exact synthetic description reproduced from the installed
- * picker's resource and date-formatting contract.
- * Invoke it through scripts/run-physical-wallpaper-picker-smoke.sh so instrumentation cleanup
- * removes only the test package and preserves the installed SMS app, its data, role, and grants.
+ * picker's resource and date-formatting contract. Invoke that exact method through
+ * scripts/run-physical-wallpaper-picker-smoke.sh so instrumentation cleanup removes only the test
+ * package and preserves the installed SMS app, its data, role, and grants.
+ *
+ * The separately gated API 36 emulator method creates no fixture and inspects no picker content;
+ * it proves only system-Back cancellation and exact app-private baseline preservation.
  */
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = Build.VERSION_CODES.TIRAMISU)
@@ -202,11 +208,149 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         }
     }
 
+    @Test
+    fun realGlobalThreadSystemPickerCancellationRestoresEditorAndBaseline() {
+        requireExplicitEmulatorCancellationGate()
+        assumeTrue(
+            EMULATOR_CANCELLATION_API_REQUIRED,
+            Build.VERSION.SDK_INT == Build.VERSION_CODES.BAKLAVA,
+        )
+
+        var automation: UiAutomation? = null
+        var originalServiceFlags: Int? = null
+        var scenario: ActivityScenario<MainActivity>? = null
+
+        try {
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val activeAutomation = instrumentation.getUiAutomation(
+                UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
+            )
+            automation = activeAutomation
+            originalServiceFlags = activeAutomation.serviceInfo.flags
+            activeAutomation.serviceInfo = activeAutomation.serviceInfo.apply {
+                flags = flags or
+                    AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            }
+
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val application = context as? AuroraSmsApplication
+                ?: failFixed(APPLICATION_REQUIRED)
+            awaitStateStorageReady(application)
+            val controller = application.container.wallpaperController
+            val launchIntent = Intent(context, MainActivity::class.java)
+                .setAction(Intent.ACTION_MAIN)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            val activeScenario = ActivityScenario.launch<MainActivity>(launchIntent)
+            scenario = activeScenario
+
+            activeScenario.onActivity { activity ->
+                if (activity.componentName.className != MainActivity::class.java.name) {
+                    failFixed(REAL_ACTIVITY_REQUIRED)
+                }
+                if (activity.openedConversationId != null) failFixed(INBOX_ROUTE_REQUIRED)
+            }
+            waitForStableInitialInboxOrAssume(activeAutomation).recycleSafely()
+
+            val baseline = CancellationBaseline(
+                assignment = readReadyAssignment(controller),
+                managedFiles = managedFileNames(context),
+                persistedGrantCount = persistedGrantCount(context.contentResolver),
+            )
+
+            openGlobalWallpaperEditor(activeAutomation)
+            clickAppTag(activeAutomation, SCOPED_WALLPAPER_PICK_TEST_TAG)
+            waitForPackage(activeAutomation, PHOTO_PICKER_PACKAGE)
+            if (!activeAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) {
+                failFixed(SYSTEM_PICKER_CANCEL_FAILED)
+            }
+
+            waitForPackage(activeAutomation, TARGET_PACKAGE)
+            waitForAppTag(activeAutomation, SCOPED_WALLPAPER_DIALOG_TEST_TAG).recycleSafely()
+            waitForEnabledAppTag(
+                activeAutomation,
+                SCOPED_WALLPAPER_PICK_TEST_TAG,
+            ).recycleSafely()
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_LOADING_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_ERROR_TEST_TAG)
+            val applyEnabled = waitForAppTag(
+                activeAutomation,
+                SCOPED_WALLPAPER_APPLY_TEST_TAG,
+            ).useNode { node -> node.isEnabled }
+            if (applyEnabled) failFixed(APPLY_ENABLED_AFTER_SYSTEM_PICKER_CANCEL)
+            assertCancellationBaselineUnchanged(controller, context, baseline)
+        } catch (assumption: AssumptionViolatedException) {
+            throw assumption
+        } catch (fixed: FixedSmokeFailure) {
+            throw fixed
+        } catch (_: Throwable) {
+            failFixed(UNEXPECTED_EMULATOR_CANCELLATION_FAILURE)
+        } finally {
+            bestEffortDismissFocusedPhotoPicker(automation)
+            try {
+                scenario?.close()
+            } catch (_: Throwable) {
+                // Best effort: the journey is read-only and its durable baseline is asserted above.
+            }
+            val activeAutomation = automation
+            val flagsToRestore = originalServiceFlags
+            if (activeAutomation != null && flagsToRestore != null) {
+                try {
+                    activeAutomation.serviceInfo = activeAutomation.serviceInfo.apply {
+                        flags = flagsToRestore
+                    }
+                } catch (_: Throwable) {
+                    // Best effort: never replace the fixed primary failure with platform text.
+                }
+            }
+        }
+    }
+
     private fun requireExplicitPhysicalGate() {
         val enabled = InstrumentationRegistry.getArguments()
             .getString(PHYSICAL_GATE_ARGUMENT)
             ?.equals("true", ignoreCase = true) == true
         assumeTrue(PHYSICAL_GATE_REQUIRED, enabled)
+    }
+
+    private fun requireExplicitEmulatorCancellationGate() {
+        val enabled = InstrumentationRegistry.getArguments()
+            .getString(EMULATOR_CANCELLATION_GATE_ARGUMENT)
+            ?.equals("true", ignoreCase = true) == true
+        assumeTrue(EMULATOR_CANCELLATION_GATE_REQUIRED, enabled)
+        assumeTrue(
+            EMULATOR_REQUIRED,
+            Build.HARDWARE == "ranchu" ||
+                Build.HARDWARE == "goldfish",
+        )
+    }
+
+    private fun awaitStateStorageReady(application: AuroraSmsApplication) {
+        val status = runBlocking {
+            withTimeoutOrNull(STATE_TIMEOUT_MILLIS) {
+                application.container.stateStorageStatus.first { current ->
+                    current != StateStorageStatus.Opening
+                }
+            }
+        }
+        if (status != StateStorageStatus.Ready) failFixed(STATE_STORAGE_NOT_READY)
+    }
+
+    private fun bestEffortDismissFocusedPhotoPicker(automation: UiAutomation?) {
+        if (automation == null) return
+        try {
+            val root = automation.rootInActiveWindow ?: return
+            val pickerFocused = try {
+                root.packageName?.toString() == PHOTO_PICKER_PACKAGE
+            } finally {
+                root.recycleSafely()
+            }
+            if (pickerFocused) {
+                automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            }
+        } catch (_: Throwable) {
+            // Best effort: inspect only the focused package and never replace the primary result.
+        }
     }
 
     private fun insertSyntheticFixture(context: Context): SyntheticMediaFixture {
@@ -888,6 +1032,22 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         assertGrantCountUnchanged(context.contentResolver, baseline)
     }
 
+    private fun assertCancellationBaselineUnchanged(
+        controller: WallpaperController,
+        context: Context,
+        baseline: CancellationBaseline,
+    ) {
+        if (readReadyAssignment(controller) != baseline.assignment) {
+            failFixed(ASSIGNMENT_CHANGED_AFTER_SYSTEM_PICKER_CANCEL)
+        }
+        if (managedFileNames(context) != baseline.managedFiles) {
+            failFixed(MANAGED_FILES_CHANGED_AFTER_SYSTEM_PICKER_CANCEL)
+        }
+        if (persistedGrantCount(context.contentResolver) != baseline.persistedGrantCount) {
+            failFixed(PERSISTED_GRANT_COUNT_CHANGED)
+        }
+    }
+
     private fun assertExactlyOneNewManagedFinal(
         context: Context,
         baseline: DurableBaseline,
@@ -1002,6 +1162,14 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         override fun toString(): String = "DurableBaseline(REDACTED)"
     }
 
+    private class CancellationBaseline(
+        val assignment: AppWallpaperAssignment?,
+        val managedFiles: Set<String>,
+        val persistedGrantCount: Int,
+    ) {
+        override fun toString(): String = "CancellationBaseline(REDACTED)"
+    }
+
     private class SyntheticMediaFixture(
         val resolver: ContentResolver,
         val uri: Uri,
@@ -1020,6 +1188,8 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
 
     private companion object {
         const val PHYSICAL_GATE_ARGUMENT = "auroraPhysicalWallpaperPickerSmoke"
+        const val EMULATOR_CANCELLATION_GATE_ARGUMENT =
+            "auroraEmulatorWallpaperPickerCancellation"
         const val TARGET_PACKAGE = "org.aurorasms.app"
         const val PHOTO_PICKER_PACKAGE = "com.android.providers.media.module"
         const val PICKER_TAB_LAYOUT_RESOURCE = "$PHOTO_PICKER_PACKAGE:id/tab_layout"
@@ -1066,10 +1236,16 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
             AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD)
 
         const val PHYSICAL_GATE_REQUIRED = "physical wallpaper picker smoke gate was not enabled"
+        const val EMULATOR_CANCELLATION_GATE_REQUIRED =
+            "emulator wallpaper picker cancellation gate was not enabled"
+        const val EMULATOR_REQUIRED = "wallpaper picker cancellation requires an emulator"
+        const val EMULATOR_CANCELLATION_API_REQUIRED =
+            "emulator wallpaper picker cancellation requires API 36"
         const val PHOTO_PICKER_API_REQUIRED = "physical wallpaper picker smoke requires API 33 or newer"
         const val PREEXISTING_ASSIGNMENT_SKIP = "global wallpaper already exists; physical smoke skipped"
         const val DEVICE_FOREGROUND_REQUIRED = "physical smoke requires an available focused device"
         const val APPLICATION_REQUIRED = "AuroraSMS application was not available"
+        const val STATE_STORAGE_NOT_READY = "AuroraSMS state storage did not become ready"
         const val REAL_ACTIVITY_REQUIRED = "real MainActivity was not launched"
         const val INBOX_ROUTE_REQUIRED = "physical smoke did not start on Inbox"
         const val APP_TAG_NOT_AVAILABLE = "required content-free app resource tag was not available"
@@ -1097,6 +1273,13 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         const val ASSIGNMENT_CHANGED_BEFORE_APPLY = "global assignment changed before Apply"
         const val MANAGED_FILES_CHANGED_BEFORE_APPLY = "managed files changed before Apply"
         const val PERSISTED_GRANT_COUNT_CHANGED = "persisted URI grant count changed"
+        const val SYSTEM_PICKER_CANCEL_FAILED = "system Photo Picker cancellation failed"
+        const val APPLY_ENABLED_AFTER_SYSTEM_PICKER_CANCEL =
+            "Apply became enabled after system Photo Picker cancellation"
+        const val ASSIGNMENT_CHANGED_AFTER_SYSTEM_PICKER_CANCEL =
+            "global assignment changed after system Photo Picker cancellation"
+        const val MANAGED_FILES_CHANGED_AFTER_SYSTEM_PICKER_CANCEL =
+            "managed files changed after system Photo Picker cancellation"
         const val APPLIED_ASSIGNMENT_REQUIRED = "Apply did not create one global assignment"
         const val BASELINE_MANAGED_FILE_REMOVED = "Apply removed a baseline managed file"
         const val EXACTLY_ONE_NEW_MANAGED_FILE_REQUIRED = "Apply did not create exactly one managed file"
@@ -1104,5 +1287,7 @@ class MainActivityStaticWallpaperPhysicalSmokeTest {
         const val MANAGED_DIRECTORY_INVALID = "managed wallpaper directory was invalid"
         const val MANAGED_DIRECTORY_UNAVAILABLE = "managed wallpaper directory was unavailable"
         const val UNEXPECTED_PHYSICAL_SMOKE_FAILURE = "physical wallpaper picker smoke failed"
+        const val UNEXPECTED_EMULATOR_CANCELLATION_FAILURE =
+            "emulator system Photo Picker cancellation smoke failed"
     }
 }

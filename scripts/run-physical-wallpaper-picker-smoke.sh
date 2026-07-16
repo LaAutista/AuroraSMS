@@ -18,6 +18,8 @@ APP_PACKAGE="org.aurorasms.app"
 TEST_PACKAGE="org.aurorasms.app.test"
 TEST_RUNNER="androidx.test.runner.AndroidJUnitRunner"
 TEST_CLASS="org.aurorasms.app.appearance.wallpaper.MainActivityStaticWallpaperPhysicalSmokeTest"
+TEST_METHOD="realGlobalThreadPickerCancelBackApplyAndResetRestoreBaseline"
+TEST_TARGET="$TEST_CLASS#$TEST_METHOD"
 PHYSICAL_GATE="auroraPhysicalWallpaperPickerSmoke"
 APP_APK="$ROOT/app/build/outputs/apk/debug/app-debug.apk"
 TEST_APK="$ROOT/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
@@ -211,7 +213,7 @@ printf 'Installing the isolated instrumentation APK.\n'
 
 set +e
 "${ADB[@]}" shell am instrument -w -r \
-    -e class "$TEST_CLASS" \
+    -e class "$TEST_TARGET" \
     -e "$PHYSICAL_GATE" true \
     "$TEST_PACKAGE/$TEST_RUNNER" | tee "$INSTRUMENTATION_OUTPUT"
 INSTRUMENTATION_STATUS="${PIPESTATUS[0]}"
