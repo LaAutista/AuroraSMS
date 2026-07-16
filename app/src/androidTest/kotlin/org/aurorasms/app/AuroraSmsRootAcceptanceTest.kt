@@ -2,14 +2,22 @@
 
 package org.aurorasms.app
 
+import android.graphics.Bitmap
+import android.net.Uri
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
@@ -17,6 +25,7 @@ import androidx.test.espresso.action.ViewActions.pressBack
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.isRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -37,7 +46,23 @@ import org.aurorasms.app.appearance.SCOPED_APPEARANCE_DIALOG_TEST_TAG
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_PROFILE_OPTION_PREFIX
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_RESET_TEST_TAG
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_SELECTOR_TEST_TAG
+import org.aurorasms.app.appearance.SCOPED_APPEARANCE_WALLPAPER_TEST_TAG
 import org.aurorasms.app.appearance.THEME_STUDIO_SCREEN_TEST_TAG
+import org.aurorasms.app.appearance.wallpaper.DurableWallpaperQuotaResult
+import org.aurorasms.app.appearance.wallpaper.ManagedWallpaperReconcileResult
+import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_APPLY_TEST_TAG
+import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_DIALOG_TEST_TAG
+import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_DIM_TEST_TAG
+import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_FOCAL_X_TEST_TAG
+import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_FOCAL_Y_TEST_TAG
+import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_LOADING_TEST_TAG
+import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_RESET_TEST_TAG
+import org.aurorasms.app.appearance.wallpaper.WallpaperController
+import org.aurorasms.app.appearance.wallpaper.WallpaperImportResult
+import org.aurorasms.app.appearance.wallpaper.WallpaperInspectionResult
+import org.aurorasms.app.appearance.wallpaper.WallpaperLoadResult
+import org.aurorasms.app.appearance.wallpaper.WallpaperMediaFailure
+import org.aurorasms.app.appearance.wallpaper.WallpaperMediaStore
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.SerializedDraftWriter
 import org.aurorasms.core.index.AnchorWindowResult
@@ -83,6 +108,12 @@ import org.aurorasms.core.state.AppearanceRevision
 import org.aurorasms.core.state.AppearanceScope
 import org.aurorasms.core.state.AppearanceScreenScope
 import org.aurorasms.core.state.AppearanceSnapshot
+import org.aurorasms.core.state.AppearanceWallpaperAssignment
+import org.aurorasms.core.state.AppearanceWallpaperMediaId
+import org.aurorasms.core.state.AppearanceWallpaperMediaKind
+import org.aurorasms.core.state.AppearanceWallpaperMutation
+import org.aurorasms.core.state.AppearanceWallpaperRepository
+import org.aurorasms.core.state.AppearanceWallpaperRevision
 import org.aurorasms.core.state.Draft
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftIdentity
@@ -324,6 +355,273 @@ class AuroraSmsRootAcceptanceTest {
         }
     }
 
+    @Test
+    fun verifiedConversationWallpaperWinsGlobalAndSurvivesRecreationWithoutPresentationReload() {
+        val fixture = SyntheticFixture()
+        val globalAssignment = fixture.wallpapers.seed(
+            scope = GLOBAL_THREAD_SCOPE,
+            mediaId = GLOBAL_WALLPAPER_MEDIA_ID,
+            dimPermill = 510,
+            focalXPermill = 500,
+            focalYPermill = 500,
+        )
+        val initialConversationAssignment = fixture.wallpapers.seed(
+            scope = SYNTHETIC_CONVERSATION_SCOPE,
+            mediaId = CONVERSATION_WALLPAPER_MEDIA_ID,
+            dimPermill = 410,
+            focalXPermill = 180,
+            focalYPermill = 760,
+        )
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+            openSyntheticThread()
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.wallpaperStore.loadCount(CONVERSATION_WALLPAPER_MEDIA_ID, preview = false) >= 1
+            }
+            waitForWallpaperPixels(CONVERSATION_WALLPAPER_COLOR_ARGB, initialConversationAssignment.dimPermill)
+            assertEquals(0, fixture.wallpaperStore.loadCount(GLOBAL_WALLPAPER_MEDIA_ID, preview = false))
+            assertEquals(initialConversationAssignment, fixture.wallpapers.assignmentFor(SYNTHETIC_CONVERSATION_SCOPE))
+            assertEquals(globalAssignment, fixture.wallpapers.assignmentFor(GLOBAL_THREAD_SCOPE))
+
+            compose.onNodeWithTag(THREAD_LIST_TEST_TAG).performScrollToIndex(THREAD_ANCHOR_INDEX)
+            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).performTextReplacement(SYNTHETIC_DRAFT)
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
+            val anchorLoadsBeforeEditor = fixture.index.anchorLoadCount.get()
+            val timelineLoadsBeforeEditor = fixture.timeline.latestLoadCount.get()
+
+            openConversationWallpaperEditor()
+            compose.onNodeWithTag(SCOPED_WALLPAPER_FOCAL_X_TEST_TAG)
+                .performSemanticsAction(SemanticsActions.SetProgress) { it(UPDATED_FOCAL_X.toFloat()) }
+            compose.onNodeWithTag(SCOPED_WALLPAPER_FOCAL_Y_TEST_TAG)
+                .performSemanticsAction(SemanticsActions.SetProgress) { it(UPDATED_FOCAL_Y.toFloat()) }
+            compose.onNodeWithTag(SCOPED_WALLPAPER_DIM_TEST_TAG)
+                .performSemanticsAction(SemanticsActions.SetProgress) { it(UPDATED_DIM.toFloat()) }
+            val conversationLoadsBeforeApply = fixture.wallpaperStore.loadCount(
+                CONVERSATION_WALLPAPER_MEDIA_ID,
+                preview = false,
+            )
+            compose.onNodeWithTag(SCOPED_WALLPAPER_APPLY_TEST_TAG).performClick()
+            waitForWallpaperDialogToClose()
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.wallpapers.assignmentFor(SYNTHETIC_CONVERSATION_SCOPE)?.let { assignment ->
+                    assignment.revision != initialConversationAssignment.revision &&
+                        assignment.dimPermill == UPDATED_DIM &&
+                        assignment.focalXPermill == UPDATED_FOCAL_X &&
+                        assignment.focalYPermill == UPDATED_FOCAL_Y
+                } == true
+            }
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.wallpaperStore.loadCount(
+                    CONVERSATION_WALLPAPER_MEDIA_ID,
+                    preview = false,
+                ) > conversationLoadsBeforeApply
+            }
+            val updatedConversationAssignment = checkNotNull(
+                fixture.wallpapers.assignmentFor(SYNTHETIC_CONVERSATION_SCOPE),
+            )
+            assertEquals(CONVERSATION_WALLPAPER_MEDIA_ID, updatedConversationAssignment.mediaId)
+            assertEquals(globalAssignment, fixture.wallpapers.assignmentFor(GLOBAL_THREAD_SCOPE))
+            assertEquals(anchorLoadsBeforeEditor, fixture.index.anchorLoadCount.get())
+            assertEquals(timelineLoadsBeforeEditor, fixture.timeline.latestLoadCount.get())
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
+            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+
+            compose.onNodeWithTag(SCOPED_APPEARANCE_CANCEL_TEST_TAG).performClick()
+            waitForDialogToClose()
+            waitForWallpaperPixels(CONVERSATION_WALLPAPER_COLOR_ARGB, UPDATED_DIM)
+            val conversationLoadsBeforeRecreation = fixture.wallpaperStore.loadCount(
+                CONVERSATION_WALLPAPER_MEDIA_ID,
+                preview = false,
+            )
+            val anchorLoadsBeforeRecreation = fixture.index.anchorLoadCount.get()
+            scenario.recreate()
+
+            waitForTag(THREAD_SCREEN_TEST_TAG)
+            waitForTag(THREAD_LIST_TEST_TAG)
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.index.anchorLoadCount.get() == anchorLoadsBeforeRecreation + 1
+            }
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.wallpaperStore.loadCount(
+                    CONVERSATION_WALLPAPER_MEDIA_ID,
+                    preview = false,
+                ) > conversationLoadsBeforeRecreation
+            }
+            assertEquals(updatedConversationAssignment, fixture.wallpapers.assignmentFor(SYNTHETIC_CONVERSATION_SCOPE))
+            assertEquals(globalAssignment, fixture.wallpapers.assignmentFor(GLOBAL_THREAD_SCOPE))
+            assertEquals(timelineLoadsBeforeEditor, fixture.timeline.latestLoadCount.get())
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
+            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            waitForWallpaperPixels(CONVERSATION_WALLPAPER_COLOR_ARGB, UPDATED_DIM)
+
+            openConversationWallpaperEditor()
+            compose.onNodeWithText("Horizontal focal point: 27%")
+                .performScrollTo()
+                .assertIsDisplayed()
+            compose.onNodeWithText("Vertical focal point: 83%")
+                .performScrollTo()
+                .assertIsDisplayed()
+            compose.onNodeWithText("Dim: 72%")
+                .performScrollTo()
+                .assertIsDisplayed()
+        }
+    }
+
+    @Test
+    fun conversationResetAndIdentityLossFallBackToGlobalWithoutCrossTargetMutation() {
+        val fixture = SyntheticFixture()
+        val globalAssignment = fixture.wallpapers.seed(
+            scope = GLOBAL_THREAD_SCOPE,
+            mediaId = GLOBAL_WALLPAPER_MEDIA_ID,
+            dimPermill = 530,
+            focalXPermill = 480,
+            focalYPermill = 520,
+        )
+        fixture.wallpapers.seed(
+            scope = SYNTHETIC_CONVERSATION_SCOPE,
+            mediaId = CONVERSATION_WALLPAPER_MEDIA_ID,
+            dimPermill = 430,
+            focalXPermill = 210,
+            focalYPermill = 790,
+        )
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+            openSyntheticThread()
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.wallpaperStore.loadCount(CONVERSATION_WALLPAPER_MEDIA_ID, preview = false) >= 1
+            }
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).performTextReplacement(SYNTHETIC_DRAFT)
+            val anchorLoadsBeforeReset = fixture.index.anchorLoadCount.get()
+            val timelineLoadsBeforeReset = fixture.timeline.latestLoadCount.get()
+
+            openConversationWallpaperEditor()
+            val globalLoadsBeforeReset = fixture.wallpaperStore.loadCount(
+                GLOBAL_WALLPAPER_MEDIA_ID,
+                preview = false,
+            )
+            compose.onNodeWithTag(SCOPED_WALLPAPER_RESET_TEST_TAG)
+                .performScrollTo()
+                .performClick()
+            waitForWallpaperDialogToClose()
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.wallpapers.assignmentFor(SYNTHETIC_CONVERSATION_SCOPE) == null
+            }
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.wallpaperStore.loadCount(
+                    GLOBAL_WALLPAPER_MEDIA_ID,
+                    preview = false,
+                ) > globalLoadsBeforeReset
+            }
+            assertEquals(globalAssignment, fixture.wallpapers.assignmentFor(GLOBAL_THREAD_SCOPE))
+            assertEquals(anchorLoadsBeforeReset, fixture.index.anchorLoadCount.get())
+            assertEquals(timelineLoadsBeforeReset, fixture.timeline.latestLoadCount.get())
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
+            compose.onNodeWithTag(SCOPED_APPEARANCE_CANCEL_TEST_TAG).performClick()
+            waitForDialogToClose()
+            waitForWallpaperPixels(GLOBAL_WALLPAPER_COLOR_ARGB, globalAssignment.dimPermill)
+
+            val replacementConversationAssignment = fixture.wallpapers.seed(
+                scope = SYNTHETIC_CONVERSATION_SCOPE,
+                mediaId = REPLACEMENT_CONVERSATION_WALLPAPER_MEDIA_ID,
+                dimPermill = 650,
+                focalXPermill = 320,
+                focalYPermill = 680,
+            )
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.wallpaperStore.loadCount(
+                    REPLACEMENT_CONVERSATION_WALLPAPER_MEDIA_ID,
+                    preview = false,
+                ) >= 1
+            }
+            waitForWallpaperPixels(
+                REPLACEMENT_CONVERSATION_WALLPAPER_COLOR_ARGB,
+                replacementConversationAssignment.dimPermill,
+            )
+            val globalLoadsBeforeIdentityLoss = fixture.wallpaperStore.loadCount(
+                GLOBAL_WALLPAPER_MEDIA_ID,
+                preview = false,
+            )
+
+            fixture.conversations.invalidateVerifiedIdentity()
+
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.wallpaperStore.loadCount(
+                    GLOBAL_WALLPAPER_MEDIA_ID,
+                    preview = false,
+                ) > globalLoadsBeforeIdentityLoss
+            }
+            waitForWallpaperPixels(GLOBAL_WALLPAPER_COLOR_ARGB, globalAssignment.dimPermill)
+            assertEquals(
+                replacementConversationAssignment,
+                fixture.wallpapers.assignmentFor(SYNTHETIC_CONVERSATION_SCOPE),
+            )
+            assertEquals(globalAssignment, fixture.wallpapers.assignmentFor(GLOBAL_THREAD_SCOPE))
+            assertEquals(anchorLoadsBeforeReset, fixture.index.anchorLoadCount.get())
+            assertEquals(timelineLoadsBeforeReset, fixture.timeline.latestLoadCount.get())
+            compose.onNodeWithTag(THREAD_SCREEN_TEST_TAG).assertIsDisplayed()
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
+            compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
+            compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).assertDoesNotExist()
+        }
+    }
+
+    private fun openSyntheticThread() {
+        waitForTag(INBOX_SCREEN_TEST_TAG)
+        compose.onNodeWithTag(org.aurorasms.feature.conversations.INBOX_SEARCH_ACTION_TEST_TAG)
+            .performClick()
+        waitForTag(SEARCH_SCREEN_TEST_TAG)
+        compose.onNodeWithTag(SEARCH_FIELD_TEST_TAG).performTextReplacement(SYNTHETIC_QUERY)
+        waitForTag(SEARCH_HIT_TEST_TAG)
+        compose.onNodeWithTag(SEARCH_HIT_TEST_TAG).performClick()
+        waitForTag(THREAD_SCREEN_TEST_TAG)
+        waitForTag(THREAD_LIST_TEST_TAG)
+        waitForTag(THREAD_MORE_ACTION_TEST_TAG)
+    }
+
+    private fun openConversationWallpaperEditor() {
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).performClick()
+        waitForTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG)
+        compose.onNodeWithTag(SCOPED_APPEARANCE_WALLPAPER_TEST_TAG)
+            .performClick()
+        waitForTag(SCOPED_WALLPAPER_DIALOG_TEST_TAG)
+        compose.waitUntil(TIMEOUT_MILLIS) {
+            compose.onAllNodesWithTag(SCOPED_WALLPAPER_LOADING_TEST_TAG)
+                .fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    private fun waitForWallpaperPixels(colorArgb: Int, dimPermill: Int) {
+        val retained = (1_000 - dimPermill) / 1_000f
+        val expectedRed = ((colorArgb shr 16) and 0xff) / 255f * retained
+        val expectedGreen = ((colorArgb shr 8) and 0xff) / 255f * retained
+        val expectedBlue = (colorArgb and 0xff) / 255f * retained
+        compose.waitUntil(TIMEOUT_MILLIS) {
+            val pixels = compose.onNodeWithTag(THREAD_LIST_TEST_TAG).captureToImage().toPixelMap()
+            var matches = 0
+            var y = 0
+            while (y < pixels.height && matches < MINIMUM_WALLPAPER_PIXEL_SAMPLES) {
+                var x = 0
+                while (x < pixels.width && matches < MINIMUM_WALLPAPER_PIXEL_SAMPLES) {
+                    val actual = pixels[x, y]
+                    if (
+                        kotlin.math.abs(actual.red - expectedRed) <= WALLPAPER_PIXEL_TOLERANCE &&
+                        kotlin.math.abs(actual.green - expectedGreen) <= WALLPAPER_PIXEL_TOLERANCE &&
+                        kotlin.math.abs(actual.blue - expectedBlue) <= WALLPAPER_PIXEL_TOLERANCE
+                    ) {
+                        matches += 1
+                    }
+                    x += WALLPAPER_PIXEL_SAMPLE_STRIDE
+                }
+                y += WALLPAPER_PIXEL_SAMPLE_STRIDE
+            }
+            matches >= MINIMUM_WALLPAPER_PIXEL_SAMPLES
+        }
+    }
+
     private fun openInboxModal(actionTag: String) {
         compose.onNodeWithTag(INBOX_MORE_ACTION_TEST_TAG).performClick()
         compose.onNodeWithTag(actionTag).performClick()
@@ -354,6 +652,12 @@ class AuroraSmsRootAcceptanceTest {
             compose.onAllNodesWithTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG).fetchSemanticsNodes().isEmpty()
         }
     }
+
+    private fun waitForWallpaperDialogToClose() {
+        compose.waitUntil(TIMEOUT_MILLIS) {
+            compose.onAllNodesWithTag(SCOPED_WALLPAPER_DIALOG_TEST_TAG).fetchSemanticsNodes().isEmpty()
+        }
+    }
 }
 
 private class SyntheticFixture : AutoCloseable {
@@ -362,11 +666,15 @@ private class SyntheticFixture : AutoCloseable {
     val index = SyntheticMessageIndex()
     val timeline = RejectingTimelineRepository()
     val appearance = InMemoryAppearanceRepository()
+    val wallpapers = InMemoryWallpaperRepository()
+    val wallpaperStore = SyntheticWallpaperMediaStore()
+    private val wallpaperController = WallpaperController(wallpapers, wallpaperStore)
     private val services = SyntheticRootServices(
         scope = scope,
         conversations = conversations,
         index = index,
         timeline = timeline,
+        wallpaperController = wallpaperController,
     )
     private val controller = AppearanceController(appearance, scope) { 20_000L }
     val harness = AuroraSmsRootTestHarness(
@@ -386,6 +694,7 @@ private class SyntheticRootServices(
     conversations: SyntheticConversationRepository,
     index: SyntheticMessageIndex,
     timeline: RejectingTimelineRepository,
+    override val wallpaperController: WallpaperController,
 ) : AuroraSmsRootServices, AutoCloseable {
     private val drafts = InMemoryDraftRepository()
     private val clock = AtomicLong(30_000L)
@@ -629,6 +938,172 @@ private class InMemoryAppearanceRepository : AppearanceProfileRepository {
     ): AppearanceRepositoryResult<Unit> = AppearanceRepositoryResult.NotFound
 }
 
+private class InMemoryWallpaperRepository : AppearanceWallpaperRepository {
+    private val lock = Any()
+    private val assignmentFlows = HashMap<AppearanceScope, MutableStateFlow<AppearanceWallpaperAssignment?>>()
+    private var nextRevision = 1L
+
+    override fun observeWallpaper(scope: AppearanceScope): Flow<AppearanceWallpaperAssignment?> = synchronized(lock) {
+        assignmentFlows.getOrPut(scope) { MutableStateFlow(null) }
+    }
+
+    fun assignmentFor(scope: AppearanceScope): AppearanceWallpaperAssignment? = synchronized(lock) {
+        assignmentFlows[scope]?.value
+    }
+
+    fun seed(
+        scope: AppearanceScope,
+        mediaId: AppearanceWallpaperMediaId,
+        dimPermill: Int,
+        focalXPermill: Int,
+        focalYPermill: Int,
+    ): AppearanceWallpaperAssignment = synchronized(lock) {
+        val assignment = newAssignment(scope, mediaId, dimPermill, focalXPermill, focalYPermill)
+        assignmentFlows.getOrPut(scope) { MutableStateFlow(null) }.value = assignment
+        assignment
+    }
+
+    override suspend fun setWallpaper(
+        scope: AppearanceScope,
+        mediaId: AppearanceWallpaperMediaId,
+        dimPermill: Int,
+        focalXPermill: Int,
+        focalYPermill: Int,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<AppearanceWallpaperMutation> = synchronized(lock) {
+        val flow = assignmentFlows.getOrPut(scope) { MutableStateFlow(null) }
+        val current = flow.value
+        if (!revisionMatches(current, expectedRevision)) return AppearanceRepositoryResult.StaleWrite
+        val assignment = newAssignment(scope, mediaId, dimPermill, focalXPermill, focalYPermill)
+        flow.value = assignment
+        AppearanceRepositoryResult.Success(
+            AppearanceWallpaperMutation(
+                assignment = assignment,
+                mediaIdNowUnreferenced = current?.mediaId?.takeIf { old ->
+                    old != mediaId && !isReferenced(old)
+                },
+            ),
+        )
+    }
+
+    override suspend fun resetWallpaper(
+        scope: AppearanceScope,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<AppearanceWallpaperMutation> = synchronized(lock) {
+        val flow = assignmentFlows.getOrPut(scope) { MutableStateFlow(null) }
+        val current = flow.value
+        if (!revisionMatches(current, expectedRevision)) return AppearanceRepositoryResult.StaleWrite
+        flow.value = null
+        AppearanceRepositoryResult.Success(
+            AppearanceWallpaperMutation(
+                assignment = null,
+                mediaIdNowUnreferenced = current?.mediaId?.takeIf { old -> !isReferenced(old) },
+            ),
+        )
+    }
+
+    override suspend fun prospectiveMediaIdsForSet(
+        scope: AppearanceScope,
+        mediaId: AppearanceWallpaperMediaId,
+        expectedRevision: AppearanceWallpaperRevision?,
+    ): AppearanceRepositoryResult<Set<AppearanceWallpaperMediaId>> = synchronized(lock) {
+        val current = assignmentFlows[scope]?.value
+        if (!revisionMatches(current, expectedRevision)) return AppearanceRepositoryResult.StaleWrite
+        AppearanceRepositoryResult.Success(
+            assignmentFlows
+                .filterKeys { it != scope }
+                .values
+                .mapNotNullTo(linkedSetOf()) { it.value?.mediaId }
+                .apply { add(mediaId) },
+        )
+    }
+
+    override suspend fun referencedMediaIds(): AppearanceRepositoryResult<Set<AppearanceWallpaperMediaId>> =
+        synchronized(lock) {
+            AppearanceRepositoryResult.Success(
+                assignmentFlows.values.mapNotNullTo(linkedSetOf()) { it.value?.mediaId },
+            )
+        }
+
+    private fun newAssignment(
+        scope: AppearanceScope,
+        mediaId: AppearanceWallpaperMediaId,
+        dimPermill: Int,
+        focalXPermill: Int,
+        focalYPermill: Int,
+    ): AppearanceWallpaperAssignment = AppearanceWallpaperAssignment(
+        scope = scope,
+        mediaKind = AppearanceWallpaperMediaKind.STATIC_RASTER_V1,
+        mediaId = mediaId,
+        dimPermill = dimPermill,
+        focalXPermill = focalXPermill,
+        focalYPermill = focalYPermill,
+        revision = AppearanceWallpaperRevision(nextRevision++),
+    )
+
+    private fun revisionMatches(
+        current: AppearanceWallpaperAssignment?,
+        expected: AppearanceWallpaperRevision?,
+    ): Boolean = current?.revision == expected && (current == null) == (expected == null)
+
+    private fun isReferenced(mediaId: AppearanceWallpaperMediaId): Boolean =
+        assignmentFlows.values.any { it.value?.mediaId == mediaId }
+}
+
+private class SyntheticWallpaperMediaStore : WallpaperMediaStore {
+    private val loads = Collections.synchronizedList(mutableListOf<SyntheticWallpaperLoad>())
+
+    override suspend fun inspect(source: Uri): WallpaperInspectionResult =
+        WallpaperInspectionResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+
+    override suspend fun import(
+        source: Uri,
+        referencedMediaIds: Set<String>,
+        onCandidateCreated: (WallpaperImportResult.Ready) -> Unit,
+    ): WallpaperImportResult = WallpaperImportResult.Failed(WallpaperMediaFailure.UNAVAILABLE)
+
+    override suspend fun load(mediaId: String, preview: Boolean): WallpaperLoadResult {
+        loads += SyntheticWallpaperLoad(mediaId = mediaId, preview = preview)
+        val color = when (mediaId) {
+            GLOBAL_WALLPAPER_MEDIA_ID.toPrivateStorageToken() -> GLOBAL_WALLPAPER_COLOR_ARGB
+            CONVERSATION_WALLPAPER_MEDIA_ID.toPrivateStorageToken() -> CONVERSATION_WALLPAPER_COLOR_ARGB
+            REPLACEMENT_CONVERSATION_WALLPAPER_MEDIA_ID.toPrivateStorageToken() ->
+                REPLACEMENT_CONVERSATION_WALLPAPER_COLOR_ARGB
+            else -> return WallpaperLoadResult.Unavailable
+        }
+        val native = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888).apply { eraseColor(color) }
+        return WallpaperLoadResult.Ready(
+            mediaId = mediaId,
+            image = native.asImageBitmap(),
+            width = native.width,
+            height = native.height,
+        )
+    }
+
+    override suspend fun deleteIfUnreferenced(
+        mediaId: String,
+        referencedMediaIds: Set<String>,
+    ): Boolean = mediaId !in referencedMediaIds
+
+    override suspend fun reconcile(referencedMediaIds: Set<String>): ManagedWallpaperReconcileResult =
+        ManagedWallpaperReconcileResult.COMPLETE
+
+    override suspend fun validateDurableQuota(
+        prospectiveMediaIds: Set<String>,
+    ): DurableWallpaperQuotaResult = DurableWallpaperQuotaResult.WITHIN_LIMIT
+
+    fun loadCount(mediaId: AppearanceWallpaperMediaId, preview: Boolean): Int = synchronized(loads) {
+        loads.count { load ->
+            load.mediaId == mediaId.toPrivateStorageToken() && load.preview == preview
+        }
+    }
+}
+
+private data class SyntheticWallpaperLoad(
+    val mediaId: String,
+    val preview: Boolean,
+)
+
 private class InMemoryDraftRepository : DraftRepository {
     private val lock = Any()
     private val drafts = HashMap<DraftIdentity, Draft>()
@@ -810,6 +1285,19 @@ private val SYNTHETIC_CONVERSATION_SCOPE = AppearanceScope.Conversation(
     participantSetKey = AppearanceParticipantSetKey.fromParticipants(SYNTHETIC_VERIFIED_PARTICIPANTS),
     providerThreadId = SYNTHETIC_THREAD_ID,
 )
+private val GLOBAL_THREAD_SCOPE = AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD)
+private val GLOBAL_WALLPAPER_MEDIA_ID = AppearanceWallpaperMediaId.fromPrivateStorageToken(
+    "sha256-v1:${"1".repeat(64)}",
+)
+private val CONVERSATION_WALLPAPER_MEDIA_ID = AppearanceWallpaperMediaId.fromPrivateStorageToken(
+    "sha256-v1:${"2".repeat(64)}",
+)
+private val REPLACEMENT_CONVERSATION_WALLPAPER_MEDIA_ID = AppearanceWallpaperMediaId.fromPrivateStorageToken(
+    "sha256-v1:${"3".repeat(64)}",
+)
+private val GLOBAL_WALLPAPER_COLOR_ARGB = 0xff2457d6.toInt()
+private val CONVERSATION_WALLPAPER_COLOR_ARGB = 0xffb43b63.toInt()
+private val REPLACEMENT_CONVERSATION_WALLPAPER_COLOR_ARGB = 0xff3a8f5b.toInt()
 private const val ANCHOR_WINDOW_SIZE = 51
 private const val ANCHOR_POSITION = 25
 private const val INBOX_ANCHOR_INDEX = 15
@@ -824,4 +1312,10 @@ private const val DAYLIGHT_NAME = "Synthetic Daylight"
 private const val SYNTHETIC_QUERY = "synthetic exact query"
 private const val SYNTHETIC_DRAFT = "Synthetic restored draft"
 private const val SYNTHETIC_EXACT_ANCHOR = "Synthetic exact anchor"
+private const val UPDATED_FOCAL_X = 270
+private const val UPDATED_FOCAL_Y = 830
+private const val UPDATED_DIM = 720
+private const val WALLPAPER_PIXEL_TOLERANCE = 0.035f
+private const val WALLPAPER_PIXEL_SAMPLE_STRIDE = 8
+private const val MINIMUM_WALLPAPER_PIXEL_SAMPLES = 24
 private const val TIMEOUT_MILLIS = 10_000L
