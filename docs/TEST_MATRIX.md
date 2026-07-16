@@ -21,10 +21,14 @@ exact Pixel APK handoff gates passed. The physical managed-store test was
 non-UI filesystem coverage only. A later owner-gated Pixel 8/API 36 smoke now
 partially covers the real global-thread Appearance editor and platform Photo
 Picker with synthetic media through editor Cancel, wallpaper Back, Apply, and
-Reset. SAF fallback, system-picker cancellation, conversation rendering,
-restart persistence, broader process-death UX, accessibility/form-factor/
-performance, carrier, and compound implementation-complete rows remain
-outstanding; the app is not complete or gold.
+Reset. Synthetic API 36 acceptance at
+`b9350be354991e36039e8136095bc25ebd520d60` now covers verified-conversation
+root pixels, focal/dim Apply, Activity recreation, reset and identity fallback,
+stale-pixel clearing, and independent Room close/reopen/reset durability. SAF
+fallback, system-picker cancellation, cold-process renderer restart, broader
+process-death UX, accessibility/form-factor/performance, carrier, and compound
+implementation-complete rows remain outstanding; the app is not complete or
+gold.
 
 ## Evidence rules
 
@@ -1534,6 +1538,39 @@ restart persistence, focal/dim interaction, accessibility, form-factor or
 performance behavior, carrier behavior, complete picker lifecycle, or a
 complete/gold application. Every existing unchecked ADR 0007 and broader Phase
 4 row therefore remains unchecked.
+
+#### ADR 0007 verified-conversation rendering/recreation partial evidence — 2026-07-15
+
+Source commit `b9350be354991e36039e8136095bc25ebd520d60` adds synthetic API 36
+verified-conversation coverage. `AuroraSmsRootAcceptanceTest` passed 5/5; its
+real-root timeline pixel captures prove conversation-over-global precedence,
+the applied dim amount, equivalent pixels after Activity recreation,
+reset-to-global pixels, and identity-loss fallback without cross-target
+mutation. Editor and repository assertions prove focal/dim values survive Apply
+plus recreation. Wallpaper Apply/reset add no presentation-data loads; Activity
+recreation performs the one expected anchor reload.
+The new `ManagedWallpaperSurfaceTest` case passed 1/1 and proves unavailable
+conversation media falls back to global, target changes recycle/clear prior
+media, and unavailable conversation plus global assignments clear to solid
+without stale pixels. The new real-Room instrumented test passed 1/1 across two
+database close/reopen cycles, proving exact global and conversation assignments
+survive database close and reopen and conversation reset leaves global
+untouched.
+
+The complete API 36 connected matrix passed in 1m15s with 456 Gradle tasks: app
+75 tests with two intentional physical-only skips, benchmark 3 with one
+scale-opt-in skip, index 31, notifications 3, state 43, telephony 15, and
+feature-conversations 4. The complete 886-task offline
+host/release/governance/license gate passed in 15s, and CycloneDX passed in 7s.
+The unchanged debug APK is 13,993,426 bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+
+Activity recreation and real-Room reopen are separate evidence. This does not
+exercise a cold-process root renderer plus managed-file restart, a physical
+verified-conversation journey, SAF/system-picker cancellation, accessibility,
+form-factor or performance behavior, carrier behavior, the complete picker
+lifecycle, or a complete/gold application. No broad compound checkbox changes
+on this evidence alone.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 

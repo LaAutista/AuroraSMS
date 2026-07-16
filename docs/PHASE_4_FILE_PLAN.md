@@ -21,8 +21,12 @@ at `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` and renderer isolation at
 quota protocol landed at `f0f1ff9` and passed focused host, API 26/API 36/Pixel
 filesystem, complete connected, release/governance, license/SBOM, and exact APK
 handoff gates. A narrow physical `global_thread` platform-Photo-Picker journey
-at `111381dff31c46380eab969dea20234cba16fe08` now passes, while complete
-picker/static-wallpaper UI acceptance remains pending;
+at `111381dff31c46380eab969dea20234cba16fe08` now passes. Synthetic API 36
+verified-conversation root rendering, focal/dim Apply, Activity recreation,
+reset/identity fallback, stale-pixel clearing, and independent real-Room
+close/reopen coverage pass at `b9350be354991e36039e8136095bc25ebd520d60`,
+while complete picker/static-wallpaper UI acceptance and cold-process renderer
+restart remain pending;
 Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
 import/export, navigation variants, and the full accessibility/performance and
 carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold
@@ -763,8 +767,31 @@ were preserved. The local, installed, and Downloads APKs were each 13,993,426
 bytes with SHA-256
 `5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
 This proves only the narrow platform-picker `global_thread` journey, not the
-SAF/system-picker cancel path, verified-conversation rendering, restart
-persistence, performance, complete lifecycle, or gold readiness.
+SAF/system-picker cancel path, performance, complete lifecycle, or gold
+readiness.
+
+Source commit `b9350be354991e36039e8136095bc25ebd520d60` adds synthetic API 36
+verified-conversation evidence. The real root acceptance class passed 5/5 and
+uses timeline pixel captures to prove conversation-over-global precedence,
+applied dim, equivalent pixels after Activity recreation, reset-to-global
+pixels, and identity-loss fallback without cross-target mutation. Editor and
+repository assertions prove focal/dim values survive Apply plus recreation.
+Wallpaper Apply/reset add no presentation-data loads; Activity recreation
+performs the one expected anchor reload. Focused managed-surface and real-Room
+close/reopen/reset tests each passed 1/1; the latter proves exact global and
+conversation assignments survive database close and reopen and reset
+independently. The complete API 36 connected matrix then passed in 1m15s with
+456 Gradle tasks: app 75 tests with
+two intentional physical-only skips, benchmark 3 with one scale-opt-in skip,
+index 31, notifications 3, state 43, telephony 15, and feature-conversations 4.
+The complete 886-task offline host/release/governance/license gate passed in
+15s, CycloneDX passed in 7s, and the debug APK remained 13,993,426 bytes with
+SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+Activity recreation and Room reopen are deliberately separate evidence: this
+does not prove a cold-process root renderer plus managed-file restart, a
+physical verified-conversation journey, SAF/system-picker cancellation,
+carrier behavior, the complete lifecycle, or gold readiness.
 
 ## Stop conditions
 

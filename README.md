@@ -173,9 +173,22 @@ SMS role, and all seven grants were preserved. The local, installed, and
 Downloads APKs were each 13,993,426 bytes with SHA-256
 `5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
 
-SAF/system-picker cancel, verified-conversation rendering, restart persistence,
-the complete Photo Picker/static-wallpaper lifecycle, import/export, navigation
-variants, GIF lifecycle, carrier coverage, full
+Source commit `b9350be354991e36039e8136095bc25ebd520d60` adds synthetic API 36
+verified-conversation acceptance. Root-level timeline pixel captures prove a
+conversation assignment wins over `global_thread` and that its dimmed color is
+equivalent after Activity recreation; editor and repository assertions prove
+focal point and dim survive Apply plus recreation. Reset falls back to global
+pixels, identity loss revokes conversation authority without mutating either
+durable target, and unavailable assigned media falls through to the solid
+background without stale pixels. A separate real-Room close/reopen test proves
+exact global and conversation rows survive database close and reopen and that
+conversation reset leaves global state untouched. This is Activity recreation
+plus an independent Room reopen; it is not cold-process
+renderer/filesystem-restart evidence.
+
+SAF/system-picker cancellation, cold-process renderer restart, the complete
+Photo Picker/static-wallpaper lifecycle, import/export, navigation variants,
+GIF lifecycle, carrier coverage, full
 accessibility/form-factor/performance coverage, and approved canonical artwork
 remain Phase 4 or release follow-on gates. Artwork is still blocked on the exact
 written publication/derivative/distribution terms in `docs/ARTWORK_CATALOG.md`.

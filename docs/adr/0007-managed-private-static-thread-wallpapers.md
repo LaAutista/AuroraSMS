@@ -8,9 +8,12 @@ quota hardening landed at source commit `f0f1ff9`. Its focused host, API 26,
 API 36, physical filesystem, complete connected, release/governance,
 license/SBOM, and exact APK handoff gates pass. The narrow physical
 `global_thread` platform-Photo-Picker journey at
-`111381dff31c46380eab969dea20234cba16fe08` also passes, while complete
-picker/UI, accessibility/form-factor, carrier, and overall acceptance remain
-pending
+`111381dff31c46380eab969dea20234cba16fe08` also passes. Synthetic API 36
+verified-conversation root pixels, focal/dim Apply, Activity recreation,
+reset/identity fallback, stale-pixel clearing, and independent real-Room
+close/reopen durability pass at `b9350be354991e36039e8136095bc25ebd520d60`,
+while cold-process renderer restart, complete picker/UI,
+accessibility/form-factor, carrier, and overall acceptance remain pending
 
 ## Context
 
@@ -303,8 +306,26 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
   target, SMS role, and all seven grants were preserved; and the local,
   installed, and Downloads APKs each matched 13,993,426 bytes and SHA-256
   `5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
-  This does not prove SAF/system-picker cancel, verified-conversation rendering,
-  restart persistence, performance, the complete lifecycle, or gold readiness.
+  That physical runner does not prove SAF/system-picker cancel,
+  verified-conversation rendering, restart persistence, performance, the
+  complete lifecycle, or gold readiness.
+- Source commit `b9350be354991e36039e8136095bc25ebd520d60` adds synthetic API 36
+  verified-conversation evidence. Root timeline pixel captures prove
+  conversation-over-global precedence, applied dim and equivalent pixels after
+  Activity recreation, reset-to-global, identity-loss fallback without
+  cross-target mutation, and stale-pixel clearing. Editor and repository
+  assertions prove focal/dim values survive Apply plus recreation. Separate
+  managed-surface and real-Room close/reopen/reset cases pass; the Room case
+  proves exact global and conversation rows survive database close and reopen
+  and reset independently. The full API
+  36 connected matrix passed in 1m15s with 456 tasks, the 886-task offline
+  host/release/governance/license gate passed in 15s, CycloneDX passed in 7s,
+  and the debug APK remained 13,993,426 bytes with SHA-256
+  `5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+  Activity recreation and Room reopen are separate evidence; this does not
+  prove a cold-process root renderer plus managed-file restart, a physical
+  verified-conversation journey, SAF/system-picker cancellation, carrier
+  behavior, the complete lifecycle, or gold readiness.
 - Inbox treatment, canonical built-ins, GIF lifecycle, live URI references,
   and import/export media remain independently reviewable slices.
 
