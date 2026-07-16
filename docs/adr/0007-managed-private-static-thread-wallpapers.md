@@ -6,8 +6,11 @@ hardening at `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` and renderer isolation
 at `e5aa4dfb1c695046c136d07e6b0c549e77e278ee`; crash-safe managed-store and
 quota hardening landed at source commit `f0f1ff9`. Its focused host, API 26,
 API 36, physical filesystem, complete connected, release/governance,
-license/SBOM, and exact APK handoff gates pass, while complete picker/UI,
-accessibility/form-factor, carrier, and overall acceptance remain pending
+license/SBOM, and exact APK handoff gates pass. The narrow physical
+`global_thread` platform-Photo-Picker journey at
+`111381dff31c46380eab969dea20234cba16fe08` also passes, while complete
+picker/UI, accessibility/form-factor, carrier, and overall acceptance remain
+pending
 
 ## Context
 
@@ -288,10 +291,20 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
 - A staged candidate is intentionally less durable than an applied assignment;
   configuration/process loss may require another pick.
 - The new state migration, direct assignment rows, shared revision floor,
-  decoder, renderer, picker/UI, accessibility/form-factor, and physical user
-  journey still require their named gates before an implementation-complete
-  claim; the managed-file crash/quota protocol itself has passed its focused
-  host and device matrix.
+  decoder, renderer, picker/UI, accessibility/form-factor, and broader physical
+  user journeys still require their named gates before an implementation-
+  complete claim. The managed-file crash/quota protocol passed its focused host
+  and device matrix, and the dedicated narrow platform-picker runner passed 1/1
+  in 7.107s on Pixel 8 Android 16/API 36 serial `192.168.68.55:43069`: Cancel
+  and wallpaper Back preserved the empty baseline, Apply created one
+  `global_thread` assignment and one conforming managed file. Reset restored
+  the baseline, and the exact synthetic Downloads fixture was deleted. Post-run
+  database/file counts were `0/0` and `0`; the test package was absent; the
+  target, SMS role, and all seven grants were preserved; and the local,
+  installed, and Downloads APKs each matched 13,993,426 bytes and SHA-256
+  `5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+  This does not prove SAF/system-picker cancel, verified-conversation rendering,
+  restart persistence, performance, the complete lifecycle, or gold readiness.
 - Inbox treatment, canonical built-ins, GIF lifecycle, live URI references,
   and import/export media remain independently reviewable slices.
 

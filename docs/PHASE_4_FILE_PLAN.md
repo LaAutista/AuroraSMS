@@ -20,7 +20,9 @@ at `975009f2b2c99cf389fb8020b270fd7c5bbf0bb2` and renderer isolation at
 `e5aa4dfb1c695046c136d07e6b0c549e77e278ee`; its crash-safe managed-store and
 quota protocol landed at `f0f1ff9` and passed focused host, API 26/API 36/Pixel
 filesystem, complete connected, release/governance, license/SBOM, and exact APK
-handoff gates. Complete picker/static-wallpaper UI acceptance remains pending;
+handoff gates. A narrow physical `global_thread` platform-Photo-Picker journey
+at `111381dff31c46380eab969dea20234cba16fe08` now passes, while complete
+picker/static-wallpaper UI acceptance remains pending;
 Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
 import/export, navigation variants, and the full accessibility/performance and
 carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold
@@ -749,6 +751,20 @@ Download copy matched SHA-256
 `5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
 The physical 29-test run exercised only non-UI app-private filesystem behavior;
 it is not Photo Picker or static-wallpaper UI-journey evidence.
+
+The later dedicated narrow runner passed 1/1 in 7.107s on Pixel 8 Android
+16/API 36 serial `192.168.68.55:43069` at source commit
+`111381dff31c46380eab969dea20234cba16fe08`: Cancel and wallpaper Back preserved
+the empty baseline, Apply created one `global_thread` assignment and one
+conforming managed file, Reset restored the baseline, and the exact synthetic
+Downloads fixture was deleted. Post-run database/file counts were `0/0` and
+`0`; the test package was absent; and the target, SMS role, and all seven grants
+were preserved. The local, installed, and Downloads APKs were each 13,993,426
+bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+This proves only the narrow platform-picker `global_thread` journey, not the
+SAF/system-picker cancel path, verified-conversation rendering, restart
+persistence, performance, complete lifecycle, or gold readiness.
 
 ## Stop conditions
 

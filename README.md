@@ -162,8 +162,20 @@ cold-launch, and exact Download-copy gates also passed. The physical 29-test run
 was non-UI app-private filesystem evidence; it does not prove the Photo Picker
 or user-visible static-wallpaper journey.
 
-The complete Photo Picker/static-wallpaper UI journey, import/export,
-navigation variants, GIF lifecycle, carrier coverage, full
+Source commit `111381dff31c46380eab969dea20234cba16fe08` now has one narrow
+physical UI result: its dedicated platform-Photo-Picker runner passed 1/1 in
+7.107s on Pixel 8 Android 16/API 36 serial `192.168.68.55:43069`. Cancel and
+wallpaper Back preserved the empty baseline; Apply created one `global_thread`
+assignment and one conforming managed file; Reset restored the baseline; and
+the exact synthetic Downloads fixture was deleted. Post-run database counts
+were `0/0`, managed files were `0`, the test package was absent, and the target,
+SMS role, and all seven grants were preserved. The local, installed, and
+Downloads APKs were each 13,993,426 bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+
+SAF/system-picker cancel, verified-conversation rendering, restart persistence,
+the complete Photo Picker/static-wallpaper lifecycle, import/export, navigation
+variants, GIF lifecycle, carrier coverage, full
 accessibility/form-factor/performance coverage, and approved canonical artwork
 remain Phase 4 or release follow-on gates. Artwork is still blocked on the exact
 written publication/derivative/distribution terms in `docs/ARTWORK_CATALOG.md`.

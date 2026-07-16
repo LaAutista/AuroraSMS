@@ -18,10 +18,13 @@ implementation now includes crash-safe managed-store and quota hardening at
 source commit `f0f1ff9`. Focused host, API 26/API 36 emulator, physical Pixel 8
 filesystem, complete API 36 connected, release/governance, license/SBOM, and
 exact Pixel APK handoff gates passed. The physical managed-store test was
-non-UI filesystem coverage only. The manual Photo Picker/static-wallpaper UI
-journey, broader process-death UX, accessibility/form-factor/performance,
-carrier, and compound implementation-complete rows remain outstanding; the app
-is not complete or gold.
+non-UI filesystem coverage only. A later owner-gated Pixel 8/API 36 smoke now
+partially covers the real global-thread Appearance editor and platform Photo
+Picker with synthetic media through editor Cancel, wallpaper Back, Apply, and
+Reset. SAF fallback, system-picker cancellation, conversation rendering,
+restart persistence, broader process-death UX, accessibility/form-factor/
+performance, carrier, and compound implementation-complete rows remain
+outstanding; the app is not complete or gold.
 
 ## Evidence rules
 
@@ -1495,6 +1498,42 @@ it does not prove the Photo Picker or static-wallpaper UI journey. The compound
 overall row, manual wallpaper journey, carrier behavior,
 accessibility/form-factor/performance, broader Phase 4 work, and completed/gold
 application all remain unclaimed.
+
+#### ADR 0007 physical global-thread Photo Picker partial evidence — 2026-07-15
+
+Source commit `111381dff31c46380eab969dea20234cba16fe08` passed the explicitly
+gated physical command:
+
+```text
+./scripts/run-physical-wallpaper-picker-smoke.sh --device 192.168.68.55:43069
+```
+
+`MainActivityStaticWallpaperPhysicalSmokeTest`, with
+`auroraPhysicalWallpaperPickerSmoke=true`, passed exactly 1/1 in 7.107s on a
+Pixel 8 running Android 16/API 36. The test opened the real `MainActivity`
+global-thread Appearance editor and platform Photo Picker, created one uniquely
+named synthetic Downloads PNG with a randomized future EXIF timestamp, and
+selected that exact item. Editor Cancel and wallpaper Back independently left
+the verified empty assignment/file baseline unchanged. A third selection still
+left that baseline unchanged before Apply; Apply created exactly one
+`global_thread` assignment and one conforming managed file, and Reset restored
+the empty baseline. The exact synthetic fixture was deleted afterward.
+
+Post-run state contained zero screen-wallpaper rows, zero conversation-wallpaper
+rows, and zero managed files. The instrumentation package was absent, the target
+package and APK were preserved, `org.aurorasms.app` remained the sole SMS-role
+holder, and `READ_SMS`, `SEND_SMS`, `RECEIVE_SMS`, `RECEIVE_MMS`,
+`RECEIVE_WAP_PUSH`, `READ_PHONE_STATE`, and `POST_NOTIFICATIONS` all remained
+granted. The local, installed, and `/sdcard/Download/AuroraSMS-debug.apk` target
+APKs were each 13,993,426 bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+
+This is one synthetic, global-thread, platform-Photo-Picker happy-path smoke. It
+does not prove system-picker cancellation, SAF fallback, conversation rendering,
+restart persistence, focal/dim interaction, accessibility, form-factor or
+performance behavior, carrier behavior, complete picker lifecycle, or a
+complete/gold application. Every existing unchecked ADR 0007 and broader Phase
+4 row therefore remains unchecked.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 
