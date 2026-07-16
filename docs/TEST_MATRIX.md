@@ -40,9 +40,16 @@ the transient preview; unavailable-source Apply reopens and rejects without
 mutation; retry creates exactly one managed final and consumes exactly one
 revision; managed load survives later source unavailability; and UI Reset
 restores the empty assignment/file/persisted-grant baseline while that consumed
-revision remains. Raw production-intent/result capture, transient-grant
-revocation proof, provider removal/cloud/blocking, API 27-32, OEM picker
-behavior, and any explicit Photo Picker Cancel control remain open. A narrow API
+revision remains. Source commit
+`65fc6552a877403523e499b457fdf015aaf6f753` adds a third narrow API 26 journey:
+direct pre-Apply conversation-route replacement disposes the transient global
+selection, and a later global stale-Apply conflict preserves the newer managed
+winner while deleting the unreferenced candidate. Raw production-intent/result
+capture, end-to-end system-notification/`PendingIntent` delivery, temporary
+URI-grant revocation proof, readable source-byte/content mutation, provider
+revocation/removal/replacement, cloud/blocking, in-flight or
+verified-conversation target loss, API 27-32, OEM picker behavior, and any
+explicit Photo Picker Cancel control remain open. A narrow API
 36 emulator host-`am force-stop`
 verified-conversation cold-target-process journey at
 `73b5ffa2827ad2cd96b922ccf4a529b5b052529d` passes twice; `global_thread` cold
@@ -1167,6 +1174,25 @@ journey has not run; this section does not claim complete ADR 0007 acceptance.
   the empty assignment/file/grant baseline. Reset does not reclaim the consumed
   revision. This one synthetic emulator journey does not close the compound
   Photo Picker/SAF row above.
+- [x] A third, separately gated API 26 AOSP DocumentsUI journey selects the exact
+  synthetic document, then directly delivers the production open-conversation
+  intent to the real `MainActivity` before Apply. The route replacement
+  dismisses both editors; returning to Inbox and reopening the empty-baseline
+  editor leaves Apply disabled, does not reopen the source, and preserves the
+  exact assignment, revision, persisted-grant identity, and no-follow managed
+  file ledger. After a fresh real selection, a controlled production-controller
+  write commits one newer global winner. The stale UI Apply reopens the selected
+  source, surfaces the exact stale-assignment error, preserves that winner and
+  its managed load/revision/file/persisted-grant state, and deletes its own
+  candidate. UI Reset removes only the controlled winner and restores the empty
+  assignment/file/persisted-grant baseline while the one consumed revision
+  remains. A host controller test separately proves the late repository
+  `StaleWrite` call order, second authoritative reference read, and created
+  candidate deletion. This is direct pre-Apply `onNewIntent` route-disposal and
+  one global assignment-CAS conflict only: it does not prove an end-to-end
+  notification/PendingIntent launch, in-flight Apply cancellation, verified-
+  conversation identity loss, or temporary URI-grant cleanup, and it does not
+  close the compound Photo Picker/SAF row above.
 - [x] Import authoritatively accepts only 8-bit Huffman baseline sequential-DCT
   (`SOF0`) JPEG with at most four components and complete scan coverage, or
   CRC-valid non-APNG PNG with at most 4,096 chunks, no
@@ -1860,9 +1886,11 @@ plus one.
 
 The focused selection runner passed cleanly in 13.054s and 13.087s; its final
 post-review run passed in 12.952s. The separately gated no-selection cancellation
-runner passed in 2.65s under the shared lock. The complete API 26 connected
-aggregate completed 181 tests with four intentional gated skips and zero
-failures across 456 Gradle tasks in 1m53s. The complete current API 36 aggregate
+runner passed in 2.65s under the shared lock. A later module-by-module XML/
+source-delta audit corrected the API 26 connected aggregate bookkeeping to 176
+tests with five intentional gated skips, rather than the previously recorded
+181/four; it had zero failures across 456 Gradle tasks in 1m53s. The complete
+current API 36 aggregate
 completed 176 tests with five intentional skips and zero failures across 456
 tasks in 1m23s. The 886-task offline host/release/privacy gate passed in 19s,
 and the separate 15-task CycloneDX gate passed in 8s. The production debug APK
@@ -1871,7 +1899,7 @@ for this source is 13,993,426 bytes with SHA-256
 
 This closes only one synthetic empty-`global_thread`, API 26 AOSP DocumentsUI
 selection lifecycle. It does not capture the raw outgoing production intent or
-raw Activity result; prove transient URI-grant revocation; uninstall/remove the
+raw Activity result; prove temporary URI-grant revocation; uninstall/remove the
 provider; exercise readable source-byte/content mutation, cloud fetch, or
 blocking; cover target
 loss, stale CAS, configuration variants beyond Activity recreation, background/
@@ -1884,6 +1912,87 @@ or gold readiness. The provider remains installed throughout Apply and Reset;
 only its exact document availability is toggled. The compound Photo Picker/SAF
 row and every unrelated implementation-complete, artwork, accessibility,
 form-factor, performance, carrier, physical, and gold gate remain unchecked.
+
+#### ADR 0007 API 26 AOSP DocumentsUI pre-Apply route-disposal and global stale-Apply partial evidence — 2026-07-16
+
+Source commit `65fc6552a877403523e499b457fdf015aaf6f753` extends the
+selection runner with a backward-compatible, separately gated journey:
+
+```shell
+./scripts/run-emulator-wallpaper-saf-selection-smoke.sh \
+  --device emulator-5556 --journey stale-apply
+```
+
+Omitting `--journey` still selects the prior selection-lifecycle method. The new
+mode requires the same exact API 26 ranchu/goldfish emulator, matching installed
+target APK, legacy default-SMS state, captured seven-permission baseline with
+owner-granted `READ_SMS`, shared per-device lock, absent test package/process,
+and bounded 180-second execution. It installs and removes only the test APK. Its
+strict parser accepts exactly one status 0, one custom status 43 with
+`auroraSafStaleApplyResult=pass`, final instrumentation code -1, and
+`OK (1 test)`; cleanup rechecks the target APK, default-SMS setting, and all
+seven permission states.
+
+The journey starts from an exact empty `global_thread` assignment and selects
+the one synthetic DocumentsUI document through the real `MainActivity` editor
+and production AndroidX SAF fallback. It then directly calls the Activity's
+new-intent path with the production open-conversation action and a fixed
+synthetic conversation ID before Apply. Thread becomes visible from the Inbox
+editor and dismisses both editors. Returning to Inbox and reopening the global
+editor shows disabled Apply; provider counters prove the dismissed source was not
+reopened. The assignment, revision sequence, persisted URI-grant identity/read/
+write/time set, and no-follow managed-file ledger stay exact throughout.
+
+After a fresh real DocumentsUI selection, the production controller commits a
+controlled newer global winner from the ordinary test provider at exactly one
+new revision. The still-open editor owns the captured empty revision. Its stale
+UI Apply reopens the selected SAF source, surfaces the exact stale-assignment
+error, and leaves the winner assignment, revision, managed-file
+ledger, persisted-grant set, and production managed load unchanged. The stale
+candidate is absent from the exact ledger. Reopening against the winner's
+revision and using UI Reset removes only that controlled assignment/file and
+restores the empty assignment/file/persisted-grant baseline; the consumed
+revision correctly remains baseline plus one. Failure cleanup can recover and
+reset only a commit matching the fixed scope, revision, dim/focal values, and
+single conforming managed final.
+
+`WallpaperControllerTest#lateRepositoryStaleWriteDeletesCreatedUnreferencedCandidate`
+separately drives a late repository `StaleWrite`. It proves the exact
+`references -> reconcile -> quota -> import -> projection -> quota -> set ->
+references -> delete` order, one set attempt, the second authoritative reference
+snapshot, and deletion of the created unreferenced candidate.
+
+The corrected focused journey passed in 8.597s and 8.513s; the final
+post-review revision-hardened pass took 8.667s. The prior selection lifecycle
+and no-selection cancellation regressions passed in 13.012s and 2.692s. The
+definitive API 26 aggregate was `BUILD SUCCESSFUL` in 1m49s across 456 tasks;
+JUnit XML reports 177 tests, six intentional gated skips, and zero failures or
+errors. The definitive API 36 aggregate was `BUILD SUCCESSFUL` in 1m23s across
+456 tasks; XML reports 176 tests, five intentional skips, and zero failures or
+errors. The API 26-only class is excluded from API 36 discovery by class-level
+`@SdkSuppress`, so the new method does not change the API 36 count. The complete
+886-task offline host/lint/release/privacy/license gate was
+`BUILD SUCCESSFUL` in 21s with 36 executed and 850 up-to-date tasks. The separate
+15-task CycloneDX 1.6 gate passed in 8s with 441 components and 442 dependency
+nodes. The unchanged production debug APK is 13,993,426 bytes with SHA-256
+`5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This closes only direct pre-Apply editor route disposal and one synthetic empty-
+baseline global assignment-CAS conflict. It does not launch through the system
+notification/PendingIntent path, cancel an in-flight Apply, or prove verified-
+conversation target identity loss. Persisted-grant snapshots do not establish
+temporary read-grant lifetime or revocation. Raw outgoing intent/result capture,
+readable source-byte/content mutation, provider revocation/removal/replacement,
+cloud/blocking behavior, API 27-32, physical/OEM SAF, explicit picker Cancel,
+background/low-
+memory/process-death variants, production-launcher/real-provider Thread
+rendering, accessibility, form factor, performance, artwork, carrier, compound
+picker/static-wallpaper
+lifecycle, and gold readiness remain open. Only synthetic emulator fixtures
+were used; no real message/address content, shared user document, carrier send,
+or physical device participated. The compound Photo Picker/SAF and every
+unrelated broad acceptance row remain unchecked; AuroraSMS is not complete or
+gold.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 

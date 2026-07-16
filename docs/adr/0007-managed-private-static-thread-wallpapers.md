@@ -23,13 +23,22 @@ lifecycle: expected canonical URI-shape validation for the exact selected
 provider document with provider-open and preview evidence, transient preview discard through
 editor Cancel/wallpaper Back/Activity recreation, unavailable-document Apply
 rejection, one-final/one-revision retry, source-independent managed load, and UI
-Reset pass. Raw production-intent/result capture, transient-grant revocation,
-provider removal/replacement, readable source-byte/content mutation,
-cloud/blocking, target-loss/stale-CAS and configuration beyond recreation,
-broader process-death, API 27-32, physical SAF-fallback/selection behavior,
-broader OEM behavior beyond the recorded Pixel 8 Photo Picker journey, performance,
-production-launcher/real-provider Thread/verified-conversation rendering,
-explicit picker Cancel, cold
+Reset pass. Source commit `65fc6552a877403523e499b457fdf015aaf6f753`
+adds one separate API 26 direct-`onNewIntent` pre-Apply route-disposal/global
+stale-assignment CAS journey: route replacement discards the staged source
+without reopening it or changing durable state; stale UI Apply reopens the
+source, reports the exact stale-assignment error, preserves one controlled newer
+winner/revision/file/persisted-grant snapshot, and leaves no extra candidate; UI
+Reset restores the empty assignment/file/persisted-grant baseline while
+retaining the consumed revision. Raw production-intent/result capture, end-to-
+end system-notification/`PendingIntent` delivery, temporary URI-grant
+revocation, readable source-byte/content mutation, provider revocation/removal/
+replacement, cloud/blocking, in-flight
+target loss, verified-conversation target identity, configuration beyond
+recreation, broader process-death, API 27-32, physical SAF-fallback/selection
+behavior, broader OEM behavior beyond the recorded Pixel 8 Photo Picker journey,
+performance, production-launcher/real-provider Thread/verified-conversation
+rendering, explicit picker Cancel, cold
 restart, complete picker/UI, accessibility/form-factor, carrier, and overall
 acceptance remain pending; AuroraSMS is not complete or gold.
 
@@ -440,24 +449,60 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
   one status 0, one custom status 42 `auroraSafSelectionResult=pass`, final code
   -1, and `OK (1 test)`. Focused selection passes took 13.054s and 13.087s; the
   final post-review pass took 12.952s, and the independent cancellation runner
-  passed in 2.65s. The complete API 26 aggregate completed 181 tests/four skips
-  with zero failures across 456 tasks in 1m53s; API 36 completed its current 176
+  passed in 2.65s. A later module-by-module XML/source-delta audit corrected the
+  API 26 aggregate bookkeeping to 176 tests/five skips rather than the
+  previously recorded 181/four; it had zero failures across 456 tasks in 1m53s.
+  API 36 completed its current 176
   tests/five skips with zero failures across 456 tasks in 1m23s. The 886-task
   offline host/release/privacy gate passed in 19s, the 15-task CycloneDX gate
   passed in 8s, and the production debug APK for this source is 13,993,426 bytes with
   SHA-256 `5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
-  This does not capture the raw production intent/result; prove transient-grant
-  revocation; uninstall/remove or replace the provider; exercise readable
+  This does not capture the raw production intent/result; prove temporary
+  URI-grant revocation; uninstall/remove or replace the provider; exercise readable
   source-byte/content mutation or cloud/blocking; cover target loss/stale CAS,
   configuration beyond Activity recreation, background/low-memory/in-flight
-  process death, actual Thread
-  rendering or a verified real-provider conversation, API 27-32, physical
+  process death, production-launcher/real-provider Thread rendering, API 27-32,
+  physical
   SAF-fallback/selection behavior, broader OEM behavior beyond the recorded
   Pixel 8 Photo Picker journey, performance, an explicit picker Cancel control,
   or cold restart; or close the
   complete lifecycle/gold gate. The provider remains installed throughout and
   only exact document availability is toggled. The compound picker/SAF and all
   unrelated implementation-complete gates remain open.
+- Source commit `65fc6552a877403523e499b457fdf015aaf6f753` adds the strict API
+  26 `run-emulator-wallpaper-saf-selection-smoke.sh --journey stale-apply`
+  mode while preserving the selection lifecycle as the runner default. Direct
+  test delivery of the production open-conversation action through
+  `Instrumentation.callActivityOnNewIntent` before Apply dismisses the editor
+  without reopening the selected source or changing the exact empty assignment,
+  revision, no-follow managed-file ledger, or persisted-grant snapshot.
+  Returning to Inbox and reopening starts with disabled Apply. After another
+  real DocumentsUI selection, one controlled production-controller
+  `global_thread` commit becomes authoritative; stale UI Apply reopens the SAF
+  source, reports the exact stale-assignment error, and preserves the winner,
+  revision, managed file, persisted-grant snapshot, and loadability with no
+  extra candidate. Reopen/UI Reset removes only that winner and restores the
+  empty assignment/file/persisted-grant baseline while its consumed revision
+  remains. The focused host test separately proves that a late repository
+  `StaleWrite` rescans authoritative references and deletes the exact created
+  unreferenced candidate.
+  The corrected focused journey passed in 8.597s and 8.513s, with a final
+  revision-hardened confirmation in 8.667s; selection and cancellation
+  regressions passed in 13.012s and 2.692s. Final connected XML totals are API
+  26 177 tests/six intentional skips after a 1m49s Gradle run and API 36 176
+  tests/five intentional skips after 1m23s, all with zero failures/errors. The
+  886-task host/lint/release/privacy/license gate passed in 21s with 36 executed
+  and 850 up-to-date; CycloneDX's 15 tasks passed in 8s with 441 components and
+  442 dependency nodes. The debug APK remains 13,993,426 bytes with SHA-256
+  `5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+  This is not system-notification/`PendingIntent` end-to-end, in-flight target-
+  loss, verified-conversation target-identity, temporary URI-grant revocation,
+  raw intent/result, readable source-byte/content mutation, provider
+  revocation/removal/replacement, cloud/blocking, API 27-32, physical/OEM SAF,
+  broad accessibility/form-factor/
+  performance, artwork, carrier, complete-lifecycle, or gold evidence. Only
+  persisted-grant snapshots are asserted. The compound Photo Picker/SAF and all
+  broad acceptance rows remain open; AuroraSMS remains incomplete and not gold.
 - Inbox treatment, canonical built-ins, GIF lifecycle, live URI references,
   and import/export media remain independently reviewable slices.
 

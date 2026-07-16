@@ -38,14 +38,19 @@ and preview evidence, transient preview discarded by editor Cancel,
 wallpaper Back, and Activity recreation, unavailable-document Apply rejection,
 successful retry to one managed final/one revision, source-independent managed
 load, and UI Reset now pass for one synthetic empty `global_thread` journey.
-Remaining picker/SAF work includes raw production-intent/result capture,
-transient-grant revocation proof, actual provider removal/replacement, readable
-source-byte/content mutation, cloud/blocking,
-target-loss/stale-CAS and configuration variants beyond recreation, background/
-low-memory/in-flight process death, API 27-32 and OEM behavior, an explicit
-picker Cancel control, and the full lifecycle. Broader picker/static-wallpaper
-UI acceptance, `global_thread` cold restart, production-launcher/real-provider
-restart, and broader process-death recovery also remain pending.
+Source commit `65fc6552a877403523e499b457fdf015aaf6f753` adds a third
+separately gated API 26 journey: direct pre-Apply conversation-route replacement
+disposes the transient global selection, and one global stale-Apply conflict
+preserves the newer managed winner while cleaning the unreferenced candidate.
+Remaining picker/SAF work includes raw production-intent/result capture, end-to-
+end system-notification/`PendingIntent` delivery, temporary URI-grant revocation
+proof, readable source-byte/content mutation, provider revocation/removal/
+replacement, cloud/blocking, in-flight
+and verified-conversation target loss, configuration variants beyond
+recreation, background/low-memory/process death, API 27-32 and OEM behavior, an
+explicit picker Cancel control, and the full lifecycle. Broader picker/static-
+wallpaper UI acceptance, `global_thread` cold restart, production-launcher/real-
+provider restart, and broader process-death recovery also remain pending.
 Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
 import/export, navigation variants, and the full accessibility/performance and
 carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold.
@@ -969,8 +974,10 @@ back a revision.
 
 The focused selection journey passed in 13.054s and 13.087s; its final
 post-review pass took 12.952s. The independent no-selection cancellation runner
-passed in 2.65s. The complete API 26 aggregate completed 181 tests with four
-gated skips and zero failures across 456 tasks in 1m53s; the current API 36
+passed in 2.65s. A later module-by-module XML/source-delta audit corrected the
+API 26 aggregate bookkeeping to 176 tests with five gated skips, rather than the
+previously recorded 181/four; it had zero failures across 456 tasks in 1m53s.
+The current API 36
 aggregate completed 176 tests with five skips and zero failures across 456 tasks
 in 1m23s.
 The 886-task host/release/privacy gate passed in 19s, CycloneDX's 15 tasks passed
@@ -978,7 +985,7 @@ in 8s, and the production debug APK for this source is 13,993,426 bytes with
 SHA-256 `5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
 
 This is one synthetic empty-`global_thread` API 26 AOSP journey. It does not
-capture the raw production intent/result, prove transient-grant revocation,
+capture the raw production intent/result, prove temporary URI-grant revocation,
 uninstall/remove or replace the provider, exercise readable source-byte/content
 mutation or cloud/blocking,
 target loss or stale CAS, configuration beyond Activity recreation, background/
@@ -989,6 +996,59 @@ performance, an explicit picker Cancel control, cold restart, complete lifecycle
 readiness. Only test-document availability changes; the provider remains
 installed through Apply and Reset. All corresponding compound gates stay open,
 and AuroraSMS remains incomplete and not gold.
+
+### ADR 0007 API 26 AOSP DocumentsUI pre-Apply route-disposal and global stale-Apply partial evidence — 2026-07-16
+
+Source commit `65fc6552a877403523e499b457fdf015aaf6f753` extends the
+preservation-safe selection runner with `--journey stale-apply`; omitting the
+option retains the prior selection lifecycle. The new mode keeps the exact API
+26 emulator, matching target, default-SMS, seven-permission, shared-lock,
+test-package isolation, 180-second timeout, and cleanup checks. It strictly
+requires one status 0, custom status 43 with
+`auroraSafStaleApplyResult=pass`, final code -1, and `OK (1 test)`.
+
+The real `MainActivity` global editor selects the exact synthetic DocumentsUI
+document from an empty assignment. Before Apply, the test directly invokes the
+Activity new-intent path with the production open-conversation action and a
+fixed synthetic ID. The Thread route dismisses both editors. Back at Inbox, a
+new global editor has disabled Apply and does not reopen the source; exact
+assignment, revision, persisted-grant identity/read/write/time, and no-follow
+managed-file ledger baselines remain unchanged.
+
+After another real selection, a controlled production-controller write commits
+one newer global winner. The stale editor reopens its source on UI Apply,
+surfaces the exact stale-assignment error, and cannot replace the winner or
+change its revision/file/persisted-grant state. The winner remains loadable and
+the stale candidate is absent. UI Reset removes only the controlled winner and
+restores the empty assignment/file/persisted-grant baseline while retaining the
+one consumed revision. Cleanup recovery targets only the fixed scope/revision/
+dim/focal values and single conforming managed final. A host test separately
+proves the late repository `StaleWrite`, second authoritative reference read,
+and unreferenced created-candidate deletion in exact call order.
+
+The corrected focused journey passed in 8.597s and 8.513s; the final revision-
+hardened pass took 8.667s. Selection and cancellation regressions passed in
+13.012s and 2.692s. Final API 26/API 36 aggregates were `BUILD SUCCESSFUL` in
+1m49s and 1m23s across 456 tasks each. Their JUnit XML reports 177 tests/six
+intentional skips and 176 tests/five skips, with zero failures/errors. The 886-
+task offline host/lint/release/privacy/license gate passed in 21s with 36
+executed and 850 up-to-date tasks. The 15-task CycloneDX 1.6 gate passed in 8s
+with 441 components and 442 dependency nodes. The unchanged production debug
+APK is 13,993,426 bytes with SHA-256
+`5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This is direct pre-Apply `onNewIntent` route disposal and one synthetic global
+assignment-CAS conflict, not an end-to-end system notification/PendingIntent
+launch, in-flight Apply cancellation, or verified-conversation target-identity
+test. Persisted-grant snapshots do not prove temporary read-grant cleanup. Raw
+intent/result capture, readable source-byte/content mutation, provider
+revocation/removal/replacement, cloud/blocking behavior, API 27-32,
+physical/OEM SAF, explicit picker Cancel,
+broader process loss, production-launcher/real-provider Thread rendering,
+accessibility, form factor, performance, artwork, carrier, compound lifecycle,
+and gold readiness remain
+open. Only synthetic emulator fixtures participated; the compound and unrelated
+broad gates stay open, and AuroraSMS remains incomplete and not gold.
 
 ## Stop conditions
 
