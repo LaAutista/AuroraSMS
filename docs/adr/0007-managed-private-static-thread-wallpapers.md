@@ -13,9 +13,13 @@ verified-conversation root pixels, focal/dim Apply, Activity recreation,
 reset/identity fallback, stale-pixel clearing, and independent real-Room
 close/reopen durability pass at `b9350be354991e36039e8136095bc25ebd520d60`,
 and gated API 36 AOSP Photo Picker `GLOBAL_ACTION_BACK` cancellation passes twice at
-`826a20dbc3e965da8f269dde1351cf4d76d28f6c`, while SAF
-fallback/cancellation, cold-process renderer restart, complete picker/UI,
-accessibility/form-factor, carrier, and overall acceptance remain pending
+`826a20dbc3e965da8f269dde1351cf4d76d28f6c`. A narrow API 36 emulator
+host-force-stop verified-conversation cold-target-process journey passes twice
+at `73b5ffa2827ad2cd96b922ccf4a529b5b052529d`, while SAF
+fallback/cancellation, `global_thread` cold restart,
+production-launcher/real-provider and broader process-death recovery, complete
+picker/UI, accessibility/form-factor, carrier, and overall acceptance remain
+pending
 
 ## Context
 
@@ -328,6 +332,31 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
   prove a cold-process root renderer plus managed-file restart, a physical
   verified-conversation journey, SAF/system-picker cancellation, carrier
   behavior, the complete lifecycle, or gold readiness.
+- Source commit `73b5ffa2827ad2cd96b922ccf4a529b5b052529d` adds one
+  explicitly gated API 36 ranchu/goldfish emulator host-force-stop journey for
+  a synthetic verified conversation. Prepare derives and journals the exact
+  expected media identity before production Apply, then records the production
+  Room assignment, revision, focal/dim values, post-reconciliation
+  managed-file baseline, grant count, canonical pending fixture, and process
+  identity. The host starts normal `MainActivity` only to obtain a live target
+  PID, observes ordinary startup remove the initial pending fixture, recreates
+  the same canonical pending-file path, and requires `am force-stop` to remove
+  the exact PID. A fresh target process reopens the production
+  container/controller/store, requires the exact assignment and pending-file
+  absence, retains and revalidates the referenced derivative, and renders
+  expected dimmed pixels through the real root Thread surface in a debug-only
+  synthetic-services host. A further fresh process performs revision-qualified
+  reset and filename/grant-count cleanup.
+  The two committed-source runs passed after force-stopping prepared target PIDs
+  16995 and 17370; each phase reported exactly one passing test, and target APK,
+  role-holder string, and recorded permission states were preserved. The
+  follow-on connected XML totals were 176 tests, zero failures, five intentional
+  skips; the 886-task offline gate and 15-task CycloneDX gate also passed. This
+  is not production-launcher or
+  real-provider rendering, UI Apply/Reset, picker/SAF/source-revocation,
+  `global_thread`, physical/OEM/performance, or low-memory/background/in-flight
+  process-death evidence. Force-stop occurs after durable commit; focal is
+  metadata-only with the solid fixture, and grants are compared by count.
 - Source commit `826a20dbc3e965da8f269dde1351cf4d76d28f6c` adds a gated API
   36 AOSP Photo Picker cancellation journey using the accessibility global Back
   action. With normal emulator SMS-role preconditions, the exact method passed

@@ -29,7 +29,10 @@ exact gated API 36 AOSP Photo Picker cancellation journey using the
 accessibility global Back action at
 `826a20dbc3e965da8f269dde1351cf4d76d28f6c` also passes twice. SAF
 fallback/cancellation, OEM picker behavior, any explicit Photo Picker Cancel
-control, cold-process renderer restart, broader process-death UX,
+control remain open. A narrow API 36 emulator host-`am force-stop`
+verified-conversation cold-target-process journey at
+`73b5ffa2827ad2cd96b922ccf4a529b5b052529d` passes twice; `global_thread`,
+production-launcher/real-provider, broader process-death UX,
 accessibility/form-factor/performance, carrier, and compound
 implementation-complete rows remain outstanding; the app is not complete or
 gold.
@@ -1164,6 +1167,16 @@ journey has not run; this section does not claim complete ADR 0007 acceptance.
   bitmap. Wallpaper work is one-at-a-time, the full cache retains only the
   current <=16-MiB allocation, and the shared MMS/wallpaper full-decode gate
   never exceeds two.
+- [x] An explicitly gated API 36 ranchu/goldfish emulator runner proves one
+  synthetic verified-conversation assignment survives host `am force-stop`
+  after commit and reopens in a fresh target process through the production
+  Room/controller/managed-store path. It observes pending-file removal,
+  revalidates the referenced final, renders expected dimmed pixels through the
+  real root Thread surface in a debug-only synthetic-services host, and restores
+  the post-reconciliation managed-file-name and grant-count baselines. This row
+  does not cover `global_thread`, production-launcher/real-provider rendering,
+  UI Apply/Reset, picker/SAF/source loss, physical/OEM/performance, or in-flight
+  process death.
 - [ ] Focal/dim live preview, revision-checked Apply/reset, configuration/reopen
   persistence, 200% font/scroll, TalkBack labels/state, RTL, short/tall,
   landscape, and split-screen tests pass without route/state-holder/provider/
@@ -1575,6 +1588,83 @@ verified-conversation journey, SAF/system-picker cancellation, accessibility,
 form-factor or performance behavior, carrier behavior, the complete picker
 lifecycle, or a complete/gold application. No broad compound checkbox changes
 on this evidence alone.
+
+#### ADR 0007 API 36 verified-conversation host-force-stop partial evidence — 2026-07-15
+
+Source commit `73b5ffa2827ad2cd96b922ccf4a529b5b052529d` adds the explicitly
+gated
+`verifiedConversationWallpaperSurvivesHostForceStopAndColdTargetProcessRelaunch`
+method and its preservation-safe runner:
+
+```shell
+./scripts/run-emulator-wallpaper-cold-restart-smoke.sh --device emulator-5554
+```
+
+The runner refuses a physical device and requires API 36 ranchu/goldfish, an
+already-installed target APK exactly matching the local build, and no
+preinstalled test package. It records the target APK identity, SMS-role-holder
+string, and seven permission states, then installs only the instrumentation
+APK. Preflight cleanup runs before the evidence baseline because initializing
+the production container may reconcile pre-existing managed state.
+
+Prepare waits for production state storage, requires the reserved synthetic
+conversation target to be empty, derives the exact expected media identity in
+an isolated cache-backed `ManagedWallpaperStore`, and durably records a
+fail-closed PREPARING recovery journal before production Apply. It then applies
+the deterministic fixture through the production `AppContainer`, Room
+repository, controller, and app-private store; validates the exact assignment,
+managed final, persisted-grant count, and decoded pixels; creates the canonical
+pending fixture; and upgrades the checkpoint with exact media/revision,
+focal/dim, baseline, and process evidence.
+
+The host starts normal `MainActivity` only to create a live prepared target
+process. It first requires that ordinary startup removed the initial pending
+fixture, recreates that same canonical path while the PID remains unchanged,
+then requires `am force-stop` to remove that exact PID. Verification in a fresh
+target process requires a different PID and later process start, the exact Room
+assignment and focal/dim metadata, observable removal of the recreated pending
+file, the exact baseline-plus-referenced-final file-name set, unchanged grant
+count, and a valid production load. The real `AuroraSmsRoot` Thread wallpaper
+surface is hosted by the debug-only test activity with synthetic
+conversation/index/timeline services; its timeline pixels match the persisted
+dimmed color, and the in-memory synthetic wallpaper repository remains empty.
+A further fresh process performs revision-qualified reset, authoritative
+reconciliation, filename/grant-count baseline restoration, checkpoint removal,
+and test-APK uninstall.
+
+The exact committed runner passed independently twice. The host force-stopped
+prepared target PIDs 16995 and 17370; their instrumentation
+prepare/verify/cleanup times were 0.114s/2.773s/0.038s and
+0.122s/2.716s/0.037s, respectively. Every phase reported exactly `OK (1 test)`,
+one zero status, final instrumentation code -1, and no skip/failure/crash. Both
+runs preserved the target APK, SMS-role-holder string, and all seven recorded
+permission states.
+
+The authoritative follow-on connected XML totals are 176 tests, zero failures,
+and five intentional opt-in skips: app 77 with four skipped, benchmark 3 with
+one skipped, index 31, notifications 3, state 43, telephony 15, and
+feature-conversations 4. `connectedDebugAndroidTest` passed 456 Gradle tasks in
+1m17s. The complete 886-task offline host/release/governance/license gate passed
+in 16s, and the 15-task CycloneDX gate passed in 7s. The production debug APK is
+unchanged at 13,993,426 bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+After the final run, that APK remained installed on `emulator-5554` and was
+copied to `/sdcard/Download/AuroraSMS-debug.apk`; local, installed, and Download
+SHA-256 values matched, and the temporary instrumentation package was absent.
+
+This is only API 36 emulator host-force-stop evidence for one synthetic
+verified-conversation assignment. It is not a production `MainActivity`
+launcher-renderer journey, a real provider-backed SMS conversation, UI
+Apply/Reset, Photo Picker or SAF, source-unavailable/revoked behavior,
+`global_thread`, physical/OEM/performance, or low-memory/background/in-flight
+process-death recovery. Force-stop occurs after import, Room assignment,
+managed-file publication, and checkpoint commit. The renderer runs once after
+one cold restart; cleanup uses another fresh process but does not render again.
+The uniform fixture proves dimmed pixels while focal position is metadata-only;
+managed baselines compare file names rather than baseline bytes, and persisted
+grants compare counts rather than identities. The test provider remains
+installed during verification. No compound picker/SAF, broader process-death,
+physical, or gold-readiness row closes from this evidence.
 
 #### ADR 0007 API 36 Photo Picker accessibility-Back cancellation partial evidence — 2026-07-15
 

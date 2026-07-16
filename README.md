@@ -186,6 +186,31 @@ conversation reset leaves global state untouched. This is Activity recreation
 plus an independent Room reopen; it is not cold-process
 renderer/filesystem-restart evidence.
 
+Source commit `73b5ffa2827ad2cd96b922ccf4a529b5b052529d` adds one explicitly
+gated API 36 emulator cold-target-process journey for a synthetic verified
+conversation. The preservation-safe host runner started a normal AuroraSMS
+process, recreated the same canonical pending-file path after ordinary startup
+reconciliation, and proved `am force-stop` removed that exact live PID. A fresh
+target process then reopened the production `AppContainer`, Room state,
+`WallpaperController`, and app-private managed store; recovered the exact
+assignment plus focal/dim metadata; removed the pending fixture while retaining
+and revalidating the referenced derivative; and rendered the expected dimmed
+pixels through the real `AuroraSmsRoot` Thread surface in a debug-only host with
+synthetic conversation/index services. Fresh-process cleanup restored the
+post-reconciliation managed-file-name and persisted-grant-count baselines. The
+exact committed runner passed independently twice, force-stopping prepared
+target PIDs 16995 and 17370, and preserved the target APK, SMS-role-holder
+string, and all seven recorded permission states.
+
+That result is not a production `MainActivity` launcher-renderer journey, a
+real provider-backed SMS conversation, UI Apply/Reset, Photo Picker or SAF,
+source-revocation, `global_thread`, physical/OEM/performance, or
+low-memory/background/in-flight process-death evidence. `MainActivity` is used
+only to expose the exact live process to the host; the force-stop occurs after
+import, Room assignment, managed-file publication, and checkpoint commit. The
+solid fixture proves dimmed rendering, while focal position is metadata-only;
+persisted grants are compared by count rather than identity.
+
 Source commit `826a20dbc3e965da8f269dde1351cf4d76d28f6c` adds an explicitly
 gated API 36 AOSP Photo Picker cancellation journey using the accessibility
 global Back action. With the emulator prepared under AuroraSMS's normal SMS-role
@@ -198,9 +223,10 @@ managed-file name set, and persisted-grant count unchanged. The physical runner
 is pinned to its original exact method.
 
 SAF fallback/cancellation, OEM picker behavior, any explicit Photo Picker Cancel
-control, cold-process renderer restart, the complete Photo Picker/static
-wallpaper lifecycle, import/export, navigation variants, GIF lifecycle, carrier
-coverage, full
+control, a `global_thread` cold restart, production-launcher/real-provider and
+broader process-death recovery, the complete Photo Picker/static wallpaper
+lifecycle, import/export, navigation variants, GIF lifecycle, carrier coverage,
+full
 accessibility/form-factor/performance coverage, and approved canonical artwork
 remain Phase 4 or release follow-on gates. Artwork is still blocked on the exact
 written publication/derivative/distribution terms in `docs/ARTWORK_CATALOG.md`.

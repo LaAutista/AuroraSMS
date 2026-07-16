@@ -26,9 +26,12 @@ verified-conversation root rendering, focal/dim Apply, Activity recreation,
 reset/identity fallback, stale-pixel clearing, and independent real-Room
 close/reopen coverage pass at `b9350be354991e36039e8136095bc25ebd520d60`,
 and an exact gated API 36 AOSP Photo Picker `GLOBAL_ACTION_BACK` cancellation
-journey passes twice at `826a20dbc3e965da8f269dde1351cf4d76d28f6c`, while SAF
-fallback/cancellation, broader picker/static-wallpaper UI acceptance, and
-cold-process renderer restart remain pending;
+journey passes twice at `826a20dbc3e965da8f269dde1351cf4d76d28f6c`. A narrow
+API 36 emulator host-`am force-stop` verified-conversation cold-target-process
+journey passes twice at `73b5ffa2827ad2cd96b922ccf4a529b5b052529d`, while SAF
+fallback/cancellation, broader picker/static-wallpaper UI acceptance,
+`global_thread` cold restart, production-launcher/real-provider restart, and
+broader process-death recovery remain pending;
 Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
 import/export, navigation variants, and the full accessibility/performance and
 carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold
@@ -625,6 +628,7 @@ app/src/androidTest/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpap
 app/src/androidTest/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialogTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/AuroraSmsRootAcceptanceTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/DefaultSmsManifestContractTest.kt
+scripts/run-emulator-wallpaper-cold-restart-smoke.sh
 ```
 
 ### 2. Import and export
@@ -794,6 +798,52 @@ Activity recreation and Room reopen are deliberately separate evidence: this
 does not prove a cold-process root renderer plus managed-file restart, a
 physical verified-conversation journey, SAF/system-picker cancellation,
 carrier behavior, the complete lifecycle, or gold readiness.
+
+Source commit `73b5ffa2827ad2cd96b922ccf4a529b5b052529d` adds a separate,
+explicitly gated API 36 ranchu/goldfish emulator journey for one synthetic
+verified-conversation assignment. Its host runner requires an already-installed
+target APK whose hash matches the local build, captures the SMS-role-holder
+string and seven permission states, and installs only the instrumentation APK.
+Prepare uses the production `AppContainer`, Room repository,
+`WallpaperController`, and managed store. Before Apply it derives the exact
+expected media identity in an isolated cache-backed store and commits a
+fail-closed recovery journal; after Apply it records the exact assignment,
+revision, focal/dim values, post-reconciliation managed-file baseline, grant
+count, process identity, and canonical pending fixture.
+
+The runner then starts normal `MainActivity` only to expose a live prepared
+target process. It observes ordinary startup remove the initial pending fixture,
+recreates the same canonical pending-file path without changing the PID, and
+requires host `am force-stop` to remove the exact live PID. Verification in a
+fresh target process requires a different PID and later process start, the exact
+durable assignment, pending-file absence, referenced-final retention and
+validated load, the exact baseline-plus-referenced-final filename set,
+unchanged grant count, and expected dimmed pixels from the real `AuroraSmsRoot`
+Thread surface hosted by the debug-only test activity with synthetic
+conversation/index services. A further fresh process performs
+revision-qualified reset and restores the filename baseline. The two passing
+runs force-stopped prepared target PIDs 16995 and 17370; their instrumentation
+prepare/verify/cleanup times were 0.114s/2.773s/0.038s and
+0.122s/2.716s/0.037s, respectively. Both runs preserved the target APK,
+SMS-role-holder string, and recorded permission states.
+
+The follow-on API 36 connected XML reports total 176 tests, zero failures, and
+five intentional opt-in skips: app 77/4 skipped, benchmark 3/1 skipped, index
+31, notifications 3, state 43, telephony 15, and feature-conversations 4. The
+complete 886-task offline host/release/governance/license gate passed in 16s,
+and the 15-task CycloneDX gate passed in 7s. The production debug APK remains
+13,993,426 bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+
+This closes only the named API 36 host-force-stop synthetic-conversation gap.
+It is not a production `MainActivity` launcher-renderer restart, a real
+provider-backed SMS conversation, UI Apply/Reset, Photo Picker/SAF,
+source-revocation, `global_thread`, physical/OEM/performance, or
+low-memory/background/in-flight process-death result. Force-stop occurs after
+import, Room commit, managed-file publication, and checkpoint commit; the solid
+fixture proves dimmed pixels while focal position is metadata-only; grant
+preservation is count-only; and the provider remains installed. The broader
+compound rows and gold-readiness gate stay open.
 
 Source commit `826a20dbc3e965da8f269dde1351cf4d76d28f6c` adds a separately gated
 API 36 AOSP Photo Picker cancellation journey using the accessibility global
