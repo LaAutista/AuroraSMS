@@ -4,6 +4,9 @@ package org.aurorasms.app.appearance.wallpaper
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.UiAutomation
 import android.content.ContentResolver
 import android.content.Context
@@ -16,6 +19,7 @@ import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.DocumentsContract
+import android.service.notification.StatusBarNotification
 import android.system.Os
 import android.system.OsConstants
 import android.view.accessibility.AccessibilityNodeInfo
@@ -45,6 +49,14 @@ import org.aurorasms.app.appearance.SCOPED_APPEARANCE_CANCEL_TEST_TAG
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_DIALOG_TEST_TAG
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_WALLPAPER_TEST_TAG
 import org.aurorasms.app.message.AppNotificationIntentFactory
+import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ProviderKind
+import org.aurorasms.core.notifications.IncomingMessageNotification
+import org.aurorasms.core.notifications.NotificationChannels
+import org.aurorasms.core.notifications.NotificationConfig
+import org.aurorasms.core.notifications.NotificationPostResult
+import org.aurorasms.core.notifications.NotificationPrivacy
 import org.aurorasms.core.state.AppearanceScope
 import org.aurorasms.core.state.AppearanceScreenScope
 import org.aurorasms.core.state.storage.StateDatabaseFactory
@@ -671,6 +683,357 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         }
     }
 
+    @Test
+    fun realGlobalThreadSafFallbackNotificationPendingIntentRouteLossPreservesBaseline() {
+        requireExplicitNotificationPendingIntentGate()
+        assumeTrue(
+            API_26_NOTIFICATION_PENDING_INTENT_REQUIRED,
+            Build.VERSION.SDK_INT == Build.VERSION_CODES.O,
+        )
+
+        var automation: UiAutomation? = null
+        var originalServiceFlags: Int? = null
+        var scenario: ActivityScenario<MainActivity>? = null
+        var scenarioLaunchIntent: Intent? = null
+        var controller: WallpaperController? = null
+        var durableBaseline: SelectionBaseline? = null
+        var notificationBaseline: Set<ActiveNotificationIdentity>? = null
+        var channelBaseline: Set<NotificationChannelSnapshot>? = null
+        var controlledNotificationPosted = false
+
+        try {
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val activeAutomation = instrumentation.getUiAutomation(
+                UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
+            )
+            automation = activeAutomation
+            originalServiceFlags = activeAutomation.serviceInfo.flags
+            activeAutomation.serviceInfo = activeAutomation.serviceInfo.apply {
+                flags = flags or
+                    AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            }
+
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val application = context as? AuroraSmsApplication
+                ?: failFixed(APPLICATION_REQUIRED)
+            awaitStateStorageReady(application)
+            assertExactSafFallbackContract(context)
+            assertSyntheticDocumentsProviderRegistered(context)
+            resetSyntheticDocumentState(context)
+            assertExactSyntheticDocumentUri()
+
+            try {
+                NotificationChannels.ensureCreated(context)
+            } catch (_: Throwable) {
+                failFixed(NOTIFICATION_CHANNEL_BOOTSTRAP_FAILED)
+            }
+            val stableChannelBaseline = notificationChannelSnapshot(context)
+            val stableChannelIds = stableChannelBaseline.mapTo(mutableSetOf()) { channel ->
+                channel.id
+            }
+            if (!stableChannelIds.containsAll(EXPECTED_NOTIFICATION_CHANNEL_IDS)) {
+                failFixed(NOTIFICATION_CHANNEL_PRECONDITION_REQUIRED)
+            }
+            channelBaseline = stableChannelBaseline
+            val stableNotificationBaseline = activeNotificationSnapshot(context)
+            if (
+                stableNotificationBaseline.any { identity ->
+                    identity.id == NOTIFICATION_PENDING_INTENT_NOTIFICATION_ID ||
+                        identity.tag == NOTIFICATION_PENDING_INTENT_TAG
+                }
+            ) {
+                failFixed(NOTIFICATION_PENDING_INTENT_COLLISION)
+            }
+            notificationBaseline = stableNotificationBaseline
+
+            val activeController = application.container.wallpaperController
+            controller = activeController
+            val activeNotifier = application.container.messageNotifier
+            val launchIntent = Intent(context, MainActivity::class.java)
+                .setAction(Intent.ACTION_MAIN)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            scenarioLaunchIntent = Intent(launchIntent)
+            val activeScenario = ActivityScenario.launch<MainActivity>(launchIntent)
+            scenario = activeScenario
+
+            var activityIdentity = 0
+            activeScenario.onActivity { activity ->
+                if (activity.componentName.className != MainActivity::class.java.name) {
+                    failFixed(REAL_ACTIVITY_REQUIRED)
+                }
+                if (activity.openedConversationId != null) failFixed(INBOX_ROUTE_REQUIRED)
+                activityIdentity = System.identityHashCode(activity)
+            }
+            waitForStableInitialInbox(activeAutomation).recycleSafely()
+
+            val baseline = SelectionBaseline(
+                assignment = readReadyAssignment(activeController),
+                managedFiles = managedFileLedger(context),
+                persistedGrants = persistedGrantSnapshot(context.contentResolver),
+                revisionSequence = readAppearanceRevisionSequence(context),
+            )
+            if (baseline.assignment != null) {
+                failFixed(NOTIFICATION_PENDING_INTENT_EMPTY_BASELINE_REQUIRED)
+            }
+            durableBaseline = baseline
+            assertSelectionBaselineUnchanged(activeController, context, baseline)
+
+            openGlobalWallpaperEditor(activeAutomation)
+            chooseExactSyntheticDocument(activeAutomation, context)
+            assertTransientSelection(activeAutomation, activeController, context, baseline)
+            val beforeNotificationPost = syntheticDocumentSnapshot(context)
+
+            val notificationReceivedAt = System.currentTimeMillis()
+            val postResult = activeNotifier.notifyIncoming(
+                message = IncomingMessageNotification(
+                    messageId = MessageId(
+                        ProviderKind.SMS,
+                        NOTIFICATION_PENDING_INTENT_MESSAGE_ID,
+                    ),
+                    conversationId = ConversationId(
+                        NOTIFICATION_PENDING_INTENT_CONVERSATION_ID,
+                    ),
+                    senderDisplayName = NOTIFICATION_PENDING_INTENT_SENDER,
+                    senderPersonKey = NOTIFICATION_PENDING_INTENT_PERSON_KEY,
+                    body = NOTIFICATION_PENDING_INTENT_BODY,
+                    receivedAtEpochMillis = notificationReceivedAt,
+                    canReply = false,
+                ),
+                config = NotificationConfig(privacy = NotificationPrivacy.SENDER_AND_BODY),
+            )
+            val posted = postResult as? NotificationPostResult.Posted
+                ?: failFixed(NOTIFICATION_PENDING_INTENT_POST_FAILED)
+            controlledNotificationPosted = true
+            if (posted.notificationId != NOTIFICATION_PENDING_INTENT_NOTIFICATION_ID) {
+                failFixed(NOTIFICATION_PENDING_INTENT_ID_INVALID)
+            }
+            val statusBarNotification = awaitExactPostedNotification(
+                context = context,
+                baseline = stableNotificationBaseline,
+                notificationId = posted.notificationId,
+            )
+            assertExactNotificationPendingIntent(
+                context = context,
+                statusBarNotification = statusBarNotification,
+                expectedWhen = notificationReceivedAt,
+            )
+            assertNotificationChannelsUnchanged(context, stableChannelBaseline)
+            if (syntheticDocumentSnapshot(context) != beforeNotificationPost) {
+                failFixed(NOTIFICATION_PENDING_INTENT_REOPENED_SOURCE)
+            }
+            assertTransientSelection(activeAutomation, activeController, context, baseline)
+
+            openExactAospNotificationShade(activeAutomation, context)
+            waitForExactSystemUiNotificationBody(activeAutomation).useNode { body ->
+                tapExactSystemUiNotificationBody(activeAutomation, body)
+            }
+            waitForPackage(activeAutomation, TARGET_PACKAGE)
+            waitForAppTag(activeAutomation, THREAD_SCREEN_TEST_TAG).recycleSafely()
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_DIALOG_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_APPEARANCE_DIALOG_TEST_TAG)
+            waitForNotificationRouteConsumed(activeScenario, activityIdentity)
+            if (syntheticDocumentSnapshot(context) != beforeNotificationPost) {
+                failFixed(NOTIFICATION_PENDING_INTENT_REOPENED_SOURCE)
+            }
+            assertSelectionBaselineUnchanged(activeController, context, baseline)
+            awaitActiveNotificationBaseline(context, stableNotificationBaseline)
+            controlledNotificationPosted = false
+            assertNotificationChannelsUnchanged(context, stableChannelBaseline)
+
+            if (!activeAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) {
+                failFixed(NOTIFICATION_PENDING_INTENT_BACK_FAILED)
+            }
+            waitForAppTag(activeAutomation, INBOX_SCREEN_TEST_TAG).recycleSafely()
+            openGlobalWallpaperEditor(activeAutomation)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_LOADING_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_ERROR_TEST_TAG)
+            if (isAppTagEnabled(activeAutomation, SCOPED_WALLPAPER_APPLY_TEST_TAG)) {
+                failFixed(NOTIFICATION_PENDING_INTENT_SELECTION_SURVIVED)
+            }
+            if (syntheticDocumentSnapshot(context) != beforeNotificationPost) {
+                failFixed(NOTIFICATION_PENDING_INTENT_REOPENED_SOURCE)
+            }
+            assertSelectionBaselineUnchanged(activeController, context, baseline)
+            clickAppTag(activeAutomation, SCOPED_WALLPAPER_BACK_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_DIALOG_TEST_TAG)
+            waitForAppTag(activeAutomation, SCOPED_APPEARANCE_DIALOG_TEST_TAG).recycleSafely()
+            clickAppTag(activeAutomation, SCOPED_APPEARANCE_CANCEL_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_APPEARANCE_DIALOG_TEST_TAG)
+            waitForAppTag(activeAutomation, INBOX_SCREEN_TEST_TAG).recycleSafely()
+            assertSelectionBaselineUnchanged(activeController, context, baseline)
+            awaitActiveNotificationBaseline(context, stableNotificationBaseline)
+            assertNotificationChannelsUnchanged(context, stableChannelBaseline)
+
+            instrumentation.sendStatus(
+                NOTIFICATION_PENDING_INTENT_SENTINEL_STATUS_CODE,
+                Bundle().apply {
+                    putString(
+                        NOTIFICATION_PENDING_INTENT_SENTINEL_KEY,
+                        NOTIFICATION_PENDING_INTENT_SENTINEL_VALUE,
+                    )
+                },
+            )
+        } catch (assumption: AssumptionViolatedException) {
+            throw assumption
+        } catch (fixed: FixedSmokeFailure) {
+            throw fixed
+        } catch (_: Throwable) {
+            failFixed(UNEXPECTED_NOTIFICATION_PENDING_INTENT_FAILURE)
+        } finally {
+            bestEffortDismissFocusedTransientSystemUi(automation)
+            bestEffortDismissFocusedDocumentsUi(automation)
+            if (controlledNotificationPosted) {
+                try {
+                    val context = ApplicationProvider.getApplicationContext<Context>()
+                    context.getSystemService(NotificationManager::class.java)?.cancel(
+                        NOTIFICATION_PENDING_INTENT_TAG,
+                        NOTIFICATION_PENDING_INTENT_NOTIFICATION_ID,
+                    )
+                } catch (_: Throwable) {
+                    // Exact notification-baseline verification below is authoritative.
+                }
+            }
+            var finalNotificationFailure: FixedSmokeFailure? = null
+            val stableNotificationBaseline = notificationBaseline
+            if (stableNotificationBaseline != null) {
+                try {
+                    val context = ApplicationProvider.getApplicationContext<Context>()
+                    awaitActiveNotificationBaseline(context, stableNotificationBaseline)
+                } catch (fixed: FixedSmokeFailure) {
+                    finalNotificationFailure = fixed
+                } catch (_: Throwable) {
+                    finalNotificationFailure = FixedSmokeFailure(
+                        FINAL_NOTIFICATION_PENDING_INTENT_BASELINE_UNAVAILABLE,
+                    )
+                }
+            }
+            val stableChannelBaseline = channelBaseline
+            if (stableChannelBaseline != null && finalNotificationFailure == null) {
+                try {
+                    val context = ApplicationProvider.getApplicationContext<Context>()
+                    assertNotificationChannelsUnchanged(context, stableChannelBaseline)
+                } catch (fixed: FixedSmokeFailure) {
+                    finalNotificationFailure = fixed
+                } catch (_: Throwable) {
+                    finalNotificationFailure = FixedSmokeFailure(
+                        FINAL_NOTIFICATION_PENDING_INTENT_CHANNEL_BASELINE_UNAVAILABLE,
+                    )
+                }
+            }
+            try {
+                val context = ApplicationProvider.getApplicationContext<Context>()
+                setSyntheticDocumentAvailable(context, available = true)
+            } catch (_: Throwable) {
+                // Durable-state verification below remains authoritative.
+            }
+            var finalScenarioFailure: FixedSmokeFailure? = null
+            val activeScenario = scenario
+            if (activeScenario != null) {
+                try {
+                    // MainActivity replaces a consumed notification route with ACTION_MAIN.
+                    // ActivityScenario tracks the launch intent's filter identity, so restore
+                    // that identity before close even if routing failed partway through.
+                    scenarioLaunchIntent?.let { launchIntent ->
+                        activeScenario.onActivity { activity ->
+                            activity.intent = Intent(launchIntent)
+                        }
+                    }
+                } catch (_: Throwable) {
+                    finalScenarioFailure = FixedSmokeFailure(
+                        FINAL_NOTIFICATION_PENDING_INTENT_ACTIVITY_CLEANUP_UNAVAILABLE,
+                    )
+                }
+                try {
+                    activeScenario.close()
+                } catch (_: Throwable) {
+                    if (finalScenarioFailure == null) {
+                        finalScenarioFailure = FixedSmokeFailure(
+                            FINAL_NOTIFICATION_PENDING_INTENT_ACTIVITY_CLEANUP_UNAVAILABLE,
+                        )
+                    }
+                }
+            }
+            var finalDurableFailure: FixedSmokeFailure? = null
+            val cleanupController = controller
+            val baseline = durableBaseline
+            if (cleanupController != null && baseline != null) {
+                try {
+                    val context = ApplicationProvider.getApplicationContext<Context>()
+                    assertSelectionBaselineUnchanged(cleanupController, context, baseline)
+                } catch (fixed: FixedSmokeFailure) {
+                    finalDurableFailure = fixed
+                } catch (_: Throwable) {
+                    finalDurableFailure = FixedSmokeFailure(
+                        FINAL_NOTIFICATION_PENDING_INTENT_DURABLE_BASELINE_UNAVAILABLE,
+                    )
+                }
+            }
+            val activeAutomation = automation
+            val flagsToRestore = originalServiceFlags
+            if (activeAutomation != null && flagsToRestore != null) {
+                try {
+                    activeAutomation.serviceInfo = activeAutomation.serviceInfo.apply {
+                        flags = flagsToRestore
+                    }
+                } catch (_: Throwable) {
+                    // Never replace fixed cleanup evidence with platform-specific text.
+                }
+            }
+            finalNotificationFailure?.let { throw it }
+            finalScenarioFailure?.let { throw it }
+            finalDurableFailure?.let { throw it }
+        }
+    }
+
+    @Test
+    fun exactSyntheticNotificationPendingIntentCleanupOnly() {
+        requireExplicitNotificationCleanupGate()
+        assumeTrue(
+            API_26_NOTIFICATION_PENDING_INTENT_REQUIRED,
+            Build.VERSION.SDK_INT == Build.VERSION_CODES.O,
+        )
+
+        try {
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val manager = context.getSystemService(NotificationManager::class.java)
+                ?: failFixed(NOTIFICATION_MANAGER_UNAVAILABLE)
+            val exactActive = activeNotifications(context).filter { notification ->
+                notification.id == NOTIFICATION_PENDING_INTENT_NOTIFICATION_ID &&
+                    notification.tag == NOTIFICATION_PENDING_INTENT_TAG
+            }
+            if (exactActive.size > 1) {
+                failFixed(EXACT_SYNTHETIC_NOTIFICATION_CLEANUP_SCOPE_INVALID)
+            }
+            exactActive.singleOrNull()?.let { notification ->
+                assertControlledSyntheticNotificationFingerprint(
+                    context = context,
+                    statusBarNotification = notification,
+                    expectedWhen = null,
+                )
+                manager.cancel(
+                    NOTIFICATION_PENDING_INTENT_TAG,
+                    NOTIFICATION_PENDING_INTENT_NOTIFICATION_ID,
+                )
+            }
+            awaitExactSyntheticNotificationAbsent(context)
+            InstrumentationRegistry.getInstrumentation().sendStatus(
+                NOTIFICATION_CLEANUP_SENTINEL_STATUS_CODE,
+                Bundle().apply {
+                    putString(
+                        NOTIFICATION_CLEANUP_SENTINEL_KEY,
+                        NOTIFICATION_CLEANUP_SENTINEL_VALUE,
+                    )
+                },
+            )
+        } catch (fixed: FixedSmokeFailure) {
+            throw fixed
+        } catch (_: Throwable) {
+            failFixed(UNEXPECTED_NOTIFICATION_CLEANUP_FAILURE)
+        }
+    }
+
     private fun requireExplicitGate() {
         val enabled = InstrumentationRegistry.getArguments()
             .getString(GATE_ARGUMENT)
@@ -702,6 +1065,519 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
             EMULATOR_REQUIRED,
             Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish",
         )
+    }
+
+    private fun requireExplicitNotificationPendingIntentGate() {
+        val enabled = InstrumentationRegistry.getArguments()
+            .getString(NOTIFICATION_PENDING_INTENT_GATE_ARGUMENT)
+            ?.equals("true", ignoreCase = true) == true
+        assumeTrue(NOTIFICATION_PENDING_INTENT_GATE_REQUIRED, enabled)
+        assumeTrue(
+            EMULATOR_REQUIRED,
+            Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish",
+        )
+    }
+
+    private fun requireExplicitNotificationCleanupGate() {
+        val enabled = InstrumentationRegistry.getArguments()
+            .getString(NOTIFICATION_CLEANUP_GATE_ARGUMENT)
+            ?.equals("true", ignoreCase = true) == true
+        assumeTrue(NOTIFICATION_CLEANUP_GATE_REQUIRED, enabled)
+        assumeTrue(
+            EMULATOR_REQUIRED,
+            Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish",
+        )
+    }
+
+    private fun notificationChannelSnapshot(
+        context: Context,
+    ): Set<NotificationChannelSnapshot> {
+        val manager = context.getSystemService(NotificationManager::class.java)
+            ?: failFixed(NOTIFICATION_MANAGER_UNAVAILABLE)
+        return try {
+            manager.notificationChannels.mapTo(mutableSetOf()) { channel ->
+                channel.toSnapshot()
+            }
+        } catch (_: Throwable) {
+            failFixed(NOTIFICATION_CHANNEL_BASELINE_UNAVAILABLE)
+        }
+    }
+
+    private fun NotificationChannel.toSnapshot(): NotificationChannelSnapshot =
+        NotificationChannelSnapshot(
+            id = id,
+            name = name?.toString(),
+            description = description,
+            importance = importance,
+            lockscreenVisibility = lockscreenVisibility,
+            bypassDnd = canBypassDnd(),
+            showBadge = canShowBadge(),
+            showLights = shouldShowLights(),
+            lightColor = lightColor,
+            vibrate = shouldVibrate(),
+            vibrationPattern = vibrationPattern?.toList(),
+            sound = sound?.toString(),
+            group = group,
+            audioUsage = audioAttributes?.usage,
+            audioContentType = audioAttributes?.contentType,
+            audioFlags = audioAttributes?.flags,
+        )
+
+    private fun assertNotificationChannelsUnchanged(
+        context: Context,
+        baseline: Set<NotificationChannelSnapshot>,
+    ) {
+        if (notificationChannelSnapshot(context) != baseline) {
+            failFixed(NOTIFICATION_CHANNEL_BASELINE_CHANGED)
+        }
+    }
+
+    private fun activeNotificationSnapshot(context: Context): Set<ActiveNotificationIdentity> =
+        activeNotifications(context).mapTo(mutableSetOf(), ::activeNotificationIdentity)
+
+    private fun activeNotifications(context: Context): Array<StatusBarNotification> {
+        val manager = context.getSystemService(NotificationManager::class.java)
+            ?: failFixed(NOTIFICATION_MANAGER_UNAVAILABLE)
+        return try {
+            manager.activeNotifications.also { notifications ->
+                if (notifications.any { notification ->
+                        notification.packageName != TARGET_PACKAGE
+                    }
+                ) {
+                    failFixed(ACTIVE_NOTIFICATION_SCOPE_INVALID)
+                }
+            }
+        } catch (fixed: FixedSmokeFailure) {
+            throw fixed
+        } catch (_: Throwable) {
+            failFixed(ACTIVE_NOTIFICATION_BASELINE_UNAVAILABLE)
+        }
+    }
+
+    private fun activeNotificationIdentity(
+        notification: StatusBarNotification,
+    ): ActiveNotificationIdentity = ActiveNotificationIdentity(
+        key = notification.key,
+        packageName = notification.packageName,
+        id = notification.id,
+        tag = notification.tag,
+        uid = notification.uid,
+        postTime = notification.postTime,
+    )
+
+    private fun awaitExactPostedNotification(
+        context: Context,
+        baseline: Set<ActiveNotificationIdentity>,
+        notificationId: Int,
+    ): StatusBarNotification {
+        val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
+        do {
+            val active = activeNotifications(context)
+            val added = active
+                .filter { notification -> activeNotificationIdentity(notification) !in baseline }
+            if (added.size == 1) {
+                val notification = added.single()
+                if (
+                    notification.packageName == TARGET_PACKAGE &&
+                    notification.id == notificationId &&
+                    notification.tag == NOTIFICATION_PENDING_INTENT_TAG
+                ) {
+                    return notification
+                }
+            }
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        failFixed(EXACT_ACTIVE_NOTIFICATION_UNAVAILABLE)
+    }
+
+    private fun awaitActiveNotificationBaseline(
+        context: Context,
+        baseline: Set<ActiveNotificationIdentity>,
+    ) {
+        val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
+        do {
+            if (activeNotificationSnapshot(context) == baseline) return
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        failFixed(ACTIVE_NOTIFICATION_BASELINE_NOT_RESTORED)
+    }
+
+    private fun awaitExactSyntheticNotificationAbsent(context: Context) {
+        val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
+        do {
+            val exactActive = activeNotifications(context).any { notification ->
+                notification.id == NOTIFICATION_PENDING_INTENT_NOTIFICATION_ID &&
+                    notification.tag == NOTIFICATION_PENDING_INTENT_TAG
+            }
+            if (!exactActive) return
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        failFixed(EXACT_SYNTHETIC_NOTIFICATION_CLEANUP_FAILED)
+    }
+
+    private fun assertExactNotificationPendingIntent(
+        context: Context,
+        statusBarNotification: StatusBarNotification,
+        expectedWhen: Long,
+    ) = assertControlledSyntheticNotificationFingerprint(
+        context = context,
+        statusBarNotification = statusBarNotification,
+        expectedWhen = expectedWhen,
+    )
+
+    private fun assertControlledSyntheticNotificationFingerprint(
+        context: Context,
+        statusBarNotification: StatusBarNotification,
+        expectedWhen: Long?,
+    ) {
+        val notification = statusBarNotification.notification
+        val contentIntent = notification.contentIntent
+            ?: failFixed(NOTIFICATION_CONTENT_PENDING_INTENT_REQUIRED)
+        val timestampMatches = expectedWhen?.let { expected ->
+            notification.`when` == expected
+        } ?: (notification.`when` > 0L)
+        if (
+            statusBarNotification.packageName != TARGET_PACKAGE ||
+            statusBarNotification.uid != context.applicationInfo.uid ||
+            statusBarNotification.id != NOTIFICATION_PENDING_INTENT_NOTIFICATION_ID ||
+            statusBarNotification.tag != NOTIFICATION_PENDING_INTENT_TAG ||
+            !statusBarNotification.isClearable ||
+            notification.channelId != NotificationChannels.MESSAGES ||
+            notification.category != Notification.CATEGORY_MESSAGE ||
+            notification.visibility != Notification.VISIBILITY_PRIVATE ||
+            !timestampMatches ||
+            notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() !=
+            NOTIFICATION_PENDING_INTENT_SENDER ||
+            notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() !=
+            NOTIFICATION_PENDING_INTENT_BODY ||
+            notification.flags and Notification.FLAG_AUTO_CANCEL == 0 ||
+            notification.actions?.isNotEmpty() == true ||
+            notification.publicVersion?.contentIntent != contentIntent ||
+            contentIntent.creatorPackage != TARGET_PACKAGE ||
+            contentIntent.creatorUid != context.applicationInfo.uid ||
+            !contentIntent.isActivity
+        ) {
+            failFixed(NOTIFICATION_PENDING_INTENT_CONTRACT_INVALID)
+        }
+    }
+
+    private fun openExactAospNotificationShade(
+        automation: UiAutomation,
+        context: Context,
+    ) {
+        val width = context.resources.displayMetrics.widthPixels
+        val height = context.resources.displayMetrics.heightPixels
+        val endY = height * NOTIFICATION_SHADE_SWIPE_END_PERCENT / 100
+        if (width <= 0 || height <= 0 || endY <= NOTIFICATION_SHADE_SWIPE_START_Y) {
+            failFixed(NOTIFICATION_SHADE_OPEN_FAILED)
+        }
+        executeFixedShellCommand(
+            automation = automation,
+            command = "input touchscreen swipe ${width / 2} " +
+                "$NOTIFICATION_SHADE_SWIPE_START_Y ${width / 2} $endY " +
+                "$NOTIFICATION_SHADE_SWIPE_DURATION_MILLIS",
+            failureMessage = NOTIFICATION_SHADE_OPEN_FAILED,
+        )
+        waitForExactExpandedSystemUiNotificationShade(automation, width, height)
+    }
+
+    private fun waitForExactExpandedSystemUiNotificationShade(
+        automation: UiAutomation,
+        width: Int,
+        height: Int,
+    ) {
+        val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
+        var stableSince = 0L
+        do {
+            val panel = findExactSystemUiResource(
+                automation = automation,
+                resource = SYSTEM_UI_NOTIFICATION_PANEL_RESOURCE,
+            )
+            val stack = findExactSystemUiResource(
+                automation = automation,
+                resource = SYSTEM_UI_NOTIFICATION_STACK_RESOURCE,
+            )
+            val exact = if (panel != null && stack != null) {
+                val panelBounds = Rect().also(panel::getBoundsInScreen)
+                val stackBounds = Rect().also(stack::getBoundsInScreen)
+                panelBounds == Rect(0, 0, width, height) &&
+                    stackBounds.left == 0 &&
+                    stackBounds.top == 0 &&
+                    stackBounds.right == width &&
+                    stackBounds.bottom > height / 2 &&
+                    stackBounds.bottom <= height
+            } else {
+                false
+            }
+            panel?.recycleSafely()
+            stack?.recycleSafely()
+            val now = SystemClock.uptimeMillis()
+            if (exact) {
+                if (stableSince == 0L) stableSince = now
+                if (now - stableSince >= SYSTEM_UI_NODE_STABLE_MILLIS) return
+            } else {
+                stableSince = 0L
+            }
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        failFixed(NOTIFICATION_SHADE_OPEN_FAILED)
+    }
+
+    private fun waitForExactSystemUiResource(
+        automation: UiAutomation,
+        resource: String,
+    ): AccessibilityNodeInfo {
+        val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
+        do {
+            findExactSystemUiResource(automation, resource)?.let { return it }
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        failFixed(NOTIFICATION_SHADE_OPEN_FAILED)
+    }
+
+    private fun findExactSystemUiResource(
+        automation: UiAutomation,
+        resource: String,
+    ): AccessibilityNodeInfo? {
+        val windows = automation.windows
+        val accepted = mutableListOf<AccessibilityNodeInfo>()
+        return try {
+            windows.forEach { window ->
+                val root = window.root ?: return@forEach
+                try {
+                    if (root.packageName?.toString() != SYSTEM_UI_PACKAGE) return@forEach
+                    val matches = root.findAccessibilityNodeInfosByViewId(resource).orEmpty()
+                    matches.forEach { node ->
+                        val exact = node.packageName?.toString() == SYSTEM_UI_PACKAGE &&
+                            node.windowId == root.windowId &&
+                            node.viewIdResourceName == resource &&
+                            node.isVisibleToUser &&
+                            node.isEnabled
+                        if (exact) accepted += node else node.recycleSafely()
+                    }
+                } finally {
+                    root.recycleSafely()
+                }
+            }
+            if (accepted.size == 1) accepted.single() else {
+                accepted.forEach { node -> node.recycleSafely() }
+                null
+            }
+        } catch (throwable: Throwable) {
+            accepted.forEach { node -> node.recycleSafely() }
+            throw throwable
+        } finally {
+            windows.forEach { window -> window.recycleSafely() }
+        }
+    }
+
+    private fun waitForExactSystemUiNotificationBody(
+        automation: UiAutomation,
+    ): AccessibilityNodeInfo {
+        val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
+        var stableBounds: Rect? = null
+        var stableSince = 0L
+        do {
+            val node = findExactSystemUiNotificationBody(automation)
+            if (node != null) {
+                val bounds = Rect().also(node::getBoundsInScreen)
+                val now = SystemClock.uptimeMillis()
+                if (bounds.width() > 0 && bounds.height() > 0 && bounds == stableBounds) {
+                    if (now - stableSince >= SYSTEM_UI_NODE_STABLE_MILLIS) return node
+                } else {
+                    stableBounds = bounds
+                    stableSince = now
+                }
+                node.recycleSafely()
+            } else {
+                stableBounds = null
+                stableSince = 0L
+            }
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        failFixed(EXACT_SYSTEM_UI_NOTIFICATION_BODY_UNAVAILABLE)
+    }
+
+    private fun findExactSystemUiNotificationBody(
+        automation: UiAutomation,
+    ): AccessibilityNodeInfo? {
+        val stack = findExactSystemUiResource(
+            automation = automation,
+            resource = SYSTEM_UI_NOTIFICATION_STACK_RESOURCE,
+        ) ?: return null
+        val accepted = mutableListOf<AccessibilityNodeInfo>()
+        return try {
+            var visited = 0
+            fun visit(node: AccessibilityNodeInfo, depth: Int) {
+                if (
+                    visited >= MAXIMUM_SYSTEM_UI_NOTIFICATION_TREE_NODES ||
+                    depth > MAXIMUM_SYSTEM_UI_NOTIFICATION_ANCESTOR_DEPTH
+                ) {
+                    return
+                }
+                visited += 1
+                for (index in 0 until node.childCount) {
+                    val child = node.getChild(index) ?: continue
+                    val exact = child.packageName?.toString() == SYSTEM_UI_PACKAGE &&
+                        child.windowId == stack.windowId &&
+                        child.viewIdResourceName in SYSTEM_UI_NOTIFICATION_BODY_RESOURCES &&
+                        child.text?.toString() == NOTIFICATION_PENDING_INTENT_BODY &&
+                        child.isVisibleToUser &&
+                        child.isEnabled &&
+                        hasExactClickableSystemUiNotificationRow(child, stack)
+                    if (exact) {
+                        accepted += child
+                    } else {
+                        try {
+                            visit(child, depth + 1)
+                        } finally {
+                            child.recycleSafely()
+                        }
+                    }
+                }
+            }
+            visit(stack, 0)
+            if (accepted.size == 1) accepted.single() else {
+                accepted.forEach { node -> node.recycleSafely() }
+                null
+            }
+        } catch (throwable: Throwable) {
+            accepted.forEach { node -> node.recycleSafely() }
+            throw throwable
+        } finally {
+            stack.recycleSafely()
+        }
+    }
+
+    private fun hasExactClickableSystemUiNotificationRow(
+        body: AccessibilityNodeInfo,
+        stack: AccessibilityNodeInfo,
+    ): Boolean {
+        val bodyBounds = Rect().also(body::getBoundsInScreen)
+        val stackBounds = Rect().also(stack::getBoundsInScreen)
+        if (
+            bodyBounds.width() <= 0 ||
+            bodyBounds.height() <= 0 ||
+            stackBounds.width() <= 0 ||
+            stackBounds.height() <= 0 ||
+            !stackBounds.contains(bodyBounds.centerX(), bodyBounds.centerY())
+        ) {
+            return false
+        }
+
+        var ancestor = try {
+            body.parent
+        } catch (_: Throwable) {
+            null
+        }
+        var requiredResourceIndex = 0
+        var clickableRowCount = 0
+        repeat(MAXIMUM_SYSTEM_UI_NOTIFICATION_ANCESTOR_DEPTH) {
+            val current = ancestor ?: return false
+            var parent: AccessibilityNodeInfo? = null
+            try {
+                if (current.windowId != stack.windowId) return false
+                val bounds = Rect().also(current::getBoundsInScreen)
+                if (
+                    current.packageName?.toString() != SYSTEM_UI_PACKAGE ||
+                    !current.isVisibleToUser ||
+                    !current.isEnabled
+                ) {
+                    return false
+                }
+                if (
+                    requiredResourceIndex < SYSTEM_UI_NOTIFICATION_ROW_RESOURCE_PATH.size &&
+                    current.viewIdResourceName ==
+                    SYSTEM_UI_NOTIFICATION_ROW_RESOURCE_PATH[requiredResourceIndex]
+                ) {
+                    requiredResourceIndex += 1
+                }
+                if (current.isClickable) {
+                    if (
+                        requiredResourceIndex <
+                        SYSTEM_UI_NOTIFICATION_ROW_RESOURCE_PATH.lastIndex ||
+                        current.className?.toString() != SYSTEM_UI_NOTIFICATION_ROW_CLASS ||
+                        !current.viewIdResourceName.isNullOrEmpty() ||
+                        !current.isVisibleToUser ||
+                        !current.isEnabled ||
+                        !bounds.contains(bodyBounds.centerX(), bodyBounds.centerY())
+                    ) {
+                        return false
+                    }
+                    clickableRowCount += 1
+                }
+                if (
+                    current.viewIdResourceName == SYSTEM_UI_NOTIFICATION_STACK_RESOURCE
+                ) {
+                    return requiredResourceIndex ==
+                        SYSTEM_UI_NOTIFICATION_ROW_RESOURCE_PATH.size &&
+                        clickableRowCount == 1 &&
+                        current.isVisibleToUser &&
+                        current.isEnabled &&
+                        bounds.contains(bodyBounds.centerX(), bodyBounds.centerY())
+                }
+                parent = current.parent
+            } catch (_: Throwable) {
+                return false
+            } finally {
+                current.recycleSafely()
+            }
+            ancestor = parent
+        }
+        ancestor?.recycleSafely()
+        return false
+    }
+
+    private fun tapExactSystemUiNotificationBody(
+        automation: UiAutomation,
+        node: AccessibilityNodeInfo,
+    ) {
+        val bounds = Rect().also(node::getBoundsInScreen)
+        val stack = findExactSystemUiResource(
+            automation = automation,
+            resource = SYSTEM_UI_NOTIFICATION_STACK_RESOURCE,
+        ) ?: failFixed(SYSTEM_UI_NOTIFICATION_BODY_INVALID)
+        val exactRow = try {
+            hasExactClickableSystemUiNotificationRow(node, stack)
+        } finally {
+            stack.recycleSafely()
+        }
+        if (
+            node.packageName?.toString() != SYSTEM_UI_PACKAGE ||
+            node.viewIdResourceName !in SYSTEM_UI_NOTIFICATION_BODY_RESOURCES ||
+            node.text?.toString() != NOTIFICATION_PENDING_INTENT_BODY ||
+            !node.isVisibleToUser ||
+            !node.isEnabled ||
+            bounds.width() <= 0 ||
+            bounds.height() <= 0 ||
+            !exactRow
+        ) {
+            failFixed(SYSTEM_UI_NOTIFICATION_BODY_INVALID)
+        }
+        executeFixedInputCommand(
+            automation,
+            "input touchscreen tap ${bounds.centerX()} ${bounds.centerY()}",
+        )
+    }
+
+    private fun waitForNotificationRouteConsumed(
+        scenario: ActivityScenario<MainActivity>,
+        expectedActivityIdentity: Int,
+    ) {
+        val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
+        do {
+            var consumed = false
+            scenario.onActivity { activity ->
+                consumed = System.identityHashCode(activity) == expectedActivityIdentity &&
+                    activity.openedConversationId == ConversationId(
+                        NOTIFICATION_PENDING_INTENT_CONVERSATION_ID,
+                    ) &&
+                    activity.intent.action == Intent.ACTION_MAIN
+            }
+            if (consumed) return
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        failFixed(NOTIFICATION_PENDING_INTENT_ROUTE_NOT_CONSUMED)
     }
 
     private fun assertExactSafFallbackContract(context: Context) {
@@ -1147,6 +2023,16 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
     private fun executeFixedInputCommand(
         automation: UiAutomation,
         command: String,
+    ) = executeFixedShellCommand(
+        automation = automation,
+        command = command,
+        failureMessage = FIXED_INPUT_COMMAND_FAILED,
+    )
+
+    private fun executeFixedShellCommand(
+        automation: UiAutomation,
+        command: String,
+        failureMessage: String,
     ) {
         try {
             val descriptor = automation.executeShellCommand(command)
@@ -1157,7 +2043,7 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
                 }
             }
         } catch (_: Throwable) {
-            failFixed(FIXED_INPUT_COMMAND_FAILED)
+            failFixed(failureMessage)
         }
     }
 
@@ -1317,6 +2203,25 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
                     root.recycleSafely()
                 }
                 if (!documentsUiFocused) return
+                if (!automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) return
+                SystemClock.sleep(POLL_INTERVAL_MILLIS)
+            }
+        } catch (_: Throwable) {
+            // Inspect only the focused package and never replace the primary result.
+        }
+    }
+
+    private fun bestEffortDismissFocusedTransientSystemUi(automation: UiAutomation?) {
+        if (automation == null) return
+        try {
+            repeat(MAXIMUM_SYSTEM_UI_DISMISS_ATTEMPTS) {
+                val root = automation.rootInActiveWindow ?: return
+                val systemUiFocused = try {
+                    root.packageName?.toString() == SYSTEM_UI_PACKAGE
+                } finally {
+                    root.recycleSafely()
+                }
+                if (!systemUiFocused) return
                 if (!automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) return
                 SystemClock.sleep(POLL_INTERVAL_MILLIS)
             }
@@ -1742,6 +2647,38 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         override fun toString(): String = "ManagedFileLedgerEntry(REDACTED)"
     }
 
+    private data class ActiveNotificationIdentity(
+        val key: String,
+        val packageName: String,
+        val id: Int,
+        val tag: String?,
+        val uid: Int,
+        val postTime: Long,
+    ) {
+        override fun toString(): String = "ActiveNotificationIdentity(REDACTED)"
+    }
+
+    private data class NotificationChannelSnapshot(
+        val id: String,
+        val name: String?,
+        val description: String?,
+        val importance: Int,
+        val lockscreenVisibility: Int,
+        val bypassDnd: Boolean,
+        val showBadge: Boolean,
+        val showLights: Boolean,
+        val lightColor: Int,
+        val vibrate: Boolean,
+        val vibrationPattern: List<Long>?,
+        val sound: String?,
+        val group: String?,
+        val audioUsage: Int?,
+        val audioContentType: Int?,
+        val audioFlags: Int?,
+    ) {
+        override fun toString(): String = "NotificationChannelSnapshot(REDACTED)"
+    }
+
     private class PersistedGrantIdentity(
         private val uri: String,
         private val read: Boolean,
@@ -1770,9 +2707,29 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         const val GATE_ARGUMENT = "auroraEmulatorWallpaperSafCancellation"
         const val SELECTION_GATE_ARGUMENT = "auroraEmulatorWallpaperSafSelection"
         const val STALE_APPLY_GATE_ARGUMENT = "auroraEmulatorWallpaperSafStaleApply"
+        const val NOTIFICATION_PENDING_INTENT_GATE_ARGUMENT =
+            "auroraEmulatorWallpaperSafNotificationPendingIntent"
+        const val NOTIFICATION_CLEANUP_GATE_ARGUMENT =
+            "auroraEmulatorWallpaperSafNotificationCleanup"
         const val TARGET_PACKAGE = "org.aurorasms.app"
         const val TEST_PACKAGE = "org.aurorasms.app.test"
         const val DOCUMENTS_UI_PACKAGE = "com.android.documentsui"
+        const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+        const val SYSTEM_UI_NOTIFICATION_PANEL_RESOURCE =
+            "$SYSTEM_UI_PACKAGE:id/notification_panel"
+        const val SYSTEM_UI_NOTIFICATION_STACK_RESOURCE =
+            "$SYSTEM_UI_PACKAGE:id/notification_stack_scroller"
+        const val SYSTEM_UI_NOTIFICATION_EXPANDED_RESOURCE =
+            "$SYSTEM_UI_PACKAGE:id/expanded"
+        const val SYSTEM_UI_NOTIFICATION_MAIN_COLUMN_RESOURCE =
+            "android:id/notification_main_column"
+        const val SYSTEM_UI_NOTIFICATION_ACTION_MARGIN_RESOURCE =
+            "android:id/notification_action_list_margin_target"
+        const val SYSTEM_UI_NOTIFICATION_EVENT_CONTENT_RESOURCE =
+            "android:id/status_bar_latest_event_content"
+        const val SYSTEM_UI_NOTIFICATION_ROW_CLASS = "android.widget.FrameLayout"
+        const val ANDROID_NOTIFICATION_TEXT_RESOURCE = "android:id/text"
+        const val ANDROID_NOTIFICATION_BIG_TEXT_RESOURCE = "android:id/big_text"
         const val IMAGE_MIME_TYPE = "image/*"
         const val DOCUMENTS_UI_TOOLBAR_RESOURCE = "$DOCUMENTS_UI_PACKAGE:id/toolbar"
         const val DOCUMENTS_UI_ROOTS_LIST_RESOURCE = "$DOCUMENTS_UI_PACKAGE:id/roots_list"
@@ -1783,10 +2740,17 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         const val STATE_TIMEOUT_MILLIS = 30_000L
         const val POLL_INTERVAL_MILLIS = 75L
         const val DOCUMENTS_UI_NODE_STABLE_MILLIS = 350L
+        const val SYSTEM_UI_NODE_STABLE_MILLIS = 350L
+        const val NOTIFICATION_SHADE_SWIPE_START_Y = 1
+        const val NOTIFICATION_SHADE_SWIPE_END_PERCENT = 75
+        const val NOTIFICATION_SHADE_SWIPE_DURATION_MILLIS = 500
         const val DOCUMENTS_UI_ROOT_VIEWPORT_TIMEOUT_MILLIS = 2_000L
         const val DOCUMENTS_UI_ROOT_SCROLL_SETTLE_MILLIS = 350L
         const val INITIAL_FOCUS_STABLE_MILLIS = 750L
         const val MAXIMUM_DOCUMENTS_UI_DISMISS_ATTEMPTS = 3
+        const val MAXIMUM_SYSTEM_UI_DISMISS_ATTEMPTS = 3
+        const val MAXIMUM_SYSTEM_UI_NOTIFICATION_ANCESTOR_DEPTH = 16
+        const val MAXIMUM_SYSTEM_UI_NOTIFICATION_TREE_NODES = 512
         const val MAXIMUM_DOCUMENTS_UI_ROOT_SCROLLS = 6
         const val MAXIMUM_TRANSIENT_URI_UTF8_BYTES = 4_096
         const val MAXIMUM_APP_DIALOG_SCROLLS = 4
@@ -1804,10 +2768,44 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         const val STALE_APPLY_SENTINEL_STATUS_CODE = 43
         const val STALE_APPLY_SENTINEL_KEY = "auroraSafStaleApplyResult"
         const val STALE_APPLY_SENTINEL_VALUE = "pass"
+        const val NOTIFICATION_PENDING_INTENT_SENTINEL_STATUS_CODE = 44
+        const val NOTIFICATION_PENDING_INTENT_SENTINEL_KEY =
+            "auroraSafNotificationPendingIntentResult"
+        const val NOTIFICATION_PENDING_INTENT_SENTINEL_VALUE = "pass"
+        const val NOTIFICATION_CLEANUP_SENTINEL_STATUS_CODE = 45
+        const val NOTIFICATION_CLEANUP_SENTINEL_KEY =
+            "auroraSafNotificationCleanupResult"
+        const val NOTIFICATION_CLEANUP_SENTINEL_VALUE = "pass"
         const val STALE_APPLY_SYNTHETIC_CONVERSATION_ID = 8_600_026L
         const val STALE_APPLY_CONCURRENT_DIM_PERMILL = 575
         const val STALE_APPLY_CONCURRENT_FOCAL_X_PERMILL = 250
         const val STALE_APPLY_CONCURRENT_FOCAL_Y_PERMILL = 750
+        const val NOTIFICATION_PENDING_INTENT_CONVERSATION_ID = 8_600_027L
+        const val NOTIFICATION_PENDING_INTENT_NOTIFICATION_ID = 8_600_027
+        const val NOTIFICATION_PENDING_INTENT_MESSAGE_ID = 9_600_027L
+        const val NOTIFICATION_PENDING_INTENT_TAG = "aurora-conversation:8600027"
+        const val NOTIFICATION_PENDING_INTENT_SENDER = "AuroraSMS synthetic route sender"
+        const val NOTIFICATION_PENDING_INTENT_PERSON_KEY = "aurora-synthetic-route-8600027"
+        const val NOTIFICATION_PENDING_INTENT_BODY =
+            "AuroraSMS synthetic notification route 8600027"
+
+        val SYSTEM_UI_NOTIFICATION_BODY_RESOURCES = setOf(
+            ANDROID_NOTIFICATION_TEXT_RESOURCE,
+            ANDROID_NOTIFICATION_BIG_TEXT_RESOURCE,
+        )
+
+        val SYSTEM_UI_NOTIFICATION_ROW_RESOURCE_PATH = listOf(
+            SYSTEM_UI_NOTIFICATION_MAIN_COLUMN_RESOURCE,
+            SYSTEM_UI_NOTIFICATION_ACTION_MARGIN_RESOURCE,
+            SYSTEM_UI_NOTIFICATION_EVENT_CONTENT_RESOURCE,
+            SYSTEM_UI_NOTIFICATION_EXPANDED_RESOURCE,
+            SYSTEM_UI_NOTIFICATION_STACK_RESOURCE,
+        )
+
+        val EXPECTED_NOTIFICATION_CHANNEL_IDS = setOf(
+            NotificationChannels.MESSAGES,
+            NotificationChannels.REPLY_FAILURES,
+        )
 
         val SYNTHETIC_CONTROL_URI: android.net.Uri = android.net.Uri.parse(
             "content://org.aurorasms.app.wallpaper.testprovider/control",
@@ -1824,10 +2822,16 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         const val SELECTION_GATE_REQUIRED = "emulator wallpaper SAF selection gate was not enabled"
         const val STALE_APPLY_GATE_REQUIRED =
             "emulator wallpaper SAF stale-Apply gate was not enabled"
+        const val NOTIFICATION_PENDING_INTENT_GATE_REQUIRED =
+            "emulator wallpaper SAF notification PendingIntent gate was not enabled"
+        const val NOTIFICATION_CLEANUP_GATE_REQUIRED =
+            "emulator wallpaper SAF notification cleanup gate was not enabled"
         const val EMULATOR_REQUIRED = "wallpaper SAF smoke requires an emulator"
         const val API_26_REQUIRED = "wallpaper SAF cancellation requires API 26"
         const val API_26_SELECTION_REQUIRED = "wallpaper SAF selection requires API 26"
         const val API_26_STALE_APPLY_REQUIRED = "wallpaper SAF stale-Apply requires API 26"
+        const val API_26_NOTIFICATION_PENDING_INTENT_REQUIRED =
+            "wallpaper SAF notification PendingIntent requires API 26"
         const val APPLICATION_REQUIRED = "AuroraSMS application was not available"
         const val STATE_STORAGE_NOT_READY = "AuroraSMS state storage did not become ready"
         const val OPEN_DOCUMENT_ACTION_REQUIRED = "Photo Picker contract did not select ACTION_OPEN_DOCUMENT"
@@ -1934,6 +2938,54 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
             "newer authoritative managed wallpaper became unavailable"
         const val STALE_APPLY_RESET_REVISION_UNEXPECTED =
             "reset after stale Apply consumed an unexpected revision"
+        const val NOTIFICATION_MANAGER_UNAVAILABLE =
+            "production notification manager was unavailable"
+        const val NOTIFICATION_CHANNEL_BASELINE_UNAVAILABLE =
+            "production notification channel baseline was unavailable"
+        const val NOTIFICATION_CHANNEL_BOOTSTRAP_FAILED =
+            "production notification channels could not be initialized"
+        const val NOTIFICATION_CHANNEL_PRECONDITION_REQUIRED =
+            "stable production notification channels were unavailable after initialization"
+        const val NOTIFICATION_CHANNEL_BASELINE_CHANGED =
+            "production notification channel baseline changed"
+        const val ACTIVE_NOTIFICATION_SCOPE_INVALID =
+            "active notification query escaped the AuroraSMS package"
+        const val ACTIVE_NOTIFICATION_BASELINE_UNAVAILABLE =
+            "AuroraSMS active notification baseline was unavailable"
+        const val ACTIVE_NOTIFICATION_BASELINE_NOT_RESTORED =
+            "AuroraSMS active notification baseline was not restored"
+        const val EXACT_SYNTHETIC_NOTIFICATION_CLEANUP_FAILED =
+            "exact synthetic AuroraSMS notification cleanup failed"
+        const val EXACT_SYNTHETIC_NOTIFICATION_CLEANUP_SCOPE_INVALID =
+            "active notification did not match the controlled synthetic cleanup fingerprint"
+        const val NOTIFICATION_PENDING_INTENT_COLLISION =
+            "reserved synthetic notification identity was already active"
+        const val NOTIFICATION_PENDING_INTENT_EMPTY_BASELINE_REQUIRED =
+            "global wallpaper must be empty before the notification PendingIntent smoke"
+        const val NOTIFICATION_PENDING_INTENT_POST_FAILED =
+            "production notifier did not post the synthetic notification"
+        const val NOTIFICATION_PENDING_INTENT_ID_INVALID =
+            "production notifier returned an unexpected notification ID"
+        const val EXACT_ACTIVE_NOTIFICATION_UNAVAILABLE =
+            "exact system-posted AuroraSMS notification was unavailable"
+        const val NOTIFICATION_CONTENT_PENDING_INTENT_REQUIRED =
+            "system-posted AuroraSMS notification had no content PendingIntent"
+        const val NOTIFICATION_PENDING_INTENT_CONTRACT_INVALID =
+            "system-posted AuroraSMS content PendingIntent contract was invalid"
+        const val NOTIFICATION_PENDING_INTENT_REOPENED_SOURCE =
+            "notification routing unexpectedly reopened the transient SAF source"
+        const val NOTIFICATION_SHADE_OPEN_FAILED =
+            "AOSP notification shade could not be opened"
+        const val EXACT_SYSTEM_UI_NOTIFICATION_BODY_UNAVAILABLE =
+            "exact synthetic AuroraSMS notification body was unavailable in SystemUI"
+        const val SYSTEM_UI_NOTIFICATION_BODY_INVALID =
+            "exact synthetic AuroraSMS SystemUI notification body was invalid"
+        const val NOTIFICATION_PENDING_INTENT_ROUTE_NOT_CONSUMED =
+            "system notification PendingIntent did not reach the exact warm Thread route"
+        const val NOTIFICATION_PENDING_INTENT_BACK_FAILED =
+            "notification Thread route did not return to Inbox"
+        const val NOTIFICATION_PENDING_INTENT_SELECTION_SURVIVED =
+            "transient SAF selection survived system notification routing"
         const val SELECTION_ASSIGNMENT_CHANGED_BEFORE_APPLY =
             "global assignment changed before successful Apply"
         const val SELECTION_MANAGED_FILES_CHANGED_BEFORE_APPLY =
@@ -1964,9 +3016,21 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
             "final SAF selection baseline could not be verified"
         const val FINAL_STALE_APPLY_BASELINE_UNAVAILABLE =
             "final SAF stale-Apply baseline could not be verified"
+        const val FINAL_NOTIFICATION_PENDING_INTENT_BASELINE_UNAVAILABLE =
+            "final notification baseline could not be verified"
+        const val FINAL_NOTIFICATION_PENDING_INTENT_CHANNEL_BASELINE_UNAVAILABLE =
+            "final notification channel baseline could not be verified"
+        const val FINAL_NOTIFICATION_PENDING_INTENT_ACTIVITY_CLEANUP_UNAVAILABLE =
+            "notification PendingIntent activity could not be closed"
+        const val FINAL_NOTIFICATION_PENDING_INTENT_DURABLE_BASELINE_UNAVAILABLE =
+            "final notification PendingIntent durable baseline could not be verified"
         const val UNEXPECTED_FAILURE = "emulator SAF fallback cancellation smoke failed"
         const val UNEXPECTED_SELECTION_FAILURE = "emulator SAF fallback selection smoke failed"
         const val UNEXPECTED_STALE_APPLY_FAILURE =
             "emulator SAF fallback route-loss/stale-Apply smoke failed"
+        const val UNEXPECTED_NOTIFICATION_PENDING_INTENT_FAILURE =
+            "emulator SAF fallback notification PendingIntent smoke failed"
+        const val UNEXPECTED_NOTIFICATION_CLEANUP_FAILURE =
+            "emulator exact synthetic notification cleanup failed"
     }
 }
