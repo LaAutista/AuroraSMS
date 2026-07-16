@@ -2,8 +2,13 @@
 
 package org.aurorasms.app
 
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
+import android.os.Process
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.semantics.SemanticsActions
@@ -20,11 +25,21 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ActivityScenario
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.pressBack
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.isRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.nio.file.FileVisitResult
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -38,7 +53,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.aurorasms.app.appearance.AppearanceController
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_APPLY_TEST_TAG
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_CANCEL_TEST_TAG
@@ -49,7 +68,10 @@ import org.aurorasms.app.appearance.SCOPED_APPEARANCE_SELECTOR_TEST_TAG
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_WALLPAPER_TEST_TAG
 import org.aurorasms.app.appearance.THEME_STUDIO_SCREEN_TEST_TAG
 import org.aurorasms.app.appearance.wallpaper.DurableWallpaperQuotaResult
+import org.aurorasms.app.appearance.wallpaper.AppWallpaperAssignment
+import org.aurorasms.app.appearance.wallpaper.ManagedWallpaperFileClassification
 import org.aurorasms.app.appearance.wallpaper.ManagedWallpaperReconcileResult
+import org.aurorasms.app.appearance.wallpaper.ManagedWallpaperStore
 import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_APPLY_TEST_TAG
 import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_DIALOG_TEST_TAG
 import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_DIM_TEST_TAG
@@ -58,13 +80,17 @@ import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_FOCAL_Y_TEST_TAG
 import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_LOADING_TEST_TAG
 import org.aurorasms.app.appearance.wallpaper.SCOPED_WALLPAPER_RESET_TEST_TAG
 import org.aurorasms.app.appearance.wallpaper.WallpaperController
+import org.aurorasms.app.appearance.wallpaper.WallpaperApplyControllerResult
 import org.aurorasms.app.appearance.wallpaper.WallpaperImportResult
 import org.aurorasms.app.appearance.wallpaper.WallpaperInspectionResult
 import org.aurorasms.app.appearance.wallpaper.WallpaperLoadResult
 import org.aurorasms.app.appearance.wallpaper.WallpaperMediaFailure
 import org.aurorasms.app.appearance.wallpaper.WallpaperMediaStore
+import org.aurorasms.app.appearance.wallpaper.classifyManagedWallpaperFileName
+import org.aurorasms.app.appearance.wallpaper.wallpaperDerivativeFileName
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.SerializedDraftWriter
+import org.aurorasms.app.preview.BoundedMediaDecodeGate
 import org.aurorasms.core.index.AnchorWindowResult
 import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.core.index.IndexRunState
@@ -148,6 +174,7 @@ import org.aurorasms.feature.conversations.THREAD_MORE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.THREAD_LIST_TEST_TAG
 import org.aurorasms.feature.conversations.THREAD_SCREEN_TEST_TAG
 import org.junit.After
+import org.junit.Assume.assumeTrue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -168,6 +195,16 @@ class AuroraSmsRootAcceptanceTest {
     @After
     fun clearHarness() {
         AuroraSmsRootTestHarnessRegistry.clear()
+    }
+
+    @Test
+    fun verifiedConversationWallpaperSurvivesHostForceStopAndColdTargetProcessRelaunch() {
+        when (requireExplicitColdRestartPhase()) {
+            COLD_RESTART_PHASE_PREPARE -> prepareColdRestartWallpaper()
+            COLD_RESTART_PHASE_VERIFY -> verifyColdRestartWallpaper()
+            COLD_RESTART_PHASE_CLEANUP -> cleanupColdRestartWallpaper()
+            else -> throw AssertionError(COLD_RESTART_PHASE_INVALID)
+        }
     }
 
     @Test
@@ -568,6 +605,701 @@ class AuroraSmsRootAcceptanceTest {
         }
     }
 
+    private fun requireExplicitColdRestartPhase(): String {
+        val arguments = InstrumentationRegistry.getArguments()
+        val enabled = arguments.getString(COLD_RESTART_GATE_ARGUMENT)
+            ?.equals("true", ignoreCase = true) == true
+        assumeTrue(COLD_RESTART_GATE_REQUIRED, enabled)
+        assumeTrue(
+            COLD_RESTART_EMULATOR_REQUIRED,
+            Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish",
+        )
+        assumeTrue(
+            COLD_RESTART_API_REQUIRED,
+            Build.VERSION.SDK_INT == Build.VERSION_CODES.BAKLAVA,
+        )
+        return arguments.getString(COLD_RESTART_PHASE_ARGUMENT).orEmpty().also { phase ->
+            restartRequire(
+                phase == COLD_RESTART_PHASE_PREPARE ||
+                    phase == COLD_RESTART_PHASE_VERIFY ||
+                    phase == COLD_RESTART_PHASE_CLEANUP,
+                COLD_RESTART_PHASE_INVALID,
+            )
+        }
+    }
+
+    private fun prepareColdRestartWallpaper() {
+        val environment = coldRestartEnvironment()
+        val preferences = environment.context.getSharedPreferences(
+            COLD_RESTART_PREFERENCES,
+            Context.MODE_PRIVATE,
+        )
+        restartRequire(
+            coldRestartCheckpointState(environment.context) == null,
+            COLD_RESTART_STALE_CHECKPOINT,
+        )
+        restartRequire(
+            readColdRestartAssignment(environment.controller) == null,
+            COLD_RESTART_CONVERSATION_ASSIGNMENT_NOT_EMPTY,
+        )
+        val expectedMediaId = deriveColdRestartExpectedMediaId(environment.context)
+        val baselineFiles = coldRestartManagedFileNames(environment.context)
+        val baselineGrantCount = environment.context.contentResolver.persistedUriPermissions.size
+        val recovery = ColdRestartRecovery(
+            baselineFiles = baselineFiles,
+            baselineGrantCount = baselineGrantCount,
+            expectedMediaId = expectedMediaId,
+            preparedPid = Process.myPid(),
+            preparedStartUptimeMillis = Process.getStartUptimeMillis(),
+        )
+        restartRequire(
+            writeColdRestartRecovery(preferences, recovery),
+            COLD_RESTART_CHECKPOINT_WRITE_FAILED,
+        )
+        var pendingFileName: String? = null
+        var appliedAssignment: AppWallpaperAssignment? = null
+        var checkpointCommitted = false
+        try {
+            val applyResult = runBlocking {
+                withTimeout(COLD_RESTART_TIMEOUT_MILLIS) {
+                    environment.controller.apply(
+                        scope = SYNTHETIC_CONVERSATION_SCOPE,
+                        source = COLD_RESTART_SOURCE_URI,
+                        dimPermill = COLD_RESTART_DIM_PERMILL,
+                        focalXPermill = COLD_RESTART_FOCAL_X_PERMILL,
+                        focalYPermill = COLD_RESTART_FOCAL_Y_PERMILL,
+                        expectedRevision = null,
+                    )
+                }
+            }
+            restartRequire(
+                applyResult == WallpaperApplyControllerResult.Success,
+                COLD_RESTART_APPLY_FAILED,
+            )
+            val assignment = readColdRestartAssignment(environment.controller)
+                ?: throw AssertionError(COLD_RESTART_ASSIGNMENT_MISSING)
+            appliedAssignment = assignment
+            restartRequire(
+                assignment.scope == SYNTHETIC_CONVERSATION_SCOPE &&
+                    assignment.mediaId == recovery.expectedMediaId &&
+                    assignment.dimPermill == COLD_RESTART_DIM_PERMILL &&
+                    assignment.focalXPermill == COLD_RESTART_FOCAL_X_PERMILL &&
+                    assignment.focalYPermill == COLD_RESTART_FOCAL_Y_PERMILL,
+                COLD_RESTART_ASSIGNMENT_MISMATCH,
+            )
+            assertColdRestartManagedFiles(environment.context, baselineFiles, assignment.mediaId)
+            restartRequire(
+                environment.context.contentResolver.persistedUriPermissions.size == baselineGrantCount,
+                COLD_RESTART_GRANT_COUNT_CHANGED,
+            )
+            assertColdRestartWallpaperLoad(environment.controller, assignment)
+            val createdPendingFileName = createColdRestartPendingFile(environment.context)
+            pendingFileName = createdPendingFileName
+            val evidence = ColdRestartEvidence(
+                mediaId = assignment.mediaId,
+                revision = assignment.revision,
+                dimPermill = assignment.dimPermill,
+                focalXPermill = assignment.focalXPermill,
+                focalYPermill = assignment.focalYPermill,
+                baselineFiles = baselineFiles,
+                baselineGrantCount = baselineGrantCount,
+                pendingFileName = createdPendingFileName,
+                preparedPid = recovery.preparedPid,
+                preparedStartUptimeMillis = recovery.preparedStartUptimeMillis,
+                verifiedPid = null,
+                verifiedStartUptimeMillis = null,
+            )
+            checkpointCommitted = writeColdRestartEvidence(preferences, evidence)
+            restartRequire(checkpointCommitted, COLD_RESTART_CHECKPOINT_WRITE_FAILED)
+        } finally {
+            if (!checkpointCommitted) {
+                val restored = bestEffortRollbackColdRestartPrepare(
+                    environment,
+                    recovery,
+                    pendingFileName,
+                    appliedAssignment,
+                )
+                if (restored) preferences.edit().clear().commit()
+            }
+        }
+    }
+
+    private fun verifyColdRestartWallpaper() {
+        val environment = coldRestartEnvironment()
+        val evidence = readColdRestartEvidence(environment.context)
+            ?: throw AssertionError(COLD_RESTART_CHECKPOINT_MISSING)
+        val currentPid = Process.myPid()
+        val currentStartUptimeMillis = Process.getStartUptimeMillis()
+        restartRequire(
+            currentPid != evidence.preparedPid &&
+                currentStartUptimeMillis > evidence.preparedStartUptimeMillis,
+            COLD_RESTART_PROCESS_NOT_RESTARTED,
+        )
+        val assignment = readColdRestartAssignment(environment.controller)
+            ?: throw AssertionError(COLD_RESTART_ASSIGNMENT_MISSING)
+        assertColdRestartAssignment(evidence, assignment)
+        restartRequire(
+            evidence.pendingFileName !in coldRestartManagedFileNames(environment.context),
+            COLD_RESTART_PENDING_FILE_SURVIVED,
+        )
+        assertColdRestartManagedFiles(environment.context, evidence.baselineFiles, evidence.mediaId)
+        restartRequire(
+            environment.context.contentResolver.persistedUriPermissions.size ==
+                evidence.baselineGrantCount,
+            COLD_RESTART_GRANT_COUNT_CHANGED,
+        )
+        assertColdRestartWallpaperLoad(environment.controller, assignment)
+
+        val fixture = SyntheticFixture(wallpaperControllerOverride = environment.controller)
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+            openSyntheticThread()
+            waitForWallpaperPixels(COLD_RESTART_WALLPAPER_COLOR_ARGB, evidence.dimPermill)
+            restartRequire(
+                fixture.wallpapers.assignmentFor(SYNTHETIC_CONVERSATION_SCOPE) == null,
+                COLD_RESTART_SYNTHETIC_WALLPAPER_USED,
+            )
+        }
+
+        val preferences = environment.context.getSharedPreferences(
+            COLD_RESTART_PREFERENCES,
+            Context.MODE_PRIVATE,
+        )
+        restartRequire(
+            writeColdRestartEvidence(
+                preferences,
+                evidence.copy(
+                    verifiedPid = currentPid,
+                    verifiedStartUptimeMillis = currentStartUptimeMillis,
+                ),
+            ),
+            COLD_RESTART_CHECKPOINT_WRITE_FAILED,
+        )
+    }
+
+    private fun cleanupColdRestartWallpaper() {
+        val environment = coldRestartEnvironment()
+        val productionFailure = runCatching {
+            cleanupColdRestartProductionState(environment)
+        }.exceptionOrNull()
+        val isolatedRootCleared = deleteColdRestartExpectedMediaRoot(environment.context)
+        if (productionFailure != null) throw productionFailure
+        restartRequire(isolatedRootCleared, COLD_RESTART_EXPECTED_MEDIA_CLEANUP_FAILED)
+    }
+
+    private fun cleanupColdRestartProductionState(environment: ColdRestartEnvironment) {
+        val preferences = environment.context.getSharedPreferences(
+            COLD_RESTART_PREFERENCES,
+            Context.MODE_PRIVATE,
+        )
+        when (coldRestartCheckpointState(environment.context)) {
+            null -> return
+            COLD_RESTART_STATE_PREPARING -> {
+                val recovery = readColdRestartRecovery(environment.context)
+                cleanupColdRestartRecovery(environment, recovery)
+                restartRequire(
+                    preferences.edit().clear().commit(),
+                    COLD_RESTART_CHECKPOINT_CLEAR_FAILED,
+                )
+                return
+            }
+            COLD_RESTART_STATE_PREPARED,
+            COLD_RESTART_STATE_VERIFIED,
+            -> Unit
+            else -> throw AssertionError(COLD_RESTART_CHECKPOINT_INVALID)
+        }
+        val evidence = readColdRestartEvidence(environment.context)
+            ?: throw AssertionError(COLD_RESTART_CHECKPOINT_INVALID)
+        val assignment = readColdRestartAssignment(environment.controller)
+        if (assignment != null) {
+            assertColdRestartAssignment(evidence, assignment)
+            val resetResult = runBlocking {
+                withTimeout(COLD_RESTART_TIMEOUT_MILLIS) {
+                    environment.controller.reset(
+                        scope = SYNTHETIC_CONVERSATION_SCOPE,
+                        expectedRevision = evidence.revision,
+                    )
+                }
+            }
+            restartRequire(
+                resetResult == WallpaperApplyControllerResult.Success,
+                COLD_RESTART_RESET_FAILED,
+            )
+            restartRequire(
+                readColdRestartAssignment(environment.controller) == null,
+                COLD_RESTART_RESET_DID_NOT_CLEAR,
+            )
+        }
+        deleteColdRestartPendingFile(environment.context, evidence.pendingFileName)
+        restartRequire(
+            coldRestartManagedFileNames(environment.context) == evidence.baselineFiles,
+            COLD_RESTART_MANAGED_FILES_NOT_RESTORED,
+        )
+        restartRequire(
+            environment.context.contentResolver.persistedUriPermissions.size ==
+                evidence.baselineGrantCount,
+            COLD_RESTART_GRANT_COUNT_CHANGED,
+        )
+        restartRequire(preferences.edit().clear().commit(), COLD_RESTART_CHECKPOINT_CLEAR_FAILED)
+    }
+
+    private fun coldRestartEnvironment(): ColdRestartEnvironment {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val application = context as? AuroraSmsApplication
+            ?: throw AssertionError(COLD_RESTART_APPLICATION_MISSING)
+        val status = runBlocking {
+            withTimeoutOrNull(COLD_RESTART_TIMEOUT_MILLIS) {
+                application.container.stateStorageStatus.first { current ->
+                    current != StateStorageStatus.Opening
+                }
+            }
+        }
+        restartRequire(status == StateStorageStatus.Ready, COLD_RESTART_STATE_NOT_READY)
+        return ColdRestartEnvironment(context, application.container.wallpaperController)
+    }
+
+    private fun readColdRestartAssignment(controller: WallpaperController): AppWallpaperAssignment? =
+        runBlocking {
+            withTimeout(COLD_RESTART_TIMEOUT_MILLIS) {
+                controller.observe(SYNTHETIC_CONVERSATION_SCOPE).first { observation ->
+                    observation.ready
+                }
+            }
+        }.assignment
+
+    private fun assertColdRestartAssignment(
+        evidence: ColdRestartEvidence,
+        actual: AppWallpaperAssignment,
+    ) {
+        restartRequire(
+            actual == AppWallpaperAssignment(
+                scope = SYNTHETIC_CONVERSATION_SCOPE,
+                mediaId = evidence.mediaId,
+                dimPermill = evidence.dimPermill,
+                focalXPermill = evidence.focalXPermill,
+                focalYPermill = evidence.focalYPermill,
+                revision = evidence.revision,
+            ),
+            COLD_RESTART_ASSIGNMENT_MISMATCH,
+        )
+    }
+
+    private fun assertColdRestartManagedFiles(
+        context: Context,
+        baselineFiles: Set<String>,
+        mediaId: String,
+    ) {
+        val expectedFile = wallpaperDerivativeFileName(mediaId)
+            ?: throw AssertionError(COLD_RESTART_MANAGED_FILE_INVALID)
+        restartRequire(expectedFile !in baselineFiles, COLD_RESTART_MANAGED_FILE_NOT_NEW)
+        restartRequire(
+            coldRestartManagedFileNames(context) == baselineFiles + expectedFile,
+            COLD_RESTART_MANAGED_FILES_MISMATCH,
+        )
+        val classification = classifyManagedWallpaperFileName(expectedFile)
+        restartRequire(
+            classification is ManagedWallpaperFileClassification.Final &&
+                classification.mediaId == mediaId,
+            COLD_RESTART_MANAGED_FILE_INVALID,
+        )
+    }
+
+    private fun assertColdRestartWallpaperLoad(
+        controller: WallpaperController,
+        assignment: AppWallpaperAssignment,
+    ) {
+        val loaded = runBlocking {
+            withTimeout(COLD_RESTART_TIMEOUT_MILLIS) {
+                controller.loadFirstAvailable(listOf(assignment))
+            }
+        } ?: throw AssertionError(COLD_RESTART_MANAGED_FILE_UNAVAILABLE)
+        try {
+            restartRequire(loaded.assignment == assignment, COLD_RESTART_ASSIGNMENT_MISMATCH)
+            val bitmap = loaded.image.asAndroidBitmap()
+            val pixel = bitmap.getPixel(bitmap.width / 2, bitmap.height / 2)
+            restartRequire(
+                coldRestartColorChannelMatches(pixel shr 16, COLD_RESTART_WALLPAPER_COLOR_ARGB shr 16) &&
+                    coldRestartColorChannelMatches(pixel shr 8, COLD_RESTART_WALLPAPER_COLOR_ARGB shr 8) &&
+                    coldRestartColorChannelMatches(pixel, COLD_RESTART_WALLPAPER_COLOR_ARGB),
+                COLD_RESTART_MANAGED_FILE_PIXELS_MISMATCH,
+            )
+        } finally {
+            loaded.release()
+        }
+    }
+
+    private fun coldRestartColorChannelMatches(actual: Int, expected: Int): Boolean =
+        kotlin.math.abs((actual and 0xff) - (expected and 0xff)) <= COLD_RESTART_COLOR_TOLERANCE
+
+    private fun coldRestartManagedFileNames(context: Context): Set<String> {
+        val directory = File(context.noBackupFilesDir, "appearance/wallpapers")
+        if (!directory.exists()) return emptySet()
+        restartRequire(directory.isDirectory, COLD_RESTART_MANAGED_DIRECTORY_INVALID)
+        return directory.list()?.toSet()
+            ?: throw AssertionError(COLD_RESTART_MANAGED_DIRECTORY_UNAVAILABLE)
+    }
+
+    private fun coldRestartCheckpointState(context: Context): String? {
+        val preferences = context.getSharedPreferences(
+            COLD_RESTART_PREFERENCES,
+            Context.MODE_PRIVATE,
+        )
+        val version = preferences.getInt(COLD_RESTART_KEY_VERSION, 0)
+        if (version == 0) {
+            restartRequire(preferences.all.isEmpty(), COLD_RESTART_CHECKPOINT_INVALID)
+            return null
+        }
+        restartRequire(version == COLD_RESTART_VERSION, COLD_RESTART_CHECKPOINT_INVALID)
+        return preferences.getString(COLD_RESTART_KEY_STATE, null)
+            ?: throw AssertionError(COLD_RESTART_CHECKPOINT_INVALID)
+    }
+
+    private fun readColdRestartRecovery(context: Context): ColdRestartRecovery {
+        restartRequire(
+            coldRestartCheckpointState(context) == COLD_RESTART_STATE_PREPARING,
+            COLD_RESTART_CHECKPOINT_INVALID,
+        )
+        val preferences = context.getSharedPreferences(
+            COLD_RESTART_PREFERENCES,
+            Context.MODE_PRIVATE,
+        )
+        val recovery = ColdRestartRecovery(
+            baselineFiles = preferences.getStringSet(COLD_RESTART_KEY_BASELINE_FILES, null)
+                ?.toSet()
+                ?: throw AssertionError(COLD_RESTART_CHECKPOINT_INVALID),
+            baselineGrantCount = preferences.getInt(COLD_RESTART_KEY_BASELINE_GRANTS, -1),
+            expectedMediaId = preferences.getString(COLD_RESTART_KEY_EXPECTED_MEDIA_ID, null)
+                ?: throw AssertionError(COLD_RESTART_CHECKPOINT_INVALID),
+            preparedPid = preferences.getInt(COLD_RESTART_KEY_PREPARED_PID, -1),
+            preparedStartUptimeMillis = preferences.getLong(
+                COLD_RESTART_KEY_PREPARED_START_UPTIME,
+                -1L,
+            ),
+        )
+        restartRequire(
+            recovery.baselineGrantCount >= 0 &&
+                runCatching {
+                    AppearanceWallpaperMediaId.fromPrivateStorageToken(recovery.expectedMediaId)
+                }.isSuccess &&
+                recovery.preparedPid > 0 &&
+                recovery.preparedStartUptimeMillis >= 0L,
+            COLD_RESTART_CHECKPOINT_INVALID,
+        )
+        return recovery
+    }
+
+    private fun writeColdRestartRecovery(
+        preferences: android.content.SharedPreferences,
+        recovery: ColdRestartRecovery,
+    ): Boolean = preferences.edit()
+        .clear()
+        .putInt(COLD_RESTART_KEY_VERSION, COLD_RESTART_VERSION)
+        .putString(COLD_RESTART_KEY_STATE, COLD_RESTART_STATE_PREPARING)
+        .putStringSet(COLD_RESTART_KEY_BASELINE_FILES, recovery.baselineFiles)
+        .putInt(COLD_RESTART_KEY_BASELINE_GRANTS, recovery.baselineGrantCount)
+        .putString(COLD_RESTART_KEY_EXPECTED_MEDIA_ID, recovery.expectedMediaId)
+        .putInt(COLD_RESTART_KEY_PREPARED_PID, recovery.preparedPid)
+        .putLong(COLD_RESTART_KEY_PREPARED_START_UPTIME, recovery.preparedStartUptimeMillis)
+        .commit()
+
+    private fun cleanupColdRestartRecovery(
+        environment: ColdRestartEnvironment,
+        recovery: ColdRestartRecovery,
+        expectedAssignment: AppWallpaperAssignment? = null,
+    ) {
+        val assignment = readColdRestartAssignment(environment.controller)
+        if (assignment != null) {
+            if (expectedAssignment != null) {
+                restartRequire(
+                    assignment == expectedAssignment,
+                    COLD_RESTART_RECOVERY_ASSIGNMENT_MISMATCH,
+                )
+            } else {
+                restartRequire(
+                    assignment.scope == SYNTHETIC_CONVERSATION_SCOPE &&
+                        assignment.mediaId == recovery.expectedMediaId &&
+                        assignment.dimPermill == COLD_RESTART_DIM_PERMILL &&
+                        assignment.focalXPermill == COLD_RESTART_FOCAL_X_PERMILL &&
+                        assignment.focalYPermill == COLD_RESTART_FOCAL_Y_PERMILL,
+                    COLD_RESTART_RECOVERY_ASSIGNMENT_MISMATCH,
+                )
+            }
+            val resetResult = runBlocking {
+                withTimeout(COLD_RESTART_TIMEOUT_MILLIS) {
+                    environment.controller.reset(
+                        SYNTHETIC_CONVERSATION_SCOPE,
+                        assignment.revision,
+                    )
+                }
+            }
+            restartRequire(
+                resetResult == WallpaperApplyControllerResult.Success,
+                COLD_RESTART_RESET_FAILED,
+            )
+        }
+        val reconciled = runBlocking {
+            withTimeout(COLD_RESTART_TIMEOUT_MILLIS) {
+                environment.controller.reconcileManagedFiles()
+            }
+        }
+        restartRequire(reconciled, COLD_RESTART_RECOVERY_RECONCILE_FAILED)
+        deleteColdRestartPendingFile(environment.context, COLD_RESTART_PENDING_FILE_NAME)
+        restartRequire(
+            readColdRestartAssignment(environment.controller) == null,
+            COLD_RESTART_RESET_DID_NOT_CLEAR,
+        )
+        restartRequire(
+            coldRestartManagedFileNames(environment.context) == recovery.baselineFiles,
+            COLD_RESTART_MANAGED_FILES_NOT_RESTORED,
+        )
+        restartRequire(
+            environment.context.contentResolver.persistedUriPermissions.size ==
+                recovery.baselineGrantCount,
+            COLD_RESTART_GRANT_COUNT_CHANGED,
+        )
+    }
+
+    private fun createColdRestartPendingFile(context: Context): String {
+        val directory = File(context.noBackupFilesDir, "appearance/wallpapers")
+        restartRequire(directory.isDirectory, COLD_RESTART_MANAGED_DIRECTORY_INVALID)
+        val fileName = COLD_RESTART_PENDING_FILE_NAME
+        restartRequire(
+            classifyManagedWallpaperFileName(fileName) is ManagedWallpaperFileClassification.Pending,
+            COLD_RESTART_PENDING_FILE_INVALID,
+        )
+        val file = File(directory, fileName)
+        restartRequire(!file.exists(), COLD_RESTART_PENDING_FILE_ALREADY_EXISTS)
+        var completed = false
+        try {
+            FileOutputStream(file).use { output ->
+                output.write(COLD_RESTART_PENDING_BYTES)
+                output.fd.sync()
+            }
+            restartRequire(
+                Files.isRegularFile(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS),
+                COLD_RESTART_PENDING_FILE_WRITE_FAILED,
+            )
+            completed = true
+            return fileName
+        } finally {
+            if (!completed) file.delete()
+        }
+    }
+
+    private fun deleteColdRestartPendingFile(context: Context, fileName: String) {
+        restartRequire(
+            fileName == COLD_RESTART_PENDING_FILE_NAME &&
+                classifyManagedWallpaperFileName(fileName) is
+                ManagedWallpaperFileClassification.Pending,
+            COLD_RESTART_PENDING_FILE_INVALID,
+        )
+        val directory = File(context.noBackupFilesDir, "appearance/wallpapers")
+        val file = File(directory, fileName)
+        if (!file.exists()) return
+        restartRequire(
+            Files.isRegularFile(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS),
+            COLD_RESTART_PENDING_FILE_INVALID,
+        )
+        restartRequire(file.delete(), COLD_RESTART_PENDING_FILE_DELETE_FAILED)
+    }
+
+    private fun readColdRestartEvidence(context: Context): ColdRestartEvidence? {
+        val checkpointState = coldRestartCheckpointState(context) ?: return null
+        restartRequire(
+            checkpointState == COLD_RESTART_STATE_PREPARED ||
+                checkpointState == COLD_RESTART_STATE_VERIFIED,
+            COLD_RESTART_CHECKPOINT_INVALID,
+        )
+        val preferences = context.getSharedPreferences(
+            COLD_RESTART_PREFERENCES,
+            Context.MODE_PRIVATE,
+        )
+        val mediaId = preferences.getString(COLD_RESTART_KEY_MEDIA_ID, null)
+            ?: throw AssertionError(COLD_RESTART_CHECKPOINT_INVALID)
+        val baselineFiles = preferences.getStringSet(COLD_RESTART_KEY_BASELINE_FILES, null)
+            ?.toSet()
+            ?: throw AssertionError(COLD_RESTART_CHECKPOINT_INVALID)
+        val evidence = ColdRestartEvidence(
+            mediaId = mediaId,
+            revision = preferences.getLong(COLD_RESTART_KEY_REVISION, -1L),
+            dimPermill = preferences.getInt(COLD_RESTART_KEY_DIM, -1),
+            focalXPermill = preferences.getInt(COLD_RESTART_KEY_FOCAL_X, -1),
+            focalYPermill = preferences.getInt(COLD_RESTART_KEY_FOCAL_Y, -1),
+            baselineFiles = baselineFiles,
+            baselineGrantCount = preferences.getInt(COLD_RESTART_KEY_BASELINE_GRANTS, -1),
+            pendingFileName = preferences.getString(COLD_RESTART_KEY_PENDING_FILE, null)
+                ?: throw AssertionError(COLD_RESTART_CHECKPOINT_INVALID),
+            preparedPid = preferences.getInt(COLD_RESTART_KEY_PREPARED_PID, -1),
+            preparedStartUptimeMillis = preferences.getLong(
+                COLD_RESTART_KEY_PREPARED_START_UPTIME,
+                -1L,
+            ),
+            verifiedPid = preferences.getInt(COLD_RESTART_KEY_VERIFIED_PID, -1)
+                .takeIf { it > 0 },
+            verifiedStartUptimeMillis = preferences.getLong(
+                COLD_RESTART_KEY_VERIFIED_START_UPTIME,
+                -1L,
+            ).takeIf { it >= 0L },
+        )
+        restartRequire(
+            runCatching { AppearanceWallpaperMediaId.fromPrivateStorageToken(evidence.mediaId) }
+                .isSuccess &&
+                evidence.revision > 0L &&
+                evidence.dimPermill in 0..1_000 &&
+                evidence.focalXPermill in 0..1_000 &&
+                evidence.focalYPermill in 0..1_000 &&
+                evidence.baselineGrantCount >= 0 &&
+                evidence.preparedPid > 0 &&
+                evidence.preparedStartUptimeMillis >= 0L &&
+                evidence.pendingFileName == COLD_RESTART_PENDING_FILE_NAME &&
+                classifyManagedWallpaperFileName(evidence.pendingFileName) is
+                    ManagedWallpaperFileClassification.Pending &&
+                ((evidence.verifiedPid == null) ==
+                    (evidence.verifiedStartUptimeMillis == null)) &&
+                (checkpointState == COLD_RESTART_STATE_VERIFIED) ==
+                    (evidence.verifiedPid != null),
+            COLD_RESTART_CHECKPOINT_INVALID,
+        )
+        return evidence
+    }
+
+    private fun writeColdRestartEvidence(
+        preferences: android.content.SharedPreferences,
+        evidence: ColdRestartEvidence,
+    ): Boolean = preferences.edit()
+        .clear()
+        .putInt(COLD_RESTART_KEY_VERSION, COLD_RESTART_VERSION)
+        .putString(
+            COLD_RESTART_KEY_STATE,
+            if (evidence.verifiedPid == null) {
+                COLD_RESTART_STATE_PREPARED
+            } else {
+                COLD_RESTART_STATE_VERIFIED
+            },
+        )
+        .putString(COLD_RESTART_KEY_MEDIA_ID, evidence.mediaId)
+        .putLong(COLD_RESTART_KEY_REVISION, evidence.revision)
+        .putInt(COLD_RESTART_KEY_DIM, evidence.dimPermill)
+        .putInt(COLD_RESTART_KEY_FOCAL_X, evidence.focalXPermill)
+        .putInt(COLD_RESTART_KEY_FOCAL_Y, evidence.focalYPermill)
+        .putStringSet(COLD_RESTART_KEY_BASELINE_FILES, evidence.baselineFiles)
+        .putInt(COLD_RESTART_KEY_BASELINE_GRANTS, evidence.baselineGrantCount)
+        .putString(COLD_RESTART_KEY_PENDING_FILE, evidence.pendingFileName)
+        .putInt(COLD_RESTART_KEY_PREPARED_PID, evidence.preparedPid)
+        .putLong(COLD_RESTART_KEY_PREPARED_START_UPTIME, evidence.preparedStartUptimeMillis)
+        .putInt(COLD_RESTART_KEY_VERIFIED_PID, evidence.verifiedPid ?: -1)
+        .putLong(
+            COLD_RESTART_KEY_VERIFIED_START_UPTIME,
+            evidence.verifiedStartUptimeMillis ?: -1L,
+        )
+        .commit()
+
+    private fun bestEffortRollbackColdRestartPrepare(
+        environment: ColdRestartEnvironment,
+        recovery: ColdRestartRecovery,
+        pendingFileName: String?,
+        expectedAssignment: AppWallpaperAssignment?,
+    ): Boolean = try {
+        pendingFileName?.let { pending ->
+            restartRequire(
+                pending == COLD_RESTART_PENDING_FILE_NAME,
+                COLD_RESTART_PENDING_FILE_INVALID,
+            )
+        }
+        cleanupColdRestartRecovery(
+            environment = environment,
+            recovery = recovery,
+            expectedAssignment = expectedAssignment,
+        )
+        true
+    } catch (_: Throwable) {
+        // The pre-Apply recovery journal remains for the host runner's exact cleanup phase.
+        false
+    }
+
+    private fun restartRequire(condition: Boolean, message: String) {
+        if (!condition) throw AssertionError(message)
+    }
+
+    private fun deriveColdRestartExpectedMediaId(context: Context): String {
+        restartRequire(
+            deleteColdRestartExpectedMediaRoot(context),
+            COLD_RESTART_EXPECTED_MEDIA_CLEANUP_FAILED,
+        )
+        val root = coldRestartExpectedMediaRoot(context)
+        restartRequire(
+            runCatching { Files.createDirectory(root.toPath()) }.isSuccess,
+            COLD_RESTART_EXPECTED_MEDIA_DIRECTORY_FAILED,
+        )
+        val store = ManagedWallpaperStore(
+            context = ColdRestartIsolatedStoreContext(context, root),
+            decodeGate = BoundedMediaDecodeGate(permits = 1),
+        )
+        try {
+            val imported = runBlocking {
+                withTimeout(COLD_RESTART_TIMEOUT_MILLIS) {
+                    store.import(COLD_RESTART_SOURCE_URI, emptySet())
+                }
+            } as? WallpaperImportResult.Ready
+                ?: throw AssertionError(COLD_RESTART_EXPECTED_MEDIA_DERIVATION_FAILED)
+            restartRequire(imported.created, COLD_RESTART_EXPECTED_MEDIA_DERIVATION_FAILED)
+            restartRequire(
+                runCatching {
+                    AppearanceWallpaperMediaId.fromPrivateStorageToken(imported.mediaId)
+                }.isSuccess,
+                COLD_RESTART_EXPECTED_MEDIA_DERIVATION_FAILED,
+            )
+            return imported.mediaId
+        } finally {
+            val reconciled = runCatching {
+                runBlocking {
+                    withTimeout(COLD_RESTART_TIMEOUT_MILLIS) {
+                        store.reconcile(emptySet())
+                    }
+                }
+            }.getOrNull()
+            val isolatedRootCleared = deleteColdRestartExpectedMediaRoot(context)
+            restartRequire(
+                reconciled == ManagedWallpaperReconcileResult.COMPLETE &&
+                    isolatedRootCleared,
+                COLD_RESTART_EXPECTED_MEDIA_CLEANUP_FAILED,
+            )
+        }
+    }
+
+    private fun coldRestartExpectedMediaRoot(context: Context): File =
+        File(context.cacheDir, COLD_RESTART_EXPECTED_MEDIA_DIRECTORY)
+
+    private fun deleteColdRestartExpectedMediaRoot(context: Context): Boolean {
+        val root = coldRestartExpectedMediaRoot(context)
+        val path = root.toPath()
+        if (Files.notExists(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return true
+        return runCatching {
+            Files.walkFileTree(
+                path,
+                object : SimpleFileVisitor<Path>() {
+                    override fun visitFile(
+                        file: Path,
+                        attrs: BasicFileAttributes,
+                    ): FileVisitResult {
+                        Files.delete(file)
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    override fun postVisitDirectory(
+                        dir: Path,
+                        exc: IOException?,
+                    ): FileVisitResult {
+                        if (exc != null) throw exc
+                        Files.delete(dir)
+                        return FileVisitResult.CONTINUE
+                    }
+                },
+            )
+            Files.notExists(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+        }.getOrDefault(false)
+    }
+
     private fun openSyntheticThread() {
         waitForTag(INBOX_SCREEN_TEST_TAG)
         compose.onNodeWithTag(org.aurorasms.feature.conversations.INBOX_SEARCH_ACTION_TEST_TAG)
@@ -660,7 +1392,54 @@ class AuroraSmsRootAcceptanceTest {
     }
 }
 
-private class SyntheticFixture : AutoCloseable {
+private data class ColdRestartEnvironment(
+    val context: Context,
+    val controller: WallpaperController,
+) {
+    override fun toString(): String = "ColdRestartEnvironment(REDACTED)"
+}
+
+private data class ColdRestartRecovery(
+    val baselineFiles: Set<String>,
+    val baselineGrantCount: Int,
+    val expectedMediaId: String,
+    val preparedPid: Int,
+    val preparedStartUptimeMillis: Long,
+) {
+    override fun toString(): String = "ColdRestartRecovery(REDACTED)"
+}
+
+private class ColdRestartIsolatedStoreContext(
+    base: Context,
+    private val isolatedNoBackupRoot: File,
+) : ContextWrapper(base) {
+    override fun getApplicationContext(): Context = this
+
+    override fun getNoBackupFilesDir(): File = isolatedNoBackupRoot
+
+    override fun toString(): String = "ColdRestartIsolatedStoreContext(REDACTED)"
+}
+
+private data class ColdRestartEvidence(
+    val mediaId: String,
+    val revision: Long,
+    val dimPermill: Int,
+    val focalXPermill: Int,
+    val focalYPermill: Int,
+    val baselineFiles: Set<String>,
+    val baselineGrantCount: Int,
+    val pendingFileName: String,
+    val preparedPid: Int,
+    val preparedStartUptimeMillis: Long,
+    val verifiedPid: Int?,
+    val verifiedStartUptimeMillis: Long?,
+) {
+    override fun toString(): String = "ColdRestartEvidence(REDACTED)"
+}
+
+private class SyntheticFixture(
+    wallpaperControllerOverride: WallpaperController? = null,
+) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val conversations = SyntheticConversationRepository()
     val index = SyntheticMessageIndex()
@@ -668,7 +1447,8 @@ private class SyntheticFixture : AutoCloseable {
     val appearance = InMemoryAppearanceRepository()
     val wallpapers = InMemoryWallpaperRepository()
     val wallpaperStore = SyntheticWallpaperMediaStore()
-    private val wallpaperController = WallpaperController(wallpapers, wallpaperStore)
+    private val wallpaperController = wallpaperControllerOverride
+        ?: WallpaperController(wallpapers, wallpaperStore)
     private val services = SyntheticRootServices(
         scope = scope,
         conversations = conversations,
@@ -1318,4 +2098,103 @@ private const val UPDATED_DIM = 720
 private const val WALLPAPER_PIXEL_TOLERANCE = 0.035f
 private const val WALLPAPER_PIXEL_SAMPLE_STRIDE = 8
 private const val MINIMUM_WALLPAPER_PIXEL_SAMPLES = 24
+private const val COLD_RESTART_GATE_ARGUMENT = "auroraEmulatorWallpaperColdRestart"
+private const val COLD_RESTART_PHASE_ARGUMENT = "auroraEmulatorWallpaperColdRestartPhase"
+private const val COLD_RESTART_PHASE_PREPARE = "prepare"
+private const val COLD_RESTART_PHASE_VERIFY = "verify"
+private const val COLD_RESTART_PHASE_CLEANUP = "cleanup"
+private const val COLD_RESTART_PREFERENCES = "aurora_wallpaper_cold_restart_evidence"
+private const val COLD_RESTART_VERSION = 2
+private const val COLD_RESTART_KEY_VERSION = "version"
+private const val COLD_RESTART_KEY_STATE = "state"
+private const val COLD_RESTART_STATE_PREPARING = "preparing"
+private const val COLD_RESTART_STATE_PREPARED = "prepared"
+private const val COLD_RESTART_STATE_VERIFIED = "verified"
+private const val COLD_RESTART_KEY_MEDIA_ID = "media_id"
+private const val COLD_RESTART_KEY_REVISION = "revision"
+private const val COLD_RESTART_KEY_DIM = "dim"
+private const val COLD_RESTART_KEY_FOCAL_X = "focal_x"
+private const val COLD_RESTART_KEY_FOCAL_Y = "focal_y"
+private const val COLD_RESTART_KEY_BASELINE_FILES = "baseline_files"
+private const val COLD_RESTART_KEY_BASELINE_GRANTS = "baseline_grants"
+private const val COLD_RESTART_KEY_EXPECTED_MEDIA_ID = "expected_media_id"
+private const val COLD_RESTART_KEY_PENDING_FILE = "pending_file"
+private const val COLD_RESTART_KEY_PREPARED_PID = "prepared_pid"
+private const val COLD_RESTART_KEY_PREPARED_START_UPTIME = "prepared_start_uptime"
+private const val COLD_RESTART_KEY_VERIFIED_PID = "verified_pid"
+private const val COLD_RESTART_KEY_VERIFIED_START_UPTIME = "verified_start_uptime"
+private const val COLD_RESTART_DIM_PERMILL = 470
+private const val COLD_RESTART_FOCAL_X_PERMILL = 230
+private const val COLD_RESTART_FOCAL_Y_PERMILL = 770
+private const val COLD_RESTART_COLOR_TOLERANCE = 20
+private const val COLD_RESTART_TIMEOUT_MILLIS = 30_000L
+private const val COLD_RESTART_PENDING_FILE_NAME =
+    ".pending-00000000-0000-0000-0000-000000000002"
+private const val COLD_RESTART_EXPECTED_MEDIA_DIRECTORY =
+    "aurora-wallpaper-cold-restart-expected"
+private val COLD_RESTART_SOURCE_URI =
+    Uri.parse("content://org.aurorasms.app.wallpaper.testprovider/cold-restart.png")
+private val COLD_RESTART_WALLPAPER_COLOR_ARGB = 0xff2457d6.toInt()
+private val COLD_RESTART_PENDING_BYTES = byteArrayOf(0x41)
+private const val COLD_RESTART_GATE_REQUIRED = "cold restart wallpaper gate was not enabled"
+private const val COLD_RESTART_EMULATOR_REQUIRED = "cold restart wallpaper evidence requires an emulator"
+private const val COLD_RESTART_API_REQUIRED = "cold restart wallpaper evidence requires API 36"
+private const val COLD_RESTART_PHASE_INVALID = "cold restart wallpaper phase was invalid"
+private const val COLD_RESTART_APPLICATION_MISSING = "AuroraSMS application was unavailable"
+private const val COLD_RESTART_STATE_NOT_READY = "AuroraSMS state storage did not become ready"
+private const val COLD_RESTART_STALE_CHECKPOINT = "cold restart wallpaper checkpoint already exists"
+private const val COLD_RESTART_CONVERSATION_ASSIGNMENT_NOT_EMPTY =
+    "cold restart conversation wallpaper baseline was not empty"
+private const val COLD_RESTART_APPLY_FAILED = "cold restart wallpaper Apply failed"
+private const val COLD_RESTART_ASSIGNMENT_MISSING = "cold restart wallpaper assignment was missing"
+private const val COLD_RESTART_ASSIGNMENT_MISMATCH = "cold restart wallpaper assignment changed"
+private const val COLD_RESTART_GRANT_COUNT_CHANGED = "cold restart persisted URI grant count changed"
+private const val COLD_RESTART_CHECKPOINT_WRITE_FAILED =
+    "cold restart wallpaper checkpoint could not be written"
+private const val COLD_RESTART_CHECKPOINT_MISSING = "cold restart wallpaper checkpoint was missing"
+private const val COLD_RESTART_CHECKPOINT_INVALID = "cold restart wallpaper checkpoint was invalid"
+private const val COLD_RESTART_CHECKPOINT_CLEAR_FAILED =
+    "cold restart wallpaper checkpoint could not be cleared"
+private const val COLD_RESTART_EXPECTED_MEDIA_DIRECTORY_FAILED =
+    "cold restart expected media directory could not be created"
+private const val COLD_RESTART_EXPECTED_MEDIA_DERIVATION_FAILED =
+    "cold restart expected media identity could not be derived"
+private const val COLD_RESTART_EXPECTED_MEDIA_CLEANUP_FAILED =
+    "cold restart expected media directory could not be cleared"
+private const val COLD_RESTART_PROCESS_NOT_RESTARTED =
+    "cold restart verification reused the preparation process"
+private const val COLD_RESTART_RESET_FAILED = "cold restart wallpaper Reset failed"
+private const val COLD_RESTART_RESET_DID_NOT_CLEAR = "cold restart wallpaper Reset did not clear"
+private const val COLD_RESTART_MANAGED_DIRECTORY_INVALID =
+    "cold restart managed wallpaper directory was invalid"
+private const val COLD_RESTART_MANAGED_DIRECTORY_UNAVAILABLE =
+    "cold restart managed wallpaper directory was unavailable"
+private const val COLD_RESTART_MANAGED_FILE_INVALID =
+    "cold restart managed wallpaper file was invalid"
+private const val COLD_RESTART_MANAGED_FILE_NOT_NEW =
+    "cold restart managed wallpaper file was not test-owned"
+private const val COLD_RESTART_MANAGED_FILES_MISMATCH =
+    "cold restart managed wallpaper file set changed"
+private const val COLD_RESTART_MANAGED_FILES_NOT_RESTORED =
+    "cold restart managed wallpaper baseline was not restored"
+private const val COLD_RESTART_MANAGED_FILE_UNAVAILABLE =
+    "cold restart managed wallpaper could not be loaded"
+private const val COLD_RESTART_MANAGED_FILE_PIXELS_MISMATCH =
+    "cold restart managed wallpaper pixels were unexpected"
+private const val COLD_RESTART_PENDING_FILE_INVALID =
+    "cold restart pending wallpaper fixture was invalid"
+private const val COLD_RESTART_PENDING_FILE_WRITE_FAILED =
+    "cold restart pending wallpaper fixture could not be written"
+private const val COLD_RESTART_PENDING_FILE_ALREADY_EXISTS =
+    "cold restart pending wallpaper fixture already existed"
+private const val COLD_RESTART_PENDING_FILE_DELETE_FAILED =
+    "cold restart pending wallpaper fixture could not be deleted"
+private const val COLD_RESTART_PENDING_FILE_SURVIVED =
+    "startup reconciliation did not remove the cold restart pending fixture"
+private const val COLD_RESTART_RECOVERY_ASSIGNMENT_MISMATCH =
+    "cold restart recovery refused an unrelated assignment"
+private const val COLD_RESTART_RECOVERY_RECONCILE_FAILED =
+    "cold restart recovery could not reconcile managed files"
+private const val COLD_RESTART_SYNTHETIC_WALLPAPER_USED =
+    "cold restart root renderer used the synthetic wallpaper repository"
 private const val TIMEOUT_MILLIS = 10_000L

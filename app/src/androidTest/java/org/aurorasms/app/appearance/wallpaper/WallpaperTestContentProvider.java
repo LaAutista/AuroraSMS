@@ -38,6 +38,7 @@ public final class WallpaperTestContentProvider extends ContentProvider {
         String path = uri.getLastPathSegment();
         if (
                 "valid.png".equals(path)
+                        || "cold-restart.png".equals(path)
                         || "rotated.png".equals(path)
                         || "animated.png".equals(path)
                         || "maximum-noise.png".equals(path)
@@ -120,7 +121,9 @@ public final class WallpaperTestContentProvider extends ContentProvider {
         }
 
         byte[] bytes;
-        if (
+        if ("cold-restart.png".equals(path)) {
+            bytes = solidColorBitmap(COLD_RESTART_COLOR_ARGB);
+        } else if (
                 "valid.png".equals(path)
                         || "mismatch.png".equals(path)
                         || "mime-exact.png".equals(path)
@@ -342,6 +345,21 @@ public final class WallpaperTestContentProvider extends ContentProvider {
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             if (!bitmap.compress(format, quality, output)) {
                 throw new FileNotFoundException("Unable to encode fixture");
+            }
+            return output.toByteArray();
+        } catch (IOException impossible) {
+            throw new AssertionError(impossible);
+        } finally {
+            bitmap.recycle();
+        }
+    }
+
+    private static byte[] solidColorBitmap(int colorArgb) throws FileNotFoundException {
+        Bitmap bitmap = Bitmap.createBitmap(40, 20, Bitmap.Config.ARGB_8888);
+        bitmap.eraseColor(colorArgb);
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                throw new FileNotFoundException("Unable to encode solid fixture");
             }
             return output.toByteArray();
         } catch (IOException impossible) {
@@ -709,6 +727,7 @@ public final class WallpaperTestContentProvider extends ContentProvider {
     private static final int PNG_IEND_CHUNK_BYTES = 12;
     private static final int MAXIMUM_MIME_CHARACTERS = 256;
     private static final int MAXIMUM_FIXTURE_EDGE = 2_048;
+    private static final int COLD_RESTART_COLOR_ARGB = 0xff2457d6;
     private static byte[] edgeExactPng;
     private static byte[] edgeOverPng;
     private static byte[] pixelsExactPng;
