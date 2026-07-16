@@ -39,16 +39,19 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.aurorasms.app.AuroraSmsApplication
 import org.aurorasms.app.MainActivity
+import org.aurorasms.app.R
 import org.aurorasms.app.StateStorageStatus
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_CANCEL_TEST_TAG
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_DIALOG_TEST_TAG
 import org.aurorasms.app.appearance.SCOPED_APPEARANCE_WALLPAPER_TEST_TAG
+import org.aurorasms.app.message.AppNotificationIntentFactory
 import org.aurorasms.core.state.AppearanceScope
 import org.aurorasms.core.state.AppearanceScreenScope
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.feature.conversations.CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_MORE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_SCREEN_TEST_TAG
+import org.aurorasms.feature.conversations.THREAD_SCREEN_TEST_TAG
 import org.junit.Assume.assumeTrue
 import org.junit.AssumptionViolatedException
 import org.junit.Test
@@ -58,9 +61,9 @@ import org.junit.runner.RunWith
  * Owner-invoked API 26 AOSP smoke for the AndroidX Photo Picker contract's SAF fallback.
  *
  * The cancellation method selects no document and never traverses DocumentsUI content. The
- * separately gated, emulator-only selection method opens only one exact test-APK SAF root and one
+ * separately gated, emulator-only selection journeys open only one exact test-APK SAF root and one
  * exact synthetic document. Unmatched visible titles are neither logged nor acted on, and no
- * shared-storage content is opened. Both methods use the real MainActivity editor and production
+ * shared-storage content is opened. Every method uses the real MainActivity editor and production
  * AndroidX picker contract.
  */
 @RunWith(AndroidJUnit4::class)
@@ -344,6 +347,9 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
             waitForAppTagToDisappear(activeAutomation, SCOPED_APPEARANCE_DIALOG_TEST_TAG)
             waitForAppTag(activeAutomation, INBOX_SCREEN_TEST_TAG).recycleSafely()
             assertSelectionBaselineRestored(activeController, context, durableBaseline)
+            if (readAppearanceRevisionSequence(context) != durableBaseline.revisionSequence + 1L) {
+                failFixed(STALE_APPLY_RESET_REVISION_UNEXPECTED)
+            }
 
             instrumentation.sendStatus(
                 SELECTION_SENTINEL_STATUS_CODE,
@@ -400,6 +406,271 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         }
     }
 
+    @Test
+    fun realGlobalThreadSafFallbackRouteLossAndStaleApplyPreserveAuthority() {
+        requireExplicitStaleApplyGate()
+        assumeTrue(API_26_STALE_APPLY_REQUIRED, Build.VERSION.SDK_INT == Build.VERSION_CODES.O)
+
+        var automation: UiAutomation? = null
+        var originalServiceFlags: Int? = null
+        var scenario: ActivityScenario<MainActivity>? = null
+        var controller: WallpaperController? = null
+        var baseline: SelectionBaseline? = null
+        var concurrentTestAssignment: AppWallpaperAssignment? = null
+        var concurrentApplySucceeded = false
+
+        try {
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val activeAutomation = instrumentation.getUiAutomation(
+                UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES,
+            )
+            automation = activeAutomation
+            originalServiceFlags = activeAutomation.serviceInfo.flags
+            activeAutomation.serviceInfo = activeAutomation.serviceInfo.apply {
+                flags = flags or
+                    AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            }
+
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val application = context as? AuroraSmsApplication
+                ?: failFixed(APPLICATION_REQUIRED)
+            awaitStateStorageReady(application)
+            assertExactSafFallbackContract(context)
+            assertSyntheticDocumentsProviderRegistered(context)
+            resetSyntheticDocumentState(context)
+            assertExactSyntheticDocumentUri()
+
+            val activeController = application.container.wallpaperController
+            controller = activeController
+            val launchIntent = Intent(context, MainActivity::class.java)
+                .setAction(Intent.ACTION_MAIN)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            val activeScenario = ActivityScenario.launch<MainActivity>(launchIntent)
+            scenario = activeScenario
+
+            activeScenario.onActivity { activity ->
+                if (activity.componentName.className != MainActivity::class.java.name) {
+                    failFixed(REAL_ACTIVITY_REQUIRED)
+                }
+                if (activity.openedConversationId != null) failFixed(INBOX_ROUTE_REQUIRED)
+            }
+            waitForStableInitialInbox(activeAutomation).recycleSafely()
+
+            val durableBaseline = SelectionBaseline(
+                assignment = readReadyAssignment(activeController),
+                managedFiles = managedFileLedger(context),
+                persistedGrants = persistedGrantSnapshot(context.contentResolver),
+                revisionSequence = readAppearanceRevisionSequence(context),
+            )
+            if (durableBaseline.assignment != null) failFixed(STALE_APPLY_EMPTY_BASELINE_REQUIRED)
+            baseline = durableBaseline
+            assertSelectionBaselineUnchanged(activeController, context, durableBaseline)
+
+            // Replacing the editor route before Apply must discard only the transient selection.
+            openGlobalWallpaperEditor(activeAutomation)
+            chooseExactSyntheticDocument(activeAutomation, context)
+            assertTransientSelection(activeAutomation, activeController, context, durableBaseline)
+            val beforeRouteReplacement = syntheticDocumentSnapshot(context)
+            activeScenario.onActivity { activity ->
+                instrumentation.callActivityOnNewIntent(
+                    activity,
+                    Intent(context, MainActivity::class.java)
+                        .setAction(AppNotificationIntentFactory.ACTION_OPEN_CONVERSATION)
+                        .putExtra(
+                            AppNotificationIntentFactory.EXTRA_CONVERSATION_ID,
+                            STALE_APPLY_SYNTHETIC_CONVERSATION_ID,
+                        ),
+                )
+            }
+            waitForPackage(activeAutomation, TARGET_PACKAGE)
+            waitForAppTag(activeAutomation, THREAD_SCREEN_TEST_TAG).recycleSafely()
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_DIALOG_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_APPEARANCE_DIALOG_TEST_TAG)
+            if (syntheticDocumentSnapshot(context) != beforeRouteReplacement) {
+                failFixed(ROUTE_REPLACEMENT_REOPENED_SOURCE)
+            }
+            assertSelectionBaselineUnchanged(activeController, context, durableBaseline)
+            if (!activeAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) {
+                failFixed(ROUTE_REPLACEMENT_BACK_FAILED)
+            }
+            waitForAppTag(activeAutomation, INBOX_SCREEN_TEST_TAG).recycleSafely()
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_DIALOG_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_APPEARANCE_DIALOG_TEST_TAG)
+            assertSelectionBaselineUnchanged(activeController, context, durableBaseline)
+
+            // Reopening must start empty; otherwise the dismissed route leaked its transient URI.
+            openGlobalWallpaperEditor(activeAutomation)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_LOADING_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_ERROR_TEST_TAG)
+            if (isAppTagEnabled(activeAutomation, SCOPED_WALLPAPER_APPLY_TEST_TAG)) {
+                failFixed(ROUTE_REPLACEMENT_SELECTION_SURVIVED)
+            }
+            if (syntheticDocumentSnapshot(context) != beforeRouteReplacement) {
+                failFixed(ROUTE_REPLACEMENT_REOPENED_SOURCE)
+            }
+            assertSelectionBaselineUnchanged(activeController, context, durableBaseline)
+
+            // A newer authoritative assignment must win over the editor's captured empty revision.
+            chooseExactSyntheticDocument(activeAutomation, context)
+            assertTransientSelection(activeAutomation, activeController, context, durableBaseline)
+            val concurrentResult = runBlocking {
+                withTimeout(STATE_TIMEOUT_MILLIS) {
+                    activeController.apply(
+                        scope = GLOBAL_THREAD_SCOPE,
+                        source = STALE_APPLY_CONCURRENT_SOURCE_URI,
+                        dimPermill = STALE_APPLY_CONCURRENT_DIM_PERMILL,
+                        focalXPermill = STALE_APPLY_CONCURRENT_FOCAL_X_PERMILL,
+                        focalYPermill = STALE_APPLY_CONCURRENT_FOCAL_Y_PERMILL,
+                        expectedRevision = null,
+                    )
+                }
+            }
+            if (concurrentResult != WallpaperApplyControllerResult.Success) {
+                failFixed(CONCURRENT_ASSIGNMENT_APPLY_FAILED)
+            }
+            concurrentApplySucceeded = true
+            val concurrent = awaitAssignment(activeController, assigned = true)
+                ?: failFixed(CONCURRENT_ASSIGNMENT_REQUIRED)
+            concurrentTestAssignment = concurrent
+            if (
+                concurrent.revision != durableBaseline.revisionSequence + 1L ||
+                concurrent.dimPermill != STALE_APPLY_CONCURRENT_DIM_PERMILL ||
+                concurrent.focalXPermill != STALE_APPLY_CONCURRENT_FOCAL_X_PERMILL ||
+                concurrent.focalYPermill != STALE_APPLY_CONCURRENT_FOCAL_Y_PERMILL
+            ) {
+                failFixed(CONCURRENT_ASSIGNMENT_INVALID)
+            }
+            if (readAppearanceRevisionSequence(context) != durableBaseline.revisionSequence + 1L) {
+                failFixed(CONCURRENT_ASSIGNMENT_REVISION_UNEXPECTED)
+            }
+            assertExactlyOneNewManagedFinal(context, durableBaseline, concurrent)
+            assertPersistedGrantsUnchanged(context, durableBaseline)
+            assertManagedWallpaperAvailable(activeController, concurrent)
+
+            val concurrentBaseline = SelectionBaseline(
+                assignment = concurrent,
+                managedFiles = managedFileLedger(context),
+                persistedGrants = durableBaseline.persistedGrants,
+                revisionSequence = durableBaseline.revisionSequence + 1L,
+            )
+            waitForEnabledAppTag(activeAutomation, SCOPED_WALLPAPER_APPLY_TEST_TAG).recycleSafely()
+            waitForAppTag(activeAutomation, SCOPED_WALLPAPER_PREVIEW_TEST_TAG).recycleSafely()
+            val beforeStaleApply = syntheticDocumentSnapshot(context)
+            clickAppTag(activeAutomation, SCOPED_WALLPAPER_APPLY_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_LOADING_TEST_TAG)
+            val staleError = scrollToAppTag(
+                activeAutomation,
+                SCOPED_WALLPAPER_ERROR_TEST_TAG,
+            ).useNode { node -> node.text?.toString() }
+            if (staleError != context.getString(R.string.wallpaper_error_stale_assignment)) {
+                failFixed(STALE_APPLY_ERROR_REQUIRED)
+            }
+            waitForEnabledAppTag(activeAutomation, SCOPED_WALLPAPER_APPLY_TEST_TAG).recycleSafely()
+            val afterStaleApply = syntheticDocumentSnapshot(context)
+            if (
+                afterStaleApply.openAttempts <= beforeStaleApply.openAttempts ||
+                afterStaleApply.successfulOpens <= beforeStaleApply.successfulOpens ||
+                afterStaleApply.lastDocumentId !=
+                WallpaperTestDocumentsProvider.IMAGE_DOCUMENT_ID
+            ) {
+                failFixed(STALE_APPLY_DID_NOT_REOPEN_SOURCE)
+            }
+            assertStaleWinnerUnchanged(activeController, context, concurrentBaseline)
+            assertManagedWallpaperAvailable(activeController, concurrent)
+
+            // Reopen against the winner's exact revision and reset only that controlled commit.
+            clickAppTag(activeAutomation, SCOPED_WALLPAPER_BACK_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_DIALOG_TEST_TAG)
+            waitForAppTag(activeAutomation, SCOPED_APPEARANCE_DIALOG_TEST_TAG).recycleSafely()
+            assertStaleWinnerUnchanged(activeController, context, concurrentBaseline)
+            clickAppTag(activeAutomation, SCOPED_APPEARANCE_WALLPAPER_TEST_TAG)
+            scrollToAndClickAppTag(activeAutomation, SCOPED_WALLPAPER_RESET_TEST_TAG)
+            awaitAssignment(activeController, assigned = false)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_WALLPAPER_DIALOG_TEST_TAG)
+            waitForAppTag(activeAutomation, SCOPED_APPEARANCE_DIALOG_TEST_TAG).recycleSafely()
+            if (readAppearanceRevisionSequence(context) != durableBaseline.revisionSequence + 1L) {
+                failFixed(STALE_APPLY_RESET_REVISION_UNEXPECTED)
+            }
+            assertSelectionBaselineRestored(activeController, context, durableBaseline)
+            concurrentTestAssignment = null
+            clickAppTag(activeAutomation, SCOPED_APPEARANCE_CANCEL_TEST_TAG)
+            waitForAppTagToDisappear(activeAutomation, SCOPED_APPEARANCE_DIALOG_TEST_TAG)
+            waitForAppTag(activeAutomation, INBOX_SCREEN_TEST_TAG).recycleSafely()
+            assertSelectionBaselineRestored(activeController, context, durableBaseline)
+
+            instrumentation.sendStatus(
+                STALE_APPLY_SENTINEL_STATUS_CODE,
+                Bundle().apply {
+                    putString(STALE_APPLY_SENTINEL_KEY, STALE_APPLY_SENTINEL_VALUE)
+                },
+            )
+        } catch (assumption: AssumptionViolatedException) {
+            throw assumption
+        } catch (fixed: FixedSmokeFailure) {
+            throw fixed
+        } catch (_: Throwable) {
+            failFixed(UNEXPECTED_STALE_APPLY_FAILURE)
+        } finally {
+            bestEffortDismissFocusedDocumentsUi(automation)
+            try {
+                val context = ApplicationProvider.getApplicationContext<Context>()
+                setSyntheticDocumentAvailable(context, available = true)
+            } catch (_: Throwable) {
+                // The exact assignment cleanup below remains authoritative.
+            }
+            try {
+                scenario?.close()
+            } catch (_: Throwable) {
+                // Cleanup below verifies durable state directly.
+            }
+            val cleanupController = controller
+            val cleanupBaseline = baseline
+            val cleanupAssignment = concurrentTestAssignment ?: if (
+                concurrentApplySucceeded && cleanupController != null && cleanupBaseline != null
+            ) {
+                try {
+                    val context = ApplicationProvider.getApplicationContext<Context>()
+                    recoverControlledConcurrentAssignment(
+                        cleanupController,
+                        context,
+                        cleanupBaseline,
+                    )
+                } catch (_: Throwable) {
+                    null
+                }
+            } else {
+                null
+            }
+            if (cleanupController != null && cleanupAssignment != null) {
+                bestEffortResetTestAssignment(cleanupController, cleanupAssignment)
+            }
+            var finalBaselineFailure: FixedSmokeFailure? = null
+            if (cleanupController != null && cleanupBaseline != null) {
+                try {
+                    val context = ApplicationProvider.getApplicationContext<Context>()
+                    assertSelectionBaselineRestored(cleanupController, context, cleanupBaseline)
+                } catch (fixed: FixedSmokeFailure) {
+                    finalBaselineFailure = fixed
+                } catch (_: Throwable) {
+                    finalBaselineFailure = FixedSmokeFailure(FINAL_STALE_APPLY_BASELINE_UNAVAILABLE)
+                }
+            }
+            val activeAutomation = automation
+            val flagsToRestore = originalServiceFlags
+            if (activeAutomation != null && flagsToRestore != null) {
+                try {
+                    activeAutomation.serviceInfo = activeAutomation.serviceInfo.apply {
+                        flags = flagsToRestore
+                    }
+                } catch (_: Throwable) {
+                    // Never replace the fixed primary result with platform-specific text.
+                }
+            }
+            finalBaselineFailure?.let { throw it }
+        }
+    }
+
     private fun requireExplicitGate() {
         val enabled = InstrumentationRegistry.getArguments()
             .getString(GATE_ARGUMENT)
@@ -416,6 +687,17 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
             .getString(SELECTION_GATE_ARGUMENT)
             ?.equals("true", ignoreCase = true) == true
         assumeTrue(SELECTION_GATE_REQUIRED, enabled)
+        assumeTrue(
+            EMULATOR_REQUIRED,
+            Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish",
+        )
+    }
+
+    private fun requireExplicitStaleApplyGate() {
+        val enabled = InstrumentationRegistry.getArguments()
+            .getString(STALE_APPLY_GATE_ARGUMENT)
+            ?.equals("true", ignoreCase = true) == true
+        assumeTrue(STALE_APPLY_GATE_REQUIRED, enabled)
         assumeTrue(
             EMULATOR_REQUIRED,
             Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish",
@@ -1116,6 +1398,23 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         assertPersistedGrantsUnchanged(context, baseline)
     }
 
+    private fun assertStaleWinnerUnchanged(
+        controller: WallpaperController,
+        context: Context,
+        winner: SelectionBaseline,
+    ) {
+        if (readReadyAssignment(controller) != winner.assignment) {
+            failFixed(STALE_APPLY_REPLACED_WINNER)
+        }
+        if (managedFileLedger(context) != winner.managedFiles) {
+            failFixed(STALE_APPLY_CHANGED_MANAGED_FILES)
+        }
+        if (readAppearanceRevisionSequence(context) != winner.revisionSequence) {
+            failFixed(STALE_APPLY_CHANGED_REVISION)
+        }
+        assertPersistedGrantsUnchanged(context, winner)
+    }
+
     private fun assertPersistedGrantsUnchanged(
         context: Context,
         baseline: SelectionBaseline,
@@ -1176,6 +1475,24 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         }
     }
 
+    private fun assertManagedWallpaperAvailable(
+        controller: WallpaperController,
+        assignment: AppWallpaperAssignment,
+    ) {
+        val loaded = runBlocking {
+            withTimeout(STATE_TIMEOUT_MILLIS) {
+                controller.loadFirstAvailable(listOf(assignment))
+            }
+        } ?: failFixed(CONCURRENT_MANAGED_WALLPAPER_UNAVAILABLE)
+        try {
+            if (loaded.assignment != assignment) {
+                failFixed(CONCURRENT_MANAGED_WALLPAPER_UNAVAILABLE)
+            }
+        } finally {
+            loaded.release()
+        }
+    }
+
     private fun colorChannelMatches(actual: Int, expected: Int): Boolean =
         kotlin.math.abs((actual and 0xff) - (expected and 0xff)) <=
             SYNTHETIC_COLOR_TOLERANCE
@@ -1195,6 +1512,32 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
             awaitAssignment(controller, assigned = false)
         } catch (_: Throwable) {
             // The selection test starts empty, so only its own possible commit is targeted.
+        }
+    }
+
+    private fun recoverControlledConcurrentAssignment(
+        controller: WallpaperController,
+        context: Context,
+        baseline: SelectionBaseline,
+    ): AppWallpaperAssignment? {
+        val current = readReadyAssignment(controller) ?: return null
+        if (
+            current.scope != GLOBAL_THREAD_SCOPE ||
+            current.revision != baseline.revisionSequence + 1L ||
+            current.dimPermill != STALE_APPLY_CONCURRENT_DIM_PERMILL ||
+            current.focalXPermill != STALE_APPLY_CONCURRENT_FOCAL_X_PERMILL ||
+            current.focalYPermill != STALE_APPLY_CONCURRENT_FOCAL_Y_PERMILL
+        ) {
+            return null
+        }
+        val ledger = managedFileLedger(context)
+        if (!ledger.containsAll(baseline.managedFiles)) return null
+        val added = ledger - baseline.managedFiles
+        if (added.size != 1) return null
+        val classification = classifyManagedWallpaperFileName(added.single().name)
+        return current.takeIf {
+            classification is ManagedWallpaperFileClassification.Final &&
+                classification.mediaId == current.mediaId
         }
     }
 
@@ -1426,6 +1769,7 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
     private companion object {
         const val GATE_ARGUMENT = "auroraEmulatorWallpaperSafCancellation"
         const val SELECTION_GATE_ARGUMENT = "auroraEmulatorWallpaperSafSelection"
+        const val STALE_APPLY_GATE_ARGUMENT = "auroraEmulatorWallpaperSafStaleApply"
         const val TARGET_PACKAGE = "org.aurorasms.app"
         const val TEST_PACKAGE = "org.aurorasms.app.test"
         const val DOCUMENTS_UI_PACKAGE = "com.android.documentsui"
@@ -1457,9 +1801,20 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         const val SELECTION_SENTINEL_STATUS_CODE = 42
         const val SELECTION_SENTINEL_KEY = "auroraSafSelectionResult"
         const val SELECTION_SENTINEL_VALUE = "pass"
+        const val STALE_APPLY_SENTINEL_STATUS_CODE = 43
+        const val STALE_APPLY_SENTINEL_KEY = "auroraSafStaleApplyResult"
+        const val STALE_APPLY_SENTINEL_VALUE = "pass"
+        const val STALE_APPLY_SYNTHETIC_CONVERSATION_ID = 8_600_026L
+        const val STALE_APPLY_CONCURRENT_DIM_PERMILL = 575
+        const val STALE_APPLY_CONCURRENT_FOCAL_X_PERMILL = 250
+        const val STALE_APPLY_CONCURRENT_FOCAL_Y_PERMILL = 750
 
         val SYNTHETIC_CONTROL_URI: android.net.Uri = android.net.Uri.parse(
             "content://org.aurorasms.app.wallpaper.testprovider/control",
+        )
+
+        val STALE_APPLY_CONCURRENT_SOURCE_URI: android.net.Uri = android.net.Uri.parse(
+            "content://org.aurorasms.app.wallpaper.testprovider/valid.png",
         )
 
         val GLOBAL_THREAD_SCOPE: AppearanceScope.Screen =
@@ -1467,9 +1822,12 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
 
         const val GATE_REQUIRED = "emulator wallpaper SAF cancellation gate was not enabled"
         const val SELECTION_GATE_REQUIRED = "emulator wallpaper SAF selection gate was not enabled"
+        const val STALE_APPLY_GATE_REQUIRED =
+            "emulator wallpaper SAF stale-Apply gate was not enabled"
         const val EMULATOR_REQUIRED = "wallpaper SAF smoke requires an emulator"
         const val API_26_REQUIRED = "wallpaper SAF cancellation requires API 26"
         const val API_26_SELECTION_REQUIRED = "wallpaper SAF selection requires API 26"
+        const val API_26_STALE_APPLY_REQUIRED = "wallpaper SAF stale-Apply requires API 26"
         const val APPLICATION_REQUIRED = "AuroraSMS application was not available"
         const val STATE_STORAGE_NOT_READY = "AuroraSMS state storage did not become ready"
         const val OPEN_DOCUMENT_ACTION_REQUIRED = "Photo Picker contract did not select ACTION_OPEN_DOCUMENT"
@@ -1546,6 +1904,36 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
             "Apply did not reopen and reject the unavailable SAF source"
         const val SUCCESSFUL_APPLY_DID_NOT_REOPEN_SOURCE =
             "successful Apply did not reopen the exact SAF source"
+        const val STALE_APPLY_EMPTY_BASELINE_REQUIRED =
+            "global wallpaper must be empty before the stale-Apply smoke"
+        const val ROUTE_REPLACEMENT_REOPENED_SOURCE =
+            "route replacement unexpectedly reopened the transient SAF source"
+        const val ROUTE_REPLACEMENT_SELECTION_SURVIVED =
+            "transient SAF selection survived route replacement"
+        const val ROUTE_REPLACEMENT_BACK_FAILED =
+            "replacement conversation route did not return to Inbox"
+        const val CONCURRENT_ASSIGNMENT_APPLY_FAILED =
+            "controlled concurrent wallpaper assignment could not be applied"
+        const val CONCURRENT_ASSIGNMENT_REQUIRED =
+            "controlled concurrent wallpaper assignment was unavailable"
+        const val CONCURRENT_ASSIGNMENT_INVALID =
+            "controlled concurrent wallpaper assignment was invalid"
+        const val CONCURRENT_ASSIGNMENT_REVISION_UNEXPECTED =
+            "controlled concurrent wallpaper consumed an unexpected revision"
+        const val STALE_APPLY_ERROR_REQUIRED =
+            "stale Apply did not surface the exact stale-assignment error"
+        const val STALE_APPLY_DID_NOT_REOPEN_SOURCE =
+            "stale Apply did not reopen the exact synthetic SAF source"
+        const val STALE_APPLY_REPLACED_WINNER =
+            "stale Apply replaced the newer authoritative assignment"
+        const val STALE_APPLY_CHANGED_MANAGED_FILES =
+            "stale Apply changed the newer assignment's managed-file ledger"
+        const val STALE_APPLY_CHANGED_REVISION =
+            "stale Apply consumed an additional appearance revision"
+        const val CONCURRENT_MANAGED_WALLPAPER_UNAVAILABLE =
+            "newer authoritative managed wallpaper became unavailable"
+        const val STALE_APPLY_RESET_REVISION_UNEXPECTED =
+            "reset after stale Apply consumed an unexpected revision"
         const val SELECTION_ASSIGNMENT_CHANGED_BEFORE_APPLY =
             "global assignment changed before successful Apply"
         const val SELECTION_MANAGED_FILES_CHANGED_BEFORE_APPLY =
@@ -1574,7 +1962,11 @@ class MainActivityStaticWallpaperSafFallbackSmokeTest {
         const val FINAL_BASELINE_UNAVAILABLE = "final SAF cancellation baseline could not be verified"
         const val FINAL_SELECTION_BASELINE_UNAVAILABLE =
             "final SAF selection baseline could not be verified"
+        const val FINAL_STALE_APPLY_BASELINE_UNAVAILABLE =
+            "final SAF stale-Apply baseline could not be verified"
         const val UNEXPECTED_FAILURE = "emulator SAF fallback cancellation smoke failed"
         const val UNEXPECTED_SELECTION_FAILURE = "emulator SAF fallback selection smoke failed"
+        const val UNEXPECTED_STALE_APPLY_FAILURE =
+            "emulator SAF fallback route-loss/stale-Apply smoke failed"
     }
 }
