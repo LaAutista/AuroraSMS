@@ -325,6 +325,54 @@ broader recovery, accessibility, form-factor, performance, artwork, carrier,
 compound lifecycle, and gold gates remain open. Only synthetic emulator fixtures
 were used, and AuroraSMS is still not complete or gold.
 
+Source commit `12939eea321e8eb6a9a173a82cab2dfd245b64e5` adds a fourth,
+separately gated API 26 AOSP journey through the selection runner's new
+`notification-pending-intent` mode. On an awake, unlocked emulator, production
+notification channels are initialized before a complete channel snapshot. The
+real `MainActivity`/DocumentsUI/AndroidX SAF path then stages the exact synthetic
+local PNG without Apply, and the production `messageNotifier` posts a fixed
+synthetic `IncomingMessageNotification`. The test identifies the exact system
+notification by package, UID, tag, ID, message channel, category, private
+visibility, timestamp, clearable/auto-cancel flags, absence of actions, Aurora
+activity content `PendingIntent`, public version, sender, and body.
+
+A real touchscreen swipe expands the AOSP shade, and a tap on that controlled
+SystemUI row/body delivers its production content `PendingIntent` to the same
+warm `MainActivity`. The exact synthetic Thread ID/action is consumed; both
+wallpaper editors are dismissed and the staged source is not reopened.
+Assignment, revision, managed-file ledger, and persisted-grant snapshots remain
+unchanged; auto-cancel restores the active-notification baseline; and the full
+post-bootstrap channel snapshot, including each channel's DND-bypass setting,
+remains exact. Returning to Inbox and reopening the global editor again shows
+disabled Apply, no load or
+error, and no staged selection.
+
+The final focused pass took 6.927s after review passes of 7.170s, 6.961s, and
+6.797s, reporting exactly custom status 44 with
+`auroraSafNotificationPendingIntentResult=pass` and `OK (1 test)`. Selection,
+stale-Apply, and cancellation regressions passed in 12.879s, 8.595s, and
+2.745s. Final API 26/API 36 connected gates were `BUILD SUCCESSFUL` in 1m51s
+and 1m26s across 456 tasks each; XML reports API 26 app 80 tests/seven skips,
+API 26 project 179/eight, and API 36 project 176/five, all with zero failures or
+errors. The 886-task host/lint/release/privacy/license gate passed in 12s with
+26 executed and 860 up-to-date; CycloneDX 1.6 passed 15 tasks in 8s with 441
+components and 442 dependency nodes. The unchanged production debug APK is
+13,993,426 bytes with SHA-256
+`5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This is one synthetic, warm-task, pre-Apply API 26 AOSP notification-shade
+journey. It does not originate from a real carrier/provider/receiver/orchestrator
+incoming message, and its fixed Thread ID is neither provider-backed nor a
+verified conversation identity. Cold or absent tasks, background/lockscreen/
+process-death delivery, raw `PendingIntent` action/extras/flags, API 27+,
+notification-permission denial, OEM or physical shades, reply/group/privacy/
+alert/new-channel behavior, raw picker results, temporary URI-grant lifetime,
+in-flight Apply, source mutation/provider removal/cloud behavior, nonempty
+baselines, broader acceptance, and gold gates remain open. The runner remains
+backward-compatible, bounded, fail-closed, and collision-safe; its status-45
+cleanup-only instrumentation is reserved for abnormal recovery and was not run
+by the passing journey. AuroraSMS remains incomplete and not gold.
+
 Phase 3 does not change the existing carrier MMS limitations. Earlier Phase
 1/2 functional evidence covers a Pixel 8 on Android 16/API 36. Phase 3 profile
 capture and functional journeys are verified with synthetic data on the API 36

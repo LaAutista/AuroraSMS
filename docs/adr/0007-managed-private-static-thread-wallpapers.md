@@ -30,17 +30,21 @@ without reopening it or changing durable state; stale UI Apply reopens the
 source, reports the exact stale-assignment error, preserves one controlled newer
 winner/revision/file/persisted-grant snapshot, and leaves no extra candidate; UI
 Reset restores the empty assignment/file/persisted-grant baseline while
-retaining the consumed revision. Raw production-intent/result capture, end-to-
-end system-notification/`PendingIntent` delivery, temporary URI-grant
-revocation, readable source-byte/content mutation, provider revocation/removal/
-replacement, cloud/blocking, in-flight
-target loss, verified-conversation target identity, configuration beyond
-recreation, broader process-death, API 27-32, physical SAF-fallback/selection
-behavior, broader OEM behavior beyond the recorded Pixel 8 Photo Picker journey,
-performance, production-launcher/real-provider Thread/verified-conversation
-rendering, explicit picker Cancel, cold
-restart, complete picker/UI, accessibility/form-factor, carrier, and overall
-acceptance remain pending; AuroraSMS is not complete or gold.
+retaining the consumed revision. Source commit
+`12939eea321e8eb6a9a173a82cab2dfd245b64e5` adds one separate warm-task API 26
+AOSP system-notification journey: after an exact pre-Apply SAF selection, the
+production notifier posts a fixed synthetic message and a real shade-row tap
+delivers its content `PendingIntent` to the same `MainActivity`, disposing the
+editors without changing wallpaper, channel, or residual-notification state.
+Real carrier/provider/receiver/orchestrator message origin, provider-backed and
+verified identity, cold/absent-task/background/lockscreen/process-death
+delivery, raw `PendingIntent` action/extras/flags, API 27+, permission-denial,
+OEM/physical shade, reply/group/privacy/alerts/new-channel behavior, raw picker
+result and temporary URI-grant proof, readable source-byte/content mutation,
+provider revocation/removal/replacement, cloud/blocking, in-flight Apply,
+nonempty baselines, physical SAF-fallback/selection behavior, performance,
+explicit picker Cancel, complete picker/UI, accessibility/form-factor, carrier,
+and overall acceptance remain pending; AuroraSMS is not complete or gold.
 
 ## Context
 
@@ -503,6 +507,51 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
   performance, artwork, carrier, complete-lifecycle, or gold evidence. Only
   persisted-grant snapshots are asserted. The compound Photo Picker/SAF and all
   broad acceptance rows remain open; AuroraSMS remains incomplete and not gold.
+- Source commit `12939eea321e8eb6a9a173a82cab2dfd245b64e5` adds the strict API
+  26 `run-emulator-wallpaper-saf-selection-smoke.sh --journey
+  notification-pending-intent` mode while preserving the selection lifecycle as
+  the runner default. On an awake, unlocked exact AOSP emulator, the test
+  initializes production notification channels before a complete owned-channel
+  snapshot, stages the exact synthetic local PNG through the real
+  `MainActivity`/DocumentsUI/AndroidX SAF path without Apply, and posts a fixed
+  synthetic `IncomingMessageNotification` through the production
+  `messageNotifier`. It fingerprints the exact system notification's package,
+  UID, tag, ID, message channel, category, private visibility, timestamp,
+  clearable/auto-cancel flags, absence of actions, Aurora activity content
+  `PendingIntent`, public version, sender, and body. A real touchscreen swipe
+  expands the shade and taps that controlled AOSP SystemUI row/body. The same
+  warm `MainActivity` consumes the exact synthetic Thread ID/action, dismisses
+  both editors, and does not reopen the source. Assignment, revision, no-follow
+  managed-file ledger, persisted grants, and the full post-bootstrap channel
+  snapshot, including each channel's DND-bypass setting, remain exact;
+  auto-cancel restores the active-notification baseline.
+  Back/reopen shows disabled Apply, no loading/error, and no staged selection.
+  The runner is backward-compatible, bounded, fail-closed, and collision-safe;
+  it fingerprints exact abnormal notification residue before cancellation.
+  Status 45 with `auroraSafNotificationCleanupResult=pass` is reserved for its
+  cleanup-only abnormal-recovery instrumentation and did not run in the passing
+  journey.
+  The final focused pass took 6.927s after review passes in 7.170s, 6.961s, and
+  6.797s, and reported exactly status 44 with
+  `auroraSafNotificationPendingIntentResult=pass` and `OK (1 test)`. Selection,
+  stale-Apply, and cancellation regressions passed in 12.879s, 8.595s, and
+  2.745s. Final API 26/API 36 root connected gates passed 456 tasks each in
+  1m51s and 1m26s. XML reports API 26 app 80 tests/seven skips, API 26 project
+  179/eight, and API 36 project 176/five, all with zero failures/errors. The
+  886-task host/lint/release/privacy/license gate passed in 12s with 26 executed
+  and 860 up-to-date; CycloneDX 1.6 passed 15 tasks in 8s with 441 components
+  and 442 dependency nodes. The unchanged debug APK is 13,993,426 bytes with
+  SHA-256
+  `5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+  This is one synthetic warm-task API 26 AOSP notification-shade route. No real
+  carrier/provider/receiver/orchestrator message, provider-backed or verified
+  conversation, cold/absent task, background/lockscreen/process death, raw
+  `PendingIntent` action/extras/flags, API 27+, permission denial, OEM/physical
+  shade, reply/group/privacy/alerts/new-channel behavior, raw picker result,
+  temporary grant lifetime, in-flight Apply, source mutation/provider removal/
+  cloud behavior, or nonempty baseline is proven. Compound lifecycle, physical,
+  carrier, accessibility/form-factor/performance, artwork, and gold gates remain
+  open; AuroraSMS remains incomplete and not gold.
 - Inbox treatment, canonical built-ins, GIF lifecycle, live URI references,
   and import/export media remain independently reviewable slices.
 
