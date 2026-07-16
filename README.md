@@ -222,15 +222,40 @@ Pick enabled, Apply disabled, no loading/error, and the exact global assignment,
 managed-file name set, and persisted-grant count unchanged. The physical runner
 is pinned to its original exact method.
 
-SAF fallback/cancellation, OEM picker behavior, any explicit Photo Picker Cancel
-control, a `global_thread` cold restart, production-launcher/real-provider and
-broader process-death recovery, the complete Photo Picker/static wallpaper
-lifecycle, import/export, navigation variants, GIF lifecycle, carrier coverage,
-full
-accessibility/form-factor/performance coverage, and approved canonical artwork
-remain Phase 4 or release follow-on gates. Artwork is still blocked on the exact
-written publication/derivative/distribution terms in `docs/ARTWORK_CATALOG.md`.
-AuroraSMS is therefore not complete or gold yet.
+Source commit `37fd044df3b9b8933839b0f89f7018ec72b8ab1b` adds the narrow API
+26 AOSP SAF-fallback cancellation counterpart. A separately constructed
+instance of the same production AndroidX `PickVisualMedia(ImageOnly)` contract
+produced `ACTION_OPEN_DOCUMENT`, requested `image/*`, and resolved to
+DocumentsUI; the production `MainActivity` picker click independently focused
+DocumentsUI, without intercepting the production outgoing intent. The test
+selected no document and traversed no DocumentsUI content. Accessibility global
+Back restored the usable global-thread editor with Pick enabled, Apply disabled,
+no loading/error state, and the exact global assignment, immediate managed-file
+name set, and persisted URI-grant identity/read/write/time set unchanged.
+
+The exact preservation-checking runner passed independently twice in 2.751s and
+2.754s, each reporting exactly `OK (1 test)`. Its per-emulator lock serializes
+participating runner invocations, while point-in-time active/preinstalled
+test-package checks reduce concurrent-run races; cleanup preserved the matching
+target APK, legacy default-SMS setting, and all seven recorded permission
+states, and left the instrumentation package absent. The final API 26 app-module
+connected XML contains 76 tests, zero failures/errors, and three intentional
+gated skips in 35.498s. The API 36 project connected matrix, 886-task offline
+host/release/governance gate, and 15-task CycloneDX gate also passed for the
+same source.
+Emulator timings are not product-performance evidence.
+
+Document selection and returned-URI validation, staged-candidate cancellation,
+preview/Apply/Reset/import/rendering through SAF, source loss or revocation,
+configuration/Activity/process loss, API 27-32 and OEM picker behavior, any
+explicit picker Cancel control, a `global_thread` cold restart,
+production-launcher/real-provider and broader process-death recovery, managed
+file byte/inode/timestamp/metadata preservation, the complete Photo Picker/
+static-wallpaper lifecycle, import/export, navigation variants, GIF lifecycle,
+carrier coverage, full accessibility/form-factor/performance coverage, and
+approved canonical artwork remain Phase 4 or release follow-on gates. Artwork
+is still blocked on the exact written publication/derivative/distribution terms
+in `docs/ARTWORK_CATALOG.md`. AuroraSMS is therefore not complete or gold yet.
 
 Phase 3 does not change the existing carrier MMS limitations. Earlier Phase
 1/2 functional evidence covers a Pixel 8 on Android 16/API 36. Phase 3 profile

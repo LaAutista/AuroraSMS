@@ -15,11 +15,13 @@ close/reopen durability pass at `b9350be354991e36039e8136095bc25ebd520d60`,
 and gated API 36 AOSP Photo Picker `GLOBAL_ACTION_BACK` cancellation passes twice at
 `826a20dbc3e965da8f269dde1351cf4d76d28f6c`. A narrow API 36 emulator
 host-force-stop verified-conversation cold-target-process journey passes twice
-at `73b5ffa2827ad2cd96b922ccf4a529b5b052529d`, while SAF
-fallback/cancellation, `global_thread` cold restart,
+at `73b5ffa2827ad2cd96b922ccf4a529b5b052529d`. Narrow API 26 AOSP SAF
+fallback no-selection accessibility-Back cancellation passes twice at
+`37fd044df3b9b8933839b0f89f7018ec72b8ab1b`, while returned-URI/selection and
+staged-candidate SAF paths, `global_thread` cold restart,
 production-launcher/real-provider and broader process-death recovery, complete
 picker/UI, accessibility/form-factor, carrier, and overall acceptance remain
-pending
+pending.
 
 ## Context
 
@@ -375,6 +377,34 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
   This proves only API 36 AOSP Photo Picker accessibility global-Back
   cancellation, not SAF fallback/cancellation, OEM picker behavior, any explicit
   Photo Picker Cancel control, selected/staged candidate handling, cold-process
+  behavior, the complete lifecycle, or gold readiness. The compound picker/SAF
+  gate remains open.
+- Source commit `37fd044df3b9b8933839b0f89f7018ec72b8ab1b` adds an explicitly
+  gated API 26 ranchu/goldfish AOSP SAF-fallback no-selection cancellation
+  journey. A separately constructed instance of the same production AndroidX
+  `PickVisualMedia(ImageOnly)` contract produced `ACTION_OPEN_DOCUMENT`,
+  requested `image/*`, and resolved to DocumentsUI. The production
+  `MainActivity` picker click independently focused DocumentsUI; the test did
+  not intercept the production outgoing intent, select a document, or traverse
+  DocumentsUI content. Accessibility global Back restored the usable
+  global-thread editor with Pick enabled, Apply disabled, no loading/error, and
+  the exact global assignment, immediate managed-file-name set, and persisted
+  URI-grant identity/read/write/persisted-time set unchanged.
+  The preservation-checking runner passed independently twice in 2.751s and
+  2.754s, each with exactly one passing test, and preserved the matching target
+  APK, legacy default-SMS setting, and all seven recorded permission states;
+  the instrumentation package was absent after cleanup. Its per-device
+  nonblocking lock and active test-process refusal reduce concurrent-run races.
+  The final API 26 app-module connected XML contains 76 tests, zero failures,
+  zero errors, and three intentional gated skips in 35.498s. The same source
+  passed the API 36 project connected matrix, the 886-task offline host/release/
+  governance/license gate, and the 15-task CycloneDX gate.
+  This does not prove production outgoing-intent interception, document
+  selection or returned-URI validation, preview/Apply/Reset/import/rendering,
+  staged-candidate cancellation, source loss/revocation, configuration,
+  Activity or process loss, managed-file bytes/inode/timestamps/metadata, a
+  verified-conversation target, API 27-32, OEM behavior, an explicit picker
+  Cancel control, broader accessibility/form-factor/performance/carrier
   behavior, the complete lifecycle, or gold readiness. The compound picker/SAF
   gate remains open.
 - Inbox treatment, canonical built-ins, GIF lifecycle, live URI references,

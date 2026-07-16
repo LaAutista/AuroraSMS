@@ -28,13 +28,19 @@ close/reopen coverage pass at `b9350be354991e36039e8136095bc25ebd520d60`,
 and an exact gated API 36 AOSP Photo Picker `GLOBAL_ACTION_BACK` cancellation
 journey passes twice at `826a20dbc3e965da8f269dde1351cf4d76d28f6c`. A narrow
 API 36 emulator host-`am force-stop` verified-conversation cold-target-process
-journey passes twice at `73b5ffa2827ad2cd96b922ccf4a529b5b052529d`, while SAF
-fallback/cancellation, broader picker/static-wallpaper UI acceptance,
+journey passes twice at `73b5ffa2827ad2cd96b922ccf4a529b5b052529d`. An exact
+gated API 26 AOSP DocumentsUI SAF-fallback, no-selection accessibility-Back
+cancellation journey passes twice at
+`37fd044df3b9b8933839b0f89f7018ec72b8ab1b`; remaining picker/SAF work is
+narrowed to successful selection and returned-URI handling, preview/Apply/
+import/rendering, staged-candidate cancellation, source loss/revocation,
+configuration/Activity/process-loss recovery, API 27-32 and OEM behavior, and
+the full lifecycle. Broader picker/static-wallpaper UI acceptance,
 `global_thread` cold restart, production-launcher/real-provider restart, and
-broader process-death recovery remain pending;
+broader process-death recovery also remain pending.
 Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
 import/export, navigation variants, and the full accessibility/performance and
-carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold
+carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold.
 
 ## Outcome
 
@@ -627,8 +633,10 @@ app/src/androidTest/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpap
 app/src/androidTest/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpaperStoreTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialogTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/AuroraSmsRootAcceptanceTest.kt
+app/src/androidTest/kotlin/org/aurorasms/app/appearance/wallpaper/MainActivityStaticWallpaperSafFallbackSmokeTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/DefaultSmsManifestContractTest.kt
 scripts/run-emulator-wallpaper-cold-restart-smoke.sh
+scripts/run-emulator-wallpaper-saf-cancellation-smoke.sh
 ```
 
 ### 2. Import and export
@@ -874,6 +882,45 @@ picker behavior, an explicit picker Cancel control, selected/staged-candidate
 cancellation, URI or file-byte identity after a successful selection,
 cold-process behavior, the complete lifecycle, or gold readiness. The compound
 picker/SAF gate remains open.
+
+Source commit `37fd044df3b9b8933839b0f89f7018ec72b8ab1b` adds a
+separately gated API 26 ranchu/goldfish AOSP DocumentsUI SAF-fallback
+no-selection cancellation journey. The API 26 app-module connected XML records
+76 tests, zero failures, zero errors, and three intentional gated skips in
+35.498s. The exact standalone runner method then passed twice in 2.751s and
+2.754s.
+
+The smoke separately constructs an AndroidX `PickVisualMedia(ImageOnly)`
+contract instance and proves that this exact API 26 environment resolves it to
+`ACTION_OPEN_DOCUMENT`, MIME type `image/*`, and AOSP DocumentsUI. It then opens
+the real `MainActivity` global-thread wallpaper editor and independently proves
+that the production Pick action focuses DocumentsUI, but it does not intercept
+or inspect the outgoing production intent. It selects no document, does not
+traverse DocumentsUI content, and cancels with the accessibility global Back
+action. On return, Pick is enabled, Apply is disabled, no loading/error state is
+present, and the editor remains usable. The exact global assignment object,
+immediate managed-filename set, and persisted URI-grant identity/read/write/
+persisted-time set remain unchanged both at the assertion point and final
+cleanup.
+
+The host runner holds a nonblocking per-device lock, refuses an active or
+preinstalled instrumentation package, and installs then removes only that test
+APK. It requires the installed target APK to match the local build and AuroraSMS
+to already be the legacy default SMS app. Both passes preserved that exact
+target, default-SMS state, and all seven captured permission states:
+`READ_SMS`, `SEND_SMS`, `RECEIVE_SMS`, `RECEIVE_MMS`, `RECEIVE_WAP_PUSH`,
+`READ_PHONE_STATE`, and `READ_CONTACTS`.
+
+This closes only the API 26 AOSP DocumentsUI SAF-fallback, no-selection
+accessibility-Back cancellation case. It does not prove the outgoing production
+intent itself, a document selection or returned URI, URI length/authority or
+nonpersistence after a result, wallpaper preview/Apply/reset/import/rendering,
+staged-candidate cancellation, source loss or revocation, configuration/
+Activity/process-loss recovery, file bytes/inodes/timestamps/metadata, a
+verified-conversation target, API 27-32, OEM DocumentsUI/pickers, an explicit
+Cancel control, broader accessibility or form-factor coverage, performance,
+carrier behavior, or the complete lifecycle. The corresponding compound gates
+remain open, and AuroraSMS is not complete or gold.
 
 ## Stop conditions
 

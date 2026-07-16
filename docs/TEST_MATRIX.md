@@ -27,9 +27,14 @@ root pixels, focal/dim Apply, Activity recreation, reset and identity fallback,
 stale-pixel clearing, and independent Room close/reopen/reset durability. An
 exact gated API 36 AOSP Photo Picker cancellation journey using the
 accessibility global Back action at
-`826a20dbc3e965da8f269dde1351cf4d76d28f6c` also passes twice. SAF
-fallback/cancellation, OEM picker behavior, any explicit Photo Picker Cancel
-control remain open. A narrow API 36 emulator host-`am force-stop`
+`826a20dbc3e965da8f269dde1351cf4d76d28f6c` also passes twice. A separately
+gated API 26 AOSP DocumentsUI no-selection accessibility-Back journey at
+`37fd044df3b9b8933839b0f89f7018ec72b8ab1b` independently confirms the
+identical AndroidX SAF contract shape and the production editor's DocumentsUI
+focus, and passes twice with preservation checks. Production-intent
+interception, returned-URI/selection behavior, OEM picker behavior, and any
+explicit Photo Picker Cancel control remain open. A narrow API 36 emulator
+host-`am force-stop`
 verified-conversation cold-target-process journey at
 `73b5ffa2827ad2cd96b922ccf4a529b5b052529d` passes twice; `global_thread`,
 production-launcher/real-provider, broader process-death UX,
@@ -70,8 +75,9 @@ gold.
 
 The current environment has SDK platforms 36 and 37.0, a physical Google Pixel
 8 (`shiba`) running LineageOS Android 16/API 36, and the synthetic-only
-`AuroraSMS_API36` API 36 AVD. Earlier physical evidence below covers only the
-Pixel/API combination. Phase 3 connected functional/profile-generation
+`AuroraSMS_API26` API 26 and `AuroraSMS_API36` API 36 AVDs. Earlier physical
+evidence below covers only the Pixel/API combination. Phase 3 connected
+functional/profile-generation
 evidence used the AVD; its timings are not representative performance
 evidence. In a later owner-approved window, the exact Phase 3 debug APK was
 installed in place and exercised against the real provider using only redacted
@@ -1130,6 +1136,14 @@ journey has not run; this section does not claim complete ADR 0007 acceptance.
   preferences, `SavedState`, logs, or analytics; Aurora takes no persistable
   grant. Pick, preview, Cancel, Back, lost target/source, recreation loss, and
   failed/stale Apply create no durable assignment or managed file.
+- [x] A separately gated API 26 AOSP DocumentsUI no-selection journey proves
+  the identical AndroidX `PickVisualMedia(ImageOnly)` contract resolves as
+  `ACTION_OPEN_DOCUMENT` with `image/*`, independently proves the production
+  editor's Pick action focuses DocumentsUI, and returns through the
+  accessibility global Back action with its exact pre-launch assignment,
+  managed-file-name, and persisted-grant-identity baselines intact. It does not
+  intercept the production outgoing intent, select a document, or close the
+  compound Photo Picker/SAF row above.
 - [x] Import authoritatively accepts only 8-bit Huffman baseline sequential-DCT
   (`SOF0`) JPEG with at most four components and complete scan coverage, or
   CRC-valid non-APNG PNG with at most 4,096 chunks, no
@@ -1714,6 +1728,61 @@ Picker Cancel control, selected/staged-candidate cancellation, URI
 non-persistence or managed-file byte identity after selection, other assignment
 tables, grant identity, cold-process behavior, or the complete picker lifecycle.
 The compound Photo Picker/SAF row remains unchecked.
+
+#### ADR 0007 API 26 AOSP DocumentsUI SAF accessibility-Back cancellation partial evidence — 2026-07-15
+
+Source commit `37fd044df3b9b8933839b0f89f7018ec72b8ab1b` adds the separately
+gated
+`MainActivityStaticWallpaperSafFallbackSmokeTest` and its exact-method runner:
+
+```shell
+./scripts/run-emulator-wallpaper-saf-cancellation-smoke.sh --device emulator-5556
+```
+
+The runner refuses physical devices and requires the exact API 26
+ranchu/goldfish emulator, an already-installed target APK matching the local
+artifact, and AuroraSMS already holding the default-SMS role. It requires all
+seven listed `READ_SMS`, `SEND_SMS`, `RECEIVE_SMS`, `RECEIVE_MMS`,
+`RECEIVE_WAP_PUSH`, `READ_PHONE_STATE`, and `READ_CONTACTS` permission states
+to be readable and owner-granted `READ_SMS` to be true. A per-device `flock`
+serializes participating runner invocations; point-in-time active/preinstalled
+test-package checks reject an existing test process/package but do not exclude
+unrelated external device use. The runner installs and later removes only the
+test APK; it does not grant a role or permission.
+
+The test separately constructs the same AndroidX
+`PickVisualMedia(ImageOnly)` contract and proves that its API 26 intent is
+`ACTION_OPEN_DOCUMENT`, has MIME type `image/*`, and resolves to AOSP
+DocumentsUI. It then independently opens the real `MainActivity` global-thread
+wallpaper editor and proves that the production Pick click focuses DocumentsUI.
+It does not intercept or inspect the production outgoing intent. The journey
+uses the accessibility global Back action without selecting a document or
+traversing DocumentsUI content. The editor returns with Pick enabled, Apply
+disabled, and no loading or error state. The exact global assignment, immediate
+managed-file-name set, and persisted URI-grant identity/read/write/persisted-time
+set all match their pre-launch baselines.
+
+The exact runner passed independently twice in 2.751s and 2.754s. Each run
+reported exactly one test, one zero status, final instrumentation code -1, and
+`OK (1 test)`, with no skip, failure, or crash. Cleanup preserved the target
+APK hash, default-SMS role, and all seven recorded permission states; the test
+package was absent afterward.
+
+The same source commit contains test-only compact API 26 portability hardening
+for root anchor/recreation visibility, notification-route teardown, and Theme
+Studio Cancel reachability. The final `:app:connectedDebugAndroidTest` XML on
+`AuroraSMS_API26` records 76 tests, zero failures/errors, three intentional
+gated skips, and 35.498s. This is app-module evidence on one AOSP API 26 AVD,
+not project-wide API 26 coverage and not coverage for API 27 through 32.
+
+This narrow result does not prove interception of the production outgoing
+intent; document selection or a returned URI; preview, Apply, Reset, import,
+rendering, or staged-candidate behavior; source loss or revocation;
+configuration, Activity, or process loss; managed-file bytes, inode,
+timestamps, or metadata preservation; a verified-conversation journey; API
+27–32 or OEM behavior; an explicit DocumentsUI/Photo Picker Cancel control; or
+broader accessibility, form-factor, performance, carrier, full-lifecycle, or
+gold readiness. The compound Photo Picker/SAF row remains unchecked.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 
