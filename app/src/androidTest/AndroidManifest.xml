@@ -5,5 +5,15 @@
             android:name="org.aurorasms.app.appearance.wallpaper.WallpaperTestContentProvider"
             android:authorities="org.aurorasms.app.wallpaper.testprovider"
             android:exported="true" />
+        <provider
+            android:name="org.aurorasms.app.appearance.wallpaper.WallpaperTestDocumentsProvider"
+            android:authorities="org.aurorasms.app.wallpaper.testdocuments"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
     </application>
 </manifest>

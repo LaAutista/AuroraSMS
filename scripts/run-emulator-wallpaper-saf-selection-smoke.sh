@@ -17,8 +17,7 @@ LOCK_SERIAL="${DEVICE_SERIAL//[![:alnum:]._-]/_}"
 LOCK_FILE="${TMPDIR:-/tmp}/aurorasms-wallpaper-saf-${LOCK_SERIAL}.lock"
 exec 9>"$LOCK_FILE"
 if ! flock --nonblock 9; then
-    printf 'Another AuroraSMS SAF-cancellation smoke owns emulator %s.\n' \
-        "$DEVICE_SERIAL" >&2
+    printf 'Another AuroraSMS SAF smoke owns emulator %s.\n' "$DEVICE_SERIAL" >&2
     exit 1
 fi
 
@@ -28,10 +27,13 @@ TEST_PACKAGE="org.aurorasms.app.test"
 DOCUMENTS_UI_PACKAGE="com.android.documentsui"
 TEST_RUNNER="androidx.test.runner.AndroidJUnitRunner"
 TEST_CLASS="org.aurorasms.app.appearance.wallpaper.MainActivityStaticWallpaperSafFallbackSmokeTest"
-TEST_METHOD="realGlobalThreadSafFallbackBackCancellationRestoresEditorAndBaseline"
+TEST_METHOD="realGlobalThreadSafFallbackSelectionLifecycleRestoresBaseline"
 TEST_TARGET="$TEST_CLASS#$TEST_METHOD"
-GATE_ARGUMENT="auroraEmulatorWallpaperSafCancellation"
-INSTRUMENTATION_TIMEOUT_SECONDS=90
+GATE_ARGUMENT="auroraEmulatorWallpaperSafSelection"
+SELECTION_SENTINEL_KEY="auroraSafSelectionResult"
+SELECTION_SENTINEL_VALUE="pass"
+SELECTION_SENTINEL_STATUS_CODE=42
+INSTRUMENTATION_TIMEOUT_SECONDS=180
 APP_APK="$ROOT/app/build/outputs/apk/debug/app-debug.apk"
 TEST_APK="$ROOT/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 ADB=(adb -s "$DEVICE_SERIAL")
@@ -48,31 +50,31 @@ PERMISSIONS=(
 mapfile -t DEVICES < <(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }')
 if ! printf '%s\n' "${DEVICES[@]}" \
     | rg --fixed-strings --line-regexp -- "$DEVICE_SERIAL" >/dev/null; then
-    printf 'Requested SAF-cancellation emulator is not authorized: %s\n' "$DEVICE_SERIAL" >&2
+    printf 'Requested SAF-selection emulator is not authorized: %s\n' "$DEVICE_SERIAL" >&2
     exit 1
 fi
 
 IS_EMULATOR="$("${ADB[@]}" shell getprop ro.kernel.qemu | tr -d '\r')"
 HARDWARE="$("${ADB[@]}" shell getprop ro.hardware | tr -d '\r')"
 if [[ "$DEVICE_SERIAL" != emulator-* || "$IS_EMULATOR" != "1" ]]; then
-    printf 'The wallpaper SAF-cancellation smoke refuses physical device: %s\n' \
+    printf 'The wallpaper SAF-selection smoke refuses physical device: %s\n' \
         "$DEVICE_SERIAL" >&2
     exit 1
 fi
 if [[ "$HARDWARE" != "ranchu" && "$HARDWARE" != "goldfish" ]]; then
-    printf 'The wallpaper SAF-cancellation smoke requires a ranchu or goldfish emulator.\n' >&2
+    printf 'The wallpaper SAF-selection smoke requires a ranchu or goldfish emulator.\n' >&2
     exit 1
 fi
 
 SDK_LEVEL="$("${ADB[@]}" shell getprop ro.build.version.sdk | tr -d '\r')"
 if [[ "$SDK_LEVEL" != "26" ]]; then
-    printf 'The wallpaper SAF-cancellation smoke requires API 26 exactly.\n' >&2
+    printf 'The wallpaper SAF-selection smoke requires API 26 exactly.\n' >&2
     exit 1
 fi
 
 POWER_STATE="$("${ADB[@]}" shell dumpsys power | tr -d '\r')"
 if ! rg --fixed-strings --quiet 'mWakefulness=Awake' <<<"$POWER_STATE"; then
-    printf 'Wake and unlock the API 26 emulator before running the SAF-cancellation smoke.\n' >&2
+    printf 'Wake and unlock the API 26 emulator before running the SAF-selection smoke.\n' >&2
     exit 1
 fi
 
@@ -152,7 +154,7 @@ if [[ -z "$BEFORE_TARGET_PATH" ]]; then
     exit 1
 fi
 if ! target_matches_build; then
-    printf 'The installed target APK does not match the SAF-cancellation smoke build.\n' >&2
+    printf 'The installed target APK does not match the SAF-selection smoke build.\n' >&2
     printf 'Update it separately, verify preserved app state, and then rerun this script.\n' >&2
     exit 1
 fi
@@ -208,7 +210,7 @@ cleanup() {
         status=1
     fi
     if ! target_matches_build; then
-        printf 'The target APK was removed or changed by SAF-cancellation cleanup.\n' >&2
+        printf 'The target APK was removed or changed by SAF-selection cleanup.\n' >&2
         status=1
     fi
     default_sms_after="$(default_sms_state)"
@@ -216,25 +218,25 @@ cleanup() {
         printf 'The post-smoke AuroraSMS API 26 permission state could not be captured.\n' >&2
         status=1
     elif [[ "$permissions_after" != "$BEFORE_PERMISSIONS" ]]; then
-        printf 'The SAF-cancellation smoke changed AuroraSMS permission state.\n' >&2
+        printf 'The SAF-selection smoke changed AuroraSMS permission state.\n' >&2
         status=1
     fi
     if [[ "$default_sms_after" != "$BEFORE_DEFAULT_SMS" ]]; then
-        printf 'The SAF-cancellation smoke changed the legacy default SMS app.\n' >&2
+        printf 'The SAF-selection smoke changed the legacy default SMS app.\n' >&2
         status=1
     fi
 
     if [[ "$status" -eq 0 ]]; then
         rm -rf "$WORK"
-        printf 'SAF-cancellation cleanup preserved the target APK, default SMS app, and permissions.\n'
+        printf 'SAF-selection cleanup preserved the target APK, default SMS app, and permissions.\n'
     else
-        printf 'SAF-cancellation evidence logs retained at: %s\n' "$WORK" >&2
+        printf 'SAF-selection evidence logs retained at: %s\n' "$WORK" >&2
     fi
     exit "$status"
 }
 trap cleanup EXIT
 
-printf 'Installing the isolated instrumentation APK.\n'
+printf 'Installing the isolated instrumentation APK with its one synthetic SAF root.\n'
 TEST_INSTALL_MAY_EXIST=1
 "${ADB[@]}" install -r -t "$TEST_APK" >/dev/null
 
@@ -254,16 +256,26 @@ INSTRUMENTATION_STATUS="${PIPESTATUS[0]}"
 set -e
 
 ZERO_STATUS_COUNT="$(rg --count '^INSTRUMENTATION_STATUS_CODE: 0$' "$INSTRUMENTATION_OUTPUT" || true)"
+SENTINEL_STATUS_COUNT="$(
+    rg --count "^INSTRUMENTATION_STATUS_CODE: $SELECTION_SENTINEL_STATUS_CODE$" \
+        "$INSTRUMENTATION_OUTPUT" || true
+)"
+SENTINEL_VALUE_COUNT="$(
+    rg --count \
+        "^INSTRUMENTATION_STATUS: $SELECTION_SENTINEL_KEY=$SELECTION_SENTINEL_VALUE$" \
+        "$INSTRUMENTATION_OUTPUT" || true
+)"
 if [[ "$INSTRUMENTATION_STATUS" -ne 0 ]] || \
     rg --quiet \
         'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed|INSTRUMENTATION_STATUS_CODE: -[1-4]' \
         "$INSTRUMENTATION_OUTPUT" || \
     [[ "$ZERO_STATUS_COUNT" -ne 1 ]] || \
+    [[ "$SENTINEL_STATUS_COUNT" -ne 1 ]] || \
+    [[ "$SENTINEL_VALUE_COUNT" -ne 1 ]] || \
     ! rg --quiet '^OK \(1 test\)$' "$INSTRUMENTATION_OUTPUT" || \
     ! rg --quiet '^INSTRUMENTATION_CODE: -1$' "$INSTRUMENTATION_OUTPUT"; then
-    printf 'The API 26 wallpaper SAF-cancellation instrumentation did not pass exactly one test.\n' \
-        >&2
+    printf 'The API 26 wallpaper SAF-selection instrumentation did not pass exactly once.\n' >&2
     exit 1
 fi
 
-printf 'API 26 ACTION_OPEN_DOCUMENT/DocumentsUI Back cancellation passed exactly one test.\n'
+printf 'API 26 real DocumentsUI selection, transient lifecycle, Apply/load, and Reset passed.\n'

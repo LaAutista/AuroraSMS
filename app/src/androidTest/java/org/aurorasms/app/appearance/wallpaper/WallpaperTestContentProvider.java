@@ -9,6 +9,7 @@ import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.util.Base64;
 
@@ -31,6 +32,22 @@ public final class WallpaperTestContentProvider extends ContentProvider {
     @Override
     public boolean onCreate() {
         return true;
+    }
+
+    @Override
+    public Bundle call(String method, String arg, Bundle extras) {
+        if (WallpaperTestDocumentsProvider.METHOD_RESET.equals(method)) {
+            return WallpaperTestDocumentsProvider.resetState(getContext());
+        }
+        if (WallpaperTestDocumentsProvider.METHOD_SET_AVAILABLE.equals(method)) {
+            boolean available = extras != null
+                && extras.getBoolean(WallpaperTestDocumentsProvider.KEY_AVAILABLE, false);
+            return WallpaperTestDocumentsProvider.setAvailable(getContext(), available);
+        }
+        if (WallpaperTestDocumentsProvider.METHOD_SNAPSHOT.equals(method)) {
+            return WallpaperTestDocumentsProvider.snapshotState(getContext());
+        }
+        return super.call(method, arg, extras);
     }
 
     @Override
