@@ -17,11 +17,21 @@ and gated API 36 AOSP Photo Picker `GLOBAL_ACTION_BACK` cancellation passes twic
 host-force-stop verified-conversation cold-target-process journey passes twice
 at `73b5ffa2827ad2cd96b922ccf4a529b5b052529d`. Narrow API 26 AOSP SAF
 fallback no-selection accessibility-Back cancellation passes twice at
-`37fd044df3b9b8933839b0f89f7018ec72b8ab1b`, while returned-URI/selection and
-staged-candidate SAF paths, `global_thread` cold restart,
-production-launcher/real-provider and broader process-death recovery, complete
-picker/UI, accessibility/form-factor, carrier, and overall acceptance remain
-pending.
+`37fd044df3b9b8933839b0f89f7018ec72b8ab1b`. Source commit `dd33737` adds one
+separate synthetic empty-`global_thread`, API 26 AOSP DocumentsUI selection
+lifecycle: expected canonical URI-shape validation for the exact selected
+provider document with provider-open and preview evidence, transient preview discard through
+editor Cancel/wallpaper Back/Activity recreation, unavailable-document Apply
+rejection, one-final/one-revision retry, source-independent managed load, and UI
+Reset pass. Raw production-intent/result capture, transient-grant revocation,
+provider removal/replacement, readable source-byte/content mutation,
+cloud/blocking, target-loss/stale-CAS and configuration beyond recreation,
+broader process-death, API 27-32, physical SAF-fallback/selection behavior,
+broader OEM behavior beyond the recorded Pixel 8 Photo Picker journey, performance,
+production-launcher/real-provider Thread/verified-conversation rendering,
+explicit picker Cancel, cold
+restart, complete picker/UI, accessibility/form-factor, carrier, and overall
+acceptance remain pending; AuroraSMS is not complete or gold.
 
 ## Context
 
@@ -272,8 +282,8 @@ fetcher.
 
 ### Preserve permission, dependency, artwork, and messaging boundaries
 
-The slice adds no manifest permission, exported component, service, provider,
-receiver, initializer, native library, repository, or network path. In
+The production slice adds no manifest permission, exported component, service,
+provider, receiver, initializer, native library, repository, or network path. In
 particular it adds no storage permission, `READ_MEDIA_*`, persistent URI grant,
 or Photo Picker backport-install component. Existing `allowBackup=false` and
 the complete backup/data-extraction exclusions remain in force; managed files
@@ -407,13 +417,55 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
   Cancel control, broader accessibility/form-factor/performance/carrier
   behavior, the complete lifecycle, or gold readiness. The compound picker/SAF
   gate remains open.
+- Source commit `dd33737` adds an explicitly gated API 26 ranchu/goldfish AOSP
+  DocumentsUI selection-lifecycle journey through the real `MainActivity`
+  global-thread editor and production AndroidX `ACTION_OPEN_DOCUMENT` fallback.
+  Its androidTest-only exported `DocumentsProvider` contributes exactly one
+  local-only root and one read-only 40x20 PNG; production manifests/APKs add no
+  provider or `MANAGE_DOCUMENTS` permission. The journey acts only on that exact
+  synthetic root/document, obtains provider-open and preview evidence, validates
+  the expected canonical bounded `content:` URI shape with a non-empty authority,
+  and records exact empty assignment, revision,
+  persisted-grant identity/read/write/time, and no-follow managed-file ledger
+  baselines. Editor Cancel, wallpaper Back, and Activity recreation each discard
+  a selected preview without durable mutation. Making only the document
+  unavailable keeps the provider installed; Apply reopens and rejects it without
+  assignment/file/grant/revision mutation. Re-enabling and retrying creates
+  exactly one managed final and consumes exactly one revision; the production
+  controller loads the expected 40x20 managed raster after source unavailability.
+  UI Reset restores the empty assignment/file/persisted-grant baseline, while
+  the consumed revision correctly remains baseline plus one.
+  The preservation-safe runner shares a per-device lock with the no-selection
+  cancellation runner, installs/removes only the test APK, and strictly requires
+  one status 0, one custom status 42 `auroraSafSelectionResult=pass`, final code
+  -1, and `OK (1 test)`. Focused selection passes took 13.054s and 13.087s; the
+  final post-review pass took 12.952s, and the independent cancellation runner
+  passed in 2.65s. The complete API 26 aggregate completed 181 tests/four skips
+  with zero failures across 456 tasks in 1m53s; API 36 completed its current 176
+  tests/five skips with zero failures across 456 tasks in 1m23s. The 886-task
+  offline host/release/privacy gate passed in 19s, the 15-task CycloneDX gate
+  passed in 8s, and the production debug APK for this source is 13,993,426 bytes with
+  SHA-256 `5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+  This does not capture the raw production intent/result; prove transient-grant
+  revocation; uninstall/remove or replace the provider; exercise readable
+  source-byte/content mutation or cloud/blocking; cover target loss/stale CAS,
+  configuration beyond Activity recreation, background/low-memory/in-flight
+  process death, actual Thread
+  rendering or a verified real-provider conversation, API 27-32, physical
+  SAF-fallback/selection behavior, broader OEM behavior beyond the recorded
+  Pixel 8 Photo Picker journey, performance, an explicit picker Cancel control,
+  or cold restart; or close the
+  complete lifecycle/gold gate. The provider remains installed throughout and
+  only exact document availability is toggled. The compound picker/SAF and all
+  unrelated implementation-complete gates remain open.
 - Inbox treatment, canonical built-ins, GIF lifecycle, live URI references,
   and import/export media remain independently reviewable slices.
 
 ## Rejected alternatives
 
 - Persist the picker URI and take a durable read grant: retains sensitive
-  provider identity and adds revocation, provider mutation/blocking, grant-cap,
+  provider identity and adds revocation, source-byte/content mutation and
+  provider-blocking, grant-cap,
   reference-count, and crash-reconciliation behavior without a product need
   for live linkage.
 - Copy the original encoded source unchanged: keeps metadata and makes every

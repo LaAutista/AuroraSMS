@@ -31,13 +31,21 @@ API 36 emulator host-`am force-stop` verified-conversation cold-target-process
 journey passes twice at `73b5ffa2827ad2cd96b922ccf4a529b5b052529d`. An exact
 gated API 26 AOSP DocumentsUI SAF-fallback, no-selection accessibility-Back
 cancellation journey passes twice at
-`37fd044df3b9b8933839b0f89f7018ec72b8ab1b`; remaining picker/SAF work is
-narrowed to successful selection and returned-URI handling, preview/Apply/
-import/rendering, staged-candidate cancellation, source loss/revocation,
-configuration/Activity/process-loss recovery, API 27-32 and OEM behavior, and
-the full lifecycle. Broader picker/static-wallpaper UI acceptance,
-`global_thread` cold restart, production-launcher/real-provider restart, and
-broader process-death recovery also remain pending.
+`37fd044df3b9b8933839b0f89f7018ec72b8ab1b`. Source commit `dd33737` adds a
+separate real-`MainActivity` API 26 DocumentsUI selection lifecycle: canonical
+URI-shape validation for the exact selected provider document with provider-open
+and preview evidence, transient preview discarded by editor Cancel,
+wallpaper Back, and Activity recreation, unavailable-document Apply rejection,
+successful retry to one managed final/one revision, source-independent managed
+load, and UI Reset now pass for one synthetic empty `global_thread` journey.
+Remaining picker/SAF work includes raw production-intent/result capture,
+transient-grant revocation proof, actual provider removal/replacement, readable
+source-byte/content mutation, cloud/blocking,
+target-loss/stale-CAS and configuration variants beyond recreation, background/
+low-memory/in-flight process death, API 27-32 and OEM behavior, an explicit
+picker Cancel control, and the full lifecycle. Broader picker/static-wallpaper
+UI acceptance, `global_thread` cold restart, production-launcher/real-provider
+restart, and broader process-death recovery also remain pending.
 Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
 import/export, navigation variants, and the full accessibility/performance and
 carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold.
@@ -633,10 +641,14 @@ app/src/androidTest/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpap
 app/src/androidTest/kotlin/org/aurorasms/app/appearance/wallpaper/ManagedWallpaperStoreTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/appearance/ScopedAppearanceDialogTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/AuroraSmsRootAcceptanceTest.kt
+app/src/androidTest/AndroidManifest.xml
+app/src/androidTest/java/org/aurorasms/app/appearance/wallpaper/WallpaperTestContentProvider.java
+app/src/androidTest/java/org/aurorasms/app/appearance/wallpaper/WallpaperTestDocumentsProvider.java
 app/src/androidTest/kotlin/org/aurorasms/app/appearance/wallpaper/MainActivityStaticWallpaperSafFallbackSmokeTest.kt
 app/src/androidTest/kotlin/org/aurorasms/app/DefaultSmsManifestContractTest.kt
 scripts/run-emulator-wallpaper-cold-restart-smoke.sh
 scripts/run-emulator-wallpaper-saf-cancellation-smoke.sh
+scripts/run-emulator-wallpaper-saf-selection-smoke.sh
 ```
 
 ### 2. Import and export
@@ -921,6 +933,62 @@ verified-conversation target, API 27-32, OEM DocumentsUI/pickers, an explicit
 Cancel control, broader accessibility or form-factor coverage, performance,
 carrier behavior, or the complete lifecycle. The corresponding compound gates
 remain open, and AuroraSMS is not complete or gold.
+
+### ADR 0007 API 26 AOSP DocumentsUI SAF selection-lifecycle partial evidence — 2026-07-16
+
+Source commit `dd33737` adds the separately gated API 26 AOSP DocumentsUI SAF
+selection-lifecycle journey and
+`scripts/run-emulator-wallpaper-saf-selection-smoke.sh`. The preservation-safe
+runner shares the cancellation runner's per-device lock; requires the exact API
+26 ranchu/goldfish emulator, matching installed target, default-SMS state, and
+captured seven-permission baseline; refuses an existing test package/process;
+installs and removes only the test APK; and strictly requires one status 0, one
+custom status 42 with `auroraSafSelectionResult=pass`, final code -1, and
+`OK (1 test)` within 180 seconds.
+
+The androidTest-only provider contributes one exact local root and one read-only
+40x20 PNG. The real `MainActivity` global-thread editor and production AndroidX
+contract traverse its API 26 `ACTION_OPEN_DOCUMENT` fallback. The journey acts
+only on that exact root/document, obtains provider-open and preview evidence,
+and validates the expected canonical `content:` URI shape with a non-empty
+authority and at most 4,096 UTF-8 bytes. Exact empty assignment,
+read-only revision sequence, persisted URI-grant identity/read/write/time set,
+and no-follow managed-file name/device/inode/link-count/size/mtime/SHA-256 ledger
+form the baseline.
+
+Independent selections followed by editor Cancel, wallpaper Back, and Activity
+recreation discard the preview and preserve every durable baseline. Making only
+the test document unavailable leaves its provider installed; Apply reopens and
+rejects it without assignment/file/grant/revision mutation. Re-enabling the same
+document and retrying creates exactly one conforming managed final and advances
+the revision exactly once. The production controller then loads the expected
+40x20 managed raster while the source is unavailable. UI Reset restores the
+empty assignment, file, and persisted-grant baselines. The consumed revision
+correctly remains baseline plus one because Reset neither allocates nor rolls
+back a revision.
+
+The focused selection journey passed in 13.054s and 13.087s; its final
+post-review pass took 12.952s. The independent no-selection cancellation runner
+passed in 2.65s. The complete API 26 aggregate completed 181 tests with four
+gated skips and zero failures across 456 tasks in 1m53s; the current API 36
+aggregate completed 176 tests with five skips and zero failures across 456 tasks
+in 1m23s.
+The 886-task host/release/privacy gate passed in 19s, CycloneDX's 15 tasks passed
+in 8s, and the production debug APK for this source is 13,993,426 bytes with
+SHA-256 `5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This is one synthetic empty-`global_thread` API 26 AOSP journey. It does not
+capture the raw production intent/result, prove transient-grant revocation,
+uninstall/remove or replace the provider, exercise readable source-byte/content
+mutation or cloud/blocking,
+target loss or stale CAS, configuration beyond Activity recreation, background/
+low-memory/in-flight process death, the actual Thread surface or a verified
+real-provider conversation, API 27-32, physical SAF-fallback/selection behavior,
+broader OEM behavior beyond the recorded Pixel 8 Photo Picker journey,
+performance, an explicit picker Cancel control, cold restart, complete lifecycle, or gold
+readiness. Only test-document availability changes; the provider remains
+installed through Apply and Reset. All corresponding compound gates stay open,
+and AuroraSMS remains incomplete and not gold.
 
 ## Stop conditions
 

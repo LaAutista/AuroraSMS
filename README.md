@@ -245,17 +245,43 @@ host/release/governance gate, and 15-task CycloneDX gate also passed for the
 same source.
 Emulator timings are not product-performance evidence.
 
-Document selection and returned-URI validation, staged-candidate cancellation,
-preview/Apply/Reset/import/rendering through SAF, source loss or revocation,
-configuration/Activity/process loss, API 27-32 and OEM picker behavior, any
-explicit picker Cancel control, a `global_thread` cold restart,
-production-launcher/real-provider and broader process-death recovery, managed
-file byte/inode/timestamp/metadata preservation, the complete Photo Picker/
-static-wallpaper lifecycle, import/export, navigation variants, GIF lifecycle,
-carrier coverage, full accessibility/form-factor/performance coverage, and
-approved canonical artwork remain Phase 4 or release follow-on gates. Artwork
-is still blocked on the exact written publication/derivative/distribution terms
-in `docs/ARTWORK_CATALOG.md`. AuroraSMS is therefore not complete or gold yet.
+Source commit `dd33737` adds a separate API 26 emulator-only real AOSP
+DocumentsUI selection-lifecycle journey through the real `MainActivity`
+global-thread editor and production `ACTION_OPEN_DOCUMENT` fallback. Its exact
+local test root/document provides provider-open and preview evidence while the
+journey validates the expected canonical bounded `content:` URI shape. Selected
+preview is transient: editor Cancel, wallpaper Back, and Activity recreation
+each preserve the empty assignment, managed-file ledger, persisted-grant
+identity, and revision baseline. When the test document is made unavailable,
+Apply reopens and rejects it without mutation or revision use; making it
+available again and retrying creates exactly one managed final and advances the
+revision exactly once. The resulting managed 40x20 raster still loads after the
+source is made unavailable. UI Reset restores the empty assignment, file, and
+persisted-grant baselines; the deliberately consumed revision remains baseline
+plus one. The focused journey passed in 13.054s, 13.087s, and, after final
+review, 12.952s; the independent no-selection cancellation runner passed in
+2.65s. The complete API 26 aggregate completed 181 tests with four gated skips
+in 1m53s, and the API 36 aggregate completed its current 176 tests with five
+skips in 1m23s, both with zero failures. The 886-task host/release/privacy gate
+passed in 19s, the 15-task CycloneDX gate passed in 8s, and the production debug
+APK for this source is 13,993,426 bytes with SHA-256
+`5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This new proof does not capture the raw outgoing production intent/result, prove
+transient URI-grant revocation, uninstall or remove the provider, exercise a
+readable source-byte/content mutation or cloud/blocking provider, cover target
+loss or stale CAS, test configuration
+variants beyond Activity recreation, or cover background/low-memory/in-flight
+process death. The provider remains installed while only its exact document's
+availability is toggled. Actual Thread-surface rendering and a real verified
+conversation, API 27-32, physical SAF-fallback/selection behavior, broader OEM
+picker behavior beyond the recorded Pixel 8 Photo Picker journey, performance,
+an explicit picker Cancel control, and cold restart remain open. The compound complete Photo
+Picker/SAF lifecycle, import/export, navigation variants, GIF lifecycle, carrier
+coverage, full accessibility/form-factor coverage, and approved canonical
+artwork also remain Phase 4 or release follow-on gates. Artwork is still blocked
+on the exact written publication/derivative/distribution terms in
+`docs/ARTWORK_CATALOG.md`. AuroraSMS is therefore not complete or gold yet.
 
 Phase 3 does not change the existing carrier MMS limitations. Earlier Phase
 1/2 functional evidence covers a Pixel 8 on Android 16/API 36. Phase 3 profile
