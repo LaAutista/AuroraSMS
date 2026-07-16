@@ -13,8 +13,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -27,6 +32,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.closeSoftKeyboard
 import androidx.test.espresso.action.ViewActions.pressBack
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.isRoot
@@ -166,6 +172,7 @@ import org.aurorasms.feature.conversations.INBOX_MORE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_LIST_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_SCOPE_APPEARANCE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_SCREEN_TEST_TAG
+import org.aurorasms.feature.conversations.MESSAGE_BUBBLE_TEST_TAG
 import org.aurorasms.feature.conversations.SEARCH_FIELD_TEST_TAG
 import org.aurorasms.feature.conversations.SEARCH_HIT_TEST_TAG
 import org.aurorasms.feature.conversations.SEARCH_SCREEN_TEST_TAG
@@ -263,13 +270,14 @@ class AuroraSmsRootAcceptanceTest {
             compose.onNodeWithTag(SEARCH_FIELD_TEST_TAG).performTextReplacement(SYNTHETIC_QUERY)
             waitForTag(SEARCH_HIT_TEST_TAG)
             compose.onNodeWithTag(SEARCH_HIT_TEST_TAG).performClick()
+            onView(isRoot()).perform(closeSoftKeyboard())
 
             waitForTag(THREAD_SCREEN_TEST_TAG)
             compose.waitUntil(TIMEOUT_MILLIS) { fixture.index.anchorLoadCount.get() == 1 }
             waitForTag(THREAD_LIST_TEST_TAG)
             waitForTag(THREAD_MORE_ACTION_TEST_TAG)
-            compose.onNodeWithTag(THREAD_LIST_TEST_TAG).performScrollToIndex(THREAD_ANCHOR_INDEX)
-            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            waitForDisplayedText(SYNTHETIC_EXACT_ANCHOR)
+            scrollThreadRowIntoView("Synthetic anchor row 20", THREAD_ANCHOR_INDEX)
             compose.onNodeWithTag(COMPOSER_TEST_TAG).performTextReplacement(SYNTHETIC_DRAFT)
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
 
@@ -286,7 +294,7 @@ class AuroraSmsRootAcceptanceTest {
             waitForDialogToClose()
             assertEquals(anchorLoadsBeforeModal, fixture.index.anchorLoadCount.get())
             assertEquals(timelineLoadsBeforeModal, fixture.timeline.latestLoadCount.get())
-            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            waitForDisplayedThreadRow("Synthetic anchor row 20")
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
 
             compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
@@ -311,7 +319,7 @@ class AuroraSmsRootAcceptanceTest {
             compose.onNodeWithTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG).assertDoesNotExist()
             compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
-            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            waitForDisplayedThreadRow("Synthetic anchor row 20")
             compose.waitUntil(TIMEOUT_MILLIS) {
                 fixture.index.anchorLoadCount.get() == anchorLoadsBeforeRecreation + 1
             }
@@ -326,7 +334,7 @@ class AuroraSmsRootAcceptanceTest {
             waitForTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG)
             compose.onNodeWithTag(SCOPED_APPEARANCE_SELECTOR_TEST_TAG).assertTextContains(EVENING_NAME)
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
-            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            waitForDisplayedThreadRow("Synthetic anchor row 20")
             assertEquals(anchorLoadsBeforeRecreation + 1, fixture.index.anchorLoadCount.get())
             assertEquals(0, fixture.timeline.latestLoadCount.get())
             assertEquals(
@@ -342,10 +350,11 @@ class AuroraSmsRootAcceptanceTest {
                 AppearanceProfileId(EVENING_ID),
                 fixture.appearance.overrideFor(SYNTHETIC_CONVERSATION_SCOPE)?.profileId,
             )
-            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            waitForDisplayedThreadRow("Synthetic anchor row 20")
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
-            compose.onNodeWithTag(THREAD_LIST_TEST_TAG).performScrollToIndex(THREAD_REENTRY_STALE_INDEX)
-            compose.onNodeWithText("Synthetic anchor row 10").assertIsDisplayed()
+            scrollThreadRowIntoView("Synthetic anchor row 10", THREAD_REENTRY_STALE_INDEX)
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).performClick().assertIsFocused()
+            moveFocusOffComposer(scenario)
             scenario.onActivity { activity -> activity.onBackPressedDispatcher.onBackPressed() }
 
             waitForTag(SEARCH_SCREEN_TEST_TAG)
@@ -353,12 +362,13 @@ class AuroraSmsRootAcceptanceTest {
             compose.onNodeWithTag(THEME_STUDIO_SCREEN_TEST_TAG).assertDoesNotExist()
             val anchorLoadsBeforeReentry = fixture.index.anchorLoadCount.get()
             compose.onNodeWithTag(SEARCH_HIT_TEST_TAG).performClick()
+            onView(isRoot()).perform(closeSoftKeyboard())
             waitForTag(THREAD_SCREEN_TEST_TAG)
             compose.waitUntil(TIMEOUT_MILLIS) {
                 fixture.index.anchorLoadCount.get() == anchorLoadsBeforeReentry + 1
             }
             waitForTag(THREAD_LIST_TEST_TAG)
-            compose.onNodeWithText(SYNTHETIC_EXACT_ANCHOR).assertIsDisplayed()
+            waitForDisplayedText(SYNTHETIC_EXACT_ANCHOR)
         }
     }
 
@@ -421,8 +431,7 @@ class AuroraSmsRootAcceptanceTest {
             assertEquals(initialConversationAssignment, fixture.wallpapers.assignmentFor(SYNTHETIC_CONVERSATION_SCOPE))
             assertEquals(globalAssignment, fixture.wallpapers.assignmentFor(GLOBAL_THREAD_SCOPE))
 
-            compose.onNodeWithTag(THREAD_LIST_TEST_TAG).performScrollToIndex(THREAD_ANCHOR_INDEX)
-            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            scrollThreadRowIntoView("Synthetic anchor row 20", THREAD_ANCHOR_INDEX)
             compose.onNodeWithTag(COMPOSER_TEST_TAG).performTextReplacement(SYNTHETIC_DRAFT)
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
             val anchorLoadsBeforeEditor = fixture.index.anchorLoadCount.get()
@@ -463,7 +472,7 @@ class AuroraSmsRootAcceptanceTest {
             assertEquals(anchorLoadsBeforeEditor, fixture.index.anchorLoadCount.get())
             assertEquals(timelineLoadsBeforeEditor, fixture.timeline.latestLoadCount.get())
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
-            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            waitForDisplayedThreadRow("Synthetic anchor row 20")
 
             compose.onNodeWithTag(SCOPED_APPEARANCE_CANCEL_TEST_TAG).performClick()
             waitForDialogToClose()
@@ -473,6 +482,8 @@ class AuroraSmsRootAcceptanceTest {
                 preview = false,
             )
             val anchorLoadsBeforeRecreation = fixture.index.anchorLoadCount.get()
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).performClick().assertIsFocused()
+            moveFocusOffComposer(scenario)
             scenario.recreate()
 
             waitForTag(THREAD_SCREEN_TEST_TAG)
@@ -490,7 +501,7 @@ class AuroraSmsRootAcceptanceTest {
             assertEquals(globalAssignment, fixture.wallpapers.assignmentFor(GLOBAL_THREAD_SCOPE))
             assertEquals(timelineLoadsBeforeEditor, fixture.timeline.latestLoadCount.get())
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
-            compose.onNodeWithText("Synthetic anchor row 20").assertIsDisplayed()
+            waitForDisplayedThreadRow("Synthetic anchor row 20")
             waitForWallpaperPixels(CONVERSATION_WALLPAPER_COLOR_ARGB, UPDATED_DIM)
 
             openConversationWallpaperEditor()
@@ -1308,9 +1319,26 @@ class AuroraSmsRootAcceptanceTest {
         compose.onNodeWithTag(SEARCH_FIELD_TEST_TAG).performTextReplacement(SYNTHETIC_QUERY)
         waitForTag(SEARCH_HIT_TEST_TAG)
         compose.onNodeWithTag(SEARCH_HIT_TEST_TAG).performClick()
+        onView(isRoot()).perform(closeSoftKeyboard())
         waitForTag(THREAD_SCREEN_TEST_TAG)
         waitForTag(THREAD_LIST_TEST_TAG)
         waitForTag(THREAD_MORE_ACTION_TEST_TAG)
+        waitForDisplayedText(SYNTHETIC_EXACT_ANCHOR)
+    }
+
+    private fun scrollThreadRowIntoView(text: String, index: Int) {
+        compose.onNodeWithTag(THREAD_LIST_TEST_TAG).performScrollToIndex(index)
+        waitForDisplayedThreadRow(text)
+    }
+
+    private fun moveFocusOffComposer(scenario: ActivityScenario<AuroraSmsRootTestActivity>) {
+        scenario.onActivity(AuroraSmsRootTestActivity::moveFocusToTestSink)
+        onView(isRoot()).perform(closeSoftKeyboard())
+        compose.waitUntil(TIMEOUT_MILLIS) {
+            runCatching {
+                compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotFocused()
+            }.isSuccess
+        }
     }
 
     private fun openConversationWallpaperEditor() {
@@ -1378,6 +1406,26 @@ class AuroraSmsRootAcceptanceTest {
             compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
         }
     }
+
+    private fun waitForDisplayedText(text: String) {
+        compose.waitUntil(TIMEOUT_MILLIS) {
+            runCatching {
+                compose.onNodeWithText(text).assertIsDisplayed()
+            }.isSuccess
+        }
+    }
+
+    private fun waitForDisplayedThreadRow(text: String) {
+        val rowMatcher = threadRowMatcher(text)
+        compose.waitUntil(TIMEOUT_MILLIS) {
+            runCatching {
+                compose.onNode(rowMatcher, useUnmergedTree = true).assertIsDisplayed()
+            }.isSuccess
+        }
+    }
+
+    private fun threadRowMatcher(text: String) =
+        hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and hasAnyDescendant(hasText(text))
 
     private fun waitForDialogToClose() {
         compose.waitUntil(TIMEOUT_MILLIS) {

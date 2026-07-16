@@ -5,9 +5,20 @@ package org.aurorasms.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.aurorasms.app.appearance.AppearanceController
 import org.aurorasms.core.model.ConversationId
@@ -20,6 +31,8 @@ class AuroraSmsRootTestActivity : ComponentActivity() {
     internal lateinit var harness: AuroraSmsRootTestHarness
         private set
 
+    private var moveFocusToTestSinkAction: (() -> Unit)? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val installedHarness = AuroraSmsRootTestHarnessRegistry.installedOrNull()
@@ -29,23 +42,47 @@ class AuroraSmsRootTestActivity : ComponentActivity() {
         }
         harness = installedHarness
         setContent {
+            val focusRequester = remember { FocusRequester() }
+            DisposableEffect(focusRequester) {
+                val moveFocus: () -> Unit = { focusRequester.requestFocus() }
+                moveFocusToTestSinkAction = moveFocus
+                onDispose {
+                    if (moveFocusToTestSinkAction === moveFocus) {
+                        moveFocusToTestSinkAction = null
+                    }
+                }
+            }
             val appearance by harness.appearanceController.state.collectAsStateWithLifecycle()
-            AuroraSmsTheme(profile = appearance.activeProfile) {
-                AuroraSmsRoot(
-                    services = harness.services,
-                    appearance = appearance,
-                    appearanceController = harness.appearanceController,
-                    pendingConversationId = harness.pendingConversationId,
-                    diagnosticsAvailable = harness.diagnosticsAvailable,
-                    contactsPermissionGranted = harness.contactsPermissionGranted,
-                    onOpenDiagnostics = harness::recordDiagnosticsOpen,
-                    onRequestContactsPermission = harness::recordContactsPermissionRequest,
-                    onPendingConversationConsumed = harness::consumePendingConversation,
-                    onOpenedConversationChanged = harness::recordOpenedConversation,
-                    onInboxReady = harness::recordInboxReady,
+            Box {
+                AuroraSmsTheme(profile = appearance.activeProfile) {
+                    AuroraSmsRoot(
+                        services = harness.services,
+                        appearance = appearance,
+                        appearanceController = harness.appearanceController,
+                        pendingConversationId = harness.pendingConversationId,
+                        diagnosticsAvailable = harness.diagnosticsAvailable,
+                        contactsPermissionGranted = harness.contactsPermissionGranted,
+                        onOpenDiagnostics = harness::recordDiagnosticsOpen,
+                        onRequestContactsPermission = harness::recordContactsPermissionRequest,
+                        onPendingConversationConsumed = harness::consumePendingConversation,
+                        onOpenedConversationChanged = harness::recordOpenedConversation,
+                        onInboxReady = harness::recordInboxReady,
+                    )
+                }
+                Spacer(
+                    modifier = Modifier
+                        .size(1.dp)
+                        .alpha(0f)
+                        .focusRequester(focusRequester)
+                        .focusable(),
                 )
             }
         }
+    }
+
+    internal fun moveFocusToTestSink() {
+        checkNotNull(moveFocusToTestSinkAction) { "Compose test focus sink is not installed" }
+            .invoke()
     }
 }
 
