@@ -48,8 +48,9 @@ one fixed synthetic message, a real touchscreen opens the AOSP notification
 shade and taps its exact SystemUI row, and the production content `PendingIntent`
 replaces the editor route in the same warm `MainActivity` without durable
 wallpaper, notification-channel, or residual-notification mutation. Remaining
-work includes a real carrier/provider/receiver/orchestrator incoming-message
-trigger; provider-backed and verified-conversation identity; cold/absent-task,
+work at that point included a real carrier/provider/receiver/orchestrator
+incoming-message trigger; provider-backed and verified-conversation identity;
+cold/absent-task,
 background, lockscreen, and process-death delivery; raw `PendingIntent` action/
 extras/flags; API 27+, permission-denial, OEM, and physical-shade behavior;
 reply/group/privacy/alert/new-channel variants; raw production picker-result
@@ -59,6 +60,16 @@ Apply, nonempty baselines, explicit picker Cancel, and the full lifecycle.
 Broader picker/static-wallpaper UI acceptance, `global_thread` cold restart,
 production-launcher/real-provider restart, and broader process-death recovery
 also remain pending.
+Source commit `f41dfd4f0552ed249b2fbda65ec2e3b164842c23` now closes one
+narrow part of that list on the dedicated non-Play API 26 GSM AVD
+`AuroraSMS_SMSRX_API26`: a single emulator-modem PDU traverses the protected
+production `SMS_DELIVER` receiver, provider write, `COMPLETE` replay journal,
+optional reply-target resolution, production private notification, exact
+receiver-process death, surviving notification, real AOSP shade tap, and
+distinct cold `MainActivity` process displaying the provider-backed verified
+Thread. Carrier-network, physical/OEM shade and lockscreen, API 27+, permission-
+denial, group/multiple-message, inline-reply execution, MMS, nonempty-provider,
+broader process-death, and gold coverage remain open.
 Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
 import/export, navigation variants, and the full accessibility/performance and
 carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold.
@@ -1124,6 +1135,55 @@ channel behavior, raw picker result or temporary URI-grant lifetime, in-flight
 Apply, source mutation/provider removal/cloud behavior, or nonempty baselines;
 or close any compound lifecycle or broader gold gate. Only synthetic emulator
 fixtures participated. AuroraSMS remains incomplete and not gold.
+
+### Production API 26 emulator-modem incoming-SMS cold-notification partial evidence — 2026-07-17
+
+Source commit `f41dfd4f0552ed249b2fbda65ec2e3b164842c23` adds the isolated,
+owner-gated
+`scripts/run-emulator-incoming-sms-cold-notification-smoke.sh` runner. It owns
+and finally discards a disposable overlay of the dedicated non-Play API 26 GSM
+AVD `AuroraSMS_SMSRX_API26`; the default invocation is:
+
+```shell
+./scripts/run-emulator-incoming-sms-cold-notification-smoke.sh
+```
+
+From an exact empty controlled baseline, the host injects one emulator-modem
+PDU. The PDU traverses the protected production `SMS_DELIVER` receiver, creates
+one Telephony provider row, reaches a `COMPLETE` replay-journal entry, resolves
+the provider-backed verified conversation and subscription-dependent optional
+reply target, and posts through the production notifier. The exact live SystemUI
+`StatusBarNotification` (SBN) record must have `PRIVATE` visibility, generic
+privacy text and a generic `publicVersion`, no controlled sender/body, the
+Aurora activity content `PendingIntent`, and the expected subscription-dependent
+action contract.
+
+The runner kills the exact receiver-process PID through the same application
+UID, then proves that the notification survives unchanged. A real touchscreen
+opens the AOSP notification shade and taps that exact row. A distinct cold app
+PID starts the production `MainActivity`, where the provider-backed verified
+Thread and controlled message are visible; notification auto-cancel follows.
+The verification phase restores the exact empty owned delivery and notification
+state, and the runner discards its overlay. Two consecutive final focused
+passes took 47.610s (prepare 1.083s, verify 0.554s) and 42.839s (prepare 0.987s,
+verify 0.549s).
+
+At that exact source hash, the final API 26/API 36 root connected gates were
+`BUILD SUCCESSFUL` in 1m45s and 1m19s. Project module XML totals were 180 tests/
+nine intentional skips and 177/six, respectively, with zero failures/errors;
+the owner-gated incoming-SMS test was discovered and intentionally skipped in
+ordinary aggregate matrices. The 886-task host/release/privacy/license gate was
+`BUILD SUCCESSFUL` in 18s with 32 executed and 854 up-to-date. CycloneDX passed
+in 7s with 441 components and 442 dependency nodes. The production debug APK
+remains 13,993,426 bytes with SHA-256
+`5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This proves one synthetic API 26 emulator-modem path, not carrier-network
+delivery. It does not prove a physical or OEM notification shade, lockscreen
+behavior, API 27+, notification-permission denial, grouped or multiple messages,
+inline reply execution, MMS, a nonempty provider baseline, OEM/carrier matrices,
+or the broader artwork, accessibility, form-factor, performance, complete-
+lifecycle, and gold gates. AuroraSMS remains incomplete and not gold.
 
 ## Stop conditions
 

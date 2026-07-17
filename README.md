@@ -373,6 +373,47 @@ backward-compatible, bounded, fail-closed, and collision-safe; its status-45
 cleanup-only instrumentation is reserved for abnormal recovery and was not run
 by the passing journey. AuroraSMS remains incomplete and not gold.
 
+Source commit `f41dfd4f0552ed249b2fbda65ec2e3b164842c23` adds a separate,
+owner-gated production incoming-SMS cold-notification journey. The isolated
+runner
+`./scripts/run-emulator-incoming-sms-cold-notification-smoke.sh` owns a
+disposable overlay of the dedicated non-Play API 26 GSM AVD
+`AuroraSMS_SMSRX_API26`. It injects exactly one emulator-modem PDU through the
+protected production `SMS_DELIVER` receiver, verifies the resulting Telephony
+provider write, `COMPLETE` replay journal, verified-conversation identity, and
+subscription-dependent optional reply target, then requires the production
+notifier to post one `PRIVATE` notification.
+
+The live SystemUI `StatusBarNotification` (SBN) record must retain generic
+privacy text and a generic `publicVersion`, exclude the controlled sender/body,
+expose the exact Aurora activity content `PendingIntent`, and match the expected
+action contract. After a same-UID kill of the exact receiver-process PID, the
+notification must
+remain posted. A real touchscreen opens the AOSP shade and taps that exact row;
+a distinct cold app PID starts `MainActivity` on the provider-backed verified
+Thread, and auto-cancel removes the notification. The verify phase then restores
+the exact empty owned delivery and notification state, and the runner discards
+its emulator overlay. Two consecutive final passes took 47.610s (prepare
+1.083s, verify 0.554s) and 42.839s (prepare
+0.987s, verify 0.549s).
+
+At the same source hash, final API 26/API 36 root connected gates were
+`BUILD SUCCESSFUL` in 1m45s and 1m19s. Project module XML totals were 180 tests/
+nine intentional skips and 177/six, respectively, with zero failures/errors;
+the new owner-gated test was discovered and intentionally skipped outside its
+isolated runner. The 886-task host/release/privacy/license gate passed in 18s
+with 32 executed and 854 up-to-date, and CycloneDX passed in 7s with 441
+components and 442 dependency nodes. The production debug APK remains
+13,993,426 bytes with SHA-256
+`5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This is one synthetic API 26 emulator-modem route, not carrier-network evidence.
+It does not cover a physical or OEM notification shade, lockscreen behavior,
+API 27+, notification-permission denial, grouped or multiple messages, inline
+reply execution, MMS, a nonempty provider baseline, OEM/carrier matrices, or
+the broader artwork, accessibility, form-factor, performance, complete-
+lifecycle, and gold gates. AuroraSMS remains incomplete and not gold.
+
 Phase 3 does not change the existing carrier MMS limitations. Earlier Phase
 1/2 functional evidence covers a Pixel 8 on Android 16/API 36. Phase 3 profile
 capture and functional journeys are verified with synthetic data on the API 36
