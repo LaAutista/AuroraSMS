@@ -4,7 +4,7 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s [--journey cold-notification|notification-denied] [--port EVEN_PORT]\n' \
+    printf 'Usage: %s [--journey cold-notification|multiple-message|notification-denied] [--port EVEN_PORT]\n' \
         "$0" >&2
 }
 
@@ -47,6 +47,26 @@ case "$JOURNEY" in
         VERIFY_SENTINEL="auroraIncomingSmsVerifyResult"
         CLEANUP_SENTINEL="auroraIncomingSmsCleanupResult"
         INCOMING_BODY="AuroraSMS modem delivery 900017"
+        FIRST_INCOMING_BODY=""
+        ;;
+    multiple-message)
+        DEFAULT_PORT=5584
+        AVD_NAME="AuroraSMS_SMSRX_API26"
+        AVD_TARGET="android-26"
+        AVD_IMAGE="system-images/android-26/default/x86_64/"
+        EXPECTED_SDK="26"
+        API_LABEL="API 26"
+        TEST_METHOD="twoRealModemSmsShareOneColdNotificationThread"
+        GATE_ARGUMENT="auroraEmulatorIncomingSmsMultipleMessage"
+        PHASE_ARGUMENT="auroraEmulatorIncomingSmsMultipleMessagePhase"
+        PREPARE_STATUS_CODE=52
+        VERIFY_STATUS_CODE=53
+        CLEANUP_STATUS_CODE=54
+        PREPARE_SENTINEL="auroraMultipleMessagePrepareResult"
+        VERIFY_SENTINEL="auroraMultipleMessageVerifyResult"
+        CLEANUP_SENTINEL="auroraMultipleMessageCleanupResult"
+        FIRST_INCOMING_BODY="AuroraSMS modem delivery 900017"
+        INCOMING_BODY="AuroraSMS modem delivery 900018"
         ;;
     notification-denied)
         DEFAULT_PORT=5582
@@ -65,6 +85,7 @@ case "$JOURNEY" in
         VERIFY_SENTINEL="auroraNotificationDeniedVerifyResult"
         CLEANUP_SENTINEL="auroraNotificationDeniedCleanupResult"
         INCOMING_BODY="AuroraSMS modem delivery marker-alpha"
+        FIRST_INCOMING_BODY=""
         ;;
     *)
         usage
@@ -91,6 +112,7 @@ SENTINEL_VALUE="pass"
 APP_APK="$ROOT/app/build/outputs/apk/debug/app-debug.apk"
 TEST_APK="$ROOT/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 INCOMING_PDU="00040B915155210310F70000627071220400001FC1BAFC2D0F4F9B5350FB4D2EB741E4323B6D2FCBF3A01C0C068BDD00"
+SECOND_INCOMING_PDU="00040B915155210310F70000627071221400001FC1BAFC2D0F4F9B5350FB4D2EB741E4323B6D2FCBF3A01C0C068BE100"
 INCOMING_SENDER="15551230017"
 INCOMING_MODEM_SENDER="+15551230017"
 EMITTED_PDU_ARGUMENT="auroraEmulatorIncomingSmsEmittedPduHex"
@@ -229,7 +251,9 @@ CLEANUP_COMPLETE=0
 EXPECTED_NOTIFICATION_TAG=""
 EXPECTED_NOTIFICATION_ID=""
 PROVIDER_ID=""
+FIRST_PROVIDER_ID=""
 CONVERSATION_ID=""
+FIRST_CONVERSATION_ID=""
 DELIVERY_SUBSCRIPTION_ID=""
 RECEIVER_PID=""
 EMITTED_PDU_HEX=""
@@ -1011,6 +1035,67 @@ wait_for_complete_journal() {
     return 1
 }
 
+complete_multiple_journal_identity() {
+    local xml count value index provider conversation subscription
+    local first_provider="" second_provider="" common_conversation="" common_subscription=""
+    local -a fields
+    xml="$(journal_xml)" || return 1
+    count="$(
+        xmllint --nonet --xpath \
+            'count(/map/string[starts-with(@name,"delivery.")])' - \
+            <<<"$xml" 2>/dev/null
+    )" || return 1
+    [[ "$count" == "2" ]] || return 1
+    for index in 1 2; do
+        value="$(
+            xmllint --nonet --xpath \
+                "string(/map/string[starts-with(@name,\"delivery.\")][$index])" - \
+                <<<"$xml" 2>/dev/null
+        )" || return 1
+        IFS=',' read -r -a fields <<<"$value"
+        [[ "${#fields[@]}" -eq 9 ]] || return 1
+        [[ "${fields[0]}" == "2" && "${fields[2]}" == "C" ]] || return 1
+        [[ "${fields[1]}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || return 1
+        provider="${fields[3]}"
+        conversation="${fields[4]}"
+        subscription="${fields[7]}"
+        [[ "$provider" =~ ^[0-9]+$ && "$conversation" =~ ^[0-9]+$ ]] || return 1
+        (( provider > 0 && conversation > 0 )) || return 1
+        [[ "${fields[5]}" =~ ^[0-9]+$ && "${fields[6]}" =~ ^[0-9]+$ ]] || return 1
+        [[ "$subscription" =~ ^-?[0-9]+$ && "${fields[8]}" =~ ^[0-9]+$ ]] || return 1
+        if (( index == 1 )); then
+            first_provider="$provider"
+            common_conversation="$conversation"
+            common_subscription="$subscription"
+        else
+            second_provider="$provider"
+            [[ "$conversation" == "$common_conversation" ]] || return 1
+            [[ "$subscription" == "$common_subscription" ]] || return 1
+        fi
+    done
+    [[ "$first_provider" != "$second_provider" ]] || return 1
+    printf '%s|%s|%s|%s\n' \
+        "$first_provider" "$second_provider" "$common_conversation" "$common_subscription"
+}
+
+wait_for_multiple_complete_journals() {
+    local deadline identity first second conversation subscription
+    deadline=$((SECONDS + DELIVERY_TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        if identity="$(complete_multiple_journal_identity)"; then
+            IFS='|' read -r first second conversation subscription <<<"$identity"
+            [[ "$first" == "$FIRST_PROVIDER_ID" || "$second" == "$FIRST_PROVIDER_ID" ]] || return 1
+            FIRST_PROVIDER_ID="$first"
+            PROVIDER_ID="$second"
+            CONVERSATION_ID="$conversation"
+            DELIVERY_SUBSCRIPTION_ID="$subscription"
+            return 0
+        fi
+        sleep 0.2
+    done
+    return 1
+}
+
 notification_id_for_conversation() {
     local conversation_id="$1" folded
     [[ "$conversation_id" =~ ^[0-9]+$ ]] || return 1
@@ -1153,6 +1238,92 @@ active_notification_id_for_tag() {
     printf '%s\n' "$parsed"
 }
 
+active_notification_update_time() {
+    local tag="$1" id="$2" dump parsed
+    dump="$(notification_dump)" || return 1
+    parsed="$(
+        awk \
+            -v package_token="pkg=$APP_PACKAGE" \
+            -v tag_token="tag=$tag" \
+            -v id_token="id=$id" '
+            function trim(line, value) {
+                value = line
+                sub(/^[[:space:]]*/, "", value)
+                sub(/[[:space:]]*$/, "", value)
+                return value
+            }
+            function token(line, expected, fields, count, i) {
+                count = split(line, fields, /[[:space:]]+/)
+                for (i = 1; i <= count; i++) if (fields[i] == expected) return 1
+                return 0
+            }
+            {
+                clean = trim($0)
+                if (clean == "Notification List:") {
+                    list_count++
+                    active = 1
+                    next
+                }
+                if (clean ~ /^mArchive=/) {
+                    archive_count++
+                    active = 0
+                    capture = 0
+                    next
+                }
+                if (active && index(clean, "NotificationRecord(") == 1) {
+                    capture = token(clean, package_token)
+                    if (capture) {
+                        app_count++
+                        if (token(clean, tag_token) && token(clean, id_token)) exact_count++
+                        else invalid = 1
+                    }
+                    next
+                }
+                if (capture && clean ~ /^mUpdateTimeMs=[0-9]+$/) {
+                    update_count++
+                    sub(/^mUpdateTimeMs=/, "", clean)
+                    update_time = clean
+                }
+            }
+            END {
+                if (list_count != 1 || archive_count != 1 || invalid ||
+                    app_count != 1 || exact_count != 1 || update_count != 1 ||
+                    update_time !~ /^[0-9]+$/) print "unknown"
+                else print update_time
+            }
+        ' <<<"$dump"
+    )" || return 1
+    [[ "$parsed" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$parsed"
+}
+
+wait_for_notification_update_after() {
+    local before="$1" deadline current stable=0 last=""
+    [[ "$before" =~ ^[0-9]+$ ]] || return 1
+    deadline=$((SECONDS + DELIVERY_TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        if current="$(
+            active_notification_update_time \
+                "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID"
+        )" && (( current > before )); then
+            if [[ "$current" == "$last" ]]; then
+                stable=$((stable + 1))
+            else
+                last="$current"
+                stable=1
+            fi
+            if (( stable >= 3 )); then
+                return 0
+            fi
+        else
+            stable=0
+            last=""
+        fi
+        sleep 0.2
+    done
+    return 1
+}
+
 notification_contract_reject() {
     printf 'Active notification contract rejected fixed stage: %s.\n' "$1" >&2
     return 1
@@ -1174,6 +1345,11 @@ active_notification_contract_is_exact() {
     }
     if rg --fixed-strings --quiet "$INCOMING_BODY" <<<"$dump"; then
         notification_contract_reject body-privacy
+        return 1
+    fi
+    if [[ -n "$FIRST_INCOMING_BODY" ]] && \
+        rg --fixed-strings --quiet "$FIRST_INCOMING_BODY" <<<"$dump"; then
+        notification_contract_reject first-body-privacy
         return 1
     fi
     if rg --fixed-strings --quiet "$INCOMING_SENDER" <<<"$dump"; then
@@ -1762,7 +1938,7 @@ display_size() {
 
 shade_row_geometry() {
     local xml="$1" body_xpath row_xpath
-    local panel_count stack_count body_count title_count private_count sender_count
+    local panel_count stack_count body_count title_count private_count first_private_count sender_count
     local body_bounds row_bounds stack_bounds
     body_xpath="//node[@package='$SYSTEM_UI_PACKAGE' and @text='$GENERIC_NOTIFICATION_BODY' and (@resource-id='android:id/text' or @resource-id='android:id/big_text') and ancestor::node[@resource-id='$SYSTEM_UI_STACK_RESOURCE']]"
     row_xpath="($body_xpath)/ancestor::node[@clickable='true'][1]"
@@ -1777,12 +1953,21 @@ shade_row_geometry() {
         xpath_value "$xml" \
             "count(//node[contains(@text,'$INCOMING_BODY') or contains(@content-desc,'$INCOMING_BODY')])"
     )" || return 1
+    if [[ -n "$FIRST_INCOMING_BODY" ]]; then
+        first_private_count="$(
+            xpath_value "$xml" \
+                "count(//node[contains(@text,'$FIRST_INCOMING_BODY') or contains(@content-desc,'$FIRST_INCOMING_BODY')])"
+        )" || return 1
+    else
+        first_private_count=0
+    fi
     sender_count="$(
         xpath_value "$xml" \
             "count(//node[contains(@text,'$INCOMING_SENDER') or contains(@content-desc,'$INCOMING_SENDER')])"
     )" || return 1
     [[ "$panel_count" == "1" && "$stack_count" == "1" && "$body_count" == "1" ]] || return 1
-    [[ "$title_count" == "1" && "$private_count" == "0" && "$sender_count" == "0" ]] || return 1
+    [[ "$title_count" == "1" && "$private_count" == "0" && \
+        "$first_private_count" == "0" && "$sender_count" == "0" ]] || return 1
     body_bounds="$(xpath_value "$xml" "string(($body_xpath)[1]/@bounds)")" || return 1
     row_bounds="$(xpath_value "$xml" "string(($row_xpath)[1]/@bounds)")" || return 1
     stack_bounds="$(
@@ -1836,7 +2021,10 @@ open_shade_and_tap_exact_row() {
 }
 
 thread_ui_is_exact() {
-    local xml="$1" screen_count inbox_count bubble_count body_count
+    local xml="$1" screen_count inbox_count total_bubble_count bubble_count body_count
+    local first_bubble_count first_body_count first_bounds second_bounds
+    local first_values second_values first_left first_top first_right first_bottom
+    local second_left second_top second_right second_bottom
     screen_count="$(
         xpath_value "$xml" \
             "count(//node[@package='$APP_PACKAGE' and @resource-id='$APP_THREAD_RESOURCE'])"
@@ -1844,6 +2032,10 @@ thread_ui_is_exact() {
     inbox_count="$(
         xpath_value "$xml" \
             "count(//node[@package='$APP_PACKAGE' and @resource-id='$APP_INBOX_RESOURCE'])"
+    )" || return 1
+    total_bubble_count="$(
+        xpath_value "$xml" \
+            "count(//node[@package='$APP_PACKAGE' and @resource-id='$APP_MESSAGE_RESOURCE'])"
     )" || return 1
     bubble_count="$(
         xpath_value "$xml" \
@@ -1854,7 +2046,36 @@ thread_ui_is_exact() {
             "count(//node[@package='$APP_PACKAGE' and @text='$INCOMING_BODY'])"
     )" || return 1
     [[ "$screen_count" == "1" && "$inbox_count" == "0" ]] || return 1
-    [[ "$bubble_count" == "1" && "$body_count" == "1" ]]
+    [[ "$bubble_count" == "1" && "$body_count" == "1" ]] || return 1
+    if [[ -z "$FIRST_INCOMING_BODY" ]]; then
+        [[ "$total_bubble_count" == "1" ]] || return 1
+        return 0
+    fi
+    [[ "$total_bubble_count" == "2" ]] || return 1
+    first_bubble_count="$(
+        xpath_value "$xml" \
+            "count(//node[@package='$APP_PACKAGE' and @resource-id='$APP_MESSAGE_RESOURCE' and (@text='$FIRST_INCOMING_BODY' or descendant::node[@package='$APP_PACKAGE' and @text='$FIRST_INCOMING_BODY'])])"
+    )" || return 1
+    first_body_count="$(
+        xpath_value "$xml" \
+            "count(//node[@package='$APP_PACKAGE' and @text='$FIRST_INCOMING_BODY'])"
+    )" || return 1
+    [[ "$first_bubble_count" == "1" && "$first_body_count" == "1" ]] || return 1
+    first_bounds="$(
+        xpath_value "$xml" \
+            "string((//node[@package='$APP_PACKAGE' and @text='$FIRST_INCOMING_BODY'])[1]/@bounds)"
+    )" || return 1
+    second_bounds="$(
+        xpath_value "$xml" \
+            "string((//node[@package='$APP_PACKAGE' and @text='$INCOMING_BODY'])[1]/@bounds)"
+    )" || return 1
+    first_values="$(parse_bounds "$first_bounds")" || return 1
+    second_values="$(parse_bounds "$second_bounds")" || return 1
+    IFS=',' read -r first_left first_top first_right first_bottom <<<"$first_values"
+    IFS=',' read -r second_left second_top second_right second_bottom <<<"$second_values"
+    (( first_left < first_right && first_top < first_bottom )) || return 1
+    (( second_left < second_right && second_top < second_bottom )) || return 1
+    (( first_top < second_top ))
 }
 
 wait_for_cold_route() {
@@ -2152,7 +2373,7 @@ if [[ "$JOURNEY" == "notification-denied" ]]; then
     }
 fi
 
-if [[ "$JOURNEY" == "cold-notification" ]]; then
+if [[ "$JOURNEY" != "notification-denied" ]]; then
     grant_legacy_default_sms_via_dialog || {
         printf 'The exact API 26 default-SMS confirmation dialog did not complete.\n' >&2
         exit 1
@@ -2307,7 +2528,7 @@ if [[ "$JOURNEY" == "notification-denied" ]]; then
     }
 fi
 
-if [[ "$JOURNEY" == "cold-notification" ]]; then
+if [[ "$JOURNEY" != "notification-denied" ]]; then
     timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
         "${ADB[@]}" shell am force-stop "$APP_PACKAGE" >/dev/null
 fi
@@ -2365,8 +2586,12 @@ if [[ "$JOURNEY" == "notification-denied" ]]; then
         exit 1
     }
 fi
-if [[ "$JOURNEY" == "cold-notification" ]]; then
-    printf 'Injecting one exact GSM PDU through the owned emulator modem.\n'
+if [[ "$JOURNEY" != "notification-denied" ]]; then
+    if [[ "$JOURNEY" == "multiple-message" ]]; then
+        printf 'Injecting the first of two exact GSM PDUs through the owned emulator modem.\n'
+    else
+        printf 'Injecting one exact GSM PDU through the owned emulator modem.\n'
+    fi
     if ! INJECTION_RESULT="$(
         timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
             "${ADB[@]}" emu sms pdu "$INCOMING_PDU" 2>/dev/null \
@@ -2416,7 +2641,7 @@ else
 fi
 
 RECEIVER_PID=""
-if [[ "$JOURNEY" == "cold-notification" ]]; then
+if [[ "$JOURNEY" != "notification-denied" ]]; then
     RECEIVER_PID="$(wait_for_single_target_pid)" || {
         printf 'The cold SMS receiver did not start one target process.\n' >&2
         exit 1
@@ -2425,6 +2650,82 @@ if [[ "$JOURNEY" == "cold-notification" ]]; then
         printf 'The production incoming-SMS journal did not reach COMPLETE in time.\n' >&2
         exit 1
     }
+    if [[ "$JOURNEY" == "multiple-message" ]]; then
+        FIRST_PROVIDER_ID="$PROVIDER_ID"
+        FIRST_CONVERSATION_ID="$CONVERSATION_ID"
+        EXPECTED_NOTIFICATION_TAG="aurora-conversation:$CONVERSATION_ID"
+        EXPECTED_NOTIFICATION_ID="$(notification_id_for_conversation "$CONVERSATION_ID")" || {
+            printf 'The first production notification ID could not be derived.\n' >&2
+            exit 1
+        }
+        wait_for_exact_notification_state active 3 || {
+            printf 'The first exact conversation notification did not stabilize.\n' >&2
+            exit 1
+        }
+        active_notification_contract_is_exact \
+            "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID" || {
+            printf 'The first conversation notification contract was not exact.\n' >&2
+            exit 1
+        }
+        FIRST_NOTIFICATION_UPDATE_TIME="$(
+            active_notification_update_time \
+                "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID"
+        )" || {
+            printf 'The first conversation notification update generation was unavailable.\n' >&2
+            exit 1
+        }
+        if ! FIRST_BACKGROUND_FOCUS="$(focused_package)" || \
+            ! app_task_is_absent || [[ "$FIRST_BACKGROUND_FOCUS" == "$APP_PACKAGE" ]]; then
+            printf 'The first delivery was not proven background and taskless.\n' >&2
+            exit 1
+        fi
+        [[ "$(single_package_pid "$APP_PACKAGE")" == "$RECEIVER_PID" ]] || {
+            printf 'The first delivery process changed before the second injection.\n' >&2
+            exit 1
+        }
+        console_sms_modem_is_ready || {
+            printf 'The owned modem was not ready before the second exact injection.\n' >&2
+            exit 1
+        }
+        printf 'Injecting the second distinct exact GSM PDU once.\n'
+        if ! SECOND_INJECTION_RESULT="$(
+            timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+                "${ADB[@]}" emu sms pdu "$SECOND_INCOMING_PDU" 2>/dev/null \
+                | tr -d '\r'
+        )"; then
+            printf 'Second exact modem PDU injection had an unknown outcome and will not be retried.\n' >&2
+            exit 1
+        fi
+        if [[ "$SECOND_INJECTION_RESULT" != "OK" ]]; then
+            printf 'Second exact modem PDU injection was not acknowledged once.\n' >&2
+            exit 1
+        fi
+        wait_for_multiple_complete_journals || {
+            printf 'The two production incoming-SMS journals did not both reach COMPLETE.\n' >&2
+            exit 1
+        }
+        wait_for_notification_update_after "$FIRST_NOTIFICATION_UPDATE_TIME" || {
+            printf 'The second delivery did not advance the conversation notification generation.\n' >&2
+            exit 1
+        }
+        [[ "$CONVERSATION_ID" == "$FIRST_CONVERSATION_ID" ]] || {
+            printf 'The two exact deliveries did not converge on one provider conversation.\n' >&2
+            exit 1
+        }
+        [[ "$(single_package_pid "$APP_PACKAGE")" == "$RECEIVER_PID" ]] || {
+            printf 'The two deliveries did not remain in one unambiguous background process.\n' >&2
+            exit 1
+        }
+        wait_for_exact_notification_state active 3 || {
+            printf 'The single conversation notification did not stabilize after two deliveries.\n' >&2
+            exit 1
+        }
+        active_notification_contract_is_exact \
+            "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID" || {
+            printf 'The updated single conversation notification contract was not exact.\n' >&2
+            exit 1
+        }
+    fi
 else
     wait_for_complete_journal || {
         printf 'The notification-denied incoming-SMS journal did not reach COMPLETE in time.\n' >&2
@@ -2455,7 +2756,7 @@ if ! app_task_is_absent || [[ "$BACKGROUND_FOCUS" == "$APP_PACKAGE" ]]; then
     printf 'The delivered message was not proven background and taskless.\n' >&2
     exit 1
 fi
-if [[ "$JOURNEY" == "cold-notification" && -n "$RECEIVER_PID" && \
+if [[ "$JOURNEY" != "notification-denied" && -n "$RECEIVER_PID" && \
     "$(single_package_pid "$APP_PACKAGE")" != "$RECEIVER_PID" ]]; then
     printf 'The observed receiver process identity changed before inspection.\n' >&2
     exit 1
@@ -2465,7 +2766,7 @@ if [[ "$(package_stopped_state "$APP_PACKAGE")" != "false" ]]; then
     exit 1
 fi
 
-if [[ "$JOURNEY" == "cold-notification" ]]; then
+if [[ "$JOURNEY" != "notification-denied" ]]; then
     EXPECTED_NOTIFICATION_TAG="aurora-conversation:$CONVERSATION_ID"
     EXPECTED_NOTIFICATION_ID="$(notification_id_for_conversation "$CONVERSATION_ID")" || {
         printf 'The production notification ID could not be derived from the provider thread.\n' >&2
@@ -2613,8 +2914,14 @@ if [[ "$(journal_entry_count)" != "0" || "$(app_notification_count)" != "0" ]]; 
     exit 1
 fi
 
-if [[ "$JOURNEY" == "cold-notification" ]]; then
-    printf 'API 26 modem delivery, receiver/provider/orchestrator notification, process death, cold Thread route, verification, and exact cleanup passed.\n'
-else
-    printf 'API 36 real notification denial, zero-SBN modem delivery, cold readable Thread, verification, and exact cleanup passed.\n'
-fi
+case "$JOURNEY" in
+    cold-notification)
+        printf 'API 26 modem delivery, receiver/provider/orchestrator notification, process death, cold Thread route, verification, and exact cleanup passed.\n'
+        ;;
+    multiple-message)
+        printf 'API 26 two-message modem delivery, one conversation notification, process death, cold Thread route, verification, and exact cleanup passed.\n'
+        ;;
+    notification-denied)
+        printf 'API 36 real notification denial, zero-SBN modem delivery, cold readable Thread, verification, and exact cleanup passed.\n'
+        ;;
+esac

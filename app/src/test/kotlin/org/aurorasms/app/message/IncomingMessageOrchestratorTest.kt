@@ -178,6 +178,49 @@ class IncomingMessageOrchestratorTest {
     }
 
     @Test
+    fun twoDistinctSameSenderDeliveriesPersistAndNotifyOnceEachAcrossReplay() = runTest {
+        val address = ParticipantAddress("+12025550126")
+        val provider = FakeSmsProviderDataSource()
+        val notifier = FakeMessageNotifier()
+        val orchestrator = IncomingMessageOrchestrator(
+            roleState = FakeRoleState(held = true),
+            smsProvider = provider,
+            contactResolver = FakeContactResolver(),
+            messageNotifier = notifier,
+            replyTargets = ReplyTargetRegistry(clockMillis = { NOW }),
+        )
+        val firstIncoming = incomingSms(address)
+        val secondIncoming = incomingSms(address).copy(
+            deliveryFingerprint = SECOND_DELIVERY_FINGERPRINT,
+            body = "Distinct synthetic message.",
+            sentTimestampMillis = NOW,
+            receivedTimestampMillis = NOW + 100,
+        )
+
+        val first = orchestrator.persist(firstIncoming) as IncomingPersistResult.Persisted
+        val second = orchestrator.persist(secondIncoming) as IncomingPersistResult.Persisted
+
+        assertEquals(2, setOf(first.providerId, second.providerId).size)
+        assertEquals(first.conversationId, second.conversationId)
+        assertEquals(2, provider.insertedIncoming.size)
+        assertEquals(2, notifier.incoming.size)
+
+        val firstReplay = orchestrator.persist(firstIncoming)
+        val secondReplay = orchestrator.persist(secondIncoming)
+
+        assertEquals(
+            IncomingPersistResult.Duplicate(first.providerId, first.conversationId),
+            firstReplay,
+        )
+        assertEquals(
+            IncomingPersistResult.Duplicate(second.providerId, second.conversationId),
+            secondReplay,
+        )
+        assertEquals(2, provider.insertedIncoming.size)
+        assertEquals(2, notifier.incoming.size)
+    }
+
+    @Test
     fun unacknowledgedStoredDeliveryIsRecoveredAndNotifiedOnce() = runTest {
         val address = ParticipantAddress("+12025550124")
         val provider = FakeSmsProviderDataSource()
@@ -224,6 +267,9 @@ class IncomingMessageOrchestratorTest {
         const val NOW = 1_704_067_200_000L
         val DELIVERY_FINGERPRINT = MessageDeliveryFingerprint.fromSha256(
             ByteArray(MessageDeliveryFingerprint.SHA_256_BYTES) { (it + 9).toByte() },
+        )
+        val SECOND_DELIVERY_FINGERPRINT = MessageDeliveryFingerprint.fromSha256(
+            ByteArray(MessageDeliveryFingerprint.SHA_256_BYTES) { (it + 10).toByte() },
         )
     }
 }
