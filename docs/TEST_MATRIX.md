@@ -91,6 +91,14 @@ both passes. The unchanged API 26 fixed raw-PDU journey also passed. API 33-35,
 physical/OEM/carrier/lockscreen, group/multiple-message, inline-reply, MMS,
 broader acceptance, and gold coverage remain open.
 
+Source commit `57ec7cf093e24f4792a242f53d6cf13f2d0e1ff0` closes one
+narrow part of the multiple-message gap: two sequential same-sender,
+single-part SMS deliveries update one private conversation notification, which
+survives process death and opens a distinct cold Thread containing the two
+messages in order. Multipart SMS, other-conversation grouping/summary behavior,
+alert counts, API 27+, physical/OEM/carrier/lockscreen, inline reply, MMS,
+broader acceptance, and gold coverage remain open.
+
 ## Evidence rules
 
 - A feature is not complete because it compiles or looks correct in a preview.
@@ -349,6 +357,11 @@ Run on a telephony-capable device after explicit test-recipient approval.
   incoming-SMS journey; this row remains unchecked for API 33-35 and the wider
   device and lifecycle matrix.
 - [ ] Tap opens the exact conversation and restores state.
+  The focused API 26 partial evidence below proves one updated same-conversation
+  SBN survives process death and a real AOSP shade tap opens a distinct cold
+  provider-backed Thread containing exactly two ordered messages. This row
+  remains unchecked for multipart, other-conversation grouping, API 27+, and
+  physical/OEM/carrier/lockscreen coverage.
 - [ ] Inline reply validates role, permission, recipient, SIM, and current
   conversation before sending.
 - [ ] Duplicate/expired reply intents do not duplicate sends.
@@ -2249,6 +2262,71 @@ unchecked API 33-35 rows or prove a physical device, OEM/carrier behavior,
 lockscreen delivery, grouped or multiple messages, inline-reply execution, MMS,
 or the broader accessibility, form-factor, performance, complete-lifecycle,
 and release gates. AuroraSMS remains incomplete and not gold.
+
+#### Production API 26 same-sender two-message incoming-SMS cold-notification continuity partial evidence — 2026-07-17
+
+Source commit `57ec7cf093e24f4792a242f53d6cf13f2d0e1ff0` adds the
+host test
+`twoDistinctSameSenderDeliveriesPersistAndNotifyOnceEachAcrossReplay` and the
+owner-gated journey:
+
+```shell
+./scripts/run-emulator-incoming-sms-cold-notification-smoke.sh \
+    --journey multiple-message
+```
+
+The host test independently proves that two distinct delivery fingerprints
+from one sender insert two provider messages, resolve one conversation, invoke
+the notifier once per delivery, and replay as duplicates without another
+provider insert or notification attempt.
+
+The runner exclusively owns and finally discards a disposable overlay of the
+dedicated non-Play API 26 GSM AVD `AuroraSMS_SMSRX_API26`. From an exact empty
+controlled baseline it injects the reviewed fixed single-part GSM PDUs for
+`AuroraSMS modem delivery 900017` at `1784328000000` and
+`AuroraSMS modem delivery 900018` at `1784328060000`, exactly once and in
+sequence. Their PDU-derived delivery fingerprints and replay-journal keys are
+distinct. An uncertain injection outcome is never retried.
+
+The first provider row, `COMPLETE` journal, exact private conversation SBN, and
+its reply action must stabilize before the second injection.
+After the second delivery, two `COMPLETE` journals have distinct positive
+provider IDs but one positive thread ID and subscription. The same unambiguous
+background process remains alive, exactly one notification tag/ID remains
+active, and that SBN's `mUpdateTimeMs` must strictly advance and stabilize.
+Generic notification text and `publicVersion` remain private; scans of the
+active notification dump and real AOSP shade reject both controlled bodies and
+the sender.
+
+The runner then kills the exact receiver-process PID and proves the updated SBN
+survives. A real shade-row tap starts a distinct cold `MainActivity` process on
+the provider-backed verified Thread. Its UI contains exactly two total
+`aurora-message-bubble` nodes, each expected body exactly once and in delivery
+order; auto-cancel removes the notification. Instrumentation verifies the exact
+two provider rows, two `COMPLETE` journals, two reply targets, two-message index
+and timeline state with unread count two, then deletes only those controlled
+mutations and restores the empty provider, journal, target, index, notification,
+and channel baselines. Zero-, one-, or two-delivery abnormal recovery remains
+bounded and fail-closed.
+
+The complete journey and exact cleanup passed twice independently. The
+unchanged API 26 single-message and API 36 notification-denied owner journeys
+also passed after the generalized instrumentation and runner changes. At
+`57ec7cf093e24f4792a242f53d6cf13f2d0e1ff0`, the definitive API 26
+connected matrix finished 97 tests with zero failures in 47s, and the API 36
+matrix finished 91 tests with zero failures in 51s. The full 886-task host/
+lint/release/benchmark/privacy/dependency/permission/
+APK-content/license gate passed in 19s (35 executed, two from cache, 849 up-to-
+date). CycloneDX passed 15 tasks in 7s. The unchanged production debug APK is
+13,993,426 bytes with SHA-256
+`876dfb17eabb95f28454998c2cd26c7d463c7212219cdd32ba4484adb37a60fc`.
+
+This closes only sequential same-sender, single-part SMS notification-update
+continuity on one API 26 AOSP emulator. Multipart SMS, other-conversation
+notification grouping/summary behavior, alert/sound/vibration counts, API 27+,
+physical/OEM shade, carrier-network and lockscreen behavior, inline-reply
+execution, MMS, nonempty-provider baselines, broader acceptance, and gold
+remain open. AuroraSMS is incomplete and not gold.
 
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 
