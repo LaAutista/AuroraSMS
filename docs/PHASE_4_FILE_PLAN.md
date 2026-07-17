@@ -70,6 +70,15 @@ distinct cold `MainActivity` process displaying the provider-backed verified
 Thread. Carrier-network, physical/OEM shade and lockscreen, API 27+, permission-
 denial, group/multiple-message, inline-reply execution, MMS, nonempty-provider,
 broader process-death, and gold coverage remain open.
+Source commit `ec3e10299953253b1330d9440a07df981ed9a1af` now closes one more narrow part: an API
+33+ messaging-eligible Inbox/Thread notice and recovery action are implemented,
+and the owned API 36 AOSP notification-denial journey passed twice from real
+Settings `USER_SET` through final-dialog `USER_FIXED`, exact Settings recovery,
+one documented modem SMS with independent test-APK raw-PDU capture, exact
+provider/journal/timestamp identity, zero SBNs, cold readable Inbox/Thread, and
+exact cleanup. The unchanged API 26 fixed raw-PDU journey also passed. API
+33-35, physical/OEM/carrier/lockscreen, group/multiple-message, inline-reply,
+MMS, broader acceptance, and gold coverage remain open.
 Inbox/other-screen treatment, built-in artwork, GIF/live-URI media,
 import/export, navigation variants, and the full accessibility/performance and
 carrier matrices remain gated follow-on work. AuroraSMS is not complete or gold.
@@ -1184,6 +1193,71 @@ behavior, API 27+, notification-permission denial, grouped or multiple messages,
 inline reply execution, MMS, a nonempty provider baseline, OEM/carrier matrices,
 or the broader artwork, accessibility, form-factor, performance, complete-
 lifecycle, and gold gates. AuroraSMS remains incomplete and not gold.
+
+### Production API 36 notification-denied incoming-SMS recovery partial evidence — 2026-07-17
+
+Source commit `ec3e10299953253b1330d9440a07df981ed9a1af` adds a persistent API 33+ explanation
+to `app/src/main/kotlin/org/aurorasms/app/MainActivity.kt`. When AuroraSMS is
+messaging-eligible but system notifications are denied, the notice remains
+visible across Inbox and Thread. Its action requests the runtime permission
+until Android reports a recorded final denial, then opens
+`Settings.ACTION_APP_NOTIFICATION_SETTINGS` for AuroraSMS's exact package.
+Focused policy, rendering, and intent coverage is in
+`app/src/test/kotlin/org/aurorasms/app/NotificationPermissionRecoveryActionTest.kt`
+and
+`app/src/androidTest/kotlin/org/aurorasms/app/NotificationPermissionNoticeTest.kt`.
+`app/src/test/kotlin/org/aurorasms/app/message/IncomingMessageOrchestratorTest.kt`
+also proves a disabled-notification result still marks the incoming delivery
+handled once, so replay neither inserts nor attempts notification again.
+
+The exact owned-emulator command was:
+
+```shell
+./scripts/run-emulator-incoming-sms-cold-notification-smoke.sh \
+    --journey notification-denied
+```
+
+The extended
+`scripts/run-emulator-incoming-sms-cold-notification-smoke.sh` runner owns and
+finally discards a disposable overlay of the non-Play API 36 GSM AVD
+`AuroraSMS_SMSRX_API36`. The real app-notification Settings master switch first
+ran only after SMS-role assignment started the protected exported
+`DefaultSmsRoleChangedReceiver` and cleared package stopped state. The switch
+produced a denied `POST_NOTIFICATIONS` state carrying `USER_SET`. The Inbox
+action then opened the real runtime-permission dialog; final denial produced
+`USER_FIXED`, and the next action opened AuroraSMS's exact disabled notification
+Settings page. That state and notice survived the Settings round trip and a
+cold, taskless boundary.
+
+One documented synthetic SMS was sent through the owned emulator modem. The
+separately permissioned test APK independently captured the one raw delivered
+PDU through
+`app/src/androidTest/java/org/aurorasms/app/message/IncomingSmsPduCaptureReceiver.java`,
+while the protected production `SMS_DELIVER` receiver handled the delivery.
+`app/src/androidTest/kotlin/org/aurorasms/app/message/IncomingSmsColdNotificationSmokeTest.kt`
+required the PDU-derived replay-journal key and decoded sent timestamp to be
+exact, one `COMPLETE` journal entry to match the sole provider row's provider/
+thread IDs and received/sent timestamps, and zero Aurora SBNs throughout. A
+cold `MainActivity` launch displayed the message and missed-alert notice in
+Inbox; the provider-backed Thread remained readable with the notice still
+present. Exact provider, journal, reply-target, index, capture, and notification
+cleanup restored the empty controlled baseline. The complete journey and exact
+cleanup passed twice. The unchanged default API 26 fixed raw-PDU journey also
+passed after these changes.
+
+At that exact source commit, focused API 36 notice/manifest instrumentation
+passed 10 tests. The complete API 36 and API 26 connected matrices each passed
+456 Gradle tasks in 1m21s and 1m49s with zero failures. The offline host/lint/
+release/privacy gate passed 883 tasks in 1m19s, and the combined license-report/
+CycloneDX gate passed 18 tasks in 8s. The resulting 13,993,426-byte debug APK
+has SHA-256
+`876dfb17eabb95f28454998c2cd26c7d463c7212219cdd32ba4484adb37a60fc`.
+
+This closes only one API 36 AOSP emulator path. API 33 through 35, physical and
+OEM devices, carrier behavior, lockscreen delivery, grouped or multiple
+messages, inline-reply execution, MMS, and the broader artwork, accessibility,
+form-factor, performance, complete-lifecycle, and release gates remain open.
+AuroraSMS remains incomplete and not gold.
 
 ## Stop conditions
 
