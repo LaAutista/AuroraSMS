@@ -287,6 +287,11 @@ def verify_manifest(path: Path) -> None:
         permission="android.permission.BROADCAST_WAP_PUSH",
         mime_type="application/vnd.wap.mms-message",
     )
+    require_component(
+        application,
+        "receiver",
+        "android.provider.action.DEFAULT_SMS_PACKAGE_CHANGED",
+    )
 
     allowed_exported_actions = {
         "android.intent.action.MAIN",

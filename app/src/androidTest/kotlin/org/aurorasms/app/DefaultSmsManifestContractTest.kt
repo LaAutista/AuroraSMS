@@ -15,6 +15,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -102,6 +103,24 @@ class DefaultSmsManifestContractTest {
                     .setType("application/vnd.wap.mms-message")
                     .setPackage(packageName),
             ).any { it.activityInfo.name == mmsReceiver.name },
+        )
+    }
+
+    @Test
+    fun roleChangeReceiverIsExportedForProtectedPlatformBroadcast() {
+        val roleChangeReceiver = requireNotNull(
+            packageInfo.receivers.orEmpty().singleOrNull {
+                it.name.endsWith(".receiver.DefaultSmsRoleChangedReceiver")
+            },
+        )
+
+        assertTrue(roleChangeReceiver.exported)
+        assertNull(roleChangeReceiver.permission)
+        assertTrue(
+            queryReceivers(
+                Intent(Telephony.Sms.Intents.ACTION_DEFAULT_SMS_PACKAGE_CHANGED)
+                    .setPackage(packageName),
+            ).any { it.activityInfo.name == roleChangeReceiver.name },
         )
     }
 

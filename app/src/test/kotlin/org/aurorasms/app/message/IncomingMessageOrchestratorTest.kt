@@ -4,12 +4,17 @@ package org.aurorasms.app.message
 
 import kotlinx.coroutines.test.runTest
 import org.aurorasms.core.model.AuroraSubscriptionId
+import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageDeliveryFingerprint
 import org.aurorasms.core.model.ParticipantAddress
+import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.notifications.NotificationPostResult
 import org.aurorasms.core.telephony.IncomingMessage
 import org.aurorasms.core.telephony.IncomingPersistResult
 import org.aurorasms.core.telephony.IncomingSmsRecord
+import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ResolvedContact
+import org.aurorasms.core.telephony.SmsProviderDataSource
 import org.aurorasms.core.testing.FakeContactResolver
 import org.aurorasms.core.testing.FakeMessageNotifier
 import org.aurorasms.core.testing.FakeRoleState
@@ -49,6 +54,55 @@ class IncomingMessageOrchestratorTest {
         assertEquals("Aster Vale", notifier.incoming.single().message.senderDisplayName)
         assertFalse(notifier.incoming.single().message.senderPersonKey.contains(address.value))
         assertNotNull(targets.resolve(persisted.conversationId, "SMS:1", NOW))
+    }
+
+    @Test
+    fun notificationsDisabledStillMarksDeliveryHandledWithoutDuplicateRetry() = runTest {
+        val address = ParticipantAddress("+12025550125")
+        val backingProvider = FakeSmsProviderDataSource()
+        var markHandledCalls = 0
+        val provider = object : SmsProviderDataSource by backingProvider {
+            override suspend fun markIncomingHandled(
+                deliveryFingerprint: MessageDeliveryFingerprint,
+                providerId: ProviderMessageId,
+                conversationId: ConversationId,
+            ): ProviderAccessResult<Unit> {
+                markHandledCalls += 1
+                return backingProvider.markIncomingHandled(
+                    deliveryFingerprint = deliveryFingerprint,
+                    providerId = providerId,
+                    conversationId = conversationId,
+                )
+            }
+        }
+        val notifier = FakeMessageNotifier().apply {
+            incomingResponder = { _, _ -> NotificationPostResult.NotificationsDisabled }
+        }
+        val orchestrator = IncomingMessageOrchestrator(
+            roleState = FakeRoleState(held = true),
+            smsProvider = provider,
+            contactResolver = FakeContactResolver(),
+            messageNotifier = notifier,
+            replyTargets = ReplyTargetRegistry(clockMillis = { NOW }),
+        )
+        val incoming = incomingSms(address)
+
+        val first = orchestrator.persist(incoming)
+        val replay = orchestrator.persist(incoming)
+
+        val persisted = first as IncomingPersistResult.Persisted
+        assertEquals(
+            IncomingPersistResult.Duplicate(persisted.providerId, persisted.conversationId),
+            replay,
+        )
+        assertEquals(1, backingProvider.insertedIncoming.size)
+        assertEquals(
+            incoming.deliveryFingerprint,
+            backingProvider.insertedIncoming.single().deliveryFingerprint,
+        )
+        assertEquals(1, markHandledCalls)
+        assertEquals(1, notifier.incoming.size)
+        assertEquals(incoming.body, notifier.incoming.single().message.body)
     }
 
     @Test

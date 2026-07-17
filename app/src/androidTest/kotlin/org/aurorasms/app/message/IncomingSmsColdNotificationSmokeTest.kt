@@ -16,6 +16,7 @@ import android.os.SystemClock
 import android.provider.BaseColumns
 import android.provider.Telephony
 import android.service.notification.StatusBarNotification
+import android.telephony.SmsMessage
 import android.util.Base64
 import androidx.core.app.NotificationManagerCompat
 import androidx.test.platform.app.InstrumentationRegistry
@@ -38,46 +39,56 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 /**
- * Owner-gated phases for the host-driven API 26 emulator modem journey.
+ * Owner-gated phases for host-driven emulator-modem delivery journeys.
  *
- * This test never creates the incoming message. The host must inject the reviewed PDU through the
- * emulator console after [PHASE_PREPARE] exits, prove the cold process and SystemUI transition,
- * and invoke [PHASE_VERIFY] only after the notification opened the real provider-backed Thread.
+ * These tests never create the incoming message. After [PHASE_PREPARE], the host injects either the
+ * reviewed fixed PDU or documented text through the emulator console, independently captures the
+ * exact delivered PDU when needed, proves the journey-specific production UI state, and invokes
+ * [PHASE_VERIFY] only after the real provider-backed Thread has been inspected.
  */
 class IncomingSmsColdNotificationSmokeTest {
     @Test
     fun realModemSmsTraversesReceiverProviderOrchestratorAndColdNotificationRoute() {
-        requireGate()
-        assumeTrue(API_26_REQUIRED, Build.VERSION.SDK_INT == Build.VERSION_CODES.O)
+        runJourney(COLD_NOTIFICATION_CONTRACT)
+    }
+
+    @Test
+    fun realModemSmsRemainsReadableWhenNotificationPermissionIsDenied() {
+        runJourney(NOTIFICATION_DENIED_CONTRACT)
+    }
+
+    private fun runJourney(contract: JourneyContract) {
+        requireGate(contract.gateArgument)
+        assumeTrue(contract.apiRequiredMessage, Build.VERSION.SDK_INT == contract.expectedSdk)
 
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext.applicationContext
         requireFixed(context.packageName == TARGET_PACKAGE, TARGET_PACKAGE_INVALID)
-        val phase = InstrumentationRegistry.getArguments().getString(PHASE_ARGUMENT)
+        val phase = InstrumentationRegistry.getArguments().getString(contract.phaseArgument)
             ?: failFixed(PHASE_REQUIRED)
 
         when (phase) {
             PHASE_PREPARE -> {
-                prepare(context)
+                prepare(context, contract)
                 instrumentation.sendStatus(
-                    PREPARE_STATUS_CODE,
-                    Bundle().apply { putString(PREPARE_SENTINEL, PASS) },
+                    contract.prepareStatusCode,
+                    Bundle().apply { putString(contract.prepareSentinel, PASS) },
                 )
             }
 
             PHASE_VERIFY -> {
-                verifyAndClean(context)
+                verifyAndClean(context, contract)
                 instrumentation.sendStatus(
-                    VERIFY_STATUS_CODE,
-                    Bundle().apply { putString(VERIFY_SENTINEL, PASS) },
+                    contract.verifyStatusCode,
+                    Bundle().apply { putString(contract.verifySentinel, PASS) },
                 )
             }
 
             PHASE_CLEANUP -> {
-                cleanup(context)
+                cleanup(context, contract)
                 instrumentation.sendStatus(
-                    CLEANUP_STATUS_CODE,
-                    Bundle().apply { putString(CLEANUP_SENTINEL, PASS) },
+                    contract.cleanupStatusCode,
+                    Bundle().apply { putString(contract.cleanupSentinel, PASS) },
                 )
             }
 
@@ -85,7 +96,7 @@ class IncomingSmsColdNotificationSmokeTest {
         }
     }
 
-    private fun prepare(context: Context) {
+    private fun prepare(context: Context, contract: JourneyContract) {
         val app = context as? AuroraSmsApplication ?: failFixed(APPLICATION_INVALID)
         requireFixed(app.defaultSmsRoleState.isRoleHeld(), DEFAULT_SMS_REQUIRED)
         requireFixed(
@@ -98,15 +109,22 @@ class IncomingSmsColdNotificationSmokeTest {
                 PackageManager.PERMISSION_GRANTED,
             RECEIVE_SMS_REQUIRED,
         )
-        requireFixed(
-            NotificationManagerCompat.from(context).areNotificationsEnabled(),
-            NOTIFICATIONS_REQUIRED,
-        )
+        val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+        if (contract.notificationsEnabled) {
+            requireFixed(notificationsEnabled, NOTIFICATIONS_REQUIRED)
+        } else {
+            requireFixed(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU, API_33_REQUIRED)
+            requireFixed(
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED && !notificationsEnabled,
+                NOTIFICATIONS_DISABLED_REQUIRED,
+            )
+        }
 
         val checkpoint = checkpoint(context)
         requireFixed(!checkpoint.getBoolean(CHECKPOINT_ARMED, false), STALE_CHECKPOINT)
         requireFixed(providerCount(context) == 0L, EMPTY_PROVIDER_REQUIRED)
-        requireFixed(controlledProviderRows(context).isEmpty(), PROVIDER_COLLISION)
+        requireFixed(controlledProviderRows(context, contract).isEmpty(), PROVIDER_COLLISION)
         requireFixed(deliveryJournal(context).all.isEmpty(), EMPTY_JOURNAL_REQUIRED)
         requireFixed(replyTargets(context).all.isEmpty(), EMPTY_REPLY_TARGETS_REQUIRED)
         requireFixed(activeNotifications(context).isEmpty(), EMPTY_NOTIFICATIONS_REQUIRED)
@@ -122,6 +140,7 @@ class IncomingSmsColdNotificationSmokeTest {
             val committed = checkpoint.edit()
                 .clear()
                 .putBoolean(CHECKPOINT_ARMED, true)
+                .putString(CHECKPOINT_JOURNEY, contract.checkpointValue)
                 .putLong(CHECKPOINT_PREPARED_AT, System.currentTimeMillis())
                 .putStringSet(CHECKPOINT_CHANNELS, channels)
                 .putBoolean(CHECKPOINT_LEDGER_PRESENT, true)
@@ -132,11 +151,23 @@ class IncomingSmsColdNotificationSmokeTest {
         }
     }
 
-    private fun verifyAndClean(context: Context) {
+    private fun verifyAndClean(context: Context, contract: JourneyContract) {
         val app = context as? AuroraSmsApplication ?: failFixed(APPLICATION_INVALID)
-        val snapshot = readCheckpoint(context)
-        val row = awaitControlledProviderRow(context, snapshot.preparedAtMillis)
-        val journal = awaitCompletedJournal(context, row, snapshot.preparedAtMillis)
+        val snapshot = readCheckpoint(context, contract.checkpointValue)
+        val emittedPdu = expectedPduForJournal(contract)
+        val row = awaitControlledProviderRow(
+            context = context,
+            preparedAtMillis = snapshot.preparedAtMillis,
+            contract = contract,
+            emittedPdu = emittedPdu,
+        )
+        val journal = awaitCompletedJournal(
+            context = context,
+            row = row,
+            preparedAtMillis = snapshot.preparedAtMillis,
+            contract = contract,
+            emittedPdu = emittedPdu,
+        )
         assertReplyTarget(context, row, journal)
 
         requireFixed(activeNotifications(context).isEmpty(), NOTIFICATION_AUTO_CANCEL_REQUIRED)
@@ -156,18 +187,21 @@ class IncomingSmsColdNotificationSmokeTest {
             snapshot = snapshot,
             row = row,
             journal = journal,
+            contract = contract,
+            emittedPdu = emittedPdu,
         )
     }
 
-    private fun cleanup(context: Context) {
+    private fun cleanup(context: Context, contract: JourneyContract) {
         val app = context as? AuroraSmsApplication ?: failFixed(APPLICATION_INVALID)
-        val snapshot = readCheckpoint(context)
-        val rows = controlledProviderRows(context)
+        val snapshot = readCheckpoint(context, contract.checkpointValue)
+        val rows = controlledProviderRows(context, contract)
         requireFixed(rows.size <= 1, CLEANUP_PROVIDER_AMBIGUOUS)
         val row = rows.singleOrNull()
         val journals = parsedJournals(context)
         requireFixed(journals.size <= 1, CLEANUP_JOURNAL_AMBIGUOUS)
         val journal = journals.singleOrNull()
+        val emittedPdu = journal?.let { expectedPduForJournal(contract) }
 
         if (row != null && journal != null && journal.providerId > 0L) {
             requireFixed(
@@ -175,7 +209,15 @@ class IncomingSmsColdNotificationSmokeTest {
                 CLEANUP_IDENTITY_MISMATCH,
             )
         }
-        journal?.let { assertControlledJournalIdentity(it, row, snapshot.preparedAtMillis) }
+        journal?.let {
+            assertControlledJournalIdentity(
+                journal = it,
+                row = row,
+                preparedAtMillis = snapshot.preparedAtMillis,
+                contract = contract,
+                emittedPdu = emittedPdu,
+            )
+        }
 
         cleanupExactMutation(
             context = context,
@@ -183,6 +225,8 @@ class IncomingSmsColdNotificationSmokeTest {
             snapshot = snapshot,
             row = row,
             journal = journal,
+            contract = contract,
+            emittedPdu = emittedPdu,
         )
     }
 
@@ -192,17 +236,30 @@ class IncomingSmsColdNotificationSmokeTest {
         snapshot: Checkpoint,
         row: ProviderRow?,
         journal: JournalEntry?,
+        contract: JourneyContract,
+        emittedPdu: ByteArray?,
     ) {
         val currentProviderCount = providerCount(context)
         if (row == null) {
             requireFixed(currentProviderCount == 0L, CLEANUP_PROVIDER_AMBIGUOUS)
         } else {
             requireFixed(currentProviderCount == 1L, CLEANUP_PROVIDER_AMBIGUOUS)
-            assertControlledProviderRow(row, snapshot.preparedAtMillis)
             requireFixed(journal != null, CLEANUP_JOURNAL_REQUIRED)
+            assertControlledProviderRow(
+                row = row,
+                preparedAtMillis = snapshot.preparedAtMillis,
+                contract = contract,
+                emittedPdu = emittedPdu ?: failFixed(EMITTED_PDU_REQUIRED),
+            )
         }
         if (journal != null) {
-            assertControlledJournalIdentity(journal, row, snapshot.preparedAtMillis)
+            assertControlledJournalIdentity(
+                journal = journal,
+                row = row,
+                preparedAtMillis = snapshot.preparedAtMillis,
+                contract = contract,
+                emittedPdu = emittedPdu,
+            )
             requireFixed(
                 deliveryJournal(context).all.keys == setOf(journal.key),
                 JOURNAL_DELTA_CHANGED,
@@ -232,7 +289,7 @@ class IncomingSmsColdNotificationSmokeTest {
         }
 
         if (row != null) {
-            val exact = controlledProviderRows(context)
+            val exact = controlledProviderRows(context, contract)
             requireFixed(
                 exact.size == 1 && sameProviderRow(exact.single(), row),
                 CLEANUP_PROVIDER_CHANGED,
@@ -245,7 +302,7 @@ class IncomingSmsColdNotificationSmokeTest {
                 arrayOf(
                     row.threadId.toString(),
                     FIXTURE_SENDER,
-                    FIXTURE_BODY,
+                    contract.expectedBody,
                     row.receivedAtMillis.toString(),
                     row.sentAtMillis.toString(),
                 ),
@@ -284,7 +341,7 @@ class IncomingSmsColdNotificationSmokeTest {
             awaitIndexLedgerBaseline(context, snapshot)
         }
         requireFixed(providerCount(context) == 0L, PROVIDER_BASELINE_NOT_RESTORED)
-        requireFixed(controlledProviderRows(context).isEmpty(), PROVIDER_ROW_REMAINED)
+        requireFixed(controlledProviderRows(context, contract).isEmpty(), PROVIDER_ROW_REMAINED)
         requireFixed(deliveryJournal(context).all.isEmpty(), JOURNAL_BASELINE_NOT_RESTORED)
         requireFixed(replyTargets(context).all.isEmpty(), REPLY_BASELINE_NOT_RESTORED)
         requireFixed(activeNotifications(context).isEmpty(), NOTIFICATION_BASELINE_NOT_RESTORED)
@@ -298,13 +355,15 @@ class IncomingSmsColdNotificationSmokeTest {
     private fun awaitControlledProviderRow(
         context: Context,
         preparedAtMillis: Long,
+        contract: JourneyContract,
+        emittedPdu: ByteArray,
     ): ProviderRow {
         val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
         do {
-            val rows = controlledProviderRows(context)
+            val rows = controlledProviderRows(context, contract)
             if (rows.size == 1 && providerCount(context) == 1L) {
                 val row = rows.single()
-                assertControlledProviderRow(row, preparedAtMillis)
+                assertControlledProviderRow(row, preparedAtMillis, contract, emittedPdu)
                 return row
             }
             requireFixed(rows.size <= 1, PROVIDER_DELTA_AMBIGUOUS)
@@ -313,21 +372,31 @@ class IncomingSmsColdNotificationSmokeTest {
         failFixed(PROVIDER_ROW_UNAVAILABLE)
     }
 
-    private fun assertControlledProviderRow(row: ProviderRow, preparedAtMillis: Long) {
+    private fun assertControlledProviderRow(
+        row: ProviderRow,
+        preparedAtMillis: Long,
+        contract: JourneyContract,
+        emittedPdu: ByteArray,
+    ) {
         val now = System.currentTimeMillis()
         requireFixed(row.id > 0L && row.threadId > 0L, PROVIDER_IDS_INVALID)
         requireFixed(row.address == FIXTURE_SENDER, PROVIDER_SENDER_INVALID)
-        requireFixed(row.body == FIXTURE_BODY, PROVIDER_BODY_INVALID)
+        requireFixed(row.body == contract.expectedBody, PROVIDER_BODY_INVALID)
         requireFixed(row.type == Telephony.Sms.MESSAGE_TYPE_INBOX, PROVIDER_BOX_INVALID)
         requireFixed(!row.read && !row.seen, PROVIDER_READ_STATE_INVALID)
         requireFixed(row.receivedAtMillis in preparedAtMillis..(now + CLOCK_TOLERANCE_MILLIS), PROVIDER_RECEIVED_TIME_INVALID)
-        requireFixed(row.sentAtMillis == FIXTURE_SENT_TIMESTAMP_MILLIS, PROVIDER_SENT_TIME_INVALID)
+        requireFixed(
+            row.sentAtMillis == expectedSentTimestampMillis(contract, emittedPdu),
+            PROVIDER_SENT_TIME_INVALID,
+        )
     }
 
     private fun awaitCompletedJournal(
         context: Context,
         row: ProviderRow,
         preparedAtMillis: Long,
+        contract: JourneyContract,
+        emittedPdu: ByteArray,
     ): JournalEntry {
         val timeoutAt = SystemClock.uptimeMillis() + WAIT_TIMEOUT_MILLIS
         do {
@@ -335,7 +404,13 @@ class IncomingSmsColdNotificationSmokeTest {
             requireFixed(journals.size <= 1, JOURNAL_DELTA_AMBIGUOUS)
             val journal = journals.singleOrNull()
             if (journal != null && journal.state == JOURNAL_COMPLETE) {
-                assertControlledJournalIdentity(journal, row, preparedAtMillis)
+                assertControlledJournalIdentity(
+                    journal = journal,
+                    row = row,
+                    preparedAtMillis = preparedAtMillis,
+                    contract = contract,
+                    emittedPdu = emittedPdu,
+                )
                 requireFixed(journal.providerId == row.id, JOURNAL_PROVIDER_ID_INVALID)
                 requireFixed(journal.conversationId == row.threadId, JOURNAL_THREAD_ID_INVALID)
                 return journal
@@ -349,12 +424,21 @@ class IncomingSmsColdNotificationSmokeTest {
         journal: JournalEntry,
         row: ProviderRow?,
         preparedAtMillis: Long,
+        contract: JourneyContract,
+        emittedPdu: ByteArray?,
     ) {
-        requireFixed(journal.key == expectedJournalKey(journal.subscriptionId), JOURNAL_KEY_INVALID)
+        val exactPdu = emittedPdu ?: failFixed(EMITTED_PDU_REQUIRED)
+        requireFixed(
+            journal.key == expectedJournalKey(journal.subscriptionId, exactPdu),
+            JOURNAL_KEY_INVALID,
+        )
         requireFixed(RECOVERY_TOKEN_PATTERN.matches(journal.recoveryToken), JOURNAL_TOKEN_INVALID)
         requireFixed(journal.state in JOURNAL_STATES, JOURNAL_STATE_INVALID)
         requireFixed(journal.receivedAtMillis >= preparedAtMillis, JOURNAL_RECEIVED_TIME_INVALID)
-        requireFixed(journal.sentAtMillis == FIXTURE_SENT_TIMESTAMP_MILLIS, JOURNAL_SENT_TIME_INVALID)
+        requireFixed(
+            journal.sentAtMillis == expectedSentTimestampMillis(contract, exactPdu),
+            JOURNAL_SENT_TIME_INVALID,
+        )
         requireFixed(journal.updatedAtMillis >= journal.receivedAtMillis, JOURNAL_UPDATED_TIME_INVALID)
         if (row != null) {
             requireFixed(journal.receivedAtMillis == row.receivedAtMillis, JOURNAL_RECEIVED_TIME_INVALID)
@@ -528,7 +612,7 @@ class IncomingSmsColdNotificationSmokeTest {
                 requireFixed(summary.latestBox == MessageBox.INBOX, INDEX_BOX_INVALID)
                 requireFixed(summary.latestStatus == MessageStatus.NONE, INDEX_STATUS_INVALID)
                 requireFixed(summary.latestSenderAddress == ParticipantAddress(FIXTURE_SENDER), INDEX_SENDER_INVALID)
-                requireFixed(summary.latestSnippet == FIXTURE_BODY, INDEX_BODY_INVALID)
+                requireFixed(summary.latestSnippet == row.body, INDEX_BODY_INVALID)
                 requireFixed(!summary.latestRead && summary.indexedUnreadCount == 1L, INDEX_UNREAD_INVALID)
                 requireFixed(summary.indexedMessageCount == 1L, INDEX_COUNT_INVALID)
                 requireFixed(
@@ -537,7 +621,7 @@ class IncomingSmsColdNotificationSmokeTest {
                     VERIFIED_IDENTITY_INVALID,
                 )
                 requireFixed(content.content.providerMessageId == providerMessageId, TIMELINE_PROVIDER_ID_INVALID)
-                requireFixed(content.content.body == FIXTURE_BODY, TIMELINE_BODY_INVALID)
+                requireFixed(content.content.body == row.body, TIMELINE_BODY_INVALID)
                 requireFixed(!content.content.sourceTruncated, TIMELINE_TRUNCATION_INVALID)
                 return
             }
@@ -588,12 +672,15 @@ class IncomingSmsColdNotificationSmokeTest {
         null,
     )?.use { cursor -> cursor.count.toLong() } ?: failFixed(PROVIDER_QUERY_UNAVAILABLE)
 
-    private fun controlledProviderRows(context: Context): List<ProviderRow> =
+    private fun controlledProviderRows(
+        context: Context,
+        contract: JourneyContract,
+    ): List<ProviderRow> =
         context.contentResolver.query(
             Telephony.Sms.CONTENT_URI,
             PROVIDER_PROJECTION,
             "${Telephony.Sms.ADDRESS} = ? OR ${Telephony.Sms.BODY} = ?",
-            arrayOf(FIXTURE_SENDER, FIXTURE_BODY),
+            arrayOf(FIXTURE_SENDER, contract.expectedBody),
             null,
         )?.use { cursor ->
             val id = cursor.getColumnIndexOrThrow(BaseColumns._ID)
@@ -645,15 +732,57 @@ class IncomingSmsColdNotificationSmokeTest {
             )
         }
 
-    private fun expectedJournalKey(subscriptionId: Int): String {
+    private fun expectedPduForJournal(contract: JourneyContract): ByteArray {
+        val argument = contract.emittedPduArgument ?: return FIXTURE_PDU
+        val encoded = InstrumentationRegistry.getArguments().getString(argument)
+            ?: failFixed(EMITTED_PDU_REQUIRED)
+        return decodeEmittedPdu(encoded)
+    }
+
+    private fun decodeEmittedPdu(encoded: String): ByteArray {
+        requireFixed(
+            encoded.isNotEmpty() &&
+                encoded.length % 2 == 0 &&
+                EMITTED_PDU_HEX_PATTERN.matches(encoded),
+            EMITTED_PDU_INVALID,
+        )
+        val decoded = ByteArray(encoded.length / 2) { index ->
+            encoded.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+        }
+        val message = decodedSmsMessage(decoded)
+        requireFixed(
+            message.displayOriginatingAddress?.trim() == FIXTURE_SENDER,
+            EMITTED_PDU_INVALID,
+        )
+        requireFixed(
+            message.displayMessageBody.orEmpty() == NOTIFICATION_DENIED_BODY,
+            EMITTED_PDU_INVALID,
+        )
+        return decoded
+    }
+
+    private fun expectedSentTimestampMillis(
+        contract: JourneyContract,
+        pdu: ByteArray,
+    ): Long = if (contract.emittedPduArgument == null) {
+        FIXTURE_SENT_TIMESTAMP_MILLIS
+    } else {
+        decodedSmsMessage(pdu).timestampMillis.coerceAtLeast(0L)
+    }
+
+    private fun decodedSmsMessage(pdu: ByteArray): SmsMessage =
+        SmsMessage.createFromPdu(pdu, FINGERPRINT_FORMAT_VALUE)
+            ?: failFixed(EMITTED_PDU_INVALID)
+
+    private fun expectedJournalKey(subscriptionId: Int, pdu: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256")
         digest.update(FINGERPRINT_DOMAIN)
         digest.updateInt(subscriptionId)
         digest.updateInt(FINGERPRINT_FORMAT.size)
         digest.update(FINGERPRINT_FORMAT)
         digest.updateInt(1)
-        digest.updateInt(FIXTURE_PDU.size)
-        digest.update(FIXTURE_PDU)
+        digest.updateInt(pdu.size)
+        digest.update(pdu)
         return JOURNAL_KEY_PREFIX + digest.digest().joinToString("") { byte ->
             "%02x".format(byte.toInt() and 0xff)
         }
@@ -701,9 +830,13 @@ class IncomingSmsColdNotificationSmokeTest {
                 )
             }
 
-    private fun readCheckpoint(context: Context): Checkpoint {
+    private fun readCheckpoint(context: Context, expectedJourney: String): Checkpoint {
         val checkpoint = checkpoint(context)
         requireFixed(checkpoint.getBoolean(CHECKPOINT_ARMED, false), CHECKPOINT_REQUIRED)
+        requireFixed(
+            checkpoint.getString(CHECKPOINT_JOURNEY, null) == expectedJourney,
+            CHECKPOINT_INVALID,
+        )
         val preparedAt = checkpoint.getLong(CHECKPOINT_PREPARED_AT, -1L)
         val channels = checkpoint.getStringSet(CHECKPOINT_CHANNELS, null)?.toSet()
             ?: failFixed(CHECKPOINT_INVALID)
@@ -756,8 +889,8 @@ class IncomingSmsColdNotificationSmokeTest {
     private fun indexLedger(context: Context): SharedPreferences =
         context.getSharedPreferences(INDEX_LEDGER_PREFERENCES, Context.MODE_PRIVATE)
 
-    private fun requireGate() {
-        val enabled = InstrumentationRegistry.getArguments().getString(GATE_ARGUMENT)
+    private fun requireGate(argument: String) {
+        val enabled = InstrumentationRegistry.getArguments().getString(argument)
         assumeTrue(GATE_REQUIRED, enabled != null)
         assumeTrue(GATE_REQUIRED, enabled == true.toString())
     }
@@ -773,6 +906,23 @@ class IncomingSmsColdNotificationSmokeTest {
         val channels: Set<String>,
         val ledgerPresent: Boolean,
         val ledgerValue: Boolean,
+    )
+
+    private data class JourneyContract(
+        val gateArgument: String,
+        val phaseArgument: String,
+        val expectedSdk: Int,
+        val apiRequiredMessage: String,
+        val checkpointValue: String,
+        val notificationsEnabled: Boolean,
+        val prepareStatusCode: Int,
+        val verifyStatusCode: Int,
+        val cleanupStatusCode: Int,
+        val prepareSentinel: String,
+        val verifySentinel: String,
+        val cleanupSentinel: String,
+        val emittedPduArgument: String?,
+        val expectedBody: String,
     )
 
     private data class ProviderRow(
@@ -808,6 +958,11 @@ class IncomingSmsColdNotificationSmokeTest {
         const val TARGET_PACKAGE = "org.aurorasms.app"
         const val GATE_ARGUMENT = "auroraEmulatorIncomingSmsColdNotification"
         const val PHASE_ARGUMENT = "auroraEmulatorIncomingSmsColdNotificationPhase"
+        const val NOTIFICATION_DENIED_GATE_ARGUMENT =
+            "auroraEmulatorIncomingSmsNotificationDenied"
+        const val NOTIFICATION_DENIED_PHASE_ARGUMENT =
+            "auroraEmulatorIncomingSmsNotificationDeniedPhase"
+        const val EMITTED_PDU_ARGUMENT = "auroraEmulatorIncomingSmsEmittedPduHex"
         const val PHASE_PREPARE = "prepare"
         const val PHASE_VERIFY = "verify"
         const val PHASE_CLEANUP = "cleanup"
@@ -817,10 +972,53 @@ class IncomingSmsColdNotificationSmokeTest {
         const val PREPARE_SENTINEL = "auroraIncomingSmsPrepareResult"
         const val VERIFY_SENTINEL = "auroraIncomingSmsVerifyResult"
         const val CLEANUP_SENTINEL = "auroraIncomingSmsCleanupResult"
+        const val NOTIFICATION_DENIED_PREPARE_STATUS_CODE = 49
+        const val NOTIFICATION_DENIED_VERIFY_STATUS_CODE = 50
+        const val NOTIFICATION_DENIED_CLEANUP_STATUS_CODE = 51
+        const val NOTIFICATION_DENIED_PREPARE_SENTINEL =
+            "auroraNotificationDeniedPrepareResult"
+        const val NOTIFICATION_DENIED_VERIFY_SENTINEL =
+            "auroraNotificationDeniedVerifyResult"
+        const val NOTIFICATION_DENIED_CLEANUP_SENTINEL =
+            "auroraNotificationDeniedCleanupResult"
         const val PASS = "pass"
+
+        val COLD_NOTIFICATION_CONTRACT = JourneyContract(
+            gateArgument = GATE_ARGUMENT,
+            phaseArgument = PHASE_ARGUMENT,
+            expectedSdk = Build.VERSION_CODES.O,
+            apiRequiredMessage = API_26_REQUIRED,
+            checkpointValue = JOURNEY_COLD_NOTIFICATION,
+            notificationsEnabled = true,
+            prepareStatusCode = PREPARE_STATUS_CODE,
+            verifyStatusCode = VERIFY_STATUS_CODE,
+            cleanupStatusCode = CLEANUP_STATUS_CODE,
+            prepareSentinel = PREPARE_SENTINEL,
+            verifySentinel = VERIFY_SENTINEL,
+            cleanupSentinel = CLEANUP_SENTINEL,
+            emittedPduArgument = null,
+            expectedBody = FIXTURE_BODY,
+        )
+        val NOTIFICATION_DENIED_CONTRACT = JourneyContract(
+            gateArgument = NOTIFICATION_DENIED_GATE_ARGUMENT,
+            phaseArgument = NOTIFICATION_DENIED_PHASE_ARGUMENT,
+            expectedSdk = Build.VERSION_CODES.BAKLAVA,
+            apiRequiredMessage = API_36_REQUIRED,
+            checkpointValue = JOURNEY_NOTIFICATION_DENIED,
+            notificationsEnabled = false,
+            prepareStatusCode = NOTIFICATION_DENIED_PREPARE_STATUS_CODE,
+            verifyStatusCode = NOTIFICATION_DENIED_VERIFY_STATUS_CODE,
+            cleanupStatusCode = NOTIFICATION_DENIED_CLEANUP_STATUS_CODE,
+            prepareSentinel = NOTIFICATION_DENIED_PREPARE_SENTINEL,
+            verifySentinel = NOTIFICATION_DENIED_VERIFY_SENTINEL,
+            cleanupSentinel = NOTIFICATION_DENIED_CLEANUP_SENTINEL,
+            emittedPduArgument = EMITTED_PDU_ARGUMENT,
+            expectedBody = NOTIFICATION_DENIED_BODY,
+        )
 
         const val FIXTURE_SENDER = "+15551230017"
         const val FIXTURE_BODY = "AuroraSMS modem delivery 900017"
+        const val NOTIFICATION_DENIED_BODY = "AuroraSMS modem delivery marker-alpha"
         const val FIXTURE_SENT_TIMESTAMP_MILLIS = 1_784_328_000_000L
         const val GENERIC_NOTIFICATION_TITLE = "AuroraSMS"
         const val GENERIC_NOTIFICATION_BODY = "New message"
@@ -832,10 +1030,16 @@ class IncomingSmsColdNotificationSmokeTest {
             .toByteArray()
         val FINGERPRINT_DOMAIN: ByteArray =
             "AuroraSMS.SMS_DELIVERY.v1".toByteArray(StandardCharsets.US_ASCII)
-        val FINGERPRINT_FORMAT: ByteArray = "3gpp".toByteArray(StandardCharsets.US_ASCII)
+        const val FINGERPRINT_FORMAT_VALUE = "3gpp"
+        val FINGERPRINT_FORMAT: ByteArray =
+            FINGERPRINT_FORMAT_VALUE.toByteArray(StandardCharsets.US_ASCII)
+        val EMITTED_PDU_HEX_PATTERN = Regex("[0-9a-fA-F]+")
 
         const val CHECKPOINT_PREFERENCES = "aurora_incoming_sms_smoke_v1"
         const val CHECKPOINT_ARMED = "armed"
+        const val CHECKPOINT_JOURNEY = "journey"
+        const val JOURNEY_COLD_NOTIFICATION = "cold_notification"
+        const val JOURNEY_NOTIFICATION_DENIED = "notification_denied"
         const val CHECKPOINT_PREPARED_AT = "prepared_at"
         const val CHECKPOINT_CHANNELS = "channels"
         const val CHECKPOINT_LEDGER_PRESENT = "ledger_present"
@@ -882,14 +1086,22 @@ class IncomingSmsColdNotificationSmokeTest {
 
         const val GATE_REQUIRED = "Owner-gated incoming SMS emulator journey was not enabled"
         const val API_26_REQUIRED = "Incoming SMS emulator journey requires API 26"
+        const val API_33_REQUIRED = "Notification-denied journey requires API 33 or newer"
+        const val API_36_REQUIRED = "Notification-denied journey requires API 36"
         const val TARGET_PACKAGE_INVALID = "Incoming SMS target package is invalid"
         const val PHASE_REQUIRED = "Incoming SMS phase is required"
         const val PHASE_INVALID = "Incoming SMS phase is invalid"
+        const val EMITTED_PDU_REQUIRED =
+            "Notification-denied journey requires the exact emitted SMS PDU hex"
+        const val EMITTED_PDU_INVALID =
+            "Notification-denied journey emitted SMS PDU hex is invalid"
         const val APPLICATION_INVALID = "Incoming SMS application entry point is invalid"
         const val DEFAULT_SMS_REQUIRED = "Incoming SMS journey requires default SMS role"
         const val READ_SMS_REQUIRED = "Incoming SMS journey requires READ_SMS"
         const val RECEIVE_SMS_REQUIRED = "Incoming SMS journey requires RECEIVE_SMS"
         const val NOTIFICATIONS_REQUIRED = "Incoming SMS journey requires notifications"
+        const val NOTIFICATIONS_DISABLED_REQUIRED =
+            "Notification-denied journey requires POST_NOTIFICATIONS to remain denied"
         const val STALE_CHECKPOINT = "Incoming SMS checkpoint is already armed"
         const val EMPTY_PROVIDER_REQUIRED = "Incoming SMS journey requires an empty SMS provider"
         const val PROVIDER_COLLISION = "Incoming SMS fixture collides with provider state"

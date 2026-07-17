@@ -81,7 +81,7 @@
 
         <receiver
             android:name=".receiver.DefaultSmsRoleChangedReceiver"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.provider.action.DEFAULT_SMS_PACKAGE_CHANGED" />
             </intent-filter>

@@ -3,7 +3,7 @@
     <string name="app_name">AuroraSMS</string>
     <string name="request_sms_role">Make AuroraSMS the SMS app</string>
     <string name="grant_messaging_permissions">Grant messaging permissions</string>
-    <string name="notification_permission_explanation">Notifications can show a generic alert, sender only, or sender and message. You can change this privacy level later.</string>
+    <string name="notification_permission_explanation">Messages remain usable and readable in AuroraSMS, but background and new-message alerts are off while notifications are disabled.</string>
     <string name="enable_notifications">Enable message notifications</string>
     <string name="open_diagnostics">Open local diagnostics</string>
     <string name="role_ready">AuroraSMS needs your explicit approval before it can become the default SMS app.</string>
