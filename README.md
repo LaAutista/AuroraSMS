@@ -84,8 +84,9 @@ API 36, `debuggable` only on the debug app, and no `INTERNET` or
 so it is verification output rather than an installable distribution. Only the
 API 26 and API 36 emulators were attached for this acceptance; no physical
 device, SIM, OEM, carrier, billing, roaming, sent/delivery, reboot, or live-send
-process-death gate closes. This is local worktree evidence only, not a commit,
-CI, physical-device handoff, release, completion, or gold claim. The exact debug
+process-death gate closes. This local evidence is frozen in implementation
+commit `17fc421`; it is not a pushed-CI, physical-device handoff, release,
+completion, or gold claim. The exact debug
 APK did install and copy to the API 36 emulator with a matching device-side
 SHA-256, then cold-launched successfully to the expected role-approval screen
 without changing the role or SMS permissions. Exact commands, module totals,

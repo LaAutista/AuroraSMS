@@ -2655,10 +2655,10 @@ matrix remains open; AuroraSMS is incomplete and not gold.
 
 ## Phase 5A bounded existing-Thread composer evidence — 2026-07-18
 
-This section records final-source local worktree verification for
-`0.5.0-phase5` (`versionCode` 4). It does not claim a final commit, pushed CI
-run, physical-device handoff, release, or carrier submission. The exact debug
-APK did complete the emulator handoff recorded below.
+This section records local verification for implementation commit `17fc421`,
+`0.5.0-phase5` (`versionCode` 4). It does not claim a pushed CI run,
+physical-device handoff, release, or carrier submission. The exact debug APK did
+complete the emulator handoff recorded below.
 
 ### Host, governance, and dependency gates
 

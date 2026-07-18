@@ -296,7 +296,7 @@ commit it.
 
 ## Local acceptance evidence
 
-The final-source `0.5.0-phase5` worktree passed the complete 886-task offline
+Implementation commit `17fc421` passed the complete 886-task offline
 host/release/privacy/license aggregate in 1m27s (90 executed, two from cache,
 794 up-to-date), with all 508 host JUnit results green. `bundleRelease` passed
 269 tasks in 7s. CycloneDX 1.6 passed 15 up-to-date tasks in 7s and reports 441
@@ -318,8 +318,8 @@ artifact sizes and hashes are retained in `docs/TEST_MATRIX.md`.
 Only API 26 and API 36 emulators were attached. The exact debug APK installed
 and copied to the API 36 emulator with a matching device-side SHA-256, then
 cold-launched to the expected role-approval screen without role or SMS-permission
-mutation. This is local worktree evidence and does not claim a final commit, CI
-run, physical-device handoff, physical device/SIM, OEM,
+mutation. This local evidence is frozen in implementation commit `17fc421` and
+does not claim a pushed CI run, physical-device handoff, physical device/SIM, OEM,
 carrier submission, billing, roaming, sent/delivery behavior, reboot, or process
 death during a real network send. The Phase 5B acknowledged-unknown late-provider
 cleanup residual remains open. AuroraSMS is not complete or gold.

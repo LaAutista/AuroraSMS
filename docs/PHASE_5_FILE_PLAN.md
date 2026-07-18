@@ -1,7 +1,7 @@
 # Phase 5 file-level plan
 
 Status: ADR 0008 is accepted and the bounded Phase 5A source implementation is
-present in the 2026-07-18 worktree as `0.5.0-phase5` (`versionCode` 4). Focused
+frozen in commit `17fc421` as `0.5.0-phase5` (`versionCode` 4). Focused
 and aggregate local/emulator acceptance passed on 2026-07-18. Physical-device,
 SIM, OEM, carrier-network, billing, roaming, sent, and delivery evidence remains
 open.
@@ -592,7 +592,7 @@ governance, clean-room, dependency, and artifact gates.
 
 ## Local/emulator acceptance evidence — 2026-07-18
 
-The final-source `0.5.0-phase5` worktree passed the complete offline aggregate in
+Implementation commit `17fc421` passed the complete offline aggregate in
 1m27s across 886 tasks (90 executed, two from cache, 794 up-to-date). All 508
 host JUnit results passed: app 236, design 9, index 69, model 19,
 notifications 21, state 38, telephony 79, testing 24, and conversations 13.
@@ -614,9 +614,9 @@ macrobenchmark test APK's debuggable/tooling-network boundary is expected and
 isolated. The release APK is unsigned and not distributable. Exact artifact
 sizes and SHA-256 values are recorded in `docs/TEST_MATRIX.md`.
 
-This evidence is local to the worktree and two attached emulators. It does not
-claim a final commit, CI run, physical-device handoff, signed release,
-acceptance, or carrier acceptance.
+This local evidence is frozen in implementation commit `17fc421` and covers two
+attached emulators. It does not claim a pushed CI run, physical-device handoff,
+signed release, physical-device acceptance, or carrier acceptance.
 
 ## Evidence that remains open
 

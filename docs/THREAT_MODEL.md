@@ -2,7 +2,7 @@
 
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
-bounded ADR 0008 Phase 5A source implementation in the 2026-07-18 worktree.
+bounded ADR 0008 Phase 5A source implementation in commit `17fc421`.
 Phase 5A local/API 26/API 36 emulator aggregate acceptance passed; all
 physical-device and real-carrier evidence remains open.
 
@@ -626,9 +626,9 @@ Pinned `aapt2` inspection confirms package/version identity, minimum API 26,
 target API 36, `debuggable` only in the debug app, and no `INTERNET` or
 `ACCESS_NETWORK_STATE` in any app variant. The macrobenchmark test APK's
 debuggable/tooling-network surface remains isolated from app variants. The
-release APK is unsigned and is not a distribution artifact. This is local
-worktree evidence; it makes no commit, CI, or physical-device handoff claim. The
-exact debug APK installed and hash-matched on the API 36 emulator, then
+release APK is unsigned and is not a distribution artifact. This local evidence
+is frozen in implementation commit `17fc421`; it makes no pushed-CI or
+physical-device handoff claim. The exact debug APK installed and hash-matched on the API 36 emulator, then
 cold-launched to the expected role-approval screen without role or SMS-permission
 mutation.
 
