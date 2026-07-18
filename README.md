@@ -18,6 +18,30 @@ claim, no outgoing provider row, one private generic failure alert, a cold
 failure-alert route, and exact cleanup. This closes only that denied-reply path;
 AuroraSMS remains incomplete and not gold.
 
+The current follow-on durability slice gives every outgoing SMS path exactly
+one durable pre-submission owner. Notification inline reply uses its caller-
+owned reply-operation store and high operation-ID namespace; Android
+`RESPOND_VIA_MESSAGE` uses ordinary low operation IDs and the transport-owned,
+private, content-free outgoing journal. Provider rows begin as app-owned,
+known-unsent `FAILED` rows with a staging sentinel. Durable `PREPARED` ownership
+precedes one conditional arm, and durable `SUBMITTING` precedes the platform
+call. Inherited `SUBMITTING` is conservatively changed to
+`SUBMISSION_UNKNOWN` and is never resubmitted. Generic reply-failure alerts are
+keyed by conversation plus operation, so later success can cancel only its own
+alert.
+
+Final-source verification for that follow-on slice is green on the API 26 and
+API 36 AOSP emulators. The 320-task focused host gate passed telephony 75/75,
+core testing 22/22, and app 191/191, together with lint and app/telephony
+`androidTest` compilation. The transport-owned journal passed 7/7 on each API;
+the owner-gated real-provider contract passed 1/1 on each without invoking
+`SmsManager`; notification identity passed 29/29 on each, including real
+`NotificationManager` sibling preservation; and a fresh disposable API 26
+SystemUI denied-inline-reply journey passed with exact cleanup before its
+overlay was discarded. The complete API 26 and API 36 connected matrices and
+the host/release/privacy/license aggregate also passed. This is verified
+hardening evidence, not a completion or gold claim.
+
 Phase 1 established the independently implemented default-SMS foundation:
 
 - role eligibility and role-before-permission onboarding;
@@ -572,17 +596,87 @@ with app 141, notifications 22, telephony 24, state 43, index 31, conversations
 5, and benchmark 4; its retained XML reconciles 258 zero-failure results and 12
 intentional gated skips to 270 runner-discovered cases.
 
-Three code residuals remain explicit. A crash after an outgoing provider insert
-but before the durable `PREPARED` checkpoint can leave a known-unsent `PENDING`
-row, although recovery will not retry or duplicate that operation. A late
-positive transport callback can leave the generic failure SBN because failure
-cancellation is not yet bound to the operation identity. The bounded
-512-entry incoming replay journal eventually evicts completed ownership, so an
-extremely old exact redelivery may eventually insert again. Successful carrier
-reply and callback behavior, physical and OEM devices, lockscreen and Android
-Auto surfaces, API 27 through 35 journeys, and process death at every lifecycle
-checkpoint remain unproven, along with broader group, multipart, MMS, and
-release acceptance. AuroraSMS is incomplete and not gold.
+The two former code residuals now have fail-safe implementation contracts. An
+outgoing provider insert is atomically visible as `FAILED` with the Aurora
+staging sentinel, not as sendable `PENDING`. After its one durable owner records
+the exact provider identity as `PREPARED`, one conditional arm may consume the
+sentinel and move only that row to `PENDING`; `SUBMITTING` is committed before
+the irreversible platform call. A synchronous refusal or cancellation before
+that call conditionally terminalizes only the exact Aurora-created row in an
+allowed staging, armed, or terminal state. A missing row is safely retired; an
+identity, creator, thread, or state conflict becomes a content-free quarantine
+tombstone and cannot mutate a foreign or reused provider row. An inherited
+`PREPARED` record retries that exact cleanup, while inherited `SUBMITTING`
+becomes `SUBMISSION_UNKNOWN` and is never rearmed or resubmitted.
+
+Notification inline reply is caller-owned by its private reply-operation store
+and reserved high operation IDs. `RESPOND_VIA_MESSAGE` is transport-owned by a
+separate private, content-free journal using ordinary low IDs. That journal
+stores at most 128 operation/provider identities, part counts, states, and
+times. Active `PREPARED` and `SUBMITTING` records are never evicted; only
+`SUBMISSION_UNKNOWN` and known-unsent quarantine tombstones expire after seven
+days. Full capacity rejects new transport-owned work instead of evicting active
+ownership. A corrupt, noncanonical, or uncommittable journal globally fails
+transport-owned submission closed. A transient cleanup failure for one exact
+provider row remains scheduled for retry but does not, by itself, block an
+unrelated send.
+
+Pre-existing `PENDING` rows created by builds before this transport journal
+have no exact durable journal record. Upgrade recovery intentionally does not
+sweep or mutate them and does not claim to repair their status.
+
+Generic failure alerts use operation-scoped tags and cancellation, and a crash
+after success-side cancellation but before durable acknowledgement replays the
+same exact keys. On first role-enabled recovery after upgrading from the
+pre-operation-key alpha, AuroraSMS dismisses any still-active conversation-only
+generic reply-failure alerts because they cannot be mapped safely to one
+durable reply operation. Previously user-dismissed alerts are not recreated.
+Message/provider state and durable late-callback ownership are unchanged; users
+should verify those replies in the conversation. If legacy-alert enumeration
+or cancellation fails, pending replay is deferred and recovery retries. A
+migrated success record without its historical source-message identity cannot
+safely cancel one exact incoming-notification generation; AuroraSMS cancels its
+operation-scoped failure alert but leaves success acknowledgement pending rather
+than guessing.
+
+Final-source focused verification completed a 320-task host gate with telephony
+75/75, core testing 22/22, and app 191/191, plus green lint and app/telephony
+`androidTest` compilation. The transport-owned submission journal passed 7/7
+on API 26 and 7/7 on API 36. The owner-gated real Telephony-provider contract
+passed 1/1 on each API without invoking `SmsManager`; it covered exact staged
+insert and arm, wrong-thread conflict preservation, idempotent terminalization,
+an absent exact URI, and exact synthetic-row cleanup. Notification identity and
+cancellation passed 29/29 on each API, including real `NotificationManager`
+sibling preservation. A final disposable API 26 SystemUI
+`inline-reply-permission-denied` journey passed with exact cleanup, after which
+its overlay was discarded.
+
+The final API 26 connected matrix was `BUILD SUCCESSFUL` in 1m51s across 456
+tasks. Preserved console module roots record app 132 with 12 skips, benchmark 3 with
+one skip, notifications 29, telephony 31, state 43, index 31, and conversations
+5: 274 total tests, 13 intentional skips, and zero failures/errors. The API 36
+matrix was `BUILD SUCCESSFUL` in 1m24s across 456 tasks; retained XML records app
+129 with nine skips, benchmark 3 with one skip, notifications 29, telephony 31,
+state 43, index 31, and conversations 5: 271 total tests, 10 intentional skips,
+and zero failures/errors. The complete host/release/privacy/license aggregate
+was `BUILD SUCCESSFUL` in 1m19s across 886 tasks (130 executed, seven from cache,
+749 up-to-date). CycloneDX 1.6 passed 15 tasks in 8s and reports 441 components
+and 442 dependencies. The final debug APK is 13,993,426 bytes with SHA-256
+`16037c616d6d696b4974f3e3a14238c18937c6f677f2f60e677ca10f0ea0ef98`.
+
+An initial API 26 aggregate run usefully exposed test-order contamination: a
+channel test disabled the production reply-failure channel, whose disabled
+importance survives delete/recreate on API 26. The corrected test uses a
+dedicated test-only channel. That failed run remains diagnostic evidence only
+and is not counted as pass evidence. The implementation and tests for this
+final-source slice are frozen in commit `3d7182c`.
+
+The bounded 512-entry incoming replay journal still eventually evicts completed
+ownership, so an extremely old exact redelivery may eventually insert again.
+Successful carrier reply and callback behavior, physical and OEM devices,
+lockscreen and Android Auto surfaces, API 27 through 35 journeys, and process
+death at every lifecycle checkpoint remain unproven, along with broader group,
+multipart, MMS, and release acceptance. AuroraSMS is incomplete and not gold.
 
 Phase 3 does not change the existing carrier MMS limitations. Earlier Phase
 1/2 functional evidence covers a Pixel 8 on Android 16/API 36. Phase 3 profile

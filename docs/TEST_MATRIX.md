@@ -111,6 +111,17 @@ remained stable; bounded shade/log scans and exact state cleanup passed. This is
 not successful carrier-send, broader API/OEM, physical-device, or complete
 lifecycle evidence. AuroraSMS remains incomplete and not gold.
 
+A follow-on durability slice replaces two implementation residuals with
+fail-safe provider staging and operation-scoped reply-failure notification
+identity under an explicit single-owner model. Focused notification identity
+and cancellation passed 29/29 on each of API 26 and API 36. The final-source
+owner-gated provider contract passed 1/1 on each API, and a fresh disposable API
+26 SystemUI denied-reply journey passed with exact cleanup. The final API 26 and
+API 36 full connected matrices and the complete host/release/privacy/license
+aggregate are also green. Broader carrier, physical/OEM, API 27 through 35,
+MMS, process-death, and release acceptance remain open, so no checklist or
+release gate closes from this slice alone.
+
 ## Evidence rules
 
 - A feature is not complete because it compiles or looks correct in a preview.
@@ -380,6 +391,11 @@ Run on a telephony-capable device after explicit test-recipient approval.
   recipient, subscription, current conversation, and synchronous permission-
   denial path before platform submission. Successful submission, live target/
   subscription mutation, API 27+, and physical/OEM coverage remain open.
+  The follow-on `FAILED` staging-sentinel -> durable `PREPARED` -> one-shot
+  `PENDING` arm -> durable `SUBMITTING` contract passed its final-source owner-
+  gated real-provider test 1/1 on each of API 26 and API 36 without invoking
+  `SmsManager`, including exact conditional rollback/conflict/idempotence and
+  cleanup. Successful carrier submission and the wider matrix remain open.
 - [ ] Duplicate/expired reply intents do not duplicate sends.
   The focused journey proves that one verified SystemUI submission creates one
   durable consumed claim and no outgoing row when permission is denied. It does
@@ -389,6 +405,10 @@ Run on a telephony-capable device after explicit test-recipient approval.
   The focused API 26 journey proves one generic body-free failure notification,
   a cold exact-Thread route, and bounded shade/log privacy scans. Broader API,
   OEM, lockscreen, Android Auto, and carrier-failure coverage remain pending.
+  Operation-scoped failure tags, exact late-success cancellation, legacy-tag
+  cleanup, sibling preservation, platform-manager identity, and crash-
+  idempotent replay passed the focused notification module 29/29 on API 26 and
+  29/29 on API 36. Broader surface and release evidence remain pending.
 - [ ] Android Auto metadata/reply verification is completed in Phase 6.
 
 ## Cross-phase lifecycle and storage pressure
@@ -406,7 +426,10 @@ Run on a telephony-capable device after explicit test-recipient approval.
   expected state; no feature relies on an Activity-owned singleton.
   The focused denied-reply journey kills the completed incoming receiver and
   then starts a distinct cold, taskless reply receiver, but it does not kill the
-  process at every accepted reply-operation checkpoint.
+  process at every accepted reply-operation checkpoint. Focused tests cover
+  exact success-side cancellation followed by pre-acknowledgement replay, and
+  the final-source disposable API 26 SystemUI rerun passed. The full process-
+  death matrix remains open.
 
 ## Phase 2 index/search matrix
 
@@ -2448,19 +2471,98 @@ incoming replay journal passed 9/9 on both. The exact debug APK is 13,993,426
 bytes with SHA-256
 `a8fdc6d227fa801c529bc5340fa538c9dec33715f74e12666ff606ad9b82c073`.
 
-Three bounded implementation residuals remain explicit:
+The two former implementation residuals now have explicit fail-safe contracts
+and one durable pre-submission owner per path:
 
-- Process death after an outgoing provider insert but before the durable
-  `PREPARED` checkpoint can leave a known-unsent `PENDING` provider row. Recovery
-  does not resubmit it, so it avoids a duplicate carrier send, but exact orphan
-  status repair remains open.
-- A generic failure notification can remain after a later positive callback.
-  Success reconciles the durable operation/provider result and cancels the exact
-  source conversation generation, but operation-bound failure-notification
-  cancellation identity is not yet carried through that callback.
-- The incoming replay journal is bounded to 512 owned entries and evicts the
-  oldest `COMPLETE` ownership records when full. An extremely old exact carrier
-  redelivery after eviction can therefore be inserted again.
+- An outgoing SMS provider row is inserted atomically as known-unsent `FAILED`
+  with Aurora's staging sentinel and exact creator/row ownership. Notification
+  inline reply owns its boundary in the caller's private durable reply-
+  operation store and reserved high operation-ID namespace. Android
+  `RESPOND_VIA_MESSAGE` uses ordinary low operation IDs and delegates ownership
+  to the transport's separate private, content-free journal. After the one
+  owner records an exact row as `PREPARED`, one conditional arm may consume the
+  sentinel and transition it to `PENDING`; a second or wrong-state arm fails.
+  Durable `SUBMITTING` is recorded before the irreversible platform call.
+- A synchronous pre-boundary refusal or cancellation conditionally terminalizes
+  only the exact Aurora-created row in an allowed staging, armed, or already-
+  terminal state. An absent row is safely retired. An identity, creator,
+  conversation, or state conflict creates a known-unsent quarantine tombstone
+  and does not mutate a foreign or reused row. Inherited `PREPARED` retries that
+  exact cleanup. Inherited `SUBMITTING` becomes `SUBMISSION_UNKNOWN` and is
+  never rearmed or resubmitted; it does not falsely converge to `FAILED`.
+- The transport-owned journal stores at most 128 content-free identities, part
+  counts, states, and lifecycle times. It never evicts active `PREPARED` or
+  `SUBMITTING` records. Only `SUBMISSION_UNKNOWN` and known-unsent quarantine
+  tombstones expire after seven days; otherwise capacity rejects a new send.
+  Corrupt, noncanonical, or uncommittable journal state globally fails
+  transport-owned submission closed. A transient provider cleanup failure
+  defers only that record, continues independent recovery, and does not by
+  itself block an unrelated send.
+- `PENDING` provider rows left by pre-journal alpha builds have no exact durable
+  record. Upgrade recovery intentionally neither sweeps nor mutates those rows
+  and makes no claim to repair them.
+- A generic reply-failure notification is tagged by conversation plus durable
+  reply-operation ID. A later positive result cancels only that operation's
+  alert and the exact source generation, preserving unrelated failures in the
+  same conversation. Posting or cancelling before a crash but acknowledging
+  afterward replays the same exact keys idempotently.
+
+On first role-enabled recovery after upgrading from the pre-operation-key
+alpha, AuroraSMS dismisses any still-active conversation-only generic
+reply-failure alerts because they cannot be mapped safely to one durable reply
+operation. Previously user-dismissed alerts are not recreated. Message/provider
+state and durable late-callback ownership are unchanged; users should verify
+those replies in the conversation. If legacy-alert enumeration or cancellation
+fails, pending replay is deferred and recovery retries. A migrated success
+record without its historical source-message identity cannot cancel one exact
+incoming generation; AuroraSMS cancels its operation-scoped failure alert but
+leaves durable success acknowledgement pending rather than guessing.
+
+Final-source focused verification passed the frozen 320-task host gate:
+telephony 75/75, core testing 22/22, and app 191/191, together with green lint
+and app/telephony `androidTest` compilation. Transport-owned submission-journal
+instrumentation passed 7/7 on API 26 and 7/7 on API 36. The owner-gated real
+Telephony-provider staging contract passed 1/1 on each API without invoking
+`SmsManager`; it proved the exact failed/sentinel insert, one-shot arm and
+sentinel consumption, wrong-thread conflict preservation, idempotent terminal
+rollback, absent exact URI handling, and exact synthetic-row cleanup.
+
+Notification verification passed 29/29 on API 26 and 29/29 on API 36. It
+includes independent same-conversation operation identities, exact late-
+success cancellation, sibling preservation, legacy cleanup/retry, crash replay,
+and a real `NotificationManager` test proving that exact cancellation preserves
+the sibling operation. A fresh disposable API 26 AOSP SystemUI
+`inline-reply-permission-denied` journey passed on the final source with exact
+cleanup; its overlay was then discarded.
+
+The final API 26 root connected matrix was `BUILD SUCCESSFUL` in 1m51s across
+456 Gradle tasks. Preserved console module roots record app 132 with 12 skips, benchmark 3
+with one skip, notifications 29, telephony 31, state 43, index 31, and
+conversations 5. That reconciles to 274 total tests, 13 intentional skips, and
+zero failures/errors. The final API 36 root connected matrix was `BUILD
+SUCCESSFUL` in 1m24s across 456 tasks. Its retained XML records app 129 with nine
+skips, benchmark 3 with one skip, notifications 29, telephony 31, state 43,
+index 31, and conversations 5: 271 total tests, 10 intentional skips, and zero
+failures/errors.
+
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m19s across all 886 Gradle tasks (130 executed, seven from cache,
+749 up-to-date). The separate CycloneDX 1.6 gate passed 15 tasks in 8s and
+reports 441 components and 442 dependencies. The final debug APK is 13,993,426
+bytes with SHA-256
+`16037c616d6d696b4974f3e3a14238c18937c6f677f2f60e677ca10f0ea0ef98`.
+
+The first API 26 aggregate attempt remains diagnostic only. It exposed test-
+order contamination because a channel test disabled the real production reply-
+failure channel and API 26 preserves disabled importance across channel delete/
+recreate. The corrected test injects a dedicated test-only disabled channel.
+Only the later clean API 26 matrix above is pass evidence. The implementation
+and tests for this final source are frozen in commit `3d7182c`.
+
+One bounded implementation limitation remains explicit: the incoming replay
+journal retains at most 512 owned entries and evicts the oldest `COMPLETE`
+ownership records when full. An extremely old exact carrier redelivery after
+eviction can therefore be inserted again.
 
 This evidence is limited to fresh AOSP API 26 emulator runs with synthetic
 modem SMS and deliberately denied `SEND_SMS`. It does not prove successful
