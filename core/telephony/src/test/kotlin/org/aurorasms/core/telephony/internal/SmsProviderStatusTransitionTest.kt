@@ -8,6 +8,28 @@ import org.junit.Test
 
 class SmsProviderStatusTransitionTest {
     @Test
+    fun outgoingArmRequiresOneFreshExactConditionalWrite() {
+        ConditionalSmsStatusWriteResult.entries.forEach { writeResult ->
+            var writes = 0
+
+            val result = armOutgoingSmsProviderRow {
+                writes += 1
+                writeResult
+            }
+
+            assertEquals(1, writes)
+            assertEquals(
+                if (writeResult == ConditionalSmsStatusWriteResult.UPDATED) {
+                    OutgoingSmsArmResult.ARMED
+                } else {
+                    OutgoingSmsArmResult.UNAVAILABLE
+                },
+                result,
+            )
+        }
+    }
+
+    @Test
     fun transitionMatrixOnlyAdvancesTowardStrongerStates() {
         SmsProviderStatus.entries.forEach { current ->
             SmsProviderStatus.entries.forEach { requested ->

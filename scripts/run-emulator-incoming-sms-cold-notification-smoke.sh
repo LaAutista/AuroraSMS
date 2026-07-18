@@ -157,6 +157,7 @@ INLINE_REPLY_FAILURE_TITLE="Check reply status"
 INLINE_REPLY_FAILURE_BODY="Confirm in AuroraSMS before trying again."
 INLINE_REPLY_FAILURE_CHANNEL="aurora_reply_failures_v1"
 INLINE_REPLY_FAILURE_TAG_PREFIX="aurora-reply-failure:"
+INLINE_REPLY_OPERATION_EXTRA="org.aurorasms.core.notifications.extra.REPLY_OPERATION_ID"
 EXPECTED_TARGET_RECIPIENT_SHA256="2bd49bec27fdeadb7f63dce372b4b69acdb90467cbc3991dee46f492d1b6d333"
 APP_THREAD_RESOURCE="aurora-thread-screen"
 APP_INBOX_RESOURCE="aurora-inbox-screen"
@@ -289,6 +290,7 @@ PROVIDER_ID=""
 FIRST_PROVIDER_ID=""
 CONVERSATION_ID=""
 FIRST_CONVERSATION_ID=""
+REPLY_OPERATION_ID=""
 DELIVERY_SUBSCRIPTION_ID=""
 RECEIVER_PID=""
 EMITTED_PDU_HEX=""
@@ -1913,9 +1915,19 @@ reply_failure_notification_id() {
     printf '%s\n' "$((EXPECTED_NOTIFICATION_ID ^ 1073741824))"
 }
 
+reply_failure_notification_tag() {
+    local operation_id="$REPLY_OPERATION_ID"
+    if [[ -z "$operation_id" ]]; then
+        operation_id="$(exact_single_notified_reply_operation)" || return 1
+    fi
+    is_canonical_positive_decimal "$operation_id" || return 1
+    printf '%s%s:%s\n' \
+        "$INLINE_REPLY_FAILURE_TAG_PREFIX" "$CONVERSATION_ID" "$operation_id"
+}
+
 inline_reply_failure_notifications_are_exact() {
     local dump conversation_record failure_record failure_id failure_tag
-    local conversation_actions failure_actions title_count body_count
+    local operation_id conversation_actions failure_actions title_count body_count
     dump="$(notification_dump)" || return 1
     if rg --fixed-strings --quiet "$INCOMING_BODY" <<<"$dump" || \
         rg --fixed-strings --quiet "$INCOMING_SENDER" <<<"$dump" || \
@@ -1924,7 +1936,9 @@ inline_reply_failure_notifications_are_exact() {
         return 1
     fi
     failure_id="$(reply_failure_notification_id)" || return 1
-    failure_tag="$INLINE_REPLY_FAILURE_TAG_PREFIX$CONVERSATION_ID"
+    failure_tag="$(reply_failure_notification_tag)" || return 1
+    operation_id="${failure_tag##*:}"
+    is_canonical_positive_decimal "$operation_id" || return 1
     conversation_record="$(
         notification_record_for_tag \
             "$dump" "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID" 2
@@ -1960,6 +1974,9 @@ inline_reply_failure_notifications_are_exact() {
         <<<"$failure_record" || return 1
     rg --fixed-strings --quiet 'category=err' <<<"$failure_record" || return 1
     rg --fixed-strings --quiet 'vis=PRIVATE' <<<"$failure_record" || return 1
+    rg --fixed-strings --quiet \
+        "$INLINE_REPLY_OPERATION_EXTRA=String ($operation_id)" \
+        <<<"$failure_record" || return 1
     rg --quiet \
         "contentIntent=PendingIntent\\{.* PendingIntentRecord\\{.* $APP_PACKAGE startActivity \\(whitelist:" \
         <<<"$failure_record" || return 1
@@ -1985,7 +2002,7 @@ reply_failure_update_time() {
     local dump failure_id failure_tag record values
     dump="$(notification_dump)" || return 1
     failure_id="$(reply_failure_notification_id)" || return 1
-    failure_tag="$INLINE_REPLY_FAILURE_TAG_PREFIX$CONVERSATION_ID"
+    failure_tag="$(reply_failure_notification_tag)" || return 1
     record="$(notification_record_for_tag "$dump" "$failure_tag" "$failure_id" 2)" || return 1
     values="$(
         sed -n 's/^[[:space:]]*mUpdateTimeMs=\([0-9][0-9]*\)$/\1/p' <<<"$record"
@@ -2908,7 +2925,7 @@ wait_for_cold_route() {
 wait_for_failure_notification_route() {
     local deadline pid xml failure_id failure_tag
     failure_id="$(reply_failure_notification_id)" || return 1
-    failure_tag="$INLINE_REPLY_FAILURE_TAG_PREFIX$CONVERSATION_ID"
+    failure_tag="$(reply_failure_notification_tag)" || return 1
     deadline=$((SECONDS + ROUTE_TIMEOUT_SECONDS))
     while (( SECONDS < deadline )); do
         if pid="$(single_package_pid "$APP_PACKAGE")" && \
@@ -3780,6 +3797,10 @@ if [[ "$JOURNEY" != "notification-denied" ]]; then
         }
         wait_for_inline_reply_failure_state "$REPLY_TARGET_EXPIRY" >/dev/null || {
             printf 'Permission-denied reply did not converge on one claim, no outgoing row, the original SBN, and one generic failure SBN.\n' >&2
+            exit 1
+        }
+        REPLY_OPERATION_ID="$(exact_single_notified_reply_operation)" || {
+            printf 'The operation-bound reply-failure notification identity was unavailable.\n' >&2
             exit 1
         }
         [[ "$(reply_action_pending_intent_identity 2)" == "$ORIGINAL_REPLY_PENDING_INTENT" ]] || {

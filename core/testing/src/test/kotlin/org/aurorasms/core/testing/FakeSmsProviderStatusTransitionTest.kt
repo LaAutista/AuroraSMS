@@ -3,9 +3,13 @@
 package org.aurorasms.core.testing
 
 import kotlinx.coroutines.test.runTest
+import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.ProviderKind
+import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.telephony.OutgoingSmsRecord
+import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderStoredMessage
 import org.aurorasms.core.telephony.SmsProviderStatus
@@ -20,7 +24,15 @@ class FakeSmsProviderStatusTransitionTest {
             SmsProviderStatus.entries.forEach { requestedStatus ->
                 val fake = FakeSmsProviderDataSource()
                 val stored = fake.insertTestOutgoing()
-                if (currentStatus != SmsProviderStatus.PENDING) {
+                if (currentStatus != SmsProviderStatus.FAILED) {
+                    assertTrue(
+                        fake.armOutgoing(stored.providerId) is ProviderAccessResult.Success,
+                    )
+                }
+                if (
+                    currentStatus != SmsProviderStatus.PENDING &&
+                    currentStatus != SmsProviderStatus.FAILED
+                ) {
                     assertTrue(
                         fake.updateStatus(stored.providerId, currentStatus) is ProviderAccessResult.Success,
                     )
@@ -46,6 +58,102 @@ class FakeSmsProviderStatusTransitionTest {
     }
 
     @Test
+    fun outgoingRowsRemainFailedUntilOneExactArm() = runTest {
+        val fake = FakeSmsProviderDataSource()
+        val stored = fake.insertTestOutgoing()
+
+        with(fake.snapshot().single()) {
+            assertEquals(MessageBox.FAILED, box)
+            assertEquals(MessageStatus.FAILED, status)
+            assertEquals(64, rawStatus)
+            assertEquals(Int.MIN_VALUE, rawErrorCode)
+        }
+
+        assertTrue(fake.armOutgoing(stored.providerId) is ProviderAccessResult.Success)
+        with(fake.snapshot().single()) {
+            assertEquals(MessageBox.OUTBOX, box)
+            assertEquals(MessageStatus.PENDING, status)
+            assertEquals(32, rawStatus)
+            assertEquals(0, rawErrorCode)
+        }
+        assertEquals(listOf(stored.providerId), fake.armedOutgoing)
+
+        val beforeDuplicate = fake.snapshot()
+        assertTrue(fake.armOutgoing(stored.providerId) is ProviderAccessResult.Unavailable)
+        assertEquals(beforeDuplicate, fake.snapshot())
+        assertEquals(listOf(stored.providerId), fake.armedOutgoing)
+
+        assertEquals(
+            ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.TERMINALIZED),
+            fake.rollbackOutgoing(stored.providerId, stored.conversationId),
+        )
+        assertEquals(
+            ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.TERMINALIZED),
+            fake.rollbackOutgoing(stored.providerId, stored.conversationId),
+        )
+        val terminal = fake.snapshot()
+        with(terminal.single()) {
+            assertEquals(MessageBox.FAILED, box)
+            assertEquals(MessageStatus.FAILED, status)
+            assertEquals(0, rawErrorCode)
+        }
+        assertTrue(fake.armOutgoing(stored.providerId) is ProviderAccessResult.Unavailable)
+        assertEquals(terminal, fake.snapshot())
+        assertEquals(listOf(stored.providerId), fake.armedOutgoing)
+    }
+
+    @Test
+    fun outgoingArmRejectsWrongKindAndMissingIdentityWithoutMutation() = runTest {
+        val fake = FakeSmsProviderDataSource()
+        val stored = fake.insertTestOutgoing()
+        val staged = fake.snapshot()
+
+        assertTrue(
+            fake.armOutgoing(ProviderMessageId(ProviderKind.MMS, stored.providerId.value)) is
+                ProviderAccessResult.InvalidInput,
+        )
+        assertTrue(
+            fake.armOutgoing(ProviderMessageId(ProviderKind.SMS, Long.MAX_VALUE)) is
+                ProviderAccessResult.Unavailable,
+        )
+        assertEquals(staged, fake.snapshot())
+        assertTrue(fake.armedOutgoing.isEmpty())
+    }
+
+    @Test
+    fun outgoingRollbackRejectsWrongKindMissingAndPostSubmissionState() = runTest {
+        val fake = FakeSmsProviderDataSource()
+        val stored = fake.insertTestOutgoing()
+
+        assertTrue(fake.armOutgoing(stored.providerId) is ProviderAccessResult.Success)
+        assertTrue(
+            fake.updateStatus(stored.providerId, SmsProviderStatus.COMPLETE) is
+                ProviderAccessResult.Success,
+        )
+        val complete = fake.snapshot()
+
+        assertTrue(
+            fake.rollbackOutgoing(
+                ProviderMessageId(ProviderKind.MMS, stored.providerId.value),
+                stored.conversationId,
+            ) is
+                ProviderAccessResult.InvalidInput,
+        )
+        assertEquals(
+            ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.ROW_ABSENT),
+            fake.rollbackOutgoing(
+                ProviderMessageId(ProviderKind.SMS, Long.MAX_VALUE),
+                stored.conversationId,
+            ),
+        )
+        assertEquals(
+            ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.OWNERSHIP_CONFLICT),
+            fake.rollbackOutgoing(stored.providerId, stored.conversationId),
+        )
+        assertEquals(complete, fake.snapshot())
+    }
+
+    @Test
     fun unknownSeedStateFailsClosedWithoutMutation() = runTest {
         val original = SyntheticMessages.smsProviderMessage()
         val fake = FakeSmsProviderDataSource(listOf(original))
@@ -55,6 +163,23 @@ class FakeSmsProviderStatusTransitionTest {
         assertTrue(result is ProviderAccessResult.Unavailable)
         assertEquals(listOf(original), fake.snapshot())
         assertTrue(fake.updatedStatuses.isEmpty())
+    }
+
+    @Test
+    fun seededForeignRowReportsOwnershipConflictWithoutMutation() = runTest {
+        val original = SyntheticMessages.smsProviderMessage()
+        val fake = FakeSmsProviderDataSource(listOf(original))
+
+        val result = fake.rollbackOutgoing(
+            original.id,
+            ConversationId(original.providerThreadId.value),
+        )
+
+        assertEquals(
+            ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.OWNERSHIP_CONFLICT),
+            result,
+        )
+        assertEquals(listOf(original), fake.snapshot())
     }
 }
 

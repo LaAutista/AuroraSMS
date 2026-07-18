@@ -21,6 +21,7 @@ import org.aurorasms.core.telephony.MmsSendRequest
 import org.aurorasms.core.telephony.OutgoingMmsPayload
 import org.aurorasms.core.telephony.RecipientSet
 import org.aurorasms.core.telephony.SmsSendRequest
+import org.aurorasms.core.telephony.SmsSubmissionOwnership
 import org.aurorasms.core.telephony.TelephonyEntryPoint
 
 class RespondViaMessageService : Service() {
@@ -44,6 +45,7 @@ class RespondViaMessageService : Service() {
                             body = request.body,
                             subscriptionId = request.subscriptionId,
                         ),
+                        ownership = SmsSubmissionOwnership.TransportOwned,
                     )
                     MessageTransportKind.MMS -> entryPoint.messageTransport.sendMms(
                         MmsSendRequest(

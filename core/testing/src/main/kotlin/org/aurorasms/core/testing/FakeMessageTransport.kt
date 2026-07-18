@@ -8,11 +8,12 @@ import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.MmsDownloadRequest
 import org.aurorasms.core.telephony.MmsSendRequest
 import org.aurorasms.core.telephony.SmsSendRequest
+import org.aurorasms.core.telephony.SmsSubmissionOwnership
 import org.aurorasms.core.telephony.SmsSubmissionObserver
 
 class FakeMessageTransport : MessageTransport {
     val smsRequests = mutableListOf<SmsSendRequest>()
-    val smsSubmissionObservers = mutableListOf<SmsSubmissionObserver>()
+    val smsSubmissionOwnership = mutableListOf<SmsSubmissionOwnership>()
     val mmsRequests = mutableListOf<MmsSendRequest>()
     val mmsDownloadRequests = mutableListOf<MmsDownloadRequest>()
 
@@ -42,12 +43,16 @@ class FakeMessageTransport : MessageTransport {
 
     override suspend fun sendSms(
         request: SmsSendRequest,
-        submissionObserver: SmsSubmissionObserver,
+        ownership: SmsSubmissionOwnership,
     ): TransportResult {
         smsRequests += request
-        smsSubmissionObservers += submissionObserver
-        return smsResponderWithObserver?.invoke(request, submissionObserver)
-            ?: smsResponder(request)
+        smsSubmissionOwnership += ownership
+        val observer = (ownership as? SmsSubmissionOwnership.CallerOwned)?.observer
+        return if (observer != null && smsResponderWithObserver != null) {
+            requireNotNull(smsResponderWithObserver).invoke(request, observer)
+        } else {
+            smsResponder(request)
+        }
     }
 
     override suspend fun sendMms(request: MmsSendRequest): TransportResult {

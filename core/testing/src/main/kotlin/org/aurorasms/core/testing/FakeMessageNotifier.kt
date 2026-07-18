@@ -5,6 +5,7 @@ package org.aurorasms.core.testing
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.notifications.IncomingMessageNotification
+import org.aurorasms.core.notifications.InlineReplyFailureKey
 import org.aurorasms.core.notifications.MessageNotifier
 import org.aurorasms.core.notifications.NotificationCancelResult
 import org.aurorasms.core.notifications.NotificationConfig
@@ -13,20 +14,26 @@ import org.aurorasms.core.notifications.NotificationPostResult
 class FakeMessageNotifier : MessageNotifier {
     val incoming = mutableListOf<NotificationCall>()
     val replyFailures = mutableListOf<ConversationId>()
+    val replyFailureCalls = mutableListOf<InlineReplyFailureKey>()
     val cancelledConversations = mutableListOf<ConversationId>()
     val incomingCancellations = mutableListOf<IncomingCancellationCall>()
     var cancelAllIncomingCalls: Int = 0
+    var cancelLegacyReplyFailuresCalls: Int = 0
     val cancelledReplyFailures = mutableListOf<ConversationId>()
+    val cancelledReplyFailureKeys = mutableListOf<InlineReplyFailureKey>()
 
     var incomingResponder: (IncomingMessageNotification, NotificationConfig) -> NotificationPostResult =
         { message, _ -> NotificationPostResult.Posted(message.conversationId.fakeNotificationId()) }
-    var replyFailureResponder: (ConversationId) -> NotificationPostResult =
-        { conversationId -> NotificationPostResult.Posted(conversationId.fakeNotificationId()) }
+    var replyFailureResponder: (InlineReplyFailureKey) -> NotificationPostResult =
+        { key -> NotificationPostResult.Posted(key.conversationId.fakeNotificationId()) }
     var cancelIncomingResponder: (ConversationId, MessageId) -> NotificationCancelResult =
         { _, _ -> NotificationCancelResult.Cancelled }
     var cancelAllIncomingResponder: () -> NotificationCancelResult =
         { NotificationCancelResult.Cancelled }
-    var cancelReplyFailureResponder: (ConversationId) -> Unit = {}
+    var cancelLegacyReplyFailuresResponder: () -> NotificationCancelResult =
+        { NotificationCancelResult.AlreadyAbsentOrReplaced }
+    var cancelReplyFailureResponder: (InlineReplyFailureKey) -> NotificationCancelResult =
+        { NotificationCancelResult.Cancelled }
 
     override fun notifyIncoming(
         message: IncomingMessageNotification,
@@ -36,9 +43,10 @@ class FakeMessageNotifier : MessageNotifier {
         return incomingResponder(message, config)
     }
 
-    override fun notifyInlineReplyFailure(conversationId: ConversationId): NotificationPostResult {
-        replyFailures += conversationId
-        return replyFailureResponder(conversationId)
+    override fun notifyInlineReplyFailure(key: InlineReplyFailureKey): NotificationPostResult {
+        replyFailures += key.conversationId
+        replyFailureCalls += key
+        return replyFailureResponder(key)
     }
 
     override fun cancelIncomingConversation(
@@ -55,9 +63,17 @@ class FakeMessageNotifier : MessageNotifier {
         return cancelAllIncomingResponder()
     }
 
-    override fun cancelInlineReplyFailure(conversationId: ConversationId) {
-        cancelReplyFailureResponder(conversationId)
-        cancelledReplyFailures += conversationId
+    override fun cancelLegacyInlineReplyFailures(): NotificationCancelResult {
+        cancelLegacyReplyFailuresCalls += 1
+        return cancelLegacyReplyFailuresResponder()
+    }
+
+    override fun cancelInlineReplyFailure(
+        key: InlineReplyFailureKey,
+    ): NotificationCancelResult {
+        cancelledReplyFailures += key.conversationId
+        cancelledReplyFailureKeys += key
+        return cancelReplyFailureResponder(key)
     }
 
     data class NotificationCall(

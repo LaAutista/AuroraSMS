@@ -13,23 +13,32 @@ import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import java.util.ArrayList
 import java.util.concurrent.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
+import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.MmsDownloadRequest
 import org.aurorasms.core.telephony.MmsSendRequest
 import org.aurorasms.core.telephony.OutgoingSmsRecord
+import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderStoredMessage
 import org.aurorasms.core.telephony.SmsProviderDataSource
-import org.aurorasms.core.telephony.SmsProviderStatus
 import org.aurorasms.core.telephony.SmsSendRequest
+import org.aurorasms.core.telephony.SmsSubmissionOwnership
 import org.aurorasms.core.telephony.SmsSubmissionObserver
 import org.aurorasms.core.telephony.SubscriptionRepository
+import org.aurorasms.core.telephony.TransportOwnedSmsRecoveryResult
+import org.aurorasms.core.telephony.acceptsNewSubmissions
 import org.aurorasms.core.telephony.receiver.SmsDeliveredReceiver
 import org.aurorasms.core.telephony.receiver.SmsSentReceiver
 
@@ -42,10 +51,48 @@ class AndroidSmsTransport(
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) : MessageTransport {
     private val appContext = context.applicationContext
+    private val transportOwnedJournal = OutgoingSmsSubmissionJournal(appContext, nowMillis = nowMillis)
+    private val transportOwnedSubmissionMutex = Mutex()
 
     override suspend fun sendSms(
         request: SmsSendRequest,
-        submissionObserver: SmsSubmissionObserver,
+        ownership: SmsSubmissionOwnership,
+    ): TransportResult = when (ownership) {
+        is SmsSubmissionOwnership.CallerOwned -> sendSmsWithOwner(
+            request = request,
+            submissionObserver = ownership.observer,
+            transportJournalOwned = false,
+        )
+        SmsSubmissionOwnership.TransportOwned -> transportOwnedSubmissionMutex.withLock {
+            if (!request.operationId.isTransportOwnedSmsOperation()) {
+                return@withLock request.failed(
+                    reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                    retryable = false,
+                    operationOrigin = TransportResult.OperationOrigin.UNMARKED,
+                )
+            }
+            if (!recoverTransportOwnedSubmissionsLocked().acceptsNewSubmissions) {
+                return@withLock request.failed(
+                    reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                    retryable = true,
+                )
+            }
+            sendSmsWithOwner(
+                request = request,
+                submissionObserver = null,
+                transportJournalOwned = true,
+            )
+        }
+    }
+
+    /** Reconciles only records inherited by this process; live sends share the same mutex. */
+    suspend fun recoverTransportOwnedSubmissions(): TransportOwnedSmsRecoveryResult =
+        transportOwnedSubmissionMutex.withLock { recoverTransportOwnedSubmissionsLocked() }
+
+    private suspend fun sendSmsWithOwner(
+        request: SmsSendRequest,
+        submissionObserver: SmsSubmissionObserver?,
+        transportJournalOwned: Boolean,
     ): TransportResult {
         val recipient = request.recipients.singleSmsRecipientOrNull()
         val rejection = TransportPolicy.smsRejection(
@@ -105,13 +152,49 @@ class AndroidSmsTransport(
             -> return request.rejected(TransportResult.FailureReason.PROVIDER_UNAVAILABLE)
         }
 
+        val markKnownUnsent: suspend () -> Unit = {
+            val rollback = rollbackProviderBestEffort(
+                providerId = stored.providerId,
+                conversationId = stored.conversationId,
+            )
+            if (transportJournalOwned) {
+                try {
+                    when ((rollback as? ProviderAccessResult.Success)?.value) {
+                        OutgoingSmsRollbackOutcome.TERMINALIZED,
+                        OutgoingSmsRollbackOutcome.ROW_ABSENT,
+                        -> transportOwnedJournal.acknowledgeKnownUnsent(
+                            operationId = request.operationId,
+                            providerId = stored.providerId,
+                            conversationId = stored.conversationId,
+                            unitCount = parts.size,
+                        )
+                        OutgoingSmsRollbackOutcome.OWNERSHIP_CONFLICT -> {
+                            transportOwnedJournal.recordKnownUnsentQuarantined(
+                                operationId = request.operationId,
+                                providerId = stored.providerId,
+                                conversationId = stored.conversationId,
+                                unitCount = parts.size,
+                            )
+                        }
+                        null -> Unit
+                    }
+                } catch (_: RuntimeException) {
+                    // The PREPARED record remains retryable recovery ownership.
+                }
+            }
+        }
+        val effectiveSubmissionObserver = submissionObserver
+            ?: transportOwnedObserver(request.operationId, stored.conversationId)
         return try {
             when (
                 runObservedSmsSubmission(
-                observer = submissionObserver,
+                observer = effectiveSubmissionObserver,
                 providerId = stored.providerId,
                 unitCount = parts.size,
-                markFailed = { markProviderFailedBestEffort(stored.providerId) },
+                markFailed = markKnownUnsent,
+                armProvider = {
+                    smsProvider.armOutgoing(stored.providerId) is ProviderAccessResult.Success
+                },
                 prepareSubmission = {
                     val sent = ArrayList<PendingIntent>(parts.size)
                     val delivered = if (request.requestDeliveryReport) {
@@ -175,7 +258,19 @@ class AndroidSmsTransport(
                         provider = stored,
                         unitCount = parts.size,
                     )
-                ObservedSmsSubmissionResult.SUBMISSION_UNKNOWN ->
+                ObservedSmsSubmissionResult.SUBMISSION_UNKNOWN -> {
+                    if (transportJournalOwned) {
+                        try {
+                            transportOwnedJournal.recordSubmissionUnknown(
+                                operationId = request.operationId,
+                                providerId = stored.providerId,
+                                conversationId = stored.conversationId,
+                                unitCount = parts.size,
+                            )
+                        } catch (_: RuntimeException) {
+                            // SUBMITTING remains the conservative durable state.
+                        }
+                    }
                     return request.failed(
                         reason = TransportResult.FailureReason.INTERNAL_ERROR,
                         retryable = false,
@@ -183,7 +278,29 @@ class AndroidSmsTransport(
                         unitCount = parts.size,
                         stage = TransportResult.FailureStage.SUBMISSION_UNKNOWN,
                     )
+                }
                 ObservedSmsSubmissionResult.SUBMITTED -> Unit
+            }
+            if (
+                transportJournalOwned &&
+                !try {
+                    transportOwnedJournal.acknowledgeSubmitted(
+                        operationId = request.operationId,
+                        providerId = stored.providerId,
+                        conversationId = stored.conversationId,
+                        unitCount = parts.size,
+                    )
+                } catch (_: RuntimeException) {
+                    false
+                }
+            ) {
+                return request.failed(
+                    reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                    retryable = false,
+                    provider = stored,
+                    unitCount = parts.size,
+                    stage = TransportResult.FailureStage.SUBMISSION_UNKNOWN,
+                )
             }
             TransportResult.Submitted(
                 operationId = request.operationId,
@@ -194,7 +311,7 @@ class AndroidSmsTransport(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: SecurityException) {
-            markProviderFailedBestEffort(stored.providerId)
+            markKnownUnsent()
             request.failed(
                 TransportResult.FailureReason.PERMISSION_DENIED,
                 false,
@@ -202,7 +319,7 @@ class AndroidSmsTransport(
                 parts.size,
             )
         } catch (_: UnsupportedOperationException) {
-            markProviderFailedBestEffort(stored.providerId)
+            markKnownUnsent()
             request.failed(
                 TransportResult.FailureReason.FEATURE_UNAVAILABLE,
                 false,
@@ -210,7 +327,7 @@ class AndroidSmsTransport(
                 parts.size,
             )
         } catch (_: IllegalArgumentException) {
-            markProviderFailedBestEffort(stored.providerId)
+            markKnownUnsent()
             request.failed(
                 TransportResult.FailureReason.INVALID_RECIPIENT,
                 false,
@@ -218,7 +335,7 @@ class AndroidSmsTransport(
                 parts.size,
             )
         } catch (_: RuntimeException) {
-            markProviderFailedBestEffort(stored.providerId)
+            markKnownUnsent()
             request.failed(
                 TransportResult.FailureReason.INTERNAL_ERROR,
                 true,
@@ -233,6 +350,50 @@ class AndroidSmsTransport(
 
     override suspend fun downloadMms(request: MmsDownloadRequest): TransportResult =
         mmsTransport.downloadMms(request)
+
+    private fun transportOwnedObserver(
+        operationId: MessageId,
+        conversationId: ConversationId,
+    ): SmsSubmissionObserver =
+        object : SmsSubmissionObserver {
+            override fun onPrepared(providerId: ProviderMessageId, unitCount: Int): Boolean =
+                transportOwnedJournal.recordPrepared(operationId, providerId, conversationId, unitCount)
+
+            override fun onSubmitting(providerId: ProviderMessageId, unitCount: Int): Boolean =
+                transportOwnedJournal.recordSubmitting(operationId, providerId, conversationId, unitCount)
+        }
+
+    private suspend fun recoverTransportOwnedSubmissionsLocked(): TransportOwnedSmsRecoveryResult =
+        recoverTransportOwnedSubmissionRecords(
+            recoverySnapshot = transportOwnedJournal::recoverySnapshot,
+            rollbackOutgoing = { record ->
+                rollbackProviderBestEffort(record.providerId, record.conversationId)
+            },
+            acknowledgeKnownUnsent = { record ->
+                transportOwnedJournal.acknowledgeKnownUnsent(
+                    operationId = record.operationMessageId(),
+                    providerId = record.providerId,
+                    conversationId = record.conversationId,
+                    unitCount = record.unitCount,
+                )
+            },
+            quarantineKnownUnsent = { record ->
+                transportOwnedJournal.recordKnownUnsentQuarantined(
+                    operationId = record.operationMessageId(),
+                    providerId = record.providerId,
+                    conversationId = record.conversationId,
+                    unitCount = record.unitCount,
+                )
+            },
+            recordSubmissionUnknown = { record ->
+                transportOwnedJournal.recordSubmissionUnknown(
+                    operationId = record.operationMessageId(),
+                    providerId = record.providerId,
+                    conversationId = record.conversationId,
+                    unitCount = record.unitCount,
+                )
+            },
+        )
 
     private fun hasSendPermission(): Boolean =
         ContextCompat.checkSelfPermission(appContext, Manifest.permission.SEND_SMS) ==
@@ -257,15 +418,18 @@ class AndroidSmsTransport(
             true
         }
 
-    private suspend fun markProviderFailedBestEffort(providerId: ProviderMessageId) {
+    private suspend fun rollbackProviderBestEffort(
+        providerId: ProviderMessageId,
+        conversationId: ConversationId,
+    ): ProviderAccessResult<OutgoingSmsRollbackOutcome> =
         try {
-            smsProvider.updateStatus(providerId, SmsProviderStatus.FAILED)
+            smsProvider.rollbackOutgoing(providerId, conversationId)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: RuntimeException) {
             // The original submission failure remains authoritative.
+            ProviderAccessResult.Unavailable("rollback outgoing SMS")
         }
-    }
 
     @Suppress("DEPRECATION")
     private fun smsManager(subscriptionId: Int): SmsManager =
@@ -325,6 +489,92 @@ class AndroidSmsTransport(
     }
 }
 
+/**
+ * Pure recovery coordinator used by the real transport and focused host tests.
+ * Provider access failures defer only their exact records; journal integrity
+ * failures remain the sole global gate for new transport-owned submissions.
+ */
+internal suspend fun recoverTransportOwnedSubmissionRecords(
+    recoverySnapshot: () -> OutgoingSmsSubmissionJournal.RecoverySnapshotResult,
+    rollbackOutgoing: suspend (
+        OutgoingSmsSubmissionJournal.Record,
+    ) -> ProviderAccessResult<OutgoingSmsRollbackOutcome>,
+    acknowledgeKnownUnsent: (OutgoingSmsSubmissionJournal.Record) -> Boolean,
+    quarantineKnownUnsent: (OutgoingSmsSubmissionJournal.Record) -> Boolean,
+    recordSubmissionUnknown: (OutgoingSmsSubmissionJournal.Record) -> Boolean,
+): TransportOwnedSmsRecoveryResult {
+    val snapshot = try {
+        recoverySnapshot()
+    } catch (_: RuntimeException) {
+        return TransportOwnedSmsRecoveryResult.JournalBlocked
+    }
+    val records = when (snapshot) {
+        is OutgoingSmsSubmissionJournal.RecoverySnapshotResult.Available -> snapshot.records
+        OutgoingSmsSubmissionJournal.RecoverySnapshotResult.PersistenceFailure -> {
+            return TransportOwnedSmsRecoveryResult.JournalBlocked
+        }
+    }
+    var recoveredCount = 0
+    var deferredCount = 0
+    for (record in records) {
+        when (record.state) {
+            OutgoingSmsSubmissionJournal.State.PREPARED -> {
+                val rollback = try {
+                    rollbackOutgoing(record)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: RuntimeException) {
+                    ProviderAccessResult.Unavailable("rollback outgoing SMS")
+                }
+                val journalUpdated = when (rollback) {
+                    is ProviderAccessResult.Success -> try {
+                        when (rollback.value) {
+                            OutgoingSmsRollbackOutcome.TERMINALIZED,
+                            OutgoingSmsRollbackOutcome.ROW_ABSENT,
+                            -> acknowledgeKnownUnsent(record)
+                            OutgoingSmsRollbackOutcome.OWNERSHIP_CONFLICT -> {
+                                quarantineKnownUnsent(record)
+                            }
+                        }
+                    } catch (_: RuntimeException) {
+                        return TransportOwnedSmsRecoveryResult.JournalBlocked
+                    }
+                    is ProviderAccessResult.InvalidInput,
+                    ProviderAccessResult.PermissionDenied,
+                    ProviderAccessResult.RoleRequired,
+                    is ProviderAccessResult.Unavailable,
+                    is ProviderAccessResult.Unsupported,
+                    -> null
+                }
+                when (journalUpdated) {
+                    true -> recoveredCount += 1
+                    false -> return TransportOwnedSmsRecoveryResult.JournalBlocked
+                    null -> deferredCount += 1
+                }
+            }
+            OutgoingSmsSubmissionJournal.State.SUBMITTING -> {
+                val journalUpdated = try {
+                    recordSubmissionUnknown(record)
+                } catch (_: RuntimeException) {
+                    return TransportOwnedSmsRecoveryResult.JournalBlocked
+                }
+                if (!journalUpdated) return TransportOwnedSmsRecoveryResult.JournalBlocked
+                recoveredCount += 1
+            }
+            OutgoingSmsSubmissionJournal.State.SUBMISSION_UNKNOWN,
+            OutgoingSmsSubmissionJournal.State.KNOWN_UNSENT_QUARANTINED,
+            -> Unit
+        }
+    }
+    return TransportOwnedSmsRecoveryResult.Available(
+        recoveredCount = recoveredCount,
+        deferredCount = deferredCount,
+    )
+}
+
+private fun OutgoingSmsSubmissionJournal.Record.operationMessageId(): MessageId =
+    MessageId(ProviderKind.PENDING_OPERATION, operationId)
+
 internal object TransportPolicy {
     fun smsRejection(
         roleHeld: Boolean,
@@ -367,6 +617,7 @@ private fun SmsSendRequest.failed(
     provider: ProviderStoredMessage? = null,
     unitCount: Int = 1,
     stage: TransportResult.FailureStage = TransportResult.FailureStage.SUBMISSION,
+    operationOrigin: TransportResult.OperationOrigin = operationId.currentOperationOrigin(),
 ): TransportResult.Failed = TransportResult.Failed(
     operationId = operationId,
     transport = MessageTransportKind.SMS,
@@ -375,7 +626,7 @@ private fun SmsSendRequest.failed(
     unitCount = unitCount,
     providerMessageId = provider?.providerId,
     stage = stage,
-    operationOrigin = operationId.currentOperationOrigin(),
+    operationOrigin = operationOrigin,
 )
 
 private fun MessageId.currentOperationOrigin(): TransportResult.OperationOrigin =
@@ -384,6 +635,9 @@ private fun MessageId.currentOperationOrigin(): TransportResult.OperationOrigin 
     } else {
         TransportResult.OperationOrigin.UNMARKED
     }
+
+internal fun MessageId.isTransportOwnedSmsOperation(): Boolean =
+    kind == ProviderKind.PENDING_OPERATION && value in 1 until INLINE_REPLY_OPERATION_ID_BOUNDARY
 
 internal enum class ObservedSmsSubmissionResult {
     SUBMITTED,
@@ -396,6 +650,7 @@ internal suspend fun runObservedSmsSubmission(
     providerId: ProviderMessageId,
     unitCount: Int,
     markFailed: suspend () -> Unit,
+    armProvider: suspend () -> Boolean,
     prepareSubmission: () -> (() -> Unit),
 ): ObservedSmsSubmissionResult {
     require(unitCount > 0) { "SMS submission must contain at least one unit" }
@@ -403,8 +658,31 @@ internal suspend fun runObservedSmsSubmission(
         markFailedIgnoringRuntimeException(markFailed)
         return ObservedSmsSubmissionResult.OBSERVER_REJECTED
     }
-    val submit = prepareSubmission()
-    if (!observerAllows { observer.onSubmitting(providerId, unitCount) }) {
+    val submit = try {
+        prepareSubmission()
+    } catch (cancelled: CancellationException) {
+        markFailedAfterCancellation(markFailed)
+        throw cancelled
+    }
+    val armed = try {
+        armProvider()
+    } catch (cancelled: CancellationException) {
+        markFailedAfterCancellation(markFailed)
+        throw cancelled
+    } catch (_: RuntimeException) {
+        false
+    }
+    if (!armed) {
+        markFailedIgnoringRuntimeException(markFailed)
+        return ObservedSmsSubmissionResult.OBSERVER_REJECTED
+    }
+    val submittingAllowed = try {
+        observerAllows { observer.onSubmitting(providerId, unitCount) }
+    } catch (cancelled: CancellationException) {
+        markFailedAfterCancellation(markFailed)
+        throw cancelled
+    }
+    if (!submittingAllowed) {
         markFailedIgnoringRuntimeException(markFailed)
         return ObservedSmsSubmissionResult.OBSERVER_REJECTED
     }
@@ -436,5 +714,15 @@ private suspend fun markFailedIgnoringRuntimeException(markFailed: suspend () ->
         throw cancelled
     } catch (_: RuntimeException) {
         // Observer refusal still returns a typed transport failure.
+    }
+}
+
+private suspend fun markFailedAfterCancellation(markFailed: suspend () -> Unit) {
+    withContext(NonCancellable) {
+        try {
+            markFailed()
+        } catch (_: RuntimeException) {
+            // Preserve the original cancellation after a best-effort rollback.
+        }
     }
 }

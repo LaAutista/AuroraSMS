@@ -10,11 +10,14 @@ import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.TransportResult
+import org.aurorasms.core.notifications.InlineReplyFailureKey
+import org.aurorasms.core.notifications.NotificationCancelResult
 import org.aurorasms.core.notifications.NotificationPostResult
 import org.aurorasms.core.telephony.SmsProviderStatus
 import org.aurorasms.core.testing.FakeMessageNotifier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class InlineReplyTransportResultHandlerTest {
@@ -311,6 +314,111 @@ class InlineReplyTransportResultHandlerTest {
     }
 
     @Test
+    fun replyFailureCancellationFailureLeavesSuccessPendingForRecreatedRetry() {
+        val store = InMemoryReplyOperationStore(maximumEntries = 4)
+        val operationRegistry = registry(store, 678L)
+        val operationId = reserveClaimed(operationRegistry, CONVERSATION, 677L)
+        val retryingNotifier = FakeMessageNotifier().apply {
+            cancelReplyFailureResponder = { NotificationCancelResult.RetryableFailure }
+        }
+
+        assertSame(
+            InlineReplyTransportDisposition.TrackedUnresolved,
+            InlineReplyTransportResultHandler(operationRegistry, retryingNotifier)
+                .handle(sent(operationId, 0, 1)),
+        )
+        assertEquals(
+            ReplyOperationPendingSuccessesResult.Available(
+                listOf(
+                    ReplyOperationPending(
+                        operationId,
+                        CONVERSATION,
+                        sourceMessage(677L),
+                    ),
+                ),
+            ),
+            registry(store, 679L).pendingSuccesses(),
+        )
+
+        val recreatedNotifier = FakeMessageNotifier()
+        val recreatedRegistry = registry(store, 680L)
+        InlineReplyTransportResultHandler(recreatedRegistry, recreatedNotifier)
+            .reconcilePendingOperations()
+
+        assertEquals(
+            listOf(InlineReplyFailureKey(CONVERSATION, operationId)),
+            recreatedNotifier.cancelledReplyFailureKeys,
+        )
+        assertEquals(
+            ReplyOperationPendingSuccessesResult.Available(emptyList()),
+            recreatedRegistry.pendingSuccesses(),
+        )
+    }
+
+    @Test
+    fun failurePostBeforeAcknowledgementCrashRepostsOnlyTheSameOperationKey() {
+        val store = FailNextAcknowledgementStore(InMemoryReplyOperationStore(maximumEntries = 4))
+        val operationRegistry = registry(store, 681L)
+        val operationId = reserveClaimed(operationRegistry, CONVERSATION, 680L)
+        val notifier = FakeMessageNotifier()
+        store.failNextFailureAcknowledgement = true
+
+        assertSame(
+            InlineReplyTransportDisposition.TrackedUnresolved,
+            InlineReplyTransportResultHandler(operationRegistry, notifier)
+                .handle(failed(operationId, TransportResult.FailureStage.SENT_CALLBACK)),
+        )
+
+        val recreatedRegistry = registry(store, 682L)
+        InlineReplyTransportResultHandler(recreatedRegistry, notifier)
+            .reconcilePendingOperations()
+        val expectedKey = InlineReplyFailureKey(CONVERSATION, operationId)
+        assertEquals(listOf(expectedKey, expectedKey), notifier.replyFailureCalls)
+        assertEquals(
+            ReplyOperationPendingFailuresResult.Available(emptyList()),
+            recreatedRegistry.pendingFailures(),
+        )
+    }
+
+    @Test
+    fun successEffectsBeforeAcknowledgementCrashReplayExactCancellations() {
+        val store = FailNextAcknowledgementStore(InMemoryReplyOperationStore(maximumEntries = 4))
+        val operationRegistry = registry(store, 684L)
+        val operationId = reserveClaimed(operationRegistry, CONVERSATION, 683L)
+        val notifier = FakeMessageNotifier()
+        store.failNextSuccessAcknowledgement = true
+
+        assertSame(
+            InlineReplyTransportDisposition.TrackedUnresolved,
+            InlineReplyTransportResultHandler(operationRegistry, notifier)
+                .handle(sent(operationId, 0, 1)),
+        )
+
+        val recreatedRegistry = registry(store, 685L)
+        InlineReplyTransportResultHandler(recreatedRegistry, notifier)
+            .reconcilePendingOperations()
+        val expectedKey = InlineReplyFailureKey(CONVERSATION, operationId)
+        assertEquals(listOf(expectedKey, expectedKey), notifier.cancelledReplyFailureKeys)
+        assertEquals(
+            listOf(
+                FakeMessageNotifier.IncomingCancellationCall(
+                    CONVERSATION,
+                    sourceMessage(683L),
+                ),
+                FakeMessageNotifier.IncomingCancellationCall(
+                    CONVERSATION,
+                    sourceMessage(683L),
+                ),
+            ),
+            notifier.incomingCancellations,
+        )
+        assertEquals(
+            ReplyOperationPendingSuccessesResult.Available(emptyList()),
+            recreatedRegistry.pendingSuccesses(),
+        )
+    }
+
+    @Test
     fun laterSuccessInSameConversationDoesNotCancelEarlierFailureAlert() {
         val store = InMemoryReplyOperationStore(maximumEntries = 4)
         val operationRegistry = registry(store, 683L)
@@ -330,7 +438,97 @@ class InlineReplyTransportResultHandlerTest {
 
         assertEquals(listOf(CONVERSATION), notifier.replyFailures)
         assertEquals(listOf(CONVERSATION), notifier.cancelledConversations)
-        assertEquals(emptyList<ConversationId>(), notifier.cancelledReplyFailures)
+        assertEquals(
+            listOf(InlineReplyFailureKey(CONVERSATION, successfulOperation)),
+            notifier.cancelledReplyFailureKeys,
+        )
+        assertEquals(
+            listOf(InlineReplyFailureKey(CONVERSATION, failedOperation)),
+            notifier.replyFailureCalls,
+        )
+    }
+
+    @Test
+    fun latePositiveEvidenceCancelsOnlyItsSubmissionUnknownFailureAlert() {
+        val store = InMemoryReplyOperationStore(maximumEntries = 4)
+        val operationRegistry = registry(store, 688L)
+        val operationId = reserveClaimed(operationRegistry, CONVERSATION, 687L)
+        val providerMessageId = providerMessage(94L)
+        assertSame(
+            ReplyOperationPhaseTransitionResult.Transitioned,
+            operationRegistry.recordPrepared(operationId, providerMessageId, unitCount = 1),
+        )
+        assertSame(
+            ReplyOperationPhaseTransitionResult.Transitioned,
+            operationRegistry.recordSubmitting(operationId, providerMessageId, unitCount = 1),
+        )
+        val notifier = FakeMessageNotifier()
+        val handler = InlineReplyTransportResultHandler(operationRegistry, notifier)
+
+        assertSame(
+            InlineReplyTransportDisposition.TrackedFailure,
+            handler.recoverInterruptedOperation(operationId),
+        )
+        assertEquals(
+            listOf(InlineReplyFailureKey(CONVERSATION, operationId)),
+            notifier.replyFailureCalls,
+        )
+
+        assertSame(
+            InlineReplyTransportDisposition.TrackedComplete,
+            handler.handle(sent(operationId, 0, 1, providerMessageId)),
+        )
+        assertEquals(
+            listOf(InlineReplyFailureKey(CONVERSATION, operationId)),
+            notifier.cancelledReplyFailureKeys,
+        )
+        assertEquals(
+            ReplyOperationPendingSuccessesResult.Available(emptyList()),
+            operationRegistry.pendingSuccesses(),
+        )
+    }
+
+    @Test
+    fun lateSuccessForOlderUnknownOperationPreservesNewerFailureKey() {
+        val store = InMemoryReplyOperationStore(maximumEntries = 4)
+        val operationRegistry = registry(store, 689L)
+        val olderUnknown = reserveClaimed(operationRegistry, CONVERSATION, 688L)
+        val newerFailure = reserveClaimed(operationRegistry, CONVERSATION, 689L)
+        val olderProvider = providerMessage(95L)
+        assertSame(
+            ReplyOperationPhaseTransitionResult.Transitioned,
+            operationRegistry.recordPrepared(olderUnknown, olderProvider, unitCount = 1),
+        )
+        assertSame(
+            ReplyOperationPhaseTransitionResult.Transitioned,
+            operationRegistry.recordSubmitting(olderUnknown, olderProvider, unitCount = 1),
+        )
+        val notifier = FakeMessageNotifier()
+        val handler = InlineReplyTransportResultHandler(operationRegistry, notifier)
+        assertSame(
+            InlineReplyTransportDisposition.TrackedFailure,
+            handler.recoverInterruptedOperation(olderUnknown),
+        )
+        assertSame(
+            InlineReplyTransportDisposition.TrackedFailure,
+            handler.handle(failed(newerFailure, TransportResult.FailureStage.SENT_CALLBACK)),
+        )
+
+        assertSame(
+            InlineReplyTransportDisposition.TrackedComplete,
+            handler.handle(sent(olderUnknown, 0, 1, olderProvider)),
+        )
+        assertEquals(
+            listOf(
+                InlineReplyFailureKey(CONVERSATION, olderUnknown),
+                InlineReplyFailureKey(CONVERSATION, newerFailure),
+            ),
+            notifier.replyFailureCalls,
+        )
+        assertEquals(
+            listOf(InlineReplyFailureKey(CONVERSATION, olderUnknown)),
+            notifier.cancelledReplyFailureKeys,
+        )
     }
 
     @Test
@@ -373,6 +571,30 @@ class InlineReplyTransportResultHandlerTest {
         assertEquals(
             ReplyOperationPendingFailuresResult.Available(emptyList()),
             recreatedRegistry.pendingFailures(),
+        )
+    }
+
+    @Test
+    fun legacyAlertCleanupFailureDefersPendingReplaySideEffects() {
+        val store = InMemoryReplyOperationStore(maximumEntries = 4)
+        val operationRegistry = registry(store, 698L)
+        val operationId = reserveClaimed(operationRegistry, CONVERSATION, 697L)
+        assertTrue(operationRegistry.markFailurePending(operationId) is ReplyOperationFailureResult.Pending)
+        val notifier = FakeMessageNotifier().apply {
+            cancelLegacyReplyFailuresResponder = {
+                NotificationCancelResult.RetryableFailure
+            }
+        }
+
+        InlineReplyTransportResultHandler(operationRegistry, notifier)
+            .reconcilePendingOperations()
+
+        assertEquals(1, notifier.cancelLegacyReplyFailuresCalls)
+        assertTrue(notifier.replyFailureCalls.isEmpty())
+        assertEquals(
+            1,
+            (operationRegistry.pendingFailures() as ReplyOperationPendingFailuresResult.Available)
+                .operations.size,
         )
     }
 
@@ -431,7 +653,7 @@ class InlineReplyTransportResultHandlerTest {
     }
 
     private fun registry(
-        store: InMemoryReplyOperationStore,
+        store: ReplyOperationStore,
         identifier: Long,
     ): ReplyOperationRegistry {
         val nextIdentifier = AtomicLong(identifier)
@@ -497,6 +719,35 @@ class InlineReplyTransportResultHandlerTest {
 
     private fun pendingOperation(value: Long) =
         MessageId(ProviderKind.PENDING_OPERATION, value)
+
+    private class FailNextAcknowledgementStore(
+        private val delegate: ReplyOperationStore,
+    ) : ReplyOperationStore by delegate {
+        var failNextFailureAcknowledgement = false
+        var failNextSuccessAcknowledgement = false
+
+        override fun acknowledgeFailureNotification(
+            operationId: Long,
+            nowMillis: Long,
+        ): ReplyOperationAcknowledgementResult {
+            if (failNextFailureAcknowledgement) {
+                failNextFailureAcknowledgement = false
+                return ReplyOperationAcknowledgementResult.PersistenceFailure
+            }
+            return delegate.acknowledgeFailureNotification(operationId, nowMillis)
+        }
+
+        override fun acknowledgeSuccessCancellation(
+            operationId: Long,
+            nowMillis: Long,
+        ): ReplyOperationAcknowledgementResult {
+            if (failNextSuccessAcknowledgement) {
+                failNextSuccessAcknowledgement = false
+                return ReplyOperationAcknowledgementResult.PersistenceFailure
+            }
+            return delegate.acknowledgeSuccessCancellation(operationId, nowMillis)
+        }
+    }
 
     private companion object {
         const val NOW = 1_704_067_200_000L

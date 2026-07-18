@@ -21,6 +21,7 @@ import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.RecipientSet
 import org.aurorasms.core.telephony.SmsSendRequest
+import org.aurorasms.core.telephony.SmsSubmissionOwnership
 import org.aurorasms.core.telephony.SmsSubmissionObserver
 
 class InlineReplyOrchestrator internal constructor(
@@ -104,7 +105,7 @@ class InlineReplyOrchestrator internal constructor(
                     body = text,
                     subscriptionId = target.subscriptionId,
                 ),
-                submissionObserver = submissionObserver,
+                ownership = SmsSubmissionOwnership.CallerOwned(submissionObserver),
             )
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) {

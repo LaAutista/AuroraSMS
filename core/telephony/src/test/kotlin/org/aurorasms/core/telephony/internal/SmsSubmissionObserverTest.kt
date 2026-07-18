@@ -4,6 +4,8 @@ package org.aurorasms.core.telephony.internal
 
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.test.runTest
+import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
+import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.telephony.SmsSubmissionObserver
@@ -11,6 +13,24 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SmsSubmissionObserverTest {
+    @Test
+    fun transportOwnedNamespaceAcceptsOnlyOrdinaryPendingOperationIds() {
+        assertEquals(
+            true,
+            MessageId(ProviderKind.PENDING_OPERATION, INLINE_REPLY_OPERATION_ID_BOUNDARY - 1L)
+                .isTransportOwnedSmsOperation(),
+        )
+        assertEquals(
+            false,
+            MessageId(ProviderKind.PENDING_OPERATION, INLINE_REPLY_OPERATION_ID_BOUNDARY)
+                .isTransportOwnedSmsOperation(),
+        )
+        assertEquals(
+            false,
+            MessageId(ProviderKind.SMS, 1L).isTransportOwnedSmsOperation(),
+        )
+    }
+
     @Test
     fun acceptedObserverRunsInExactOrderImmediatelyBeforePlatformSubmission() = runTest {
         val events = mutableListOf<String>()
@@ -25,6 +45,10 @@ class SmsSubmissionObserverTest {
             providerId = PROVIDER_ID,
             unitCount = UNIT_COUNT,
             markFailed = { events += "provider-failed" },
+            armProvider = {
+                events += "provider-armed"
+                true
+            },
             prepareSubmission = {
                 events += "platform-prepared"
                 val submit: () -> Unit = { events += "platform-submitted" }
@@ -37,6 +61,7 @@ class SmsSubmissionObserverTest {
             listOf(
                 "observer-prepared:SMS:73:3",
                 "platform-prepared",
+                "provider-armed",
                 "observer-submitting:SMS:73:3",
                 "platform-submitted",
             ),
@@ -62,6 +87,7 @@ class SmsSubmissionObserverTest {
                 providerId = PROVIDER_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = { events += "provider-failed" },
+                armProvider = { error("provider must not be armed") },
                 prepareSubmission = { error("platform preparation must not run") },
             )
 
@@ -94,6 +120,10 @@ class SmsSubmissionObserverTest {
                     events += "provider-failed"
                     if (index == 1) throw SecurityException("synthetic provider failure")
                 },
+                armProvider = {
+                    events += "provider-armed"
+                    true
+                },
                 prepareSubmission = {
                     events += "platform-prepared"
                     val submit: () -> Unit = { events += "platform-submitted" }
@@ -106,6 +136,7 @@ class SmsSubmissionObserverTest {
                 listOf(
                     "observer-prepared:SMS:73:3",
                     "platform-prepared",
+                    "provider-armed",
                     "observer-submitting:SMS:73:3",
                     "provider-failed",
                 ),
@@ -127,6 +158,10 @@ class SmsSubmissionObserverTest {
             providerId = PROVIDER_ID,
             unitCount = UNIT_COUNT,
             markFailed = { events += "provider-failed" },
+            armProvider = {
+                events += "provider-armed"
+                true
+            },
             prepareSubmission = {
                 events += "platform-prepared"
                 val submit: () -> Unit = {
@@ -142,6 +177,7 @@ class SmsSubmissionObserverTest {
             listOf(
                 "observer-prepared:SMS:73:3",
                 "platform-prepared",
+                "provider-armed",
                 "observer-submitting:SMS:73:3",
                 "platform-invoked",
             ),
@@ -164,6 +200,7 @@ class SmsSubmissionObserverTest {
                 providerId = PROVIDER_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = { events += "provider-failed" },
+                armProvider = { error("provider must not be armed") },
                 prepareSubmission = { error("platform preparation must not run") },
             )
         } catch (_: CancellationException) {
@@ -172,6 +209,90 @@ class SmsSubmissionObserverTest {
 
         assertEquals(true, cancelled)
         assertEquals(listOf("observer-prepared:SMS:73:3"), events)
+    }
+
+    @Test
+    fun submittingCancellationRollsBackArmedProviderBeforePropagating() = runTest {
+        val events = mutableListOf<String>()
+        var cancelled = false
+
+        try {
+            runObservedSmsSubmission(
+                observer = recordingObserver(
+                    events = events,
+                    prepared = { true },
+                    submitting = { throw CancellationException("synthetic submitting cancellation") },
+                ),
+                providerId = PROVIDER_ID,
+                unitCount = UNIT_COUNT,
+                markFailed = { events += "provider-failed" },
+                armProvider = {
+                    events += "provider-armed"
+                    true
+                },
+                prepareSubmission = {
+                    events += "platform-prepared"
+                    val submit: () -> Unit = { events += "platform-submitted" }
+                    submit
+                },
+            )
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+
+        assertEquals(true, cancelled)
+        assertEquals(
+            listOf(
+                "observer-prepared:SMS:73:3",
+                "platform-prepared",
+                "provider-armed",
+                "observer-submitting:SMS:73:3",
+                "provider-failed",
+            ),
+            events,
+        )
+    }
+
+    @Test
+    fun submittingCheckpointCancellationRollsBackThenPreservesCancellation() = runTest {
+        val events = mutableListOf<String>()
+        var cancelled = false
+
+        try {
+            runObservedSmsSubmission(
+                observer = recordingObserver(
+                    events = events,
+                    prepared = { true },
+                    submitting = { throw CancellationException("synthetic submitting cancellation") },
+                ),
+                providerId = PROVIDER_ID,
+                unitCount = UNIT_COUNT,
+                markFailed = { events += "provider-failed" },
+                armProvider = {
+                    events += "provider-armed"
+                    true
+                },
+                prepareSubmission = {
+                    events += "platform-prepared"
+                    val submit: () -> Unit = { events += "platform-submitted" }
+                    submit
+                },
+            )
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+
+        assertEquals(true, cancelled)
+        assertEquals(
+            listOf(
+                "observer-prepared:SMS:73:3",
+                "platform-prepared",
+                "provider-armed",
+                "observer-submitting:SMS:73:3",
+                "provider-failed",
+            ),
+            events,
+        )
     }
 
     @Test
@@ -189,6 +310,10 @@ class SmsSubmissionObserverTest {
                 providerId = PROVIDER_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = { events += "provider-failed" },
+                armProvider = {
+                    events += "provider-armed"
+                    true
+                },
                 prepareSubmission = {
                     events += "platform-prepared"
                     val submit: () -> Unit = {
@@ -207,8 +332,87 @@ class SmsSubmissionObserverTest {
             listOf(
                 "observer-prepared:SMS:73:3",
                 "platform-prepared",
+                "provider-armed",
                 "observer-submitting:SMS:73:3",
                 "platform-invoked",
+            ),
+            events,
+        )
+    }
+
+    @Test
+    fun armRefusalOrExceptionRollsBackWithoutSubmitting() = runTest {
+        listOf<suspend () -> Boolean>(
+            { false },
+            { throw IllegalStateException("synthetic arm failure") },
+        ).forEach { arm ->
+            val events = mutableListOf<String>()
+
+            val result = runObservedSmsSubmission(
+                observer = recordingObserver(
+                    events = events,
+                    prepared = { true },
+                    submitting = { error("onSubmitting must not run") },
+                ),
+                providerId = PROVIDER_ID,
+                unitCount = UNIT_COUNT,
+                markFailed = { events += "provider-failed" },
+                armProvider = arm,
+                prepareSubmission = {
+                    events += "platform-prepared"
+                    val submit: () -> Unit = { events += "platform-submitted" }
+                    submit
+                },
+            )
+
+            assertEquals(ObservedSmsSubmissionResult.OBSERVER_REJECTED, result)
+            assertEquals(
+                listOf(
+                    "observer-prepared:SMS:73:3",
+                    "platform-prepared",
+                    "provider-failed",
+                ),
+                events,
+            )
+        }
+    }
+
+    @Test
+    fun cancellationWhileArmingRollsBackThenPreservesCancellation() = runTest {
+        val events = mutableListOf<String>()
+        var cancelled = false
+
+        try {
+            runObservedSmsSubmission(
+                observer = recordingObserver(
+                    events = events,
+                    prepared = { true },
+                    submitting = { error("onSubmitting must not run") },
+                ),
+                providerId = PROVIDER_ID,
+                unitCount = UNIT_COUNT,
+                markFailed = { events += "provider-failed" },
+                armProvider = {
+                    events += "provider-arm-invoked"
+                    throw CancellationException("synthetic arm cancellation")
+                },
+                prepareSubmission = {
+                    events += "platform-prepared"
+                    val submit: () -> Unit = { events += "platform-submitted" }
+                    submit
+                },
+            )
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+
+        assertEquals(true, cancelled)
+        assertEquals(
+            listOf(
+                "observer-prepared:SMS:73:3",
+                "platform-prepared",
+                "provider-arm-invoked",
+                "provider-failed",
             ),
             events,
         )

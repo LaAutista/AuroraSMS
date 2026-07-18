@@ -19,6 +19,7 @@ import org.aurorasms.core.telephony.IncomingDeliveryDisposition
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplayRequest
 import org.aurorasms.core.telephony.OutgoingSmsRecord
+import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderPage
 import org.aurorasms.core.telephony.ProviderPageCursor
@@ -46,10 +47,12 @@ class FakeSmsProviderDataSource(
         }
     }
     private val incomingDeliveries = linkedMapOf<MessageDeliveryFingerprint, FakeIncomingDelivery>()
+    private val appOwnedOutgoingIds = linkedSetOf<ProviderMessageId>()
 
     var failure: ProviderAccessResult<Nothing>? = null
     val insertedIncoming = mutableListOf<IncomingSmsRecord>()
     val insertedOutgoing = mutableListOf<OutgoingSmsRecord>()
+    val armedOutgoing = mutableListOf<ProviderMessageId>()
     val updatedStatuses = linkedMapOf<ProviderMessageId, SmsProviderStatus>()
 
     override suspend fun count(): ProviderAccessResult<Long> = synchronized(lock) {
@@ -178,6 +181,7 @@ class FakeSmsProviderDataSource(
         failure ?: run {
             insertedOutgoing += message
             val id = ProviderMessageId(ProviderKind.SMS, nextProviderId++)
+            appOwnedOutgoingIds += id
             val conversationId = conversationIdFor(message.recipient)
             messages += SmsProviderMessage(
                 id = id,
@@ -185,10 +189,10 @@ class FakeSmsProviderDataSource(
                 sender = message.recipient,
                 body = message.body,
                 direction = MessageDirection.OUTGOING,
-                box = MessageBox.OUTBOX,
-                status = MessageStatus.PENDING,
-                rawStatus = RAW_STATUS_PENDING,
-                rawErrorCode = null,
+                box = MessageBox.FAILED,
+                status = MessageStatus.FAILED,
+                rawStatus = RAW_STATUS_FAILED,
+                rawErrorCode = OUTGOING_STAGING_ERROR_CODE,
                 timestampMillis = message.timestampMillis,
                 sentTimestampMillis = null,
                 subscriptionId = message.subscriptionId,
@@ -204,6 +208,102 @@ class FakeSmsProviderDataSource(
                 ),
             )
             ProviderAccessResult.Success(ProviderStoredMessage(id, conversationId))
+        }
+    }
+
+    override suspend fun armOutgoing(
+        id: ProviderMessageId,
+    ): ProviderAccessResult<Unit> = synchronized(lock) {
+        if (id.kind != ProviderKind.SMS) {
+            return@synchronized ProviderAccessResult.InvalidInput("provider message kind")
+        }
+        val index = messages.indexOfFirst { it.id == id }
+        failure ?: if (index >= 0) {
+            val current = messages[index]
+            if (
+                id !in appOwnedOutgoingIds ||
+                current.smsProviderStatusOrNull() != SmsProviderStatus.FAILED ||
+                current.rawErrorCode != OUTGOING_STAGING_ERROR_CODE
+            ) {
+                return@synchronized ProviderAccessResult.Unavailable("arm outgoing SMS")
+            }
+            val box = MessageBox.OUTBOX
+            val status = MessageStatus.PENDING
+            messages[index] = current.copy(
+                box = box,
+                status = status,
+                rawStatus = RAW_STATUS_PENDING,
+                rawErrorCode = CLEARED_OUTGOING_ERROR_CODE,
+                syncFingerprint = fakeSyncFingerprint(
+                    current.id.value,
+                    current.providerThreadId.value,
+                    current.sender?.value,
+                    current.body,
+                    current.timestampMillis,
+                    box.toStorageCode(),
+                    status.toStorageCode(),
+                    RAW_STATUS_PENDING,
+                ),
+            )
+            armedOutgoing += id
+            ProviderAccessResult.Success(Unit)
+        } else {
+            ProviderAccessResult.Unavailable("arm outgoing SMS")
+        }
+    }
+
+    override suspend fun rollbackOutgoing(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+    ): ProviderAccessResult<OutgoingSmsRollbackOutcome> = synchronized(lock) {
+        if (id.kind != ProviderKind.SMS || conversationId.value <= 0L) {
+            return@synchronized ProviderAccessResult.InvalidInput("provider message kind")
+        }
+        val index = messages.indexOfFirst { it.id == id }
+        failure ?: if (index >= 0) {
+            val current = messages[index]
+            if (
+                id !in appOwnedOutgoingIds ||
+                current.providerThreadId.value != conversationId.value
+            ) {
+                return@synchronized ProviderAccessResult.Success(
+                    OutgoingSmsRollbackOutcome.OWNERSHIP_CONFLICT,
+                )
+            }
+            val currentStatus = current.smsProviderStatusOrNull()
+            val ownedSubmissionState =
+                (currentStatus == SmsProviderStatus.FAILED &&
+                    current.rawErrorCode == OUTGOING_STAGING_ERROR_CODE) ||
+                    (currentStatus == SmsProviderStatus.PENDING &&
+                        current.rawErrorCode == CLEARED_OUTGOING_ERROR_CODE) ||
+                    (currentStatus == SmsProviderStatus.FAILED &&
+                        current.rawErrorCode == CLEARED_OUTGOING_ERROR_CODE)
+            if (!ownedSubmissionState) {
+                return@synchronized ProviderAccessResult.Success(
+                    OutgoingSmsRollbackOutcome.OWNERSHIP_CONFLICT,
+                )
+            }
+            val box = MessageBox.FAILED
+            val status = MessageStatus.FAILED
+            messages[index] = current.copy(
+                box = box,
+                status = status,
+                rawStatus = RAW_STATUS_FAILED,
+                rawErrorCode = CLEARED_OUTGOING_ERROR_CODE,
+                syncFingerprint = fakeSyncFingerprint(
+                    current.id.value,
+                    current.providerThreadId.value,
+                    current.sender?.value,
+                    current.body,
+                    current.timestampMillis,
+                    box.toStorageCode(),
+                    status.toStorageCode(),
+                    RAW_STATUS_FAILED,
+                ),
+            )
+            ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.TERMINALIZED)
+        } else {
+            ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.ROW_ABSENT)
         }
     }
 
@@ -274,6 +374,8 @@ class FakeSmsProviderDataSource(
 private const val RAW_STATUS_COMPLETE = 0
 private const val RAW_STATUS_PENDING = 32
 private const val RAW_STATUS_FAILED = 64
+private const val OUTGOING_STAGING_ERROR_CODE = Int.MIN_VALUE
+private const val CLEARED_OUTGOING_ERROR_CODE = 0
 
 private val SmsProviderStatus.transitionRank: Int
     get() = when (this) {

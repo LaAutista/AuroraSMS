@@ -8,6 +8,7 @@ import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.TransportResult
+import org.aurorasms.core.notifications.InlineReplyFailureKey
 import org.aurorasms.core.notifications.MessageNotifier
 import org.aurorasms.core.notifications.NotificationCancelResult
 import org.aurorasms.core.notifications.NotificationPostResult
@@ -34,6 +35,15 @@ internal class InlineReplyTransportResultHandler(
 
     /** Replays side effects that may have been interrupted by process death. */
     fun reconcilePendingOperations() {
+        if (!effectsAllowed()) return
+        // Pre-operation-key alpha alerts identify only a conversation, so they
+        // cannot be mapped safely when that conversation owns multiple durable
+        // failures. Remove only still-active legacy tag/ID tuples; never reopen
+        // acknowledged operations or guess an operation identity during upgrade.
+        val legacyCleanup = runtimeResultOrNull {
+            messageNotifier.cancelLegacyInlineReplyFailures()
+        } ?: NotificationCancelResult.RetryableFailure
+        if (legacyCleanup == NotificationCancelResult.RetryableFailure) return
         when (val successes = replyOperations.pendingSuccesses()) {
             is ReplyOperationPendingSuccessesResult.Available -> {
                 successes.operations.forEach { operation ->
@@ -79,14 +89,18 @@ internal class InlineReplyTransportResultHandler(
             is ReplyOperationFailureResult.SuccessTerminal ->
                 InlineReplyTransportDisposition.TrackedTerminal
             ReplyOperationFailureResult.PersistenceFailure -> {
-                fallbackConversationId?.let(::postUnacknowledgedFailure)
+                fallbackConversationId?.let { conversationId ->
+                    postUnacknowledgedFailure(operationId, conversationId)
+                }
                 InlineReplyTransportDisposition.TrackedUnresolved
             }
             ReplyOperationFailureResult.ProviderMismatch,
             ReplyOperationFailureResult.UnitCountMismatch,
             ReplyOperationFailureResult.PhaseMismatch,
             ReplyOperationFailureResult.CorruptOwnership -> {
-                fallbackConversationId?.let(::postUnacknowledgedFailure)
+                fallbackConversationId?.let { conversationId ->
+                    postUnacknowledgedFailure(operationId, conversationId)
+                }
                 InlineReplyTransportDisposition.TrackedUnresolved
             }
             ReplyOperationFailureResult.Invalid,
@@ -95,7 +109,9 @@ internal class InlineReplyTransportResultHandler(
                     fallbackConversationId != null ||
                     operationOrigin == TransportResult.OperationOrigin.INLINE_REPLY
                 ) {
-                    fallbackConversationId?.let(::postUnacknowledgedFailure)
+                    fallbackConversationId?.let { conversationId ->
+                        postUnacknowledgedFailure(operationId, conversationId)
+                    }
                     InlineReplyTransportDisposition.TrackedUnresolved
                 } else {
                     InlineReplyTransportDisposition.Untracked
@@ -149,7 +165,9 @@ internal class InlineReplyTransportResultHandler(
                 InlineReplyTransportDisposition.TrackedTerminal
             ReplyOperationInterruptedRecoveryResult.CorruptOwnership,
             ReplyOperationInterruptedRecoveryResult.PersistenceFailure -> {
-                fallbackConversationId?.let(::postUnacknowledgedFailure)
+                fallbackConversationId?.let { conversationId ->
+                    postUnacknowledgedFailure(operationId, conversationId)
+                }
                 InlineReplyTransportDisposition.TrackedUnresolved
             }
             ReplyOperationInterruptedRecoveryResult.Invalid,
@@ -158,7 +176,9 @@ internal class InlineReplyTransportResultHandler(
                     fallbackConversationId != null ||
                     operationOrigin == TransportResult.OperationOrigin.INLINE_REPLY
                 ) {
-                    fallbackConversationId?.let(::postUnacknowledgedFailure)
+                    fallbackConversationId?.let { conversationId ->
+                        postUnacknowledgedFailure(operationId, conversationId)
+                    }
                     InlineReplyTransportDisposition.TrackedUnresolved
                 } else {
                     InlineReplyTransportDisposition.Untracked
@@ -269,13 +289,23 @@ internal class InlineReplyTransportResultHandler(
         conversationId: ConversationId,
         sourceMessageId: MessageId?,
     ): InlineReplyTransportDisposition {
-        if (!effectsAllowed() || sourceMessageId == null) {
+        if (!effectsAllowed()) {
             return InlineReplyTransportDisposition.TrackedUnresolved
         }
-        val cancellation = runtimeResultOrNull {
-            messageNotifier.cancelIncomingConversation(conversationId, sourceMessageId)
+        val failureCancellation = runtimeResultOrNull {
+            messageNotifier.cancelInlineReplyFailure(
+                InlineReplyFailureKey(conversationId, operationId),
+            )
         } ?: NotificationCancelResult.RetryableFailure
-        if (cancellation == NotificationCancelResult.RetryableFailure) {
+        val cancellation = sourceMessageId?.let { expectedMessageId ->
+            runtimeResultOrNull {
+                messageNotifier.cancelIncomingConversation(conversationId, expectedMessageId)
+            }
+        } ?: NotificationCancelResult.RetryableFailure
+        if (
+            cancellation == NotificationCancelResult.RetryableFailure ||
+            failureCancellation == NotificationCancelResult.RetryableFailure
+        ) {
             return InlineReplyTransportDisposition.TrackedUnresolved
         }
         return when (replyOperations.acknowledgeSuccessCancellation(operationId)) {
@@ -297,7 +327,9 @@ internal class InlineReplyTransportResultHandler(
     ): InlineReplyTransportDisposition {
         if (!effectsAllowed()) return InlineReplyTransportDisposition.TrackedFailure
         val posted = runtimeResultOrNull {
-            messageNotifier.notifyInlineReplyFailure(conversationId)
+            messageNotifier.notifyInlineReplyFailure(
+                InlineReplyFailureKey(conversationId, operationId),
+            )
         }
         if (posted !is NotificationPostResult.Posted) {
             return InlineReplyTransportDisposition.TrackedFailure
@@ -318,9 +350,16 @@ internal class InlineReplyTransportResultHandler(
     private fun effectsAllowed(): Boolean =
         runtimeResultOrNull(userVisibleEffectsAllowed) ?: false
 
-    private fun postUnacknowledgedFailure(conversationId: ConversationId) {
+    private fun postUnacknowledgedFailure(
+        operationId: MessageId,
+        conversationId: ConversationId,
+    ) {
         if (!effectsAllowed()) return
-        runtimeResultOrNull { messageNotifier.notifyInlineReplyFailure(conversationId) }
+        runtimeResultOrNull {
+            messageNotifier.notifyInlineReplyFailure(
+                InlineReplyFailureKey(conversationId, operationId),
+            )
+        }
     }
 
     private fun TransportResult.OperationOrigin.untrackedDisposition():

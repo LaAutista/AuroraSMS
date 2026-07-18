@@ -13,7 +13,9 @@ import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderKind
+import org.aurorasms.core.notifications.InlineReplyFailureKey
 import org.aurorasms.core.telephony.SmsProviderStatus
+import org.aurorasms.core.testing.FakeMessageNotifier
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -837,6 +839,41 @@ class SharedPreferencesReplyOperationStoreTest {
             SmsProviderStatus.FAILED,
             (legacy.pendingProviderUpdate(legacyV3) as
                 ReplyOperationPendingProviderUpdateResult.Available).update?.status,
+        )
+    }
+
+    @Test
+    fun sourceLessLegacyLateSuccessStillCancelsItsExactFailureAlert() {
+        val operationId = legacyPendingOperation(7_731L)
+        assertTrue(
+            preferences().edit()
+                .putString("operation.7731", "1|501|1000|2000|0|-")
+                .commit(),
+        )
+        val registry = registry(identifierGenerator = { 7_732L })
+        val notifier = FakeMessageNotifier()
+        val handler = InlineReplyTransportResultHandler(registry, notifier)
+
+        handler.reconcilePendingOperations()
+        assertEquals(
+            listOf(InlineReplyFailureKey(CONVERSATION, operationId)),
+            notifier.replyFailureCalls,
+        )
+        assertEquals(
+            ReplyOperationSentResult.SuccessPending(CONVERSATION, null),
+            registry.recordSent(operationId, 0, 1),
+        )
+
+        handler.reconcilePendingOperations()
+        assertEquals(
+            listOf(InlineReplyFailureKey(CONVERSATION, operationId)),
+            notifier.cancelledReplyFailureKeys,
+        )
+        assertEquals(
+            ReplyOperationPendingSuccessesResult.Available(
+                listOf(ReplyOperationPending(operationId, CONVERSATION, null)),
+            ),
+            registry.pendingSuccesses(),
         )
     }
 

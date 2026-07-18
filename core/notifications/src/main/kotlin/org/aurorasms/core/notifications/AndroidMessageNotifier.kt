@@ -24,6 +24,7 @@ class AndroidMessageNotifier internal constructor(
     private val intentFactory: NotificationIntentFactory,
     private val incomingGenerationTracker: IncomingNotificationGenerationTracker,
     notificationGateway: NotificationMutationGateway?,
+    private val replyFailureChannelId: String = NotificationChannels.REPLY_FAILURES,
 ) : MessageNotifier {
     constructor(
         context: Context,
@@ -127,17 +128,17 @@ class AndroidMessageNotifier internal constructor(
         )
     }
 
-    override fun notifyInlineReplyFailure(conversationId: ConversationId): NotificationPostResult {
+    override fun notifyInlineReplyFailure(key: InlineReplyFailureKey): NotificationPostResult {
         NotificationChannels.ensureCreated(appContext)
-        if (!notificationsEnabledForChannel(NotificationChannels.REPLY_FAILURES)) {
+        if (!notificationsEnabledForChannel(replyFailureChannelId)) {
             return NotificationPostResult.NotificationsDisabled
         }
 
-        val contentIntent = when (val result = contentPendingIntent(conversationId)) {
+        val contentIntent = when (val result = contentPendingIntent(key.conversationId)) {
             is ContentIntentResult.Accepted -> result.pendingIntent
             is ContentIntentResult.Rejected -> return NotificationPostResult.Rejected(result.reason)
         }
-        val builder = NotificationCompat.Builder(appContext, NotificationChannels.REPLY_FAILURES)
+        val builder = NotificationCompat.Builder(appContext, replyFailureChannelId)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(appContext.getString(R.string.notification_reply_failed_title))
             .setContentText(appContext.getString(R.string.notification_reply_failed_body))
@@ -146,10 +147,18 @@ class AndroidMessageNotifier internal constructor(
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
+            .addExtras(
+                Bundle().apply {
+                    putString(
+                        REPLY_OPERATION_ID_EXTRA,
+                        replyOperationIdMarker(key.operationId),
+                    )
+                },
+            )
 
         return post(
-            replyFailureTag(conversationId),
-            replyFailureNotificationId(conversationId),
+            replyFailureTag(key),
+            replyFailureNotificationId(key.conversationId),
             builder,
         )
     }
@@ -254,12 +263,45 @@ class AndroidMessageNotifier internal constructor(
         }
     }
 
-    override fun cancelInlineReplyFailure(conversationId: ConversationId) {
-        synchronized(notificationMutationLock) {
+    override fun cancelLegacyInlineReplyFailures(): NotificationCancelResult = synchronized(
+        notificationMutationLock,
+    ) {
+        val active = try {
+            notificationGateway.activeNotifications()
+        } catch (_: RuntimeException) {
+            return@synchronized NotificationCancelResult.RetryableFailure
+        }
+        var cancelledAny = false
+        active.forEach { candidate ->
+            val conversationId = parseLegacyReplyFailureTag(candidate.tag) ?: return@forEach
+            if (candidate.id != replyFailureNotificationId(conversationId)) {
+                return@forEach
+            }
+            try {
+                notificationGateway.cancel(requireNotNull(candidate.tag), candidate.id)
+                cancelledAny = true
+            } catch (_: RuntimeException) {
+                return@synchronized NotificationCancelResult.RetryableFailure
+            }
+        }
+        if (cancelledAny) {
+            NotificationCancelResult.Cancelled
+        } else {
+            NotificationCancelResult.AlreadyAbsentOrReplaced
+        }
+    }
+
+    override fun cancelInlineReplyFailure(
+        key: InlineReplyFailureKey,
+    ): NotificationCancelResult = synchronized(notificationMutationLock) {
+        try {
             notificationGateway.cancel(
-                replyFailureTag(conversationId),
-                replyFailureNotificationId(conversationId),
+                replyFailureTag(key),
+                replyFailureNotificationId(key.conversationId),
             )
+            NotificationCancelResult.Cancelled
+        } catch (_: RuntimeException) {
+            NotificationCancelResult.RetryableFailure
         }
     }
 
@@ -644,6 +686,9 @@ private class AndroidNotificationMutationGateway(
 internal const val SOURCE_MESSAGE_ID_EXTRA =
     "org.aurorasms.core.notifications.extra.SOURCE_MESSAGE_ID"
 
+internal const val REPLY_OPERATION_ID_EXTRA =
+    "org.aurorasms.core.notifications.extra.REPLY_OPERATION_ID"
+
 internal fun sourceMessageIdMarker(messageId: MessageId): String =
     "${messageId.kind.name}:${messageId.value}"
 
@@ -657,6 +702,17 @@ internal fun parseSourceMessageIdMarker(marker: String?): MessageId? {
     val value = marker.substring(separator + 1).toLongOrNull() ?: return null
     val messageId = runCatching { MessageId(kind, value) }.getOrNull() ?: return null
     return messageId.takeIf { sourceMessageIdMarker(it) == marker }
+}
+
+internal fun replyOperationIdMarker(operationId: MessageId): String {
+    require(operationId.kind == ProviderKind.PENDING_OPERATION)
+    return operationId.value.toString()
+}
+
+internal fun parseReplyOperationIdMarker(marker: String?): MessageId? {
+    val value = marker?.toCanonicalPositiveLongOrNull() ?: return null
+    return MessageId(ProviderKind.PENDING_OPERATION, value)
+        .takeIf { replyOperationIdMarker(it) == marker }
 }
 
 private fun String.toNotificationLine(maximumCharacters: Int): String =
@@ -700,7 +756,21 @@ internal fun parseConversationTag(tag: String?): ConversationId? {
     return ConversationId(value).takeIf { conversationTag(it) == tag }
 }
 
-private fun replyFailureTag(conversationId: ConversationId): String =
-    "aurora-reply-failure:${conversationId.value}"
+internal fun replyFailureTag(key: InlineReplyFailureKey): String =
+    "$REPLY_FAILURE_TAG_PREFIX${key.conversationId.value}:${key.operationId.value}"
+
+internal fun legacyReplyFailureTag(conversationId: ConversationId): String =
+    "$REPLY_FAILURE_TAG_PREFIX${conversationId.value}"
+
+internal fun parseLegacyReplyFailureTag(tag: String?): ConversationId? {
+    if (tag == null || !tag.startsWith(REPLY_FAILURE_TAG_PREFIX)) return null
+    val value = tag.removePrefix(REPLY_FAILURE_TAG_PREFIX)
+        .toCanonicalPositiveLongOrNull()
+        ?: return null
+    return ConversationId(value).takeIf { candidate ->
+        tag == legacyReplyFailureTag(candidate)
+    }
+}
 
 private const val CONVERSATION_TAG_PREFIX = "aurora-conversation:"
+private const val REPLY_FAILURE_TAG_PREFIX = "aurora-reply-failure:"

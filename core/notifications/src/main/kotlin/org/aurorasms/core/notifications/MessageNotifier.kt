@@ -4,6 +4,7 @@ package org.aurorasms.core.notifications
 
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ProviderKind
 
 /**
  * One bounded notification update. [senderPersonKey] must be an opaque,
@@ -60,7 +61,7 @@ interface MessageNotifier {
         config: NotificationConfig,
     ): NotificationPostResult
 
-    fun notifyInlineReplyFailure(conversationId: ConversationId): NotificationPostResult
+    fun notifyInlineReplyFailure(key: InlineReplyFailureKey): NotificationPostResult
 
     fun cancelIncomingConversation(
         conversationId: ConversationId,
@@ -70,15 +71,39 @@ interface MessageNotifier {
     /** Cancels every active incoming slot only after validating its exact source generation. */
     fun cancelAllIncoming(): NotificationCancelResult
 
-    fun cancelInlineReplyFailure(conversationId: ConversationId)
+    /** Removes only pre-operation-key reply alerts left by an older app build. */
+    fun cancelLegacyInlineReplyFailures(): NotificationCancelResult
+
+    /** Cancels only the alert owned by this exact reply operation. */
+    fun cancelInlineReplyFailure(key: InlineReplyFailureKey): NotificationCancelResult
 }
 
 /**
- * Result of cancelling one exact incoming-notification generation.
+ * Exact identity for a generic, body-free inline-reply failure alert.
  *
- * A missing notification or one already replaced by a newer message is a safe,
- * terminal no-op. A retryable failure means the notification manager could not
- * establish or apply that result, so the caller must retain durable ownership.
+ * The conversation remains the cold-route destination while the operation ID
+ * prevents a late positive callback from cancelling another reply's alert.
+ */
+data class InlineReplyFailureKey(
+    val conversationId: ConversationId,
+    val operationId: MessageId,
+) {
+    init {
+        // Pre-boundary durable reply operations used the same namespace with a
+        // lower numeric value, so kind is the migration-safe ownership check.
+        require(operationId.kind == ProviderKind.PENDING_OPERATION) {
+            "Inline-reply failure operations must use the pending-operation namespace"
+        }
+    }
+}
+
+/**
+ * Result of an exact, idempotent notification cancellation.
+ *
+ * A missing notification or one already replaced by another identity is a
+ * safe, terminal no-op. A retryable failure means the notification manager
+ * could not establish or apply that result, so the caller must retain durable
+ * ownership.
  */
 sealed interface NotificationCancelResult {
     data object Cancelled : NotificationCancelResult

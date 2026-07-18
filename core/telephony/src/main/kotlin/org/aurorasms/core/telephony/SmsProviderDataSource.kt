@@ -256,6 +256,18 @@ enum class SmsProviderStatus {
     PENDING,
 }
 
+/** Exact disposition of an app-owned pre-submission outgoing SMS row. */
+enum class OutgoingSmsRollbackOutcome {
+    /** The exact staged, armed, or already-terminal app-owned row is terminal. */
+    TERMINALIZED,
+
+    /** No provider row currently exists at the exact provider URI. */
+    ROW_ABSENT,
+
+    /** A row exists, but its ownership, conversation, or submission state differs. */
+    OWNERSHIP_CONFLICT,
+}
+
 interface SmsProviderDataSource {
     suspend fun count(): ProviderAccessResult<Long>
 
@@ -274,7 +286,31 @@ interface SmsProviderDataSource {
         conversationId: ConversationId,
     ): ProviderAccessResult<Unit>
 
+    /**
+     * Inserts an outgoing row in a canonical known-unsent failed state.
+     *
+     * The exact returned row must be durably checkpointed by the caller before
+     * [armOutgoing] can make it eligible for an irreversible platform send.
+     */
     suspend fun insertOutgoing(message: OutgoingSmsRecord): ProviderAccessResult<ProviderStoredMessage>
+
+    /**
+     * Conditionally moves one exact app-owned outgoing row from known-unsent
+     * failed state to pending. This is deliberately one-shot: an already-pending
+     * or otherwise changed row is not accepted as success.
+     */
+    suspend fun armOutgoing(id: ProviderMessageId): ProviderAccessResult<Unit> =
+        ProviderAccessResult.Unsupported("arm outgoing SMS")
+
+    /**
+     * Conditionally terminalizes one exact app-created staged or armed row.
+     * Foreign, recycled, or otherwise changed rows must fail closed.
+     */
+    suspend fun rollbackOutgoing(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+    ): ProviderAccessResult<OutgoingSmsRollbackOutcome> =
+        ProviderAccessResult.Unsupported("rollback outgoing SMS")
 
     suspend fun updateStatus(
         id: ProviderMessageId,

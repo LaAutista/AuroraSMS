@@ -27,6 +27,7 @@ import org.aurorasms.app.AuroraSmsApplication
 import org.aurorasms.core.index.conversation.ConversationLookupResult
 import org.aurorasms.core.index.conversation.ConversationPageResult
 import org.aurorasms.core.index.timeline.TimelineContentResult
+import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
@@ -704,12 +705,20 @@ class IncomingSmsColdNotificationSmokeTest {
         val expectedId = notificationId(conversation)
         val expectedTag = "$CONVERSATION_NOTIFICATION_TAG_PREFIX$conversation"
         val expectedFailureId = expectedId xor REPLY_FAILURE_ID_MASK
-        val expectedFailureTag = "$REPLY_FAILURE_NOTIFICATION_TAG_PREFIX$conversation"
+        val expectedFailureTagPrefix = "$REPLY_FAILURE_NOTIFICATION_TAG_PREFIX$conversation:"
         val conversationStatus = active.singleOrNull { status ->
             status.id == expectedId && status.tag == expectedTag
         }
         val failureStatus = active.singleOrNull { status ->
-            status.id == expectedFailureId && status.tag == expectedFailureTag
+            status.id == expectedFailureId && status.tag?.let { tag ->
+                tag.startsWith(expectedFailureTagPrefix) &&
+                    tag.removePrefix(expectedFailureTagPrefix)
+                        .toLongOrNull()
+                        ?.takeIf { operationId ->
+                            operationId >= INLINE_REPLY_OPERATION_ID_BOUNDARY &&
+                                tag == "$expectedFailureTagPrefix$operationId"
+                        } != null
+            } == true
         }
         requireFixed(
             contract.allowReplyFailureNotification || failureStatus == null,

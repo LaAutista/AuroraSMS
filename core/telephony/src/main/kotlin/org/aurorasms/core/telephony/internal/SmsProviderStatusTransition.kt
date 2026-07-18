@@ -29,6 +29,26 @@ internal enum class MonotonicSmsStatusUpdateResult {
     UNAVAILABLE,
 }
 
+internal enum class OutgoingSmsArmResult {
+    ARMED,
+    UNAVAILABLE,
+}
+
+/**
+ * Arms a staged outgoing row only when one exact conditional write succeeds.
+ *
+ * Unlike terminal status reconciliation, this transition must never accept an
+ * already-applied write: doing so could authorize a second carrier submission.
+ */
+internal fun armOutgoingSmsProviderRow(
+    conditionalWrite: () -> ConditionalSmsStatusWriteResult,
+): OutgoingSmsArmResult = when (conditionalWrite()) {
+    ConditionalSmsStatusWriteResult.UPDATED -> OutgoingSmsArmResult.ARMED
+    ConditionalSmsStatusWriteResult.STALE,
+    ConditionalSmsStatusWriteResult.UNAVAILABLE,
+    -> OutgoingSmsArmResult.UNAVAILABLE
+}
+
 /**
  * Advances a provider row without allowing a stale callback to regress it.
  *

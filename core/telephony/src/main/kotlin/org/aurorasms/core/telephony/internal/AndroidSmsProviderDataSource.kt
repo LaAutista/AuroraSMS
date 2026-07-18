@@ -35,6 +35,7 @@ import org.aurorasms.core.telephony.IncomingDeliveryDisposition
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplayRequest
 import org.aurorasms.core.telephony.OutgoingSmsRecord
+import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderPage
 import org.aurorasms.core.telephony.ProviderPageCursor
@@ -311,23 +312,117 @@ class AndroidSmsProviderDataSource(
     override suspend fun insertOutgoing(
         message: OutgoingSmsRecord,
     ): ProviderAccessResult<ProviderStoredMessage> = withWriteAccess("insert outgoing SMS") {
+        val failed = SmsProviderStatus.FAILED.toSmsProviderStatusProjection()
         val values = ContentValues().apply {
             put(Telephony.Sms.ADDRESS, message.recipient.value)
             put(Telephony.Sms.BODY, message.body)
             put(Telephony.Sms.DATE, message.timestampMillis)
-            put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_OUTBOX)
-            put(Telephony.Sms.STATUS, Telephony.Sms.STATUS_PENDING)
+            put(Telephony.Sms.TYPE, failed.messageType)
+            put(Telephony.Sms.STATUS, failed.rawStatus)
+            put(Telephony.Sms.ERROR_CODE, OUTGOING_STAGING_ERROR_CODE)
             put(Telephony.Sms.READ, 1)
             put(Telephony.Sms.SEEN, 1)
             put(Telephony.Sms.SUBSCRIPTION_ID, message.subscriptionId.value)
             put(Telephony.Sms.CREATOR, appContext.packageName)
         }
-        val uri = resolver.insert(Telephony.Sms.Outbox.CONTENT_URI, values)
+        // Box-specific provider URIs are allowed to replace TYPE. The base URI
+        // preserves the fail-safe state in the same atomic provider insert.
+        val uri = resolver.insert(Telephony.Sms.CONTENT_URI, values)
             ?: return@withWriteAccess ProviderAccessResult.Unavailable("insert outgoing SMS")
         val id = runCatching { ContentUris.parseId(uri) }.getOrNull()
             ?.takeIf { it > 0L }
             ?: return@withWriteAccess ProviderAccessResult.Unavailable("read inserted SMS ID")
-        insertedReference(id, incomingDisposition = null)
+        insertedOutgoingReference(id)
+    }
+
+    override suspend fun armOutgoing(
+        id: ProviderMessageId,
+    ): ProviderAccessResult<Unit> = withWriteAccess("arm outgoing SMS") {
+        if (id.kind != ProviderKind.SMS) {
+            return@withWriteAccess ProviderAccessResult.InvalidInput("provider message kind")
+        }
+        val failed = SmsProviderStatus.FAILED.toSmsProviderStatusProjection()
+        val pending = SmsProviderStatus.PENDING.toSmsProviderStatusProjection()
+        val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id.value)
+        val result = armOutgoingSmsProviderRow {
+            val values = ContentValues().apply {
+                put(Telephony.Sms.TYPE, pending.messageType)
+                put(Telephony.Sms.STATUS, pending.rawStatus)
+                put(Telephony.Sms.ERROR_CODE, CLEARED_OUTGOING_ERROR_CODE)
+            }
+            when (
+                resolver.update(
+                    uri,
+                    values,
+                    "${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.STATUS} = ? AND " +
+                        "${Telephony.Sms.ERROR_CODE} = ? AND ${Telephony.Sms.CREATOR} = ?",
+                    arrayOf(
+                        failed.messageType.toString(),
+                        failed.rawStatus.toString(),
+                        OUTGOING_STAGING_ERROR_CODE.toString(),
+                        appContext.packageName,
+                    ),
+                )
+            ) {
+                1 -> ConditionalSmsStatusWriteResult.UPDATED
+                0 -> ConditionalSmsStatusWriteResult.STALE
+                else -> ConditionalSmsStatusWriteResult.UNAVAILABLE
+            }
+        }
+        when (result) {
+            OutgoingSmsArmResult.ARMED -> ProviderAccessResult.Success(Unit)
+            OutgoingSmsArmResult.UNAVAILABLE -> {
+                ProviderAccessResult.Unavailable("arm outgoing SMS")
+            }
+        }
+    }
+
+    override suspend fun rollbackOutgoing(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+    ): ProviderAccessResult<OutgoingSmsRollbackOutcome> = withWriteAccess("rollback outgoing SMS") {
+        if (id.kind != ProviderKind.SMS || conversationId.value <= 0L) {
+            return@withWriteAccess ProviderAccessResult.InvalidInput("provider message kind")
+        }
+        val failed = SmsProviderStatus.FAILED.toSmsProviderStatusProjection()
+        val pending = SmsProviderStatus.PENDING.toSmsProviderStatusProjection()
+        val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id.value)
+        val values = ContentValues().apply {
+            put(Telephony.Sms.TYPE, failed.messageType)
+            put(Telephony.Sms.STATUS, failed.rawStatus)
+            put(Telephony.Sms.ERROR_CODE, CLEARED_OUTGOING_ERROR_CODE)
+        }
+        val ownedStaging = "(${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.STATUS} = ? AND " +
+            "${Telephony.Sms.ERROR_CODE} = ?)"
+        val ownedArmed = "(${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.STATUS} = ? AND " +
+            "${Telephony.Sms.ERROR_CODE} = ?)"
+        val ownedTerminal = "(${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.STATUS} = ? AND " +
+            "${Telephony.Sms.ERROR_CODE} = ?)"
+        when (
+            resolver.update(
+                uri,
+                values,
+                "${Telephony.Sms.CREATOR} = ? AND ${Telephony.Sms.THREAD_ID} = ? AND " +
+                    "($ownedStaging OR $ownedArmed OR $ownedTerminal)",
+                arrayOf(
+                    appContext.packageName,
+                    conversationId.value.toString(),
+                    failed.messageType.toString(),
+                    failed.rawStatus.toString(),
+                    OUTGOING_STAGING_ERROR_CODE.toString(),
+                    pending.messageType.toString(),
+                    pending.rawStatus.toString(),
+                    CLEARED_OUTGOING_ERROR_CODE.toString(),
+                    failed.messageType.toString(),
+                    failed.rawStatus.toString(),
+                    CLEARED_OUTGOING_ERROR_CODE.toString(),
+                ),
+            )
+        ) {
+            1 -> ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.TERMINALIZED)
+            0 -> outgoingRollbackZeroWriteDisposition(uri, conversationId)
+            else -> ProviderAccessResult.Unavailable("rollback outgoing SMS")
+        }
     }
 
     override suspend fun updateStatus(
@@ -379,6 +474,67 @@ class AndroidSmsProviderDataSource(
                 rawStatus = it.getInt(rawStatusIndex),
             )
             if (it.moveToNext()) null else current
+        }
+    }
+
+    /** Classifies only the exact provider URI after a zero-row conditional update. */
+    private fun outgoingRollbackZeroWriteDisposition(
+        uri: Uri,
+        conversationId: ConversationId,
+    ): ProviderAccessResult<OutgoingSmsRollbackOutcome> {
+        val cursor = resolver.query(
+            uri,
+            arrayOf(
+                Telephony.Sms.THREAD_ID,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.STATUS,
+                Telephony.Sms.ERROR_CODE,
+                Telephony.Sms.CREATOR,
+            ),
+            null,
+            null,
+            null,
+        ) ?: return ProviderAccessResult.Unavailable("verify outgoing SMS rollback conflict")
+        return cursor.use {
+            if (!it.moveToFirst()) {
+                return@use ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.ROW_ABSENT)
+            }
+            val threadId = it.getLong(it.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID))
+            val messageType = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.TYPE))
+            val rawStatus = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.STATUS))
+            val rawErrorCode = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.ERROR_CODE))
+            val creator = it.getString(it.getColumnIndexOrThrow(Telephony.Sms.CREATOR))
+            if (it.moveToNext()) {
+                return@use ProviderAccessResult.Unavailable("verify exact outgoing SMS rollback row")
+            }
+            val failed = SmsProviderStatus.FAILED.toSmsProviderStatusProjection()
+            val pending = SmsProviderStatus.PENDING.toSmsProviderStatusProjection()
+            val exactOwner = creator == appContext.packageName &&
+                threadId == conversationId.value
+            val exactTerminal = exactOwner &&
+                messageType == failed.messageType &&
+                rawStatus == failed.rawStatus &&
+                rawErrorCode == CLEARED_OUTGOING_ERROR_CODE
+            val exactRetryablePreSubmissionState = exactOwner &&
+                (
+                    (messageType == failed.messageType &&
+                        rawStatus == failed.rawStatus &&
+                        rawErrorCode == OUTGOING_STAGING_ERROR_CODE) ||
+                        (messageType == pending.messageType &&
+                            rawStatus == pending.rawStatus &&
+                            rawErrorCode == CLEARED_OUTGOING_ERROR_CODE)
+                    )
+            when {
+                exactTerminal -> {
+                    ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.TERMINALIZED)
+                }
+                exactRetryablePreSubmissionState -> {
+                    ProviderAccessResult.Unavailable("terminalize outgoing SMS")
+                }
+                else -> {
+                    ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.OWNERSHIP_CONFLICT)
+                }
+            }
         }
     }
 
@@ -764,16 +920,48 @@ class AndroidSmsProviderDataSource(
         return incomingReplayJournal.quarantine(entry.fingerprint, reason)
     }
 
-    private fun insertedReference(
+    private fun insertedOutgoingReference(
         providerId: Long,
-        incomingDisposition: IncomingDeliveryDisposition?,
-    ): ProviderAccessResult<ProviderStoredMessage> = when (val reference = providerReference(providerId)) {
-        is ExactProviderReference.Found -> ProviderAccessResult.Success(
-            reference.message.copy(incomingDisposition = incomingDisposition),
-        )
-        ExactProviderReference.Missing,
-        ExactProviderReference.Unavailable
-        -> ProviderAccessResult.Unavailable("resolve inserted SMS conversation")
+    ): ProviderAccessResult<ProviderStoredMessage> {
+        val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, providerId)
+        val cursor = resolver.query(
+            uri,
+            arrayOf(
+                Telephony.Sms.THREAD_ID,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.STATUS,
+                Telephony.Sms.ERROR_CODE,
+                Telephony.Sms.CREATOR,
+            ),
+            null,
+            null,
+            null,
+        ) ?: return ProviderAccessResult.Unavailable("validate inserted outgoing SMS")
+        return cursor.use {
+            if (!it.moveToFirst()) {
+                return@use ProviderAccessResult.Unavailable("validate inserted outgoing SMS")
+            }
+            val threadId = it.getLong(it.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID))
+            val messageType = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.TYPE))
+            val rawStatus = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.STATUS))
+            val rawErrorCode = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.ERROR_CODE))
+            val creator = it.getString(it.getColumnIndexOrThrow(Telephony.Sms.CREATOR))
+            val exact = threadId > 0L &&
+                smsProviderStatusFromRaw(messageType, rawStatus) == SmsProviderStatus.FAILED &&
+                rawErrorCode == OUTGOING_STAGING_ERROR_CODE &&
+                creator == appContext.packageName &&
+                !it.moveToNext()
+            if (!exact) {
+                ProviderAccessResult.Unavailable("validate inserted outgoing SMS")
+            } else {
+                ProviderAccessResult.Success(
+                    ProviderStoredMessage(
+                        providerId = ProviderMessageId(ProviderKind.SMS, providerId),
+                        conversationId = ConversationId(threadId),
+                    ),
+                )
+            }
+        }
     }
 
     private fun IncomingSmsReplayJournal.Entry.storedMessage(
@@ -810,6 +998,8 @@ class AndroidSmsProviderDataSource(
     companion object {
         private const val TRANSACTION_ID_COLUMN = "tr_id"
         private const val TRANSACTION_ID_PREFIX = "aurora-sms-delivery-v1:"
+        private const val OUTGOING_STAGING_ERROR_CODE = Int.MIN_VALUE
+        private const val CLEARED_OUTGOING_ERROR_CODE = 0
         private const val MAX_RECOVERY_CANDIDATES = 8
         private const val MAX_STATUS_UPDATE_ATTEMPTS = 4
         private val INCOMING_REPLAY_PROJECTION = arrayOf(

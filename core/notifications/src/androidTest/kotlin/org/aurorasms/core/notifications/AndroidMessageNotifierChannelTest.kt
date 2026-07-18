@@ -7,7 +7,10 @@ import android.app.NotificationManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ProviderKind
 import org.junit.Assert.assertSame
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,26 +22,45 @@ class AndroidMessageNotifierChannelTest {
 
     @Test
     fun disabledReplyFailureChannelIsNotReportedAsPosted() {
-        manager.deleteNotificationChannel(NotificationChannels.REPLY_FAILURES)
+        manager.deleteNotificationChannel(DISABLED_TEST_CHANNEL_ID)
         manager.createNotificationChannel(
             NotificationChannel(
-                NotificationChannels.REPLY_FAILURES,
+                DISABLED_TEST_CHANNEL_ID,
                 "Disabled reply failures",
                 NotificationManager.IMPORTANCE_NONE,
             ),
         )
         try {
-            val notifier = AndroidMessageNotifier(context) {
-                error("A disabled channel must short-circuit before intent creation")
-            }
+            val notifier = AndroidMessageNotifier(
+                context = context,
+                intentFactory = NotificationIntentFactory {
+                    error("A disabled channel must short-circuit before intent creation")
+                },
+                incomingGenerationTracker = IncomingNotificationGenerationTracker(
+                    InMemoryIncomingNotificationGenerationStore(),
+                ),
+                notificationGateway = null,
+                replyFailureChannelId = DISABLED_TEST_CHANNEL_ID,
+            )
 
             assertSame(
                 NotificationPostResult.NotificationsDisabled,
-                notifier.notifyInlineReplyFailure(ConversationId(71L)),
+                notifier.notifyInlineReplyFailure(
+                    InlineReplyFailureKey(
+                        ConversationId(71L),
+                        MessageId(
+                            ProviderKind.PENDING_OPERATION,
+                            INLINE_REPLY_OPERATION_ID_BOUNDARY + 91L,
+                        ),
+                    ),
+                ),
             )
         } finally {
-            manager.deleteNotificationChannel(NotificationChannels.REPLY_FAILURES)
-            NotificationChannels.ensureCreated(context)
+            manager.deleteNotificationChannel(DISABLED_TEST_CHANNEL_ID)
         }
+    }
+
+    private companion object {
+        const val DISABLED_TEST_CHANNEL_ID = "aurora_reply_failures_disabled_test_v1"
     }
 }

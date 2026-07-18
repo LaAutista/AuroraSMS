@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ProviderKind
@@ -690,6 +691,169 @@ class AndroidMessageNotifierGenerationCancellationTest {
         assertTrue(gateway.cancelCalls.isEmpty())
     }
 
+    @Test
+    fun realManagerOperationScopedFailureCancellationPreservesSibling() {
+        val first = InlineReplyFailureKey(SEAM_CONVERSATION_ID, REPLY_OPERATION_ONE)
+        val second = InlineReplyFailureKey(SEAM_CONVERSATION_ID, REPLY_OPERATION_TWO)
+
+        assertTrue(notifier.notifyInlineReplyFailure(first) is NotificationPostResult.Posted)
+        assertTrue(notifier.notifyInlineReplyFailure(second) is NotificationPostResult.Posted)
+        assertNotNull(awaitActiveReplyFailure(first))
+        val secondBeforeCancellation = requireNotNull(awaitActiveReplyFailure(second))
+        assertEquals(
+            replyOperationIdMarker(REPLY_OPERATION_TWO),
+            secondBeforeCancellation.notification.extras.getString(REPLY_OPERATION_ID_EXTRA),
+        )
+
+        assertSame(NotificationCancelResult.Cancelled, notifier.cancelInlineReplyFailure(first))
+        assertNull(awaitNoActiveReplyFailure(first))
+        val preserved = requireNotNull(awaitActiveReplyFailure(second))
+        assertEquals(replyFailureTag(second), preserved.tag)
+        assertEquals(
+            replyOperationIdMarker(REPLY_OPERATION_TWO),
+            preserved.notification.extras.getString(REPLY_OPERATION_ID_EXTRA),
+        )
+    }
+
+    @Test
+    fun sameConversationReplyFailuresHaveIndependentOperationKeys() {
+        val gateway = FakeNotificationMutationGateway()
+        val seamNotifier = seamNotifier(gateway)
+        val first = InlineReplyFailureKey(SEAM_CONVERSATION_ID, REPLY_OPERATION_ONE)
+        val second = InlineReplyFailureKey(SEAM_CONVERSATION_ID, REPLY_OPERATION_TWO)
+
+        assertTrue(seamNotifier.notifyInlineReplyFailure(first) is NotificationPostResult.Posted)
+        assertTrue(seamNotifier.notifyInlineReplyFailure(second) is NotificationPostResult.Posted)
+        assertEquals(
+            setOf(replyFailureTag(first), replyFailureTag(second)),
+            gateway.active.mapNotNull(ActiveNotificationSnapshot::tag).toSet(),
+        )
+
+        assertSame(NotificationCancelResult.Cancelled, seamNotifier.cancelInlineReplyFailure(first))
+        val preserved = gateway.active.single()
+        assertEquals(replyFailureTag(second), preserved.tag)
+        assertEquals(
+            replyOperationIdMarker(REPLY_OPERATION_TWO),
+            preserved.notification.extras.getString(REPLY_OPERATION_ID_EXTRA),
+        )
+    }
+
+    @Test
+    fun replyFailureIdentityRejectsWrongKindAndRetainsLegacyOperations() {
+        val legacyOperation = MessageId(ProviderKind.PENDING_OPERATION, 9_901L)
+        assertEquals(
+            legacyOperation,
+            InlineReplyFailureKey(SEAM_CONVERSATION_ID, legacyOperation).operationId,
+        )
+        assertTrue(
+            runCatching {
+                InlineReplyFailureKey(SEAM_CONVERSATION_ID, OLDER_MESSAGE_ID)
+            }.isFailure,
+        )
+        assertEquals(legacyOperation, parseReplyOperationIdMarker("9901"))
+        assertEquals(
+            REPLY_OPERATION_ONE,
+            parseReplyOperationIdMarker(replyOperationIdMarker(REPLY_OPERATION_ONE)),
+        )
+    }
+
+    @Test
+    fun replyFailureCancellationIsIdempotentAndRuntimeFailureIsRetryable() {
+        val gateway = FakeNotificationMutationGateway()
+        val seamNotifier = seamNotifier(gateway)
+        val key = InlineReplyFailureKey(SEAM_CONVERSATION_ID, REPLY_OPERATION_ONE)
+
+        assertSame(NotificationCancelResult.Cancelled, seamNotifier.cancelInlineReplyFailure(key))
+        gateway.cancelFailure = IllegalStateException("synthetic cancellation failure")
+        assertSame(
+            NotificationCancelResult.RetryableFailure,
+            seamNotifier.cancelInlineReplyFailure(key),
+        )
+    }
+
+    @Test
+    fun legacyReplyFailureCleanupPreservesOperationScopedAlerts() {
+        val gateway = FakeNotificationMutationGateway()
+        val seamNotifier = seamNotifier(gateway)
+        val current = InlineReplyFailureKey(SEAM_CONVERSATION_ID, REPLY_OPERATION_ONE)
+        gateway.active += ActiveNotificationSnapshot(
+            tag = legacyReplyFailureTag(SEAM_CONVERSATION_ID),
+            id = replyFailureNotificationId(SEAM_CONVERSATION_ID),
+            notification = NotificationCompat.Builder(
+                context,
+                NotificationChannels.REPLY_FAILURES,
+            ).setSmallIcon(R.drawable.ic_notification).build(),
+        )
+        assertTrue(seamNotifier.notifyInlineReplyFailure(current) is NotificationPostResult.Posted)
+
+        assertSame(
+            NotificationCancelResult.Cancelled,
+            seamNotifier.cancelLegacyInlineReplyFailures(),
+        )
+        assertEquals(listOf(replyFailureTag(current)), gateway.active.map { it.tag })
+    }
+
+    @Test
+    fun partialLegacyReplyFailureCleanupConvergesOnRetry() {
+        val gateway = FakeNotificationMutationGateway()
+        val seamNotifier = seamNotifier(gateway)
+        val firstLegacyTag = legacyReplyFailureTag(CAPACITY_CONVERSATION_ONE)
+        val secondLegacyTag = legacyReplyFailureTag(CAPACITY_CONVERSATION_TWO)
+        listOf(CAPACITY_CONVERSATION_ONE, CAPACITY_CONVERSATION_TWO).forEach { conversationId ->
+            gateway.active += ActiveNotificationSnapshot(
+                tag = legacyReplyFailureTag(conversationId),
+                id = replyFailureNotificationId(conversationId),
+                notification = NotificationCompat.Builder(
+                    context,
+                    NotificationChannels.REPLY_FAILURES,
+                ).setSmallIcon(R.drawable.ic_notification).build(),
+            )
+        }
+        val current = InlineReplyFailureKey(SEAM_CONVERSATION_ID, REPLY_OPERATION_ONE)
+        assertTrue(seamNotifier.notifyInlineReplyFailure(current) is NotificationPostResult.Posted)
+        gateway.cancelFailuresRemainingByTag[secondLegacyTag] = 1
+
+        assertSame(
+            NotificationCancelResult.RetryableFailure,
+            seamNotifier.cancelLegacyInlineReplyFailures(),
+        )
+        assertTrue(gateway.active.none { it.tag == firstLegacyTag })
+        assertTrue(gateway.active.any { it.tag == secondLegacyTag })
+        assertTrue(gateway.active.any { it.tag == replyFailureTag(current) })
+
+        assertSame(
+            NotificationCancelResult.Cancelled,
+            seamNotifier.cancelLegacyInlineReplyFailures(),
+        )
+        assertEquals(listOf(replyFailureTag(current)), gateway.active.map { it.tag })
+    }
+
+    @Test
+    fun legacyCleanupSnapshotFailureRetriesAndWrongIdIsIgnored() {
+        val gateway = FakeNotificationMutationGateway()
+        val seamNotifier = seamNotifier(gateway)
+        gateway.active += ActiveNotificationSnapshot(
+            tag = legacyReplyFailureTag(SEAM_CONVERSATION_ID),
+            id = replyFailureNotificationId(SEAM_CONVERSATION_ID) + 1,
+            notification = NotificationCompat.Builder(
+                context,
+                NotificationChannels.REPLY_FAILURES,
+            ).setSmallIcon(R.drawable.ic_notification).build(),
+        )
+
+        assertSame(
+            NotificationCancelResult.AlreadyAbsentOrReplaced,
+            seamNotifier.cancelLegacyInlineReplyFailures(),
+        )
+        assertEquals(1, gateway.active.size)
+
+        gateway.activeSnapshotFailure = IllegalStateException("synthetic snapshot failure")
+        assertSame(
+            NotificationCancelResult.RetryableFailure,
+            seamNotifier.cancelLegacyInlineReplyFailures(),
+        )
+    }
+
     private fun seamNotifier(
         gateway: NotificationMutationGateway,
         maximumTrackedConversations: Int = 4_096,
@@ -802,6 +966,28 @@ class AndroidMessageNotifierGenerationCancellationTest {
                 notification.id == notificationIdForConversation(conversationId)
         }
 
+    private fun awaitActiveReplyFailure(key: InlineReplyFailureKey): StatusBarNotification? {
+        repeat(POLL_ATTEMPTS) {
+            activeReplyFailure(key)?.let { return it }
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        }
+        return activeReplyFailure(key)
+    }
+
+    private fun awaitNoActiveReplyFailure(key: InlineReplyFailureKey): StatusBarNotification? {
+        repeat(POLL_ATTEMPTS) {
+            if (activeReplyFailure(key) == null) return null
+            SystemClock.sleep(POLL_INTERVAL_MILLIS)
+        }
+        return activeReplyFailure(key)
+    }
+
+    private fun activeReplyFailure(key: InlineReplyFailureKey): StatusBarNotification? =
+        manager.activeNotifications.singleOrNull { notification ->
+            notification.tag == replyFailureTag(key) &&
+                notification.id == replyFailureNotificationId(key.conversationId)
+        }
+
     private fun awaitNoActiveNotifications() {
         repeat(POLL_ATTEMPTS) {
             if (manager.activeNotifications.isEmpty()) return
@@ -816,6 +1002,8 @@ class AndroidMessageNotifierGenerationCancellationTest {
         var preserveActiveOnNotify = false
         var activeSnapshotFailure: RuntimeException? = null
         var notifyFailure: RuntimeException? = null
+        var cancelFailure: RuntimeException? = null
+        val cancelFailuresRemainingByTag = mutableMapOf<String, Int>()
         var beforeNotify: (() -> Unit)? = null
 
         override fun notify(
@@ -837,6 +1025,12 @@ class AndroidMessageNotifierGenerationCancellationTest {
 
         override fun cancel(tag: String, notificationId: Int) {
             cancelCalls += tag to notificationId
+            cancelFailure?.let { throw it }
+            val failuresRemaining = cancelFailuresRemainingByTag[tag] ?: 0
+            if (failuresRemaining > 0) {
+                cancelFailuresRemainingByTag[tag] = failuresRemaining - 1
+                throw IllegalStateException("synthetic keyed cancellation failure")
+            }
             active.removeAll { candidate ->
                 candidate.tag == tag && candidate.id == notificationId
             }
@@ -882,6 +1076,14 @@ class AndroidMessageNotifierGenerationCancellationTest {
         val MATCHING_MESSAGE_ID = MessageId(ProviderKind.MMS, 8803L)
         val MESSAGE_ONE = MessageId(ProviderKind.SMS, 8804L)
         val MESSAGE_TWO = MessageId(ProviderKind.MMS, 8805L)
+        val REPLY_OPERATION_ONE = MessageId(
+            ProviderKind.PENDING_OPERATION,
+            INLINE_REPLY_OPERATION_ID_BOUNDARY + 9_901L,
+        )
+        val REPLY_OPERATION_TWO = MessageId(
+            ProviderKind.PENDING_OPERATION,
+            INLINE_REPLY_OPERATION_ID_BOUNDARY + 9_902L,
+        )
         val VISIBLE_CONFIG = NotificationConfig(NotificationPrivacy.SENDER_AND_BODY)
 
         const val TEST_GENERATION_PREFERENCE_NAME = "notification-generation-seam-test"

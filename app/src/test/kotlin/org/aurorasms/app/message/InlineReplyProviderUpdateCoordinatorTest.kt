@@ -192,8 +192,8 @@ class InlineReplyProviderUpdateCoordinatorTest {
         )
     }
 
-    private suspend fun FakeSmsProviderDataSource.insertOutgoing(body: String): ProviderMessageId =
-        (insertOutgoing(
+    private suspend fun FakeSmsProviderDataSource.insertOutgoing(body: String): ProviderMessageId {
+        val providerId = (insertOutgoing(
             OutgoingSmsRecord(
                 recipient = RECIPIENT,
                 body = body,
@@ -201,6 +201,9 @@ class InlineReplyProviderUpdateCoordinatorTest {
                 subscriptionId = SUBSCRIPTION_ID,
             ),
         ) as ProviderAccessResult.Success).value.providerId
+        assertTrue(armOutgoing(providerId) is ProviderAccessResult.Success)
+        return providerId
+    }
 
     private companion object {
         const val NOW_MILLIS = 10_000L

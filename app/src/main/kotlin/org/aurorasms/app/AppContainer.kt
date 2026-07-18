@@ -112,6 +112,7 @@ import org.aurorasms.core.telephony.SmsProviderDataSource
 import org.aurorasms.core.telephony.SmsProviderStatus
 import org.aurorasms.core.telephony.SubscriptionRepository
 import org.aurorasms.core.telephony.SubscriptionSnapshot
+import org.aurorasms.core.telephony.followUpRequired
 import org.aurorasms.core.telephony.internal.AndroidContactResolver
 import org.aurorasms.core.telephony.internal.AndroidDefaultSmsRoleState
 import org.aurorasms.core.telephony.internal.AndroidMmsProviderDataSource
@@ -280,13 +281,14 @@ class AppContainer(
         subscriptions = subscriptionRepository,
         stagingStore = mmsStagingStore,
     )
-    val messageTransport: MessageTransport = AndroidSmsTransport(
+    private val androidSmsTransport = AndroidSmsTransport(
         context = application,
         roleState = defaultSmsRoleState,
         subscriptions = subscriptionRepository,
         smsProvider = smsProviderDataSource,
         mmsTransport = mmsTransport,
     )
+    val messageTransport: MessageTransport = androidSmsTransport
     val messageNotifier: MessageNotifier = AndroidMessageNotifier(
         context = application,
         intentFactory = AppNotificationIntentFactory(application),
@@ -584,9 +586,11 @@ class AppContainer(
         }
         if (!defaultSmsRoleState.isRoleHeld()) return
 
+        val transportOwnedRecovery =
+            androidSmsTransport.recoverTransportOwnedSubmissions()
         inlineReplyTransportResultHandler.reconcilePendingOperations()
         var retryDelayMillis = INCOMING_NOTIFICATION_RECOVERY_INITIAL_RETRY_MILLIS
-        var followUpRequired = false
+        var followUpRequired = transportOwnedRecovery.followUpRequired
         for (attempt in 0 until INCOMING_NOTIFICATION_RECOVERY_MAXIMUM_ATTEMPTS) {
             if (!defaultSmsRoleState.isRoleHeld()) return
             val result = try {

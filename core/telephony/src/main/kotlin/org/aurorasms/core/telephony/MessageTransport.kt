@@ -38,14 +38,46 @@ interface SmsSubmissionObserver {
 
     fun onSubmitting(providerId: ProviderMessageId, unitCount: Int): Boolean
 
-    companion object {
-        val ALLOW: SmsSubmissionObserver = object : SmsSubmissionObserver {
-            override fun onPrepared(providerId: ProviderMessageId, unitCount: Int): Boolean = true
+}
 
-            override fun onSubmitting(providerId: ProviderMessageId, unitCount: Int): Boolean = true
+/**
+ * Selects the single durable owner of the pre-submission SMS lifecycle.
+ *
+ * [TransportOwned] uses the transport's private, content-free journal. A
+ * [CallerOwned] observer must synchronously persist both callbacks and fail
+ * closed when either checkpoint cannot be committed.
+ */
+sealed interface SmsSubmissionOwnership {
+    data object TransportOwned : SmsSubmissionOwnership
+
+    data class CallerOwned(val observer: SmsSubmissionObserver) : SmsSubmissionOwnership
+}
+
+/** Startup disposition for the transport-owned, content-free SMS journal. */
+sealed interface TransportOwnedSmsRecoveryResult {
+    /** The journal was readable; individual provider rows may still need a later retry. */
+    data class Available(
+        val recoveredCount: Int,
+        val deferredCount: Int,
+    ) : TransportOwnedSmsRecoveryResult {
+        init {
+            require(recoveredCount >= 0)
+            require(deferredCount >= 0)
         }
     }
+
+    /** Journal integrity or persistence could not be established, so new work fails closed. */
+    data object JournalBlocked : TransportOwnedSmsRecoveryResult
 }
+
+val TransportOwnedSmsRecoveryResult.acceptsNewSubmissions: Boolean
+    get() = this is TransportOwnedSmsRecoveryResult.Available
+
+val TransportOwnedSmsRecoveryResult.followUpRequired: Boolean
+    get() = when (this) {
+        is TransportOwnedSmsRecoveryResult.Available -> deferredCount > 0
+        TransportOwnedSmsRecoveryResult.JournalBlocked -> true
+    }
 
 class EncodedMmsPdu private constructor(bytes: ByteArray) {
     private val bytes: ByteArray = bytes.copyOf()
@@ -145,7 +177,7 @@ data class MmsDownloadRequest(
 interface MessageTransport {
     suspend fun sendSms(
         request: SmsSendRequest,
-        submissionObserver: SmsSubmissionObserver = SmsSubmissionObserver.ALLOW,
+        ownership: SmsSubmissionOwnership,
     ): TransportResult
 
     suspend fun sendMms(request: MmsSendRequest): TransportResult
