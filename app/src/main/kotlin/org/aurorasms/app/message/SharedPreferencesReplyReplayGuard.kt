@@ -4,6 +4,7 @@ package org.aurorasms.app.message
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.util.Base64
 import java.security.MessageDigest
 
 /**
@@ -42,10 +43,13 @@ class SharedPreferencesReplyReplayGuard(
             return false
         }
         val cutoff = (claimedAtMillis - retentionMillis).coerceAtLeast(0L)
-        val storedClaims = preferences.all.mapNotNull { (key, value) ->
-            val serialized = value as? String ?: return@mapNotNull null
-            key.takeIf { it.startsWith(KEY_PREFIX) }
-                ?.let { storedKey -> decode(storedKey, serialized) }
+        val entries = preferences.all
+        val storedClaims = ArrayList<StoredClaim>(entries.size)
+        entries.forEach { (key, value) ->
+            if (!key.startsWith(KEY_PREFIX)) return false
+            val serialized = value as? String ?: return false
+            val decoded = decode(key, serialized) ?: return false
+            storedClaims += decoded
         }
         val key = KEY_PREFIX + claim.requestId
         if (storedClaims.any { stored -> stored.key == key && !stored.isExpired(claimedAtMillis, cutoff) }) {
@@ -58,40 +62,164 @@ class SharedPreferencesReplyReplayGuard(
 
         val editor = preferences.edit()
         expired.forEach { stored -> editor.remove(stored.key) }
+        val expiredKeys = expired.mapTo(HashSet(expired.size)) { stored -> stored.key }
+        storedClaims.filter { stored -> stored.requiresMigration && stored.key !in expiredKeys }
+            .forEach { stored -> editor.putString(stored.key, serialize(stored)) }
         return editor.putString(key, serialize(claim, claimedAtMillis)).commit()
     }
 
     private fun decode(key: String, serialized: String): StoredClaim? {
-        val fields = serialized.split('|')
-        if (fields.size != SERIALIZED_FIELD_COUNT) return null
-        val claimedAtMillis = fields[0].toLongOrNull()?.takeIf { it >= 0L } ?: return null
-        val conversationId = fields[1].toLongOrNull()?.takeIf { it > 0L } ?: return null
-        val subscriptionId = fields[2].toIntOrNull()?.takeIf { it >= 0 } ?: return null
-        val expiresAtMillis = fields[3].toLongOrNull()?.takeIf { it > 0L } ?: return null
-        val recipientDigest = fields[4].takeIf { digest ->
-            digest.length == SHA_256_HEX_CHARACTERS && digest.all { it in HEX }
-        } ?: return null
+        val requestId = key.removePrefix(KEY_PREFIX)
+            .takeIf(::isValidRequestId)
+            ?: return null
+        if (key != KEY_PREFIX + requestId) return null
+        val fields = serialized.split(SEPARATOR)
+        return when {
+            fields.size == SERIALIZED_FIELD_COUNT && fields[0] == FORMAT_VERSION ->
+                decodeCurrent(key, requestId, fields)
+            fields.size == LEGACY_FIELD_COUNT -> decodeLegacy(key, requestId, fields)
+            else -> null
+        }
+    }
+
+    private fun decodeCurrent(
+        key: String,
+        requestId: String,
+        fields: List<String>,
+    ): StoredClaim? {
+        if (!hasValidChecksum(fields)) return null
+        val storedRequestId = decodeCanonicalText(fields[1])
+            ?.takeIf(::isValidRequestId)
+            ?: return null
+        if (storedRequestId != requestId) return null
+        val claimedAtMillis = fields[2].toLongOrNull()
+            ?.takeIf { it >= 0L && it.toString() == fields[2] }
+            ?: return null
+        val conversationId = fields[3].toLongOrNull()
+            ?.takeIf { it > 0L && it.toString() == fields[3] }
+            ?: return null
+        val subscriptionId = fields[4].toIntOrNull()
+            ?.takeIf { it >= 0 && it.toString() == fields[4] }
+            ?: return null
+        val expiresAtMillis = fields[5].toLongOrNull()
+            ?.takeIf {
+                it > claimedAtMillis && it.toString() == fields[5]
+            }
+            ?: return null
+        val recipientDigest = fields[6].takeIf(::isCanonicalSha256) ?: return null
         return StoredClaim(
             key = key,
+            requestId = requestId,
             claimedAtMillis = claimedAtMillis,
             conversationId = conversationId,
             subscriptionId = subscriptionId,
             expiresAtMillis = expiresAtMillis,
             recipientDigest = recipientDigest,
+            requiresMigration = false,
         )
     }
 
-    private fun serialize(claim: ReplyReplayClaim, claimedAtMillis: Long): String = listOf(
-        claimedAtMillis,
-        claim.conversationId.value,
-        claim.subscriptionId.value,
-        claim.expiresAtMillis,
-        recipientDigest(claim.recipient.value),
-    ).joinToString(separator = "|")
+    private fun decodeLegacy(
+        key: String,
+        requestId: String,
+        fields: List<String>,
+    ): StoredClaim? {
+        val claimedAtMillis = fields[0].toLongOrNull()
+            ?.takeIf { it >= 0L && it.toString() == fields[0] }
+            ?: return null
+        val conversationId = fields[1].toLongOrNull()
+            ?.takeIf { it > 0L && it.toString() == fields[1] }
+            ?: return null
+        val subscriptionId = fields[2].toIntOrNull()
+            ?.takeIf { it >= 0 && it.toString() == fields[2] }
+            ?: return null
+        val expiresAtMillis = fields[3].toLongOrNull()
+            ?.takeIf {
+                it > claimedAtMillis && it.toString() == fields[3]
+            }
+            ?: return null
+        val recipientDigest = fields[4].takeIf(::isCanonicalSha256) ?: return null
+        return StoredClaim(
+            key = key,
+            requestId = requestId,
+            claimedAtMillis = claimedAtMillis,
+            conversationId = conversationId,
+            subscriptionId = subscriptionId,
+            expiresAtMillis = expiresAtMillis,
+            recipientDigest = recipientDigest,
+            requiresMigration = true,
+        )
+    }
+
+    private fun serialize(claim: ReplyReplayClaim, claimedAtMillis: Long): String = serialize(
+        requestId = claim.requestId,
+        claimedAtMillis = claimedAtMillis,
+        conversationId = claim.conversationId.value,
+        subscriptionId = claim.subscriptionId.value,
+        expiresAtMillis = claim.expiresAtMillis,
+        recipientDigest = recipientDigest(claim.recipient.value),
+    )
+
+    private fun serialize(claim: StoredClaim): String = serialize(
+        requestId = claim.requestId,
+        claimedAtMillis = claim.claimedAtMillis,
+        conversationId = claim.conversationId,
+        subscriptionId = claim.subscriptionId,
+        expiresAtMillis = claim.expiresAtMillis,
+        recipientDigest = claim.recipientDigest,
+    )
+
+    private fun serialize(
+        requestId: String,
+        claimedAtMillis: Long,
+        conversationId: Long,
+        subscriptionId: Int,
+        expiresAtMillis: Long,
+        recipientDigest: String,
+    ): String {
+        val canonicalFields = listOf(
+            FORMAT_VERSION,
+            encodeText(requestId),
+            claimedAtMillis.toString(),
+            conversationId.toString(),
+            subscriptionId.toString(),
+            expiresAtMillis.toString(),
+            recipientDigest,
+        )
+        return (canonicalFields + checksum(canonicalFields)).joinToString(separator = SEPARATOR)
+    }
+
+    private fun hasValidChecksum(fields: List<String>): Boolean {
+        val storedChecksum = fields.last().takeIf(::isCanonicalSha256) ?: return false
+        val expectedChecksum = checksum(fields.dropLast(1))
+        return MessageDigest.isEqual(
+            storedChecksum.toByteArray(Charsets.US_ASCII),
+            expectedChecksum.toByteArray(Charsets.US_ASCII),
+        )
+    }
+
+    private fun checksum(canonicalFields: List<String>): String = sha256Hex(
+        canonicalFields.joinToString(separator = SEPARATOR).toByteArray(Charsets.UTF_8),
+    )
+
+    private fun encodeText(value: String): String = Base64.encodeToString(
+        value.toByteArray(Charsets.UTF_8),
+        BASE64_FLAGS,
+    )
+
+    private fun decodeCanonicalText(encoded: String): String? {
+        val bytes = runCatching { Base64.decode(encoded, BASE64_FLAGS) }.getOrNull() ?: return null
+        val decoded = String(bytes, Charsets.UTF_8)
+        if (encodeText(decoded) != encoded) return null
+        return decoded
+    }
 
     private fun recipientDigest(value: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(value.toByteArray(Charsets.UTF_8))
+        return sha256Hex(value.toByteArray(Charsets.UTF_8))
+    }
+
+    private fun sha256Hex(value: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value)
         return buildString(digest.size * 2) {
             digest.forEach { byte ->
                 val unsigned = byte.toInt() and 0xff
@@ -101,6 +229,9 @@ class SharedPreferencesReplyReplayGuard(
         }
     }
 
+    private fun isCanonicalSha256(value: String): Boolean =
+        value.length == SHA_256_HEX_CHARACTERS && value.all { it in HEX }
+
     private fun isValidRequestId(value: String): Boolean =
         value.isNotBlank() &&
             value.length <= MAXIMUM_REQUEST_ID_CHARACTERS &&
@@ -108,11 +239,13 @@ class SharedPreferencesReplyReplayGuard(
 
     private data class StoredClaim(
         val key: String,
+        val requestId: String,
         val claimedAtMillis: Long,
-        @Suppress("unused") val conversationId: Long,
-        @Suppress("unused") val subscriptionId: Int,
+        val conversationId: Long,
+        val subscriptionId: Int,
         val expiresAtMillis: Long,
-        @Suppress("unused") val recipientDigest: String,
+        val recipientDigest: String,
+        val requiresMigration: Boolean,
     ) {
         fun isExpired(nowMillis: Long, retentionCutoff: Long): Boolean =
             claimedAtMillis < retentionCutoff && expiresAtMillis <= nowMillis
@@ -121,12 +254,16 @@ class SharedPreferencesReplyReplayGuard(
     private companion object {
         const val PREFERENCES_NAME = "aurora_inline_reply_replay"
         const val KEY_PREFIX = "claim."
+        const val FORMAT_VERSION = "2"
+        const val SEPARATOR = "|"
         const val MAXIMUM_REQUEST_ID_CHARACTERS = 256
         const val DEFAULT_RETENTION_MILLIS = 7L * 24L * 60L * 60L * 1_000L
         const val DEFAULT_MAXIMUM_ACTIVE_CLAIMS = 16_384
         const val ABSOLUTE_MAXIMUM_ACTIVE_CLAIMS = 65_536
         const val HEX = "0123456789abcdef"
         const val SHA_256_HEX_CHARACTERS = 64
-        const val SERIALIZED_FIELD_COUNT = 5
+        const val SERIALIZED_FIELD_COUNT = 8
+        const val LEGACY_FIELD_COUNT = 5
+        const val BASE64_FLAGS = Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING
     }
 }

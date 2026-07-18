@@ -188,6 +188,52 @@ data class IncomingSmsRecord(
     }
 }
 
+data class IncomingSmsNotificationReplayRequest(
+    val limit: Int,
+) {
+    init {
+        require(limit in 1..MAXIMUM_LIMIT) {
+            "Incoming SMS notification replay limit must be in 1..$MAXIMUM_LIMIT"
+        }
+    }
+
+    companion object {
+        const val MAXIMUM_LIMIT: Int = 64
+    }
+}
+
+/**
+ * Provider-backed content for one durable incoming-notification retry.
+ *
+ * The delivery fingerprint and provider identifiers are sufficient to pass
+ * this item back to [SmsProviderDataSource.markIncomingHandled] only after the
+ * notification has been posted successfully.
+ */
+data class IncomingSmsNotificationReplay(
+    val deliveryFingerprint: MessageDeliveryFingerprint,
+    val providerId: ProviderMessageId,
+    val conversationId: ConversationId,
+    val sender: ParticipantAddress,
+    val body: String,
+    val receivedTimestampMillis: Long,
+    val sentTimestampMillis: Long,
+    val subscriptionId: AuroraSubscriptionId?,
+) {
+    init {
+        require(providerId.kind == org.aurorasms.core.model.ProviderKind.SMS) {
+            "Incoming SMS notification replays need an SMS provider ID"
+        }
+        require(body.length <= IncomingSmsRecord.MAX_SMS_BODY_CHARACTERS) {
+            "Incoming SMS notification replay body exceeds the bounded provider projection"
+        }
+        require(receivedTimestampMillis >= 0L && sentTimestampMillis >= 0L) {
+            "Incoming SMS notification replay timestamps cannot be negative"
+        }
+    }
+
+    override fun toString(): String = "IncomingSmsNotificationReplay(REDACTED)"
+}
+
 data class OutgoingSmsRecord(
     val recipient: ParticipantAddress,
     val body: String,
@@ -205,6 +251,7 @@ data class OutgoingSmsRecord(
 
 enum class SmsProviderStatus {
     COMPLETE,
+    DELIVERY_FAILED,
     FAILED,
     PENDING,
 }
@@ -215,6 +262,11 @@ interface SmsProviderDataSource {
     suspend fun readPage(request: ProviderPageRequest): ProviderAccessResult<ProviderPage<SmsProviderMessage>>
 
     suspend fun insertIncoming(message: IncomingSmsRecord): ProviderAccessResult<ProviderStoredMessage>
+
+    suspend fun readPendingIncomingNotifications(
+        request: IncomingSmsNotificationReplayRequest,
+    ): ProviderAccessResult<List<IncomingSmsNotificationReplay>> =
+        ProviderAccessResult.Unsupported("recover pending incoming SMS notifications")
 
     suspend fun markIncomingHandled(
         deliveryFingerprint: MessageDeliveryFingerprint,

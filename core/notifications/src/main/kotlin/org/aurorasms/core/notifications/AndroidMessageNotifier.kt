@@ -3,30 +3,55 @@
 package org.aurorasms.core.notifications
 
 import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ProviderKind
 
-class AndroidMessageNotifier(
+class AndroidMessageNotifier internal constructor(
     context: Context,
     private val intentFactory: NotificationIntentFactory,
+    private val incomingGenerationTracker: IncomingNotificationGenerationTracker,
+    notificationGateway: NotificationMutationGateway?,
 ) : MessageNotifier {
+    constructor(
+        context: Context,
+        intentFactory: NotificationIntentFactory,
+    ) : this(
+        context = context,
+        intentFactory = intentFactory,
+        incomingGenerationTracker = IncomingNotificationGenerationTracker(
+            SharedPreferencesIncomingNotificationGenerationStore(context),
+        ),
+        notificationGateway = null,
+    )
+
     private val appContext = context.applicationContext
     private val notificationManager = NotificationManagerCompat.from(appContext)
+    private val platformNotificationManager =
+        appContext.getSystemService(NotificationManager::class.java)
+    private val notificationGateway = notificationGateway ?: AndroidNotificationMutationGateway(
+        notificationManager,
+        platformNotificationManager,
+    )
 
     override fun notifyIncoming(
         message: IncomingMessageNotification,
         config: NotificationConfig,
     ): NotificationPostResult {
         NotificationChannels.ensureCreated(appContext)
-        if (!notificationManager.areNotificationsEnabled()) {
+        if (!notificationsEnabledForChannel(NotificationChannels.MESSAGES)) {
             return NotificationPostResult.NotificationsDisabled
         }
 
@@ -76,18 +101,35 @@ class AndroidMessageNotifier(
             .setShowWhen(true)
             .setOnlyAlertOnce(true)
             .setAutoCancel(true)
+            .addExtras(
+                Bundle().apply {
+                    putString(
+                        SOURCE_MESSAGE_ID_EXTRA,
+                        sourceMessageIdMarker(message.messageId),
+                    )
+                },
+            )
 
         if (message.canReply) {
             builder.addAction(inlineReplyAction(message, config))
         }
 
         val notificationId = notificationIdForConversation(message.conversationId)
-        return post(conversationTag(message.conversationId), notificationId, builder)
+        return post(
+            tag = conversationTag(message.conversationId),
+            notificationId = notificationId,
+            builder = builder,
+            incomingGeneration = IncomingNotificationGeneration(
+                conversationId = message.conversationId,
+                messageId = message.messageId,
+                receivedAtEpochMillis = message.receivedAtEpochMillis,
+            ),
+        )
     }
 
     override fun notifyInlineReplyFailure(conversationId: ConversationId): NotificationPostResult {
         NotificationChannels.ensureCreated(appContext)
-        if (!notificationManager.areNotificationsEnabled()) {
+        if (!notificationsEnabledForChannel(NotificationChannels.REPLY_FAILURES)) {
             return NotificationPostResult.NotificationsDisabled
         }
 
@@ -112,15 +154,113 @@ class AndroidMessageNotifier(
         )
     }
 
-    override fun cancelConversation(conversationId: ConversationId) {
-        notificationManager.cancel(
-            conversationTag(conversationId),
-            notificationIdForConversation(conversationId),
-        )
-        notificationManager.cancel(
-            replyFailureTag(conversationId),
-            replyFailureNotificationId(conversationId),
-        )
+    override fun cancelIncomingConversation(
+        conversationId: ConversationId,
+        expectedMessageId: MessageId,
+    ): NotificationCancelResult = synchronized(notificationMutationLock) {
+        try {
+            val tag = conversationTag(conversationId)
+            val notificationId = notificationIdForConversation(conversationId)
+            val trackedGeneration = incomingGenerationTracker.lookup(conversationId)
+            when (trackedGeneration) {
+                is IncomingNotificationGenerationTracker.Lookup.Tracked -> {
+                    if (trackedGeneration.messageId != expectedMessageId) {
+                        return@synchronized NotificationCancelResult.AlreadyAbsentOrReplaced
+                    }
+                }
+
+                IncomingNotificationGenerationTracker.Lookup.UntrackedAfterOverflow -> {
+                    // A successful active-notification snapshot below is now
+                    // authoritative for legacy/untracked generations.
+                }
+
+                IncomingNotificationGenerationTracker.Lookup.Corrupt,
+                IncomingNotificationGenerationTracker.Lookup.PersistenceFailure,
+                -> return@synchronized NotificationCancelResult.RetryableFailure
+
+                IncomingNotificationGenerationTracker.Lookup.Untracked -> Unit
+            }
+            val active = notificationGateway.activeNotifications().firstOrNull { candidate ->
+                candidate.tag == tag && candidate.id == notificationId
+            }
+            if (active == null) {
+                return@synchronized if (
+                    trackedGeneration is IncomingNotificationGenerationTracker.Lookup.Tracked
+                ) {
+                    cancelTrackedGeneration(tag, notificationId, conversationId, expectedMessageId)
+                } else {
+                    NotificationCancelResult.AlreadyAbsentOrReplaced
+                }
+            }
+            val activeMessageId = parseSourceMessageIdMarker(
+                active.notification.extras.getString(SOURCE_MESSAGE_ID_EXTRA),
+            ) ?: return@synchronized NotificationCancelResult.RetryableFailure
+            if (activeMessageId == expectedMessageId) {
+                cancelTrackedGeneration(tag, notificationId, conversationId, expectedMessageId)
+            } else if (
+                trackedGeneration is IncomingNotificationGenerationTracker.Lookup.Tracked
+            ) {
+                NotificationCancelResult.RetryableFailure
+            } else {
+                NotificationCancelResult.AlreadyAbsentOrReplaced
+            }
+        } catch (_: RuntimeException) {
+            NotificationCancelResult.RetryableFailure
+        }
+    }
+
+    override fun cancelAllIncoming(): NotificationCancelResult = synchronized(
+        notificationMutationLock,
+    ) {
+        val active = try {
+            notificationGateway.activeNotifications()
+        } catch (_: RuntimeException) {
+            return@synchronized NotificationCancelResult.RetryableFailure
+        }
+        var cancelledAny = false
+        var retryRequired = false
+        active.forEach { candidate ->
+            val conversationId = parseConversationTag(candidate.tag) ?: return@forEach
+            if (candidate.id != notificationIdForConversation(conversationId)) {
+                retryRequired = true
+                return@forEach
+            }
+            val messageId = parseSourceMessageIdMarker(
+                candidate.notification.extras.getString(SOURCE_MESSAGE_ID_EXTRA),
+            )
+            if (messageId == null) {
+                retryRequired = true
+                return@forEach
+            }
+            try {
+                notificationGateway.cancel(requireNotNull(candidate.tag), candidate.id)
+                cancelledAny = true
+            } catch (_: RuntimeException) {
+                retryRequired = true
+            }
+        }
+        val remaining = try {
+            notificationGateway.activeNotifications()
+        } catch (_: RuntimeException) {
+            return@synchronized NotificationCancelResult.RetryableFailure
+        }
+        if (!replaceIncomingGenerationsFromActiveNotifications(remaining)) {
+            retryRequired = true
+        }
+        when {
+            retryRequired -> NotificationCancelResult.RetryableFailure
+            cancelledAny -> NotificationCancelResult.Cancelled
+            else -> NotificationCancelResult.AlreadyAbsentOrReplaced
+        }
+    }
+
+    override fun cancelInlineReplyFailure(conversationId: ConversationId) {
+        synchronized(notificationMutationLock) {
+            notificationGateway.cancel(
+                replyFailureTag(conversationId),
+                replyFailureNotificationId(conversationId),
+            )
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -128,11 +268,200 @@ class AndroidMessageNotifier(
         tag: String,
         notificationId: Int,
         builder: NotificationCompat.Builder,
-    ): NotificationPostResult = try {
-        notificationManager.notify(tag, notificationId, builder.build())
-        NotificationPostResult.Posted(notificationId)
-    } catch (_: SecurityException) {
-        NotificationPostResult.Rejected(NotificationPostResult.RejectionReason.PERMISSION_DENIED)
+        incomingGeneration: IncomingNotificationGeneration? = null,
+    ): NotificationPostResult = synchronized(notificationMutationLock) {
+        if (incomingGeneration != null) {
+            when (incomingGenerationOrdering(incomingGeneration, tag, notificationId)) {
+                IncomingGenerationOrdering.Proceed -> Unit
+                IncomingGenerationOrdering.Superseded ->
+                    return@synchronized NotificationPostResult.SupersededByNewer
+                IncomingGenerationOrdering.Unavailable ->
+                    return@synchronized generationStateUnavailable()
+            }
+            if (
+                !persistIncomingGenerationBeforeNotify(
+                    incomingGeneration.conversationId,
+                    incomingGeneration.messageId,
+                )
+            ) {
+                return@synchronized generationStateUnavailable()
+            }
+        }
+        try {
+            notificationGateway.notify(tag, notificationId, builder.build())
+            NotificationPostResult.Posted(notificationId)
+        } catch (_: SecurityException) {
+            NotificationPostResult.Rejected(NotificationPostResult.RejectionReason.PERMISSION_DENIED)
+        } catch (failure: RuntimeException) {
+            if (incomingGeneration != null) {
+                NotificationPostResult.Rejected(
+                    NotificationPostResult.RejectionReason.GENERATION_STATE_UNAVAILABLE,
+                )
+            } else {
+                throw failure
+            }
+        }
+    }
+
+    /**
+     * Establishes that an incoming generation may safely replace the exact
+     * conversation slot before any durable state or NMS mutation occurs.
+     */
+    private fun incomingGenerationOrdering(
+        candidate: IncomingNotificationGeneration,
+        tag: String,
+        notificationId: Int,
+    ): IncomingGenerationOrdering {
+        val trackedGeneration = incomingGenerationTracker.lookup(candidate.conversationId)
+        if (
+            trackedGeneration is IncomingNotificationGenerationTracker.Lookup.Tracked &&
+            trackedGeneration.messageId.isProvablyNewerThan(candidate.messageId)
+        ) {
+            return IncomingGenerationOrdering.Superseded
+        }
+
+        val exactActive = try {
+            notificationGateway.activeNotifications().filter { active ->
+                active.tag == tag && active.id == notificationId
+            }
+        } catch (_: RuntimeException) {
+            return IncomingGenerationOrdering.Unavailable
+        }
+        if (exactActive.size > 1) return IncomingGenerationOrdering.Unavailable
+        val active = exactActive.singleOrNull()
+            ?: return when (trackedGeneration) {
+                IncomingNotificationGenerationTracker.Lookup.PersistenceFailure ->
+                    IncomingGenerationOrdering.Unavailable
+                else -> IncomingGenerationOrdering.Proceed
+            }
+
+        val activeMessageId = parseSourceMessageIdMarker(
+            active.notification.extras.getString(SOURCE_MESSAGE_ID_EXTRA),
+        )
+        if (activeMessageId != null && activeMessageId.kind == candidate.messageId.kind) {
+            return if (activeMessageId.value > candidate.messageId.value) {
+                IncomingGenerationOrdering.Superseded
+            } else {
+                IncomingGenerationOrdering.Proceed
+            }
+        }
+
+        val activeWhen = active.notification.`when`
+        if (activeWhen < 0L) return IncomingGenerationOrdering.Unavailable
+        if (activeWhen > candidate.receivedAtEpochMillis) {
+            return IncomingGenerationOrdering.Superseded
+        }
+        if (activeWhen < candidate.receivedAtEpochMillis) {
+            return IncomingGenerationOrdering.Proceed
+        }
+
+        return IncomingGenerationOrdering.Unavailable
+    }
+
+    private fun MessageId.isProvablyNewerThan(candidate: MessageId): Boolean =
+        kind == candidate.kind && value > candidate.value
+
+    private fun generationStateUnavailable() = NotificationPostResult.Rejected(
+        NotificationPostResult.RejectionReason.GENERATION_STATE_UNAVAILABLE,
+    )
+
+    private fun persistIncomingGenerationBeforeNotify(
+        conversationId: ConversationId,
+        messageId: MessageId,
+    ): Boolean = when (incomingGenerationTracker.record(conversationId, messageId)) {
+        IncomingNotificationGenerationTracker.RecordResult.Recorded -> true
+        IncomingNotificationGenerationTracker.RecordResult.Full -> {
+            val activeConversationIds = try {
+                notificationGateway.activeNotifications()
+                    .mapNotNull(::activeConversationIdOrNull)
+                    .toSet()
+            } catch (_: RuntimeException) {
+                return false
+            }
+            if (
+                incomingGenerationTracker.reconcileProvablyAbsent(activeConversationIds) !=
+                IncomingNotificationGenerationTracker.MutationResult.Success
+            ) {
+                return false
+            }
+            when (incomingGenerationTracker.record(conversationId, messageId)) {
+                IncomingNotificationGenerationTracker.RecordResult.Recorded -> true
+                IncomingNotificationGenerationTracker.RecordResult.Full -> {
+                    false
+                }
+                IncomingNotificationGenerationTracker.RecordResult.Corrupt,
+                IncomingNotificationGenerationTracker.RecordResult.PersistenceFailure,
+                -> false
+            }
+        }
+        IncomingNotificationGenerationTracker.RecordResult.Corrupt ->
+            rebuildIncomingGenerationsFromActiveNotifications(conversationId, messageId)
+        IncomingNotificationGenerationTracker.RecordResult.PersistenceFailure -> false
+    }
+
+    private fun rebuildIncomingGenerationsFromActiveNotifications(
+        conversationId: ConversationId,
+        messageId: MessageId,
+    ): Boolean {
+        val active = try {
+            notificationGateway.activeNotifications()
+        } catch (_: RuntimeException) {
+            return false
+        }
+        val rebuilt = activeIncomingGenerations(active) ?: return false
+        rebuilt[conversationId] = messageId
+        return incomingGenerationTracker.replaceAll(rebuilt) ==
+            IncomingNotificationGenerationTracker.RecordResult.Recorded
+    }
+
+    private fun replaceIncomingGenerationsFromActiveNotifications(
+        active: List<ActiveNotificationSnapshot>,
+    ): Boolean {
+        val rebuilt = activeIncomingGenerations(active) ?: return false
+        return incomingGenerationTracker.replaceAll(rebuilt) ==
+            IncomingNotificationGenerationTracker.RecordResult.Recorded
+    }
+
+    private fun activeIncomingGenerations(
+        active: List<ActiveNotificationSnapshot>,
+    ): MutableMap<ConversationId, MessageId>? {
+        val rebuilt = linkedMapOf<ConversationId, MessageId>()
+        active.forEach { candidate ->
+            val activeConversationId = parseConversationTag(candidate.tag) ?: return@forEach
+            if (candidate.id != notificationIdForConversation(activeConversationId)) return null
+            val activeMessageId = parseSourceMessageIdMarker(
+                candidate.notification.extras.getString(SOURCE_MESSAGE_ID_EXTRA),
+            ) ?: return null
+            val previous = rebuilt.put(activeConversationId, activeMessageId)
+            if (previous != null && previous != activeMessageId) return null
+        }
+        return rebuilt
+    }
+
+    private fun activeConversationIdOrNull(
+        active: ActiveNotificationSnapshot,
+    ): ConversationId? {
+        val conversationId = parseConversationTag(active.tag) ?: return null
+        return conversationId.takeIf { candidate ->
+            active.id == notificationIdForConversation(candidate)
+        }
+    }
+
+    private fun cancelTrackedGeneration(
+        tag: String,
+        notificationId: Int,
+        conversationId: ConversationId,
+        messageId: MessageId,
+    ): NotificationCancelResult {
+        notificationGateway.cancel(tag, notificationId)
+        return if (
+            incomingGenerationTracker.forgetIfCurrent(conversationId, messageId) ==
+            IncomingNotificationGenerationTracker.MutationResult.Success
+        ) {
+            NotificationCancelResult.Cancelled
+        } else {
+            NotificationCancelResult.RetryableFailure
+        }
     }
 
     private fun contentPendingIntent(conversationId: ConversationId): ContentIntentResult {
@@ -156,6 +485,21 @@ class AndroidMessageNotifier(
             PendingIntentPolicy.immutableUpdateCurrent(),
         )
         return ContentIntentResult.Accepted(pendingIntent)
+    }
+
+    private fun notificationsEnabledForChannel(channelId: String): Boolean {
+        if (!notificationManager.areNotificationsEnabled()) return false
+        val channel = platformNotificationManager.getNotificationChannel(channelId) ?: return false
+        if (channel.importance == NotificationManager.IMPORTANCE_NONE) return false
+        if (Build.VERSION.SDK_INT >= 28) {
+            val groupId = channel.group
+            val groupBlocked = groupId != null &&
+                platformNotificationManager.getNotificationChannelGroup(groupId)?.isBlocked == true
+            if (groupBlocked) {
+                return false
+            }
+        }
+        return true
     }
 
     private fun inlineReplyAction(
@@ -229,6 +573,18 @@ class AndroidMessageNotifier(
         ) : ContentIntentResult
     }
 
+    private data class IncomingNotificationGeneration(
+        val conversationId: ConversationId,
+        val messageId: MessageId,
+        val receivedAtEpochMillis: Long,
+    )
+
+    private enum class IncomingGenerationOrdering {
+        Proceed,
+        Superseded,
+        Unavailable,
+    }
+
     private companion object {
         const val MAXIMUM_PERSON_CHARACTERS = 256
         const val MAXIMUM_CONVERSATION_TITLE_CHARACTERS = 256
@@ -236,7 +592,71 @@ class AndroidMessageNotifier(
         const val CONTENT_INTENT_SALT = 0x434F4E54
         const val INLINE_REPLY_SALT = 0x52504C59
         const val LOCAL_USER_PERSON_KEY = "aurorasms-local-user"
+        val notificationMutationLock = Any()
     }
+}
+
+internal data class ActiveNotificationSnapshot(
+    val tag: String?,
+    val id: Int,
+    val notification: Notification,
+)
+
+internal interface NotificationMutationGateway {
+    fun notify(
+        tag: String,
+        notificationId: Int,
+        notification: Notification,
+    )
+
+    fun cancel(tag: String, notificationId: Int)
+
+    fun activeNotifications(): List<ActiveNotificationSnapshot>
+}
+
+private class AndroidNotificationMutationGateway(
+    private val notificationManager: NotificationManagerCompat,
+    private val platformNotificationManager: NotificationManager,
+) : NotificationMutationGateway {
+    @SuppressLint("MissingPermission")
+    override fun notify(
+        tag: String,
+        notificationId: Int,
+        notification: Notification,
+    ) {
+        notificationManager.notify(tag, notificationId, notification)
+    }
+
+    override fun cancel(tag: String, notificationId: Int) {
+        notificationManager.cancel(tag, notificationId)
+    }
+
+    override fun activeNotifications(): List<ActiveNotificationSnapshot> =
+        platformNotificationManager.activeNotifications.map { active ->
+            ActiveNotificationSnapshot(
+                tag = active.tag,
+                id = active.id,
+                notification = active.notification,
+            )
+        }
+}
+
+internal const val SOURCE_MESSAGE_ID_EXTRA =
+    "org.aurorasms.core.notifications.extra.SOURCE_MESSAGE_ID"
+
+internal fun sourceMessageIdMarker(messageId: MessageId): String =
+    "${messageId.kind.name}:${messageId.value}"
+
+internal fun parseSourceMessageIdMarker(marker: String?): MessageId? {
+    if (marker == null || marker.count { it == ':' } != 1) return null
+    val separator = marker.indexOf(':')
+    val kind = ProviderKind.entries.firstOrNull { candidate ->
+        candidate.name == marker.substring(0, separator)
+    } ?: return null
+    if (!kind.isTelephonyProvider) return null
+    val value = marker.substring(separator + 1).toLongOrNull() ?: return null
+    val messageId = runCatching { MessageId(kind, value) }.getOrNull() ?: return null
+    return messageId.takeIf { sourceMessageIdMarker(it) == marker }
 }
 
 private fun String.toNotificationLine(maximumCharacters: Int): String =
@@ -269,8 +689,18 @@ private fun String.takeUtf16Safely(maximumCharacters: Int): String {
 private fun conversationCategory(conversationId: ConversationId): String =
     NotificationProtocol.CATEGORY_CONVERSATION_PREFIX + conversationId.value
 
-private fun conversationTag(conversationId: ConversationId): String =
+internal fun conversationTag(conversationId: ConversationId): String =
     "aurora-conversation:${conversationId.value}"
+
+internal fun parseConversationTag(tag: String?): ConversationId? {
+    if (tag == null || !tag.startsWith(CONVERSATION_TAG_PREFIX)) return null
+    val value = tag.removePrefix(CONVERSATION_TAG_PREFIX)
+        .toCanonicalPositiveLongOrNull()
+        ?: return null
+    return ConversationId(value).takeIf { conversationTag(it) == tag }
+}
 
 private fun replyFailureTag(conversationId: ConversationId): String =
     "aurora-reply-failure:${conversationId.value}"
+
+private const val CONVERSATION_TAG_PREFIX = "aurora-conversation:"

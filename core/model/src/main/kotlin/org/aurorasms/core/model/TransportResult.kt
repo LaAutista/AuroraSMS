@@ -7,6 +7,10 @@ sealed interface TransportResult {
     val operationId: MessageId
     val transport: MessageTransportKind
 
+    /** Explicit callback ownership; UNMARKED also covers pre-upgrade PendingIntents. */
+    val operationOrigin: OperationOrigin
+        get() = OperationOrigin.UNMARKED
+
     data class Submitted(
         override val operationId: MessageId,
         override val transport: MessageTransportKind,
@@ -25,6 +29,7 @@ sealed interface TransportResult {
         val unitIndex: Int = 0,
         val unitCount: Int = 1,
         val providerMessageId: ProviderMessageId? = null,
+        override val operationOrigin: OperationOrigin = OperationOrigin.UNMARKED,
     ) : TransportResult {
         init {
             require(unitIndex >= 0 && unitCount > 0 && unitIndex < unitCount) {
@@ -40,6 +45,7 @@ sealed interface TransportResult {
         val unitIndex: Int = 0,
         val unitCount: Int = 1,
         val providerMessageId: ProviderMessageId? = null,
+        override val operationOrigin: OperationOrigin = OperationOrigin.UNMARKED,
     ) : TransportResult {
         init {
             require(unitIndex >= 0 && unitCount > 0 && unitIndex < unitCount) {
@@ -75,12 +81,35 @@ sealed interface TransportResult {
         val unitIndex: Int = 0,
         val unitCount: Int = 1,
         val providerMessageId: ProviderMessageId? = null,
+        val stage: FailureStage = FailureStage.SUBMISSION,
+        override val operationOrigin: OperationOrigin = OperationOrigin.UNMARKED,
     ) : TransportResult {
         init {
             require(unitIndex >= 0 && unitCount > 0 && unitIndex < unitCount) {
                 "Transport unit position is invalid"
             }
+            require(stage != FailureStage.SUBMISSION_UNKNOWN || !retryable) {
+                "An uncertain submission must never invite an automatic retry"
+            }
         }
+    }
+
+    /** Identifies which transport boundary reported a failure. */
+    enum class FailureStage {
+        /** The platform transport call failed before AuroraSMS received a callback. */
+        SUBMISSION,
+
+        /** The irreversible platform call began but its acceptance could not be proven. */
+        SUBMISSION_UNKNOWN,
+
+        /** The platform sent callback reported that an outbound unit was not sent. */
+        SENT_CALLBACK,
+
+        /** The platform delivery callback reported that an outbound unit was not delivered. */
+        DELIVERY_CALLBACK,
+
+        /** The platform MMS download callback or its completed payload processing failed. */
+        DOWNLOAD_CALLBACK,
     }
 
     enum class FailureReason {
@@ -96,5 +125,13 @@ sealed interface TransportResult {
         PLATFORM_REJECTED,
         CANCELLED,
         INTERNAL_ERROR,
+    }
+
+    enum class OperationOrigin {
+        /** Ordinary operations and callbacks created by builds without an ownership marker. */
+        UNMARKED,
+
+        /** A notification inline-reply operation created with the durable ownership protocol. */
+        INLINE_REPLY,
     }
 }

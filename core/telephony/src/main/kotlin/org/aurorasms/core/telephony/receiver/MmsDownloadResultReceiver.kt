@@ -46,14 +46,9 @@ class MmsDownloadResultReceiver : BroadcastReceiver() {
                         }
                         is EncodedMmsPdu.CreationResult.Rejected -> {
                             entryPoint.onTransportResult(
-                                TransportResult.Failed(
+                                mmsDownloadFailureResult(
                                     operationId = operationId,
-                                    transport = MessageTransportKind.MMS,
-                                    reason = if (downloaded.reason == EncodedMmsPdu.CreationResult.Reason.TOO_LARGE) {
-                                        TransportResult.FailureReason.PAYLOAD_TOO_LARGE
-                                    } else {
-                                        TransportResult.FailureReason.PLATFORM_REJECTED
-                                    },
+                                    reason = downloaded.toFailureReason(),
                                     retryable = false,
                                     platformResultCode = code,
                                 ),
@@ -62,9 +57,8 @@ class MmsDownloadResultReceiver : BroadcastReceiver() {
                     }
                 } else {
                     entryPoint.onTransportResult(
-                        TransportResult.Failed(
+                        mmsDownloadFailureResult(
                             operationId = operationId,
-                            transport = MessageTransportKind.MMS,
                             reason = TransportResult.FailureReason.PLATFORM_REJECTED,
                             retryable = code == SmsManager.MMS_ERROR_RETRY || code == SmsManager.MMS_ERROR_NO_DATA_NETWORK,
                             platformResultCode = code,
@@ -87,3 +81,24 @@ class MmsDownloadResultReceiver : BroadcastReceiver() {
                 .putExtra(MmsSendResultReceiver.EXTRA_STAGED_URI, stagedUri)
     }
 }
+
+private fun EncodedMmsPdu.CreationResult.Rejected.toFailureReason(): TransportResult.FailureReason =
+    if (reason == EncodedMmsPdu.CreationResult.Reason.TOO_LARGE) {
+        TransportResult.FailureReason.PAYLOAD_TOO_LARGE
+    } else {
+        TransportResult.FailureReason.PLATFORM_REJECTED
+    }
+
+internal fun mmsDownloadFailureResult(
+    operationId: MessageId,
+    reason: TransportResult.FailureReason,
+    retryable: Boolean,
+    platformResultCode: Int,
+): TransportResult.Failed = TransportResult.Failed(
+    operationId = operationId,
+    transport = MessageTransportKind.MMS,
+    reason = reason,
+    retryable = retryable,
+    platformResultCode = platformResultCode,
+    stage = TransportResult.FailureStage.DOWNLOAD_CALLBACK,
+)

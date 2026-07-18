@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -168,17 +169,30 @@ internal fun BroadcastReceiver.dispatchAsync(
 ) {
     val entryPoint = context.telephonyEntryPointOrNull() ?: return
     val pendingResult = goAsync()
+    // The broadcast's bounded wait is not ownership of the underlying work.
+    // Cancelling that work at the deadline could strand a provider-backed SMS
+    // between its durable journal checkpoints with no process-local retry.
+    val work = TelephonyReceiverScope.scope.launch {
+        runCatching { block(entryPoint) }
+    }
     TelephonyReceiverScope.scope.launch {
         try {
-            runCatching {
-                withTimeoutOrNull(TelephonyReceiverScope.MAX_RECEIVER_WORK_MILLIS) {
-                    block(entryPoint)
-                }
-            }
+            awaitReceiverWorkWithoutCancelling(
+                work = work,
+                timeoutMillis = TelephonyReceiverScope.MAX_RECEIVER_WORK_MILLIS,
+            )
         } finally {
             pendingResult.finish()
         }
     }
+}
+
+internal suspend fun awaitReceiverWorkWithoutCancelling(
+    work: Job,
+    timeoutMillis: Long,
+) {
+    require(timeoutMillis > 0L)
+    withTimeoutOrNull(timeoutMillis) { work.join() }
 }
 
 private object TelephonyReceiverScope {

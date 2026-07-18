@@ -14,6 +14,13 @@
             android:name="org.aurorasms.app.AuroraSmsRootTestActivity"
             android:exported="false" />
 
+        <!-- Read-only shell probe used by disposable-emulator owner journeys. -->
+        <provider
+            android:name="org.aurorasms.app.debug.DebugSmsSnapshotProvider"
+            android:authorities="org.aurorasms.app.debug.sms_snapshot"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+
         <!-- Debug is not a performance deliverable and exposes no profile control surface. -->
         <provider
             android:name="androidx.startup.InitializationProvider"

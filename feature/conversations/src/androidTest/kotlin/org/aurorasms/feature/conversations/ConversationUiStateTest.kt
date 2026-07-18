@@ -83,6 +83,44 @@ class ConversationUiStateTest {
     }
 
     @Test
+    fun sentMessageWithFailedDeliveryReportIsNotLabeledAsSendFailure() {
+        val ready = readyThreadState()
+        val message = ready.window.items.single().copy(
+            direction = MessageDirection.OUTGOING,
+            box = MessageBox.SENT,
+            status = MessageStatus.FAILED,
+        )
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = ready.copy(window = ready.window.copy(items = listOf(message))),
+                    composer = ComposerUiState(body = "Synthetic draft", saving = false, failed = false),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                )
+            }
+        }
+
+        compose.onNodeWithText("Sent; delivery failed").assertIsDisplayed()
+        compose.onNodeWithText("Failed to send").assertDoesNotExist()
+    }
+
+    @Test
     fun trustedConversationAppearanceActionUsesOnlyTheRouteCallback() {
         var openCount = 0
         compose.setContent {

@@ -2,13 +2,18 @@
 
 package org.aurorasms.app.message
 
+import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ParticipantAddress
+import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.notifications.InlineReplyDisposition
 import org.aurorasms.core.notifications.InlineReplyRequest
@@ -16,23 +21,27 @@ import org.aurorasms.core.testing.FakeMessageNotifier
 import org.aurorasms.core.testing.FakeMessageTransport
 import org.aurorasms.core.testing.FakeRoleState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class InlineReplyOrchestratorTest {
     @Test
-    fun validReplyIsOwnedOnceAndUsesExactTarget() = runTest {
+    fun submittedReplyIsOwnedOnceUsesExactTargetAndWaitsForSentCallback() = runTest {
         val conversationId = ConversationId(41)
         val recipient = ParticipantAddress("+12025550131")
         val targets = ReplyTargetRegistry(clockMillis = { NOW }).apply {
             remember("SMS:501", conversationId, recipient, AuroraSubscriptionId(2))
         }
-        val transport = FakeMessageTransport()
+        val observedPhases = mutableListOf<String>()
+        val transport = successfulObservedTransport(observedPhases)
         val notifier = FakeMessageNotifier()
+        val operations = replyOperations()
         val orchestrator = InlineReplyOrchestrator(
             roleState = FakeRoleState(held = true),
             replyTargets = targets,
             replayGuard = inMemoryReplayGuard(),
+            replyOperations = operations,
             messageTransport = transport,
             messageNotifier = notifier,
             clockMillis = { NOW },
@@ -48,7 +57,242 @@ class InlineReplyOrchestratorTest {
         assertEquals(1, transport.smsRequests.size)
         assertEquals(recipient, transport.smsRequests.single().recipients.singleSmsRecipientOrNull())
         assertEquals(AuroraSubscriptionId(2), transport.smsRequests.single().subscriptionId)
+        assertEquals(listOf("prepared", "submitting"), observedPhases)
+        assertEquals(
+            ReplyOperationPendingFailuresResult.Available(emptyList()),
+            operations.pendingFailures(),
+        )
+        assertEquals(emptyList<ConversationId>(), notifier.replyFailures)
+        assertEquals(emptyList<ConversationId>(), notifier.cancelledConversations)
+    }
+
+    @Test
+    fun submittingCheckpointRefusalFailsClosedAsKnownUnsent() = runTest {
+        val conversationId = ConversationId(412)
+        val operations = replyOperations()
+        val notifier = FakeMessageNotifier()
+        val providerId = ProviderMessageId(ProviderKind.SMS, 9_412L)
+        var platformSubmissionCount = 0
+        val transport = FakeMessageTransport().apply {
+            smsResponderWithObserver = { request, observer ->
+                assertTrue(observer.onPrepared(providerId, unitCount = 1))
+                // A changed unit count proves that durable ownership refuses an
+                // inconsistent irreversible-submission checkpoint.
+                val submissionAllowed = observer.onSubmitting(providerId, unitCount = 2)
+                if (submissionAllowed) platformSubmissionCount += 1
+                assertEquals(false, submissionAllowed)
+                TransportResult.Failed(
+                    operationId = request.operationId,
+                    transport = MessageTransportKind.SMS,
+                    reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                    retryable = true,
+                    providerMessageId = providerId,
+                    stage = TransportResult.FailureStage.SUBMISSION,
+                )
+            }
+        }
+        val orchestrator = InlineReplyOrchestrator(
+            roleState = FakeRoleState(held = true),
+            replyTargets = replyTargets(conversationId),
+            replayGuard = inMemoryReplayGuard(),
+            replyOperations = operations,
+            messageTransport = transport,
+            messageNotifier = notifier,
+            clockMillis = { NOW },
+        )
+        val request = replyRequest(conversationId)
+
+        assertEquals(InlineReplyDisposition.ACCEPTED, orchestrator.handle(request))
+        assertEquals(InlineReplyDisposition.REJECTED, orchestrator.handle(request))
+        advanceUntilIdle()
+
+        assertEquals(0, platformSubmissionCount)
+        assertEquals(1, transport.smsRequests.size)
+        assertEquals(listOf(conversationId), notifier.replyFailures)
+        assertEquals(emptyList<ConversationId>(), notifier.cancelledConversations)
+        assertNotifiedFailure(
+            operations = operations,
+            operationId = transport.smsRequests.single().operationId,
+            conversationId = conversationId,
+            failureKind = ReplyOperationFailureKind.KNOWN_UNSENT,
+        )
+    }
+
+    @Test
+    fun runtimeFailureAfterSubmittingRecoversAsUnknownWithoutRetryOrCancellation() = runTest {
+        val conversationId = ConversationId(413)
+        val operations = replyOperations()
+        val notifier = FakeMessageNotifier()
+        val providerId = ProviderMessageId(ProviderKind.SMS, 9_413L)
+        val transport = FakeMessageTransport().apply {
+            smsResponderWithObserver = { _, observer ->
+                assertTrue(observer.onPrepared(providerId, unitCount = 1))
+                assertTrue(observer.onSubmitting(providerId, unitCount = 1))
+                throw IllegalStateException("synthetic failure after submitting checkpoint")
+            }
+        }
+        val orchestrator = InlineReplyOrchestrator(
+            roleState = FakeRoleState(held = true),
+            replyTargets = replyTargets(conversationId),
+            replayGuard = inMemoryReplayGuard(),
+            replyOperations = operations,
+            messageTransport = transport,
+            messageNotifier = notifier,
+            clockMillis = { NOW },
+        )
+        val request = replyRequest(conversationId)
+
+        assertEquals(InlineReplyDisposition.ACCEPTED, orchestrator.handle(request))
+        assertEquals(InlineReplyDisposition.REJECTED, orchestrator.handle(request))
+        advanceUntilIdle()
+
+        assertEquals(1, transport.smsRequests.size)
+        assertEquals(listOf(conversationId), notifier.replyFailures)
+        assertEquals(emptyList<ConversationId>(), notifier.cancelledConversations)
+        assertNotifiedFailure(
+            operations = operations,
+            operationId = transport.smsRequests.single().operationId,
+            conversationId = conversationId,
+            failureKind = ReplyOperationFailureKind.SUBMISSION_UNKNOWN,
+        )
+    }
+
+    @Test
+    fun cancellationAfterSubmittingIsRethrownAndDurablyRecoveredAsUnknown() = runTest {
+        val conversationId = ConversationId(414)
+        val operations = replyOperations()
+        val notifier = FakeMessageNotifier()
+        val providerId = ProviderMessageId(ProviderKind.SMS, 9_414L)
+        val transport = FakeMessageTransport().apply {
+            smsResponderWithObserver = { _, observer ->
+                assertTrue(observer.onPrepared(providerId, unitCount = 1))
+                assertTrue(observer.onSubmitting(providerId, unitCount = 1))
+                throw CancellationException("synthetic caller cancellation")
+            }
+        }
+        val orchestrator = InlineReplyOrchestrator(
+            roleState = FakeRoleState(held = true),
+            replyTargets = replyTargets(conversationId),
+            replayGuard = inMemoryReplayGuard(),
+            replyOperations = operations,
+            messageTransport = transport,
+            messageNotifier = notifier,
+            clockMillis = { NOW },
+        )
+        val request = replyRequest(conversationId)
+
+        var cancellationWasRethrown = false
+        try {
+            orchestrator.handle(request)
+        } catch (_: CancellationException) {
+            cancellationWasRethrown = true
+        }
+        assertTrue(cancellationWasRethrown)
+        assertEquals(InlineReplyDisposition.REJECTED, orchestrator.handle(request))
+        advanceUntilIdle()
+
+        assertEquals(1, transport.smsRequests.size)
+        assertEquals(listOf(conversationId), notifier.replyFailures)
+        assertEquals(emptyList<ConversationId>(), notifier.cancelledConversations)
+        assertNotifiedFailure(
+            operations = operations,
+            operationId = transport.smsRequests.single().operationId,
+            conversationId = conversationId,
+            failureKind = ReplyOperationFailureKind.SUBMISSION_UNKNOWN,
+        )
+    }
+
+    @Test
+    fun failureCallbackBeforeSubmittedReturnCannotBeHiddenByLaterCancellation() = runTest {
+        val conversationId = ConversationId(410)
+        val operations = replyOperations()
+        val notifier = FakeMessageNotifier()
+        val callbackHandler = InlineReplyTransportResultHandler(operations, notifier)
+        val transport = FakeMessageTransport().apply {
+            smsResponderWithObserver = { request, observer ->
+                val providerId = ProviderMessageId(ProviderKind.SMS, 9_410L)
+                assertTrue(observer.onPrepared(providerId, unitCount = 1))
+                assertTrue(observer.onSubmitting(providerId, unitCount = 1))
+                callbackHandler.handle(
+                    TransportResult.Failed(
+                        operationId = request.operationId,
+                        transport = MessageTransportKind.SMS,
+                        reason = TransportResult.FailureReason.PLATFORM_REJECTED,
+                        retryable = true,
+                        stage = TransportResult.FailureStage.SENT_CALLBACK,
+                        providerMessageId = providerId,
+                    ),
+                )
+                TransportResult.Submitted(
+                    operationId = request.operationId,
+                    transport = MessageTransportKind.SMS,
+                    unitCount = 1,
+                    providerMessageId = providerId,
+                )
+            }
+        }
+        val orchestrator = InlineReplyOrchestrator(
+            roleState = FakeRoleState(held = true),
+            replyTargets = replyTargets(conversationId),
+            replayGuard = inMemoryReplayGuard(),
+            replyOperations = operations,
+            messageTransport = transport,
+            messageNotifier = notifier,
+            clockMillis = { NOW },
+        )
+
+        assertEquals(InlineReplyDisposition.ACCEPTED, orchestrator.handle(replyRequest(conversationId)))
+        advanceUntilIdle()
+
+        assertEquals(listOf(conversationId), notifier.replyFailures)
+        assertEquals(emptyList<ConversationId>(), notifier.cancelledConversations)
+    }
+
+    @Test
+    fun successCallbackBeforeSubmittedReturnCancelsSourceNotificationExactlyOnce() = runTest {
+        val conversationId = ConversationId(415)
+        val operations = replyOperations()
+        val notifier = FakeMessageNotifier()
+        val callbackHandler = InlineReplyTransportResultHandler(operations, notifier)
+        val transport = FakeMessageTransport().apply {
+            smsResponderWithObserver = { request, observer ->
+                val providerId = ProviderMessageId(ProviderKind.SMS, 9_415L)
+                assertTrue(observer.onPrepared(providerId, unitCount = 1))
+                assertTrue(observer.onSubmitting(providerId, unitCount = 1))
+                callbackHandler.handle(
+                    TransportResult.Sent(
+                        operationId = request.operationId,
+                        transport = MessageTransportKind.SMS,
+                        platformResultCode = 0,
+                        unitIndex = 0,
+                        unitCount = 1,
+                        providerMessageId = providerId,
+                    ),
+                )
+                TransportResult.Submitted(
+                    operationId = request.operationId,
+                    transport = MessageTransportKind.SMS,
+                    unitCount = 1,
+                    providerMessageId = providerId,
+                )
+            }
+        }
+        val orchestrator = InlineReplyOrchestrator(
+            roleState = FakeRoleState(held = true),
+            replyTargets = replyTargets(conversationId),
+            replayGuard = inMemoryReplayGuard(),
+            replyOperations = operations,
+            transportResultHandler = callbackHandler,
+            messageTransport = transport,
+            messageNotifier = notifier,
+            clockMillis = { NOW },
+        )
+
+        assertEquals(InlineReplyDisposition.ACCEPTED, orchestrator.handle(replyRequest(conversationId)))
+        advanceUntilIdle()
+
         assertEquals(listOf(conversationId), notifier.cancelledConversations)
+        assertEquals(emptyList<ConversationId>(), notifier.replyFailures)
     }
 
     @Test
@@ -69,11 +313,12 @@ class InlineReplyOrchestratorTest {
                 AuroraSubscriptionId(2),
             )
         }
-        val transport = FakeMessageTransport()
+        val transport = successfulObservedTransport()
         val orchestrator = InlineReplyOrchestrator(
             roleState = FakeRoleState(held = true),
             replyTargets = targets,
             replayGuard = inMemoryReplayGuard(),
+            replyOperations = replyOperations(),
             messageTransport = transport,
             messageNotifier = FakeMessageNotifier(),
             clockMillis = { NOW },
@@ -106,6 +351,7 @@ class InlineReplyOrchestratorTest {
             roleState = FakeRoleState(held = false),
             replyTargets = targets,
             replayGuard = inMemoryReplayGuard(),
+            replyOperations = replyOperations(),
             messageTransport = transport,
             messageNotifier = FakeMessageNotifier(),
             clockMillis = { NOW },
@@ -116,6 +362,44 @@ class InlineReplyOrchestratorTest {
 
         assertEquals(InlineReplyDisposition.REJECTED, result)
         assertEquals(0, transport.smsRequests.size)
+    }
+
+    @Test
+    fun operationJournalSaturationFailsBeforeClaimOrTransport() = runTest {
+        val conversationId = ConversationId(421)
+        val nextIdentifier = AtomicLong(20_000L)
+        val operations = ReplyOperationRegistry(
+            store = InMemoryReplyOperationStore(maximumEntries = 1),
+            clockMillis = { NOW },
+            identifierGenerator = ReplyOperationIdentifierGenerator {
+                nextIdentifier.incrementAndGet()
+            },
+        )
+        assertTrue(
+            operations.reserve(
+                ConversationId(999L),
+                MessageId(ProviderKind.SMS, 999L),
+            ) is ReplyOperationReservationResult.Reserved,
+        )
+        val claims = mutableSetOf<String>()
+        val transport = FakeMessageTransport()
+        val notifier = FakeMessageNotifier()
+        val orchestrator = InlineReplyOrchestrator(
+            roleState = FakeRoleState(held = true),
+            replyTargets = replyTargets(conversationId),
+            replayGuard = inMemoryReplayGuard(claims),
+            replyOperations = operations,
+            messageTransport = transport,
+            messageNotifier = notifier,
+            clockMillis = { NOW },
+        )
+
+        assertEquals(InlineReplyDisposition.REJECTED, orchestrator.handle(replyRequest(conversationId)))
+        advanceUntilIdle()
+
+        assertEquals(emptySet<String>(), claims)
+        assertEquals(0, transport.smsRequests.size)
+        assertEquals(emptyList<ConversationId>(), notifier.replyFailures)
     }
 
     @Test
@@ -133,7 +417,7 @@ class InlineReplyOrchestratorTest {
         )
         val durableClaims = mutableSetOf<String>()
         val replayGuard = inMemoryReplayGuard(durableClaims)
-        val firstTransport = FakeMessageTransport()
+        val firstTransport = successfulObservedTransport()
         val first = orchestrator(
             targets = ReplyTargetRegistry(
                 clockMillis = { NOW },
@@ -147,7 +431,7 @@ class InlineReplyOrchestratorTest {
         assertEquals(InlineReplyDisposition.ACCEPTED, first.handle(request))
         advanceUntilIdle()
 
-        val recreatedTransport = FakeMessageTransport()
+        val recreatedTransport = successfulObservedTransport()
         val recreated = orchestrator(
             targets = ReplyTargetRegistry(
                 clockMillis = { NOW },
@@ -179,11 +463,12 @@ class InlineReplyOrchestratorTest {
             )
         }
         val claims = mutableSetOf<String>()
-        val transport = FakeMessageTransport()
+        val transport = successfulObservedTransport()
         val orchestrator = InlineReplyOrchestrator(
             roleState = FakeRoleState(held = true),
             replyTargets = targets,
             replayGuard = inMemoryReplayGuard(claims),
+            replyOperations = replyOperations(clockMillis = { now }),
             messageTransport = transport,
             messageNotifier = FakeMessageNotifier(),
             clockMillis = { now },
@@ -201,7 +486,7 @@ class InlineReplyOrchestratorTest {
     fun moreThanFormerMemoryBoundDoesNotMakeOldClaimReplayable() = runTest {
         val conversationId = ConversationId(45)
         val claims = mutableSetOf<String>()
-        val transport = FakeMessageTransport()
+        val transport = successfulObservedTransport()
         val targets = ReplyTargetRegistry(
             maximumEntries = 512,
             clockMillis = { NOW },
@@ -251,6 +536,7 @@ class InlineReplyOrchestratorTest {
             roleState = FakeRoleState(held = true),
             replyTargets = replyTargets(conversationId),
             replayGuard = inMemoryReplayGuard(),
+            replyOperations = replyOperations(),
             messageTransport = transport,
             messageNotifier = notifier,
             clockMillis = { NOW },
@@ -271,10 +557,48 @@ class InlineReplyOrchestratorTest {
         roleState = FakeRoleState(held = true),
         replyTargets = targets,
         replayGuard = replayGuard,
+        replyOperations = replyOperations(),
         messageTransport = transport,
         messageNotifier = FakeMessageNotifier(),
         clockMillis = { NOW },
     )
+
+    private fun successfulObservedTransport(
+        observedPhases: MutableList<String> = mutableListOf(),
+    ) = FakeMessageTransport().apply {
+        smsResponderWithObserver = { request, observer ->
+            val providerId = ProviderMessageId(ProviderKind.SMS, request.operationId.value)
+            observedPhases += "prepared"
+            check(observer.onPrepared(providerId, unitCount = 1))
+            observedPhases += "submitting"
+            check(observer.onSubmitting(providerId, unitCount = 1))
+            TransportResult.Submitted(
+                operationId = request.operationId,
+                transport = MessageTransportKind.SMS,
+                unitCount = 1,
+                providerMessageId = providerId,
+            )
+        }
+    }
+
+    private fun assertNotifiedFailure(
+        operations: ReplyOperationRegistry,
+        operationId: MessageId,
+        conversationId: ConversationId,
+        failureKind: ReplyOperationFailureKind,
+    ) {
+        assertEquals(
+            ReplyOperationInterruptedRecoveryResult.Notified(
+                ReplyOperationPendingFailure(
+                    operationId = operationId,
+                    conversationId = conversationId,
+                    sourceMessageId = MessageId(ProviderKind.SMS, 501L),
+                    failureKind = failureKind,
+                ),
+            ),
+            operations.recoverInterruptedOperation(operationId),
+        )
+    }
 
     private fun replyTargets(conversationId: ConversationId) =
         ReplyTargetRegistry(clockMillis = { NOW }).apply {
@@ -289,6 +613,19 @@ class InlineReplyOrchestratorTest {
     private fun inMemoryReplayGuard(
         claims: MutableSet<String> = mutableSetOf(),
     ) = ReplyReplayGuard { claim, _ -> claims.add(claim.requestId) }
+
+    private fun replyOperations(
+        clockMillis: () -> Long = { NOW },
+    ): ReplyOperationRegistry {
+        val nextIdentifier = AtomicLong(10_000L)
+        return ReplyOperationRegistry(
+            store = InMemoryReplyOperationStore(maximumEntries = 4_096),
+            clockMillis = clockMillis,
+            identifierGenerator = ReplyOperationIdentifierGenerator {
+                nextIdentifier.incrementAndGet()
+            },
+        )
+    }
 
     private fun replyRequest(
         conversationId: ConversationId,

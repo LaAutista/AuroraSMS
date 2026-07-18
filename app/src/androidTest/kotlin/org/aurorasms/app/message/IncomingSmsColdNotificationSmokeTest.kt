@@ -62,6 +62,11 @@ class IncomingSmsColdNotificationSmokeTest {
         runJourney(MULTIPLE_MESSAGE_CONTRACT)
     }
 
+    @Test
+    fun realModemSmsSupportsColdInlineReplyPermissionDeniedJourney() {
+        runJourney(INLINE_REPLY_PERMISSION_DENIED_CONTRACT)
+    }
+
     private fun runJourney(contract: JourneyContract) {
         requireGate(contract.gateArgument)
         assumeTrue(contract.apiRequiredMessage, Build.VERSION.SDK_INT == contract.expectedSdk)
@@ -300,16 +305,23 @@ class IncomingSmsColdNotificationSmokeTest {
         val notificationJournal = journals
             .filter { it.providerId > 0L }
             .maxWithOrNull(compareBy<JournalEntry>({ it.receivedAtMillis }, { it.providerId }))
-        val activeNotification = controlledActiveNotification(context, threadId, notificationJournal)
+        val controlledNotifications = controlledActiveNotifications(
+            context,
+            threadId,
+            notificationJournal,
+            contract,
+        )
         requireFixed(
             notificationChannelSnapshot(context) == snapshot.channels,
             CHANNEL_BASELINE_CHANGED,
         )
 
-        activeNotification?.let { notification ->
+        if (controlledNotifications.isNotEmpty()) {
             val manager = context.getSystemService(NotificationManager::class.java)
                 ?: failFixed(NOTIFICATION_MANAGER_UNAVAILABLE)
-            manager.cancel(notification.tag, notification.id)
+            controlledNotifications.forEach { notification ->
+                manager.cancel(notification.tag, notification.id)
+            }
         }
 
         if (rows.isNotEmpty()) {
@@ -534,6 +546,13 @@ class IncomingSmsColdNotificationSmokeTest {
             JOURNAL_SENT_TIME_INVALID,
         )
         requireFixed(journal.updatedAtMillis >= journal.receivedAtMillis, JOURNAL_UPDATED_TIME_INVALID)
+        requireFixed(
+            journal.providerContentDigest == expectedProviderContentDigest(
+                sender = FIXTURE_SENDER,
+                body = delivery.body,
+            ),
+            JOURNAL_PROVIDER_CONTENT_DIGEST_INVALID,
+        )
         if (row != null) {
             requireFixed(journal.receivedAtMillis == row.receivedAtMillis, JOURNAL_RECEIVED_TIME_INVALID)
             requireFixed(journal.sentAtMillis == row.sentAtMillis, JOURNAL_SENT_TIME_INVALID)
@@ -611,35 +630,120 @@ class IncomingSmsColdNotificationSmokeTest {
         val fields = encoded.split(REPLY_TARGET_SEPARATOR)
         requireFixed(fields.size == REPLY_TARGET_FIELD_COUNT, REPLY_TARGET_ENCODING_INVALID)
         requireFixed(fields[0] == REPLY_TARGET_VERSION, REPLY_TARGET_ENCODING_INVALID)
-        requireFixed(fields[1].toLongOrNull() == conversationId, REPLY_TARGET_IDENTITY_INVALID)
-        requireFixed(fields[2].toIntOrNull() == subscriptionId, REPLY_TARGET_SUBSCRIPTION_INVALID)
+        val requestId = "${ProviderKind.SMS.name}:$providerId"
         requireFixed(
-            fields[3].toLongOrNull()?.let { it > System.currentTimeMillis() } == true,
+            fields[1] == encodeCanonicalReplyTargetText(requestId),
+            REPLY_TARGET_IDENTITY_INVALID,
+        )
+        requireFixed(
+            fields[2].toLongOrNull() == conversationId &&
+                fields[2] == conversationId.toString(),
+            REPLY_TARGET_IDENTITY_INVALID,
+        )
+        requireFixed(
+            fields[3].toIntOrNull() == subscriptionId &&
+                fields[3] == subscriptionId.toString(),
+            REPLY_TARGET_SUBSCRIPTION_INVALID,
+        )
+        requireFixed(
+            fields[4].toLongOrNull()?.let {
+                it > System.currentTimeMillis() && fields[4] == it.toString()
+            } == true,
             REPLY_TARGET_EXPIRY_INVALID,
         )
         val decodedAddress = runCatching {
             String(
                 Base64.decode(
-                    fields[4],
-                    Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING,
+                    fields[5],
+                    REPLY_TARGET_BASE64_FLAGS,
                 ),
                 Charsets.UTF_8,
             )
         }.getOrNull()
-        requireFixed(decodedAddress == FIXTURE_SENDER, REPLY_TARGET_RECIPIENT_INVALID)
+        requireFixed(
+            decodedAddress == FIXTURE_SENDER &&
+                fields[5] == encodeCanonicalReplyTargetText(FIXTURE_SENDER),
+            REPLY_TARGET_RECIPIENT_INVALID,
+        )
+        val expectedChecksum = sha256Hex(
+            fields.dropLast(1)
+                .joinToString(REPLY_TARGET_SEPARATOR)
+                .toByteArray(StandardCharsets.UTF_8),
+        )
+        requireFixed(
+            REPLY_TARGET_SHA256_PATTERN.matches(fields[6]) &&
+                MessageDigest.isEqual(
+                    fields[6].toByteArray(StandardCharsets.US_ASCII),
+                    expectedChecksum.toByteArray(StandardCharsets.US_ASCII),
+                ),
+            REPLY_TARGET_ENCODING_INVALID,
+        )
     }
 
-    private fun controlledActiveNotification(
+    private fun encodeCanonicalReplyTargetText(value: String): String = Base64.encodeToString(
+        value.toByteArray(StandardCharsets.UTF_8),
+        REPLY_TARGET_BASE64_FLAGS,
+    )
+
+    private fun sha256Hex(value: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(value).joinToString("") { byte ->
+            "%02x".format(byte.toInt() and 0xff)
+        }
+
+    private fun controlledActiveNotifications(
         context: Context,
         threadId: Long?,
         journal: JournalEntry?,
-    ): StatusBarNotification? {
+        contract: JourneyContract,
+    ): List<StatusBarNotification> {
         val active = activeNotifications(context)
-        requireFixed(active.size <= 1, NOTIFICATION_DELTA_AMBIGUOUS)
-        val status = active.singleOrNull() ?: return null
+        val maximumActiveNotifications = if (contract.allowReplyFailureNotification) 2 else 1
+        requireFixed(active.size <= maximumActiveNotifications, NOTIFICATION_DELTA_AMBIGUOUS)
+        if (active.isEmpty()) return emptyList()
         val conversation = threadId ?: failFixed(NOTIFICATION_IDENTITY_INVALID)
         val expectedId = notificationId(conversation)
         val expectedTag = "$CONVERSATION_NOTIFICATION_TAG_PREFIX$conversation"
+        val expectedFailureId = expectedId xor REPLY_FAILURE_ID_MASK
+        val expectedFailureTag = "$REPLY_FAILURE_NOTIFICATION_TAG_PREFIX$conversation"
+        val conversationStatus = active.singleOrNull { status ->
+            status.id == expectedId && status.tag == expectedTag
+        }
+        val failureStatus = active.singleOrNull { status ->
+            status.id == expectedFailureId && status.tag == expectedFailureTag
+        }
+        requireFixed(
+            contract.allowReplyFailureNotification || failureStatus == null,
+            NOTIFICATION_DELTA_AMBIGUOUS,
+        )
+        requireFixed(
+            active.all { status ->
+                status === conversationStatus ||
+                    contract.allowReplyFailureNotification && status === failureStatus
+            },
+            NOTIFICATION_DELTA_AMBIGUOUS,
+        )
+        conversationStatus?.let { status ->
+            assertControlledConversationNotification(
+                context = context,
+                status = status,
+                journal = journal,
+                expectedId = expectedId,
+                expectedTag = expectedTag,
+            )
+        }
+        failureStatus?.let { status ->
+            assertControlledReplyFailureNotification(context, status)
+        }
+        return active.toList()
+    }
+
+    private fun assertControlledConversationNotification(
+        context: Context,
+        status: StatusBarNotification,
+        journal: JournalEntry?,
+        expectedId: Int,
+        expectedTag: String,
+    ) {
         val notification = status.notification
         val contentIntent = notification.contentIntent
             ?: failFixed(NOTIFICATION_CONTRACT_INVALID)
@@ -666,7 +770,29 @@ class IncomingSmsColdNotificationSmokeTest {
                 contentIntent.isActivity,
             NOTIFICATION_CONTRACT_INVALID,
         )
-        return status
+    }
+
+    private fun assertControlledReplyFailureNotification(
+        context: Context,
+        status: StatusBarNotification,
+    ) {
+        val notification = status.notification
+        val contentIntent = notification.contentIntent
+            ?: failFixed(NOTIFICATION_CONTRACT_INVALID)
+        requireFixed(
+            status.packageName == TARGET_PACKAGE &&
+                status.uid == context.applicationInfo.uid &&
+                status.isClearable &&
+                notification.channelId == NotificationChannels.REPLY_FAILURES &&
+                notification.category == Notification.CATEGORY_ERROR &&
+                notification.visibility == Notification.VISIBILITY_PRIVATE &&
+                notification.flags and Notification.FLAG_AUTO_CANCEL != 0 &&
+                notification.actions.orEmpty().isEmpty() &&
+                contentIntent.creatorPackage == TARGET_PACKAGE &&
+                contentIntent.creatorUid == context.applicationInfo.uid &&
+                contentIntent.isActivity,
+            NOTIFICATION_CONTRACT_INVALID,
+        )
     }
 
     private fun notificationId(conversationId: Long): Int {
@@ -854,6 +980,25 @@ class IncomingSmsColdNotificationSmokeTest {
             val fields = encoded.split(JOURNAL_SEPARATOR)
             requireFixed(fields.size == JOURNAL_FIELD_COUNT, JOURNAL_ENCODING_INVALID)
             requireFixed(fields[0] == JOURNAL_VERSION, JOURNAL_ENCODING_INVALID)
+            val storageToken = key.removePrefix(JOURNAL_KEY_PREFIX)
+            requireFixed(
+                key == JOURNAL_KEY_PREFIX + storageToken &&
+                    JOURNAL_STORAGE_TOKEN_PATTERN.matches(storageToken),
+                JOURNAL_KEY_INVALID,
+            )
+            val actualChecksum = fields.last()
+            val expectedChecksum = expectedJournalChecksum(
+                storageToken = storageToken,
+                payload = fields.dropLast(1).joinToString(JOURNAL_SEPARATOR),
+            )
+            requireFixed(
+                JOURNAL_SHA256_PATTERN.matches(actualChecksum) &&
+                    MessageDigest.isEqual(
+                        actualChecksum.toByteArray(StandardCharsets.US_ASCII),
+                        expectedChecksum.toByteArray(StandardCharsets.US_ASCII),
+                    ),
+                JOURNAL_ENCODING_INVALID,
+            )
             JournalEntry(
                 key = key,
                 recoveryToken = fields[1],
@@ -864,6 +1009,9 @@ class IncomingSmsColdNotificationSmokeTest {
                 sentAtMillis = fields[6].toLongOrNull() ?: failFixed(JOURNAL_ENCODING_INVALID),
                 subscriptionId = fields[7].toIntOrNull() ?: failFixed(JOURNAL_ENCODING_INVALID),
                 updatedAtMillis = fields[8].toLongOrNull() ?: failFixed(JOURNAL_ENCODING_INVALID),
+                providerContentDigest = fields[9].takeIf(
+                    JOURNAL_PROVIDER_CONTENT_DIGEST_PATTERN::matches,
+                ) ?: failFixed(JOURNAL_ENCODING_INVALID),
             )
         }
 
@@ -938,6 +1086,29 @@ class IncomingSmsColdNotificationSmokeTest {
         update((value ushr 8).toByte())
         update(value.toByte())
     }
+
+    private fun expectedProviderContentDigest(sender: String, body: String): String {
+        val senderBytes = sender.toByteArray(StandardCharsets.UTF_8)
+        val bodyBytes = body.toByteArray(StandardCharsets.UTF_8)
+        return MessageDigest.getInstance("SHA-256").apply {
+            update(PROVIDER_CONTENT_DIGEST_DOMAIN)
+            updateInt(senderBytes.size)
+            update(senderBytes)
+            updateInt(bodyBytes.size)
+            update(bodyBytes)
+        }.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
+    private fun expectedJournalChecksum(storageToken: String, payload: String): String =
+        MessageDigest.getInstance("SHA-256").apply {
+            update(JOURNAL_CHECKSUM_DOMAIN)
+            update(byteArrayOf(0))
+            update(storageToken.toByteArray(StandardCharsets.US_ASCII))
+            update(byteArrayOf(0))
+            update(payload.toByteArray(StandardCharsets.UTF_8))
+        }.digest().joinToString("") { byte ->
+            "%02x".format(byte.toInt() and 0xff)
+        }
 
     private fun notificationChannelSnapshot(context: Context): Set<String> {
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -1059,6 +1230,7 @@ class IncomingSmsColdNotificationSmokeTest {
         val apiRequiredMessage: String,
         val checkpointValue: String,
         val notificationsEnabled: Boolean,
+        val allowReplyFailureNotification: Boolean,
         val prepareStatusCode: Int,
         val verifyStatusCode: Int,
         val cleanupStatusCode: Int,
@@ -1121,6 +1293,7 @@ class IncomingSmsColdNotificationSmokeTest {
         val sentAtMillis: Long,
         val subscriptionId: Int,
         val updatedAtMillis: Long,
+        val providerContentDigest: String,
     ) {
         override fun toString(): String = "JournalEntry(state=$state, REDACTED)"
     }
@@ -1138,6 +1311,10 @@ class IncomingSmsColdNotificationSmokeTest {
             "auroraEmulatorIncomingSmsMultipleMessage"
         const val MULTIPLE_MESSAGE_PHASE_ARGUMENT =
             "auroraEmulatorIncomingSmsMultipleMessagePhase"
+        const val INLINE_REPLY_PERMISSION_DENIED_GATE_ARGUMENT =
+            "auroraEmulatorInlineReplyPermissionDenied"
+        const val INLINE_REPLY_PERMISSION_DENIED_PHASE_ARGUMENT =
+            "auroraEmulatorInlineReplyPermissionDeniedPhase"
         const val EMITTED_PDU_ARGUMENT = "auroraEmulatorIncomingSmsEmittedPduHex"
         const val PHASE_PREPARE = "prepare"
         const val PHASE_VERIFY = "verify"
@@ -1166,6 +1343,15 @@ class IncomingSmsColdNotificationSmokeTest {
             "auroraMultipleMessageVerifyResult"
         const val MULTIPLE_MESSAGE_CLEANUP_SENTINEL =
             "auroraMultipleMessageCleanupResult"
+        const val INLINE_REPLY_PERMISSION_DENIED_PREPARE_STATUS_CODE = 55
+        const val INLINE_REPLY_PERMISSION_DENIED_VERIFY_STATUS_CODE = 56
+        const val INLINE_REPLY_PERMISSION_DENIED_CLEANUP_STATUS_CODE = 57
+        const val INLINE_REPLY_PERMISSION_DENIED_PREPARE_SENTINEL =
+            "auroraInlineReplyPermissionDeniedPrepareResult"
+        const val INLINE_REPLY_PERMISSION_DENIED_VERIFY_SENTINEL =
+            "auroraInlineReplyPermissionDeniedVerifyResult"
+        const val INLINE_REPLY_PERMISSION_DENIED_CLEANUP_SENTINEL =
+            "auroraInlineReplyPermissionDeniedCleanupResult"
         const val PASS = "pass"
 
         val COLD_NOTIFICATION_CONTRACT = JourneyContract(
@@ -1175,6 +1361,7 @@ class IncomingSmsColdNotificationSmokeTest {
             apiRequiredMessage = API_26_REQUIRED,
             checkpointValue = JOURNEY_COLD_NOTIFICATION,
             notificationsEnabled = true,
+            allowReplyFailureNotification = false,
             prepareStatusCode = PREPARE_STATUS_CODE,
             verifyStatusCode = VERIFY_STATUS_CODE,
             cleanupStatusCode = CLEANUP_STATUS_CODE,
@@ -1193,6 +1380,7 @@ class IncomingSmsColdNotificationSmokeTest {
             apiRequiredMessage = API_36_REQUIRED,
             checkpointValue = JOURNEY_NOTIFICATION_DENIED,
             notificationsEnabled = false,
+            allowReplyFailureNotification = false,
             prepareStatusCode = NOTIFICATION_DENIED_PREPARE_STATUS_CODE,
             verifyStatusCode = NOTIFICATION_DENIED_VERIFY_STATUS_CODE,
             cleanupStatusCode = NOTIFICATION_DENIED_CLEANUP_STATUS_CODE,
@@ -1211,6 +1399,7 @@ class IncomingSmsColdNotificationSmokeTest {
             apiRequiredMessage = API_26_REQUIRED,
             checkpointValue = JOURNEY_MULTIPLE_MESSAGE,
             notificationsEnabled = true,
+            allowReplyFailureNotification = false,
             prepareStatusCode = MULTIPLE_MESSAGE_PREPARE_STATUS_CODE,
             verifyStatusCode = MULTIPLE_MESSAGE_VERIFY_STATUS_CODE,
             cleanupStatusCode = MULTIPLE_MESSAGE_CLEANUP_STATUS_CODE,
@@ -1224,6 +1413,25 @@ class IncomingSmsColdNotificationSmokeTest {
                 FIXTURE_SENT_TIMESTAMP_MILLIS,
                 MULTIPLE_MESSAGE_SECOND_SENT_TIMESTAMP_MILLIS,
             ),
+        )
+        val INLINE_REPLY_PERMISSION_DENIED_CONTRACT = JourneyContract(
+            gateArgument = INLINE_REPLY_PERMISSION_DENIED_GATE_ARGUMENT,
+            phaseArgument = INLINE_REPLY_PERMISSION_DENIED_PHASE_ARGUMENT,
+            expectedSdk = Build.VERSION_CODES.O,
+            apiRequiredMessage = API_26_REQUIRED,
+            checkpointValue = JOURNEY_INLINE_REPLY_PERMISSION_DENIED,
+            notificationsEnabled = true,
+            allowReplyFailureNotification = true,
+            prepareStatusCode = INLINE_REPLY_PERMISSION_DENIED_PREPARE_STATUS_CODE,
+            verifyStatusCode = INLINE_REPLY_PERMISSION_DENIED_VERIFY_STATUS_CODE,
+            cleanupStatusCode = INLINE_REPLY_PERMISSION_DENIED_CLEANUP_STATUS_CODE,
+            prepareSentinel = INLINE_REPLY_PERMISSION_DENIED_PREPARE_SENTINEL,
+            verifySentinel = INLINE_REPLY_PERMISSION_DENIED_VERIFY_SENTINEL,
+            cleanupSentinel = INLINE_REPLY_PERMISSION_DENIED_CLEANUP_SENTINEL,
+            emittedPduArgument = null,
+            expectedBodies = listOf(FIXTURE_BODY),
+            fixedPduHexes = listOf(FIXTURE_PDU_HEX),
+            fixedSentTimestampsMillis = listOf(FIXTURE_SENT_TIMESTAMP_MILLIS),
         )
 
         const val FIXTURE_SENDER = "+15551230017"
@@ -1244,6 +1452,8 @@ class IncomingSmsColdNotificationSmokeTest {
         const val FINGERPRINT_FORMAT_VALUE = "3gpp"
         val FINGERPRINT_FORMAT: ByteArray =
             FINGERPRINT_FORMAT_VALUE.toByteArray(StandardCharsets.US_ASCII)
+        val PROVIDER_CONTENT_DIGEST_DOMAIN: ByteArray =
+            "AuroraSMS.INCOMING_PROVIDER_CONTENT.v1".toByteArray(StandardCharsets.US_ASCII)
         val EMITTED_PDU_HEX_PATTERN = Regex("[0-9a-fA-F]+")
 
         const val CHECKPOINT_PREFERENCES = "aurora_incoming_sms_smoke_v1"
@@ -1252,27 +1462,39 @@ class IncomingSmsColdNotificationSmokeTest {
         const val JOURNEY_COLD_NOTIFICATION = "cold_notification"
         const val JOURNEY_NOTIFICATION_DENIED = "notification_denied"
         const val JOURNEY_MULTIPLE_MESSAGE = "multiple_message"
+        const val JOURNEY_INLINE_REPLY_PERMISSION_DENIED = "inline_reply_permission_denied"
         const val CHECKPOINT_PREPARED_AT = "prepared_at"
         const val CHECKPOINT_CHANNELS = "channels"
         const val CHECKPOINT_LEDGER_PRESENT = "ledger_present"
         const val CHECKPOINT_LEDGER_VALUE = "ledger_value"
         const val JOURNAL_PREFERENCES = "aurora_sms_delivery_journal_v1"
         const val JOURNAL_KEY_PREFIX = "delivery."
-        const val JOURNAL_VERSION = "2"
+        const val JOURNAL_VERSION = "4"
         const val JOURNAL_SEPARATOR = ","
-        const val JOURNAL_FIELD_COUNT = 9
+        const val JOURNAL_FIELD_COUNT = 11
         const val JOURNAL_PENDING = "P"
         const val JOURNAL_STORED = "S"
         const val JOURNAL_COMPLETE = "C"
         val JOURNAL_STATES = setOf(JOURNAL_PENDING, JOURNAL_STORED, JOURNAL_COMPLETE)
+        val JOURNAL_PROVIDER_CONTENT_DIGEST_PATTERN = Regex("[0-9a-f]{64}")
+        val JOURNAL_STORAGE_TOKEN_PATTERN = Regex("[0-9a-f]{64}")
+        val JOURNAL_SHA256_PATTERN = Regex("[0-9a-f]{64}")
+        val JOURNAL_CHECKSUM_DOMAIN: ByteArray =
+            "AuroraSMS.INCOMING_SMS_REPLAY_JOURNAL.v4"
+                .toByteArray(StandardCharsets.US_ASCII)
         const val NO_SUBSCRIPTION = -1
         val RECOVERY_TOKEN_PATTERN =
             Regex("[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
         const val REPLY_TARGET_PREFERENCES = "aurora_inline_reply_targets"
         const val REPLY_TARGET_PREFIX = "target."
-        const val REPLY_TARGET_VERSION = "1"
+        const val REPLY_TARGET_VERSION = "2"
         const val REPLY_TARGET_SEPARATOR = "|"
-        const val REPLY_TARGET_FIELD_COUNT = 5
+        const val REPLY_TARGET_FIELD_COUNT = 7
+        const val REPLY_TARGET_BASE64_FLAGS =
+            Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING
+        val REPLY_TARGET_SHA256_PATTERN = Regex("[0-9a-f]{64}")
+        const val REPLY_FAILURE_NOTIFICATION_TAG_PREFIX = "aurora-reply-failure:"
+        const val REPLY_FAILURE_ID_MASK = 0x4000_0000
         const val INDEX_LEDGER_PREFERENCES = "aurora_index_signal_ledger"
         const val INDEX_LEDGER_KEY = "ambiguous_provider_change_pending"
         const val CHANNEL_FIELD_SEPARATOR = "\u001f"
@@ -1346,6 +1568,8 @@ class IncomingSmsColdNotificationSmokeTest {
         const val JOURNAL_RECEIVED_TIME_INVALID = "Incoming SMS journal receive time is invalid"
         const val JOURNAL_SENT_TIME_INVALID = "Incoming SMS journal sent time is invalid"
         const val JOURNAL_UPDATED_TIME_INVALID = "Incoming SMS journal update time is invalid"
+        const val JOURNAL_PROVIDER_CONTENT_DIGEST_INVALID =
+            "Incoming SMS journal provider content digest is invalid"
         const val JOURNAL_SUBSCRIPTION_INVALID = "Incoming SMS journal subscription is invalid"
         const val JOURNAL_PENDING_IDS_INVALID = "Incoming SMS pending journal IDs are invalid"
         const val JOURNAL_STORED_IDS_INVALID = "Incoming SMS stored journal IDs are invalid"

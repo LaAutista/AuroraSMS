@@ -12,7 +12,11 @@ import android.telephony.SmsManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import java.util.ArrayList
+import java.util.concurrent.CancellationException
+import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
+import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
+import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.MessageTransport
@@ -24,6 +28,7 @@ import org.aurorasms.core.telephony.ProviderStoredMessage
 import org.aurorasms.core.telephony.SmsProviderDataSource
 import org.aurorasms.core.telephony.SmsProviderStatus
 import org.aurorasms.core.telephony.SmsSendRequest
+import org.aurorasms.core.telephony.SmsSubmissionObserver
 import org.aurorasms.core.telephony.SubscriptionRepository
 import org.aurorasms.core.telephony.receiver.SmsDeliveredReceiver
 import org.aurorasms.core.telephony.receiver.SmsSentReceiver
@@ -38,7 +43,10 @@ class AndroidSmsTransport(
 ) : MessageTransport {
     private val appContext = context.applicationContext
 
-    override suspend fun sendSms(request: SmsSendRequest): TransportResult {
+    override suspend fun sendSms(
+        request: SmsSendRequest,
+        submissionObserver: SmsSubmissionObserver,
+    ): TransportResult {
         val recipient = request.recipients.singleSmsRecipientOrNull()
         val rejection = TransportPolicy.smsRejection(
             roleHeld = roleState.isRoleHeld(),
@@ -53,6 +61,30 @@ class AndroidSmsTransport(
             return TransportResult.Rejected(request.operationId, MessageTransportKind.SMS, rejection)
         }
         checkNotNull(recipient)
+
+        val manager: SmsManager
+        val parts: ArrayList<String>
+        try {
+            manager = smsManager(request.subscriptionId.value)
+            parts = manager.divideMessage(request.body)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: SecurityException) {
+            return request.failed(TransportResult.FailureReason.PERMISSION_DENIED, false)
+        } catch (_: UnsupportedOperationException) {
+            return request.failed(TransportResult.FailureReason.FEATURE_UNAVAILABLE, false)
+        } catch (_: IllegalArgumentException) {
+            return request.failed(TransportResult.FailureReason.INVALID_RECIPIENT, false)
+        } catch (_: RuntimeException) {
+            return request.failed(TransportResult.FailureReason.INTERNAL_ERROR, true)
+        }
+        if (parts.isEmpty() || parts.size > MAX_SMS_PARTS) {
+            return request.failed(
+                reason = TransportResult.FailureReason.PAYLOAD_TOO_LARGE,
+                retryable = false,
+                unitCount = parts.size.coerceAtLeast(1),
+            )
+        }
 
         val stored = when (
             val result = smsProvider.insertOutgoing(
@@ -74,52 +106,84 @@ class AndroidSmsTransport(
         }
 
         return try {
-            val manager = smsManager(request.subscriptionId.value)
-            val parts = manager.divideMessage(request.body)
-            if (parts.isEmpty() || parts.size > MAX_SMS_PARTS) {
-                smsProvider.updateStatus(stored.providerId, SmsProviderStatus.FAILED)
-                return request.failed(
-                    reason = TransportResult.FailureReason.PAYLOAD_TOO_LARGE,
-                    retryable = false,
-                    provider = stored,
+            when (
+                runObservedSmsSubmission(
+                observer = submissionObserver,
+                providerId = stored.providerId,
+                unitCount = parts.size,
+                markFailed = { markProviderFailedBestEffort(stored.providerId) },
+                prepareSubmission = {
+                    val sent = ArrayList<PendingIntent>(parts.size)
+                    val delivered = if (request.requestDeliveryReport) {
+                        ArrayList<PendingIntent>(parts.size)
+                    } else {
+                        null
+                    }
+                    parts.indices.forEach { index ->
+                        sent += sentPendingIntent(request, stored, index, parts.size)
+                        delivered?.add(
+                            deliveredPendingIntent(request, stored, index, parts.size),
+                        )
+                    }
+                    val platformSubmission: () -> Unit = {
+                        if (parts.size == 1) {
+                            if (Build.VERSION.SDK_INT >= 30) {
+                                manager.sendTextMessage(
+                                    recipient.value,
+                                    null,
+                                    parts.single(),
+                                    sent.single(),
+                                    delivered?.singleOrNull(),
+                                    request.operationId.value,
+                                )
+                            } else {
+                                manager.sendTextMessage(
+                                    recipient.value,
+                                    null,
+                                    parts.single(),
+                                    sent.single(),
+                                    delivered?.singleOrNull(),
+                                )
+                            }
+                        } else if (Build.VERSION.SDK_INT >= 30) {
+                            manager.sendMultipartTextMessage(
+                                recipient.value,
+                                null,
+                                parts,
+                                sent,
+                                delivered,
+                                request.operationId.value,
+                            )
+                        } else {
+                            manager.sendMultipartTextMessage(
+                                recipient.value,
+                                null,
+                                parts,
+                                sent,
+                                delivered,
+                            )
+                        }
+                    }
+                    platformSubmission
+                },
                 )
-            }
-            val sent = ArrayList<PendingIntent>(parts.size)
-            val delivered = if (request.requestDeliveryReport) ArrayList<PendingIntent>(parts.size) else null
-            parts.indices.forEach { index ->
-                sent += sentPendingIntent(request, stored, index, parts.size)
-                delivered?.add(deliveredPendingIntent(request, stored, index, parts.size))
-            }
-            if (parts.size == 1) {
-                if (Build.VERSION.SDK_INT >= 30) {
-                    manager.sendTextMessage(
-                        recipient.value,
-                        null,
-                        parts.single(),
-                        sent.single(),
-                        delivered?.singleOrNull(),
-                        request.operationId.value,
+            ) {
+                ObservedSmsSubmissionResult.OBSERVER_REJECTED ->
+                    return request.failed(
+                        reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                        retryable = true,
+                        provider = stored,
+                        unitCount = parts.size,
                     )
-                } else {
-                    manager.sendTextMessage(
-                        recipient.value,
-                        null,
-                        parts.single(),
-                        sent.single(),
-                        delivered?.singleOrNull(),
+                ObservedSmsSubmissionResult.SUBMISSION_UNKNOWN ->
+                    return request.failed(
+                        reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                        retryable = false,
+                        provider = stored,
+                        unitCount = parts.size,
+                        stage = TransportResult.FailureStage.SUBMISSION_UNKNOWN,
                     )
-                }
-            } else if (Build.VERSION.SDK_INT >= 30) {
-                manager.sendMultipartTextMessage(
-                    recipient.value,
-                    null,
-                    parts,
-                    sent,
-                    delivered,
-                    request.operationId.value,
-                )
-            } else {
-                manager.sendMultipartTextMessage(recipient.value, null, parts, sent, delivered)
+                ObservedSmsSubmissionResult.SUBMITTED -> Unit
             }
             TransportResult.Submitted(
                 operationId = request.operationId,
@@ -127,18 +191,40 @@ class AndroidSmsTransport(
                 unitCount = parts.size,
                 providerMessageId = stored.providerId,
             )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: SecurityException) {
-            smsProvider.updateStatus(stored.providerId, SmsProviderStatus.FAILED)
-            request.failed(TransportResult.FailureReason.PERMISSION_DENIED, false, stored)
+            markProviderFailedBestEffort(stored.providerId)
+            request.failed(
+                TransportResult.FailureReason.PERMISSION_DENIED,
+                false,
+                stored,
+                parts.size,
+            )
         } catch (_: UnsupportedOperationException) {
-            smsProvider.updateStatus(stored.providerId, SmsProviderStatus.FAILED)
-            request.failed(TransportResult.FailureReason.FEATURE_UNAVAILABLE, false, stored)
+            markProviderFailedBestEffort(stored.providerId)
+            request.failed(
+                TransportResult.FailureReason.FEATURE_UNAVAILABLE,
+                false,
+                stored,
+                parts.size,
+            )
         } catch (_: IllegalArgumentException) {
-            smsProvider.updateStatus(stored.providerId, SmsProviderStatus.FAILED)
-            request.failed(TransportResult.FailureReason.INVALID_RECIPIENT, false, stored)
+            markProviderFailedBestEffort(stored.providerId)
+            request.failed(
+                TransportResult.FailureReason.INVALID_RECIPIENT,
+                false,
+                stored,
+                parts.size,
+            )
         } catch (_: RuntimeException) {
-            smsProvider.updateStatus(stored.providerId, SmsProviderStatus.FAILED)
-            request.failed(TransportResult.FailureReason.INTERNAL_ERROR, true, stored)
+            markProviderFailedBestEffort(stored.providerId)
+            request.failed(
+                TransportResult.FailureReason.INTERNAL_ERROR,
+                true,
+                stored,
+                parts.size,
+            )
         }
     }
 
@@ -171,6 +257,16 @@ class AndroidSmsTransport(
             true
         }
 
+    private suspend fun markProviderFailedBestEffort(providerId: ProviderMessageId) {
+        try {
+            smsProvider.updateStatus(providerId, SmsProviderStatus.FAILED)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            // The original submission failure remains authoritative.
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun smsManager(subscriptionId: Int): SmsManager =
         if (Build.VERSION.SDK_INT >= 31) {
@@ -187,7 +283,14 @@ class AndroidSmsTransport(
     ): PendingIntent = PendingIntent.getBroadcast(
         appContext,
         requestCode(request.operationId.value, unitIndex, SENT_CHANNEL),
-        SmsSentReceiver.createIntent(appContext, request.operationId, stored.providerId, unitIndex, unitCount),
+        SmsSentReceiver.createIntent(
+            appContext,
+            request.operationId,
+            stored.providerId,
+            unitIndex,
+            unitCount,
+            request.operationId.currentOperationOrigin(),
+        ),
         CALLBACK_FLAGS,
     )
 
@@ -199,7 +302,14 @@ class AndroidSmsTransport(
     ): PendingIntent = PendingIntent.getBroadcast(
         appContext,
         requestCode(request.operationId.value, unitIndex, DELIVERED_CHANNEL),
-        SmsDeliveredReceiver.createIntent(appContext, request.operationId, stored.providerId, unitIndex, unitCount),
+        SmsDeliveredReceiver.createIntent(
+            appContext,
+            request.operationId,
+            stored.providerId,
+            unitIndex,
+            unitCount,
+            request.operationId.currentOperationOrigin(),
+        ),
         CALLBACK_FLAGS,
     )
 
@@ -254,11 +364,77 @@ private fun SmsSendRequest.rejected(reason: TransportResult.FailureReason): Tran
 private fun SmsSendRequest.failed(
     reason: TransportResult.FailureReason,
     retryable: Boolean,
-    provider: ProviderStoredMessage,
+    provider: ProviderStoredMessage? = null,
+    unitCount: Int = 1,
+    stage: TransportResult.FailureStage = TransportResult.FailureStage.SUBMISSION,
 ): TransportResult.Failed = TransportResult.Failed(
     operationId = operationId,
     transport = MessageTransportKind.SMS,
     reason = reason,
     retryable = retryable,
-    providerMessageId = provider.providerId,
+    unitCount = unitCount,
+    providerMessageId = provider?.providerId,
+    stage = stage,
+    operationOrigin = operationId.currentOperationOrigin(),
 )
+
+private fun MessageId.currentOperationOrigin(): TransportResult.OperationOrigin =
+    if (value >= INLINE_REPLY_OPERATION_ID_BOUNDARY) {
+        TransportResult.OperationOrigin.INLINE_REPLY
+    } else {
+        TransportResult.OperationOrigin.UNMARKED
+    }
+
+internal enum class ObservedSmsSubmissionResult {
+    SUBMITTED,
+    OBSERVER_REJECTED,
+    SUBMISSION_UNKNOWN,
+}
+
+internal suspend fun runObservedSmsSubmission(
+    observer: SmsSubmissionObserver,
+    providerId: ProviderMessageId,
+    unitCount: Int,
+    markFailed: suspend () -> Unit,
+    prepareSubmission: () -> (() -> Unit),
+): ObservedSmsSubmissionResult {
+    require(unitCount > 0) { "SMS submission must contain at least one unit" }
+    if (!observerAllows { observer.onPrepared(providerId, unitCount) }) {
+        markFailedIgnoringRuntimeException(markFailed)
+        return ObservedSmsSubmissionResult.OBSERVER_REJECTED
+    }
+    val submit = prepareSubmission()
+    if (!observerAllows { observer.onSubmitting(providerId, unitCount) }) {
+        markFailedIgnoringRuntimeException(markFailed)
+        return ObservedSmsSubmissionResult.OBSERVER_REJECTED
+    }
+    return try {
+        submit()
+        ObservedSmsSubmissionResult.SUBMITTED
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: RuntimeException) {
+        // The Binder/service boundary may have accepted the SMS before
+        // surfacing an exception. Never label or retry this as known-unsent.
+        ObservedSmsSubmissionResult.SUBMISSION_UNKNOWN
+    }
+}
+
+private fun observerAllows(callback: () -> Boolean): Boolean =
+    try {
+        callback()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: RuntimeException) {
+        false
+    }
+
+private suspend fun markFailedIgnoringRuntimeException(markFailed: suspend () -> Unit) {
+    try {
+        markFailed()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: RuntimeException) {
+        // Observer refusal still returns a typed transport failure.
+    }
+}

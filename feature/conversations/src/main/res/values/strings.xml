@@ -53,6 +53,7 @@
     <string name="participant_overflow">%1$s, +%2$d</string>
     <string name="delivery_sent">Sent</string>
     <string name="delivery_pending">Sending</string>
+    <string name="delivery_sent_failed">Sent; delivery failed</string>
     <string name="delivery_failed">Failed to send</string>
     <string name="delivery_unknown">Status unavailable</string>
     <plurals name="more_attachments">

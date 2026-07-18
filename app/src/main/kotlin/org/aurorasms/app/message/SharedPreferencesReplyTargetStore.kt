@@ -8,6 +8,7 @@ import android.util.Base64
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.ParticipantAddress
+import java.security.MessageDigest
 
 /**
  * Private process-death-safe reply routing state.
@@ -34,7 +35,13 @@ class SharedPreferencesReplyTargetStore(
 
     @Synchronized
     override fun put(target: ReplyTarget, nowMillis: Long): Boolean {
-        if (nowMillis < 0L || target.expiresAtMillis <= nowMillis) return false
+        if (
+            !isValidRequestId(target.requestId) ||
+            nowMillis < 0L ||
+            target.expiresAtMillis <= nowMillis
+        ) {
+            return false
+        }
         val stored = decodedEntries()
         val validKeys = stored.mapTo(mutableSetOf()) { it.key }
         val malformedKeys = preferences.all.keys.filter { key ->
@@ -58,13 +65,29 @@ class SharedPreferencesReplyTargetStore(
     override fun get(requestId: String, nowMillis: Long): ReplyTarget? {
         if (nowMillis < 0L) return null
         val preferenceKey = key(requestId)
-        val encoded = preferences.getString(preferenceKey, null) ?: return null
+        val stored = preferences.all[preferenceKey] ?: return null
+        val encoded = stored as? String
+        if (encoded == null) {
+            preferences.edit().remove(preferenceKey).apply()
+            return null
+        }
         val target = decode(requestId, encoded)
         if (target == null || target.expiresAtMillis <= nowMillis) {
             preferences.edit().remove(preferenceKey).apply()
             return null
         }
         return target
+    }
+
+    @Synchronized
+    override fun remove(requestId: String, conversationId: ConversationId): Boolean {
+        if (!isValidRequestId(requestId)) return false
+        val preferenceKey = key(requestId)
+        val stored = preferences.all[preferenceKey] ?: return true
+        val encoded = stored as? String ?: return false
+        val target = decode(requestId, encoded) ?: return false
+        if (target.conversationId != conversationId) return false
+        return preferences.edit().remove(preferenceKey).commit()
     }
 
     @Synchronized
@@ -76,30 +99,37 @@ class SharedPreferencesReplyTargetStore(
         decode(requestId, value)?.let { target -> StoredTarget(key, target) }
     }
 
-    private fun encode(target: ReplyTarget): String = listOf(
-        FORMAT_VERSION,
-        target.conversationId.value,
-        target.subscriptionId.value,
-        target.expiresAtMillis,
-        Base64.encodeToString(
-            target.recipient.value.toByteArray(Charsets.UTF_8),
-            Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING,
-        ),
-    ).joinToString(separator = SEPARATOR)
+    private fun encode(target: ReplyTarget): String {
+        val canonicalFields = listOf(
+            FORMAT_VERSION,
+            encodeText(target.requestId),
+            target.conversationId.value.toString(),
+            target.subscriptionId.value.toString(),
+            target.expiresAtMillis.toString(),
+            encodeText(target.recipient.value),
+        )
+        return (canonicalFields + checksum(canonicalFields)).joinToString(separator = SEPARATOR)
+    }
 
     private fun decode(requestId: String, encoded: String): ReplyTarget? {
         if (!isValidRequestId(requestId)) return null
         val fields = encoded.split(SEPARATOR)
         if (fields.size != FIELD_COUNT || fields[0] != FORMAT_VERSION) return null
-        val conversationId = fields[1].toLongOrNull()?.takeIf { it > 0L } ?: return null
-        val subscriptionId = fields[2].toIntOrNull()?.takeIf { it >= 0 } ?: return null
-        val expiresAtMillis = fields[3].toLongOrNull()?.takeIf { it > 0L } ?: return null
-        val recipient = runCatching {
-            String(
-                Base64.decode(fields[4], Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING),
-                Charsets.UTF_8,
-            )
-        }.getOrNull()?.let { value ->
+        if (!hasValidChecksum(fields)) return null
+        val storedRequestId = decodeCanonicalText(fields[1])
+            ?.takeIf(::isValidRequestId)
+            ?: return null
+        if (storedRequestId != requestId) return null
+        val conversationId = fields[2].toLongOrNull()
+            ?.takeIf { it > 0L && it.toString() == fields[2] }
+            ?: return null
+        val subscriptionId = fields[3].toIntOrNull()
+            ?.takeIf { it >= 0 && it.toString() == fields[3] }
+            ?: return null
+        val expiresAtMillis = fields[4].toLongOrNull()
+            ?.takeIf { it > 0L && it.toString() == fields[4] }
+            ?: return null
+        val recipient = decodeCanonicalText(fields[5])?.let { value ->
             runCatching { ParticipantAddress(value) }.getOrNull()
         } ?: return null
         return ReplyTarget(
@@ -110,6 +140,45 @@ class SharedPreferencesReplyTargetStore(
             expiresAtMillis = expiresAtMillis,
         )
     }
+
+    private fun hasValidChecksum(fields: List<String>): Boolean {
+        val storedChecksum = fields.last().takeIf(::isCanonicalSha256) ?: return false
+        val expectedChecksum = checksum(fields.dropLast(1))
+        return MessageDigest.isEqual(
+            storedChecksum.toByteArray(Charsets.US_ASCII),
+            expectedChecksum.toByteArray(Charsets.US_ASCII),
+        )
+    }
+
+    private fun checksum(canonicalFields: List<String>): String = sha256Hex(
+        canonicalFields.joinToString(separator = SEPARATOR).toByteArray(Charsets.UTF_8),
+    )
+
+    private fun encodeText(value: String): String = Base64.encodeToString(
+        value.toByteArray(Charsets.UTF_8),
+        BASE64_FLAGS,
+    )
+
+    private fun decodeCanonicalText(encoded: String): String? {
+        val bytes = runCatching { Base64.decode(encoded, BASE64_FLAGS) }.getOrNull() ?: return null
+        val decoded = String(bytes, Charsets.UTF_8)
+        if (encodeText(decoded) != encoded) return null
+        return decoded
+    }
+
+    private fun sha256Hex(value: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value)
+        return buildString(digest.size * 2) {
+            digest.forEach { byte ->
+                val unsigned = byte.toInt() and 0xff
+                append(HEX[unsigned ushr 4])
+                append(HEX[unsigned and 0x0f])
+            }
+        }
+    }
+
+    private fun isCanonicalSha256(value: String): Boolean =
+        value.length == SHA_256_HEX_CHARACTERS && value.all { it in HEX }
 
     private fun isValidRequestId(value: String): Boolean =
         value.isNotBlank() && value.length <= 256 && value.none(Char::isISOControl)
@@ -122,11 +191,14 @@ class SharedPreferencesReplyTargetStore(
     private companion object {
         const val PREFERENCES_NAME = "aurora_inline_reply_targets"
         const val KEY_PREFIX = "target."
-        const val FORMAT_VERSION = "1"
+        const val FORMAT_VERSION = "2"
         const val SEPARATOR = "|"
-        const val FIELD_COUNT = 5
+        const val FIELD_COUNT = 7
         const val DEFAULT_MAXIMUM_ENTRIES = 4_096
         const val ABSOLUTE_MAXIMUM_ENTRIES = 16_384
+        const val BASE64_FLAGS = Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING
+        const val HEX = "0123456789abcdef"
+        const val SHA_256_HEX_CHARACTERS = 64
 
         fun key(requestId: String): String = KEY_PREFIX + requestId
     }

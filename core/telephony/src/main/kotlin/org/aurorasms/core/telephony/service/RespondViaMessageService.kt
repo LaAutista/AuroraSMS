@@ -13,6 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.aurorasms.core.model.AuroraSubscriptionId
+import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderKind
@@ -113,12 +114,14 @@ class RespondViaMessageService : Service() {
         private val APPROVED_SCHEMES = setOf("sms", "smsto", "mms", "mmsto")
         private val random = SecureRandom()
 
-        private fun nextOperationId(): Long {
-            var candidate: Long
-            do {
-                candidate = random.nextLong() and Long.MAX_VALUE
-            } while (candidate == 0L)
-            return candidate
-        }
+        private fun nextOperationId(): Long = nextOrdinaryOperationId(random::nextLong)
     }
+}
+
+internal fun nextOrdinaryOperationId(nextLong: () -> Long): Long {
+    var candidate: Long
+    do {
+        candidate = nextLong() and (INLINE_REPLY_OPERATION_ID_BOUNDARY - 1L)
+    } while (candidate == 0L)
+    return candidate
 }

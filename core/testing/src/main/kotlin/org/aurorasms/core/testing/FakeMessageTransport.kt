@@ -8,9 +8,11 @@ import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.MmsDownloadRequest
 import org.aurorasms.core.telephony.MmsSendRequest
 import org.aurorasms.core.telephony.SmsSendRequest
+import org.aurorasms.core.telephony.SmsSubmissionObserver
 
 class FakeMessageTransport : MessageTransport {
     val smsRequests = mutableListOf<SmsSendRequest>()
+    val smsSubmissionObservers = mutableListOf<SmsSubmissionObserver>()
     val mmsRequests = mutableListOf<MmsSendRequest>()
     val mmsDownloadRequests = mutableListOf<MmsDownloadRequest>()
 
@@ -21,6 +23,8 @@ class FakeMessageTransport : MessageTransport {
             unitCount = 1,
         )
     }
+    var smsResponderWithObserver:
+        ((SmsSendRequest, SmsSubmissionObserver) -> TransportResult)? = null
     var mmsResponder: (MmsSendRequest) -> TransportResult = { request ->
         TransportResult.Submitted(
             operationId = request.operationId,
@@ -36,9 +40,14 @@ class FakeMessageTransport : MessageTransport {
         )
     }
 
-    override suspend fun sendSms(request: SmsSendRequest): TransportResult {
+    override suspend fun sendSms(
+        request: SmsSendRequest,
+        submissionObserver: SmsSubmissionObserver,
+    ): TransportResult {
         smsRequests += request
-        return smsResponder(request)
+        smsSubmissionObservers += submissionObserver
+        return smsResponderWithObserver?.invoke(request, submissionObserver)
+            ?: smsResponder(request)
     }
 
     override suspend fun sendMms(request: MmsSendRequest): TransportResult {

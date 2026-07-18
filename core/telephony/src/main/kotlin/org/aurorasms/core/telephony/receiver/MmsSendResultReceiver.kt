@@ -23,17 +23,7 @@ class MmsSendResultReceiver : BroadcastReceiver() {
         val code = resultCode
         dispatchAsync(context) { entryPoint ->
             MmsPduStagingStore(context).cleanup(uri, MmsPduDirection.SEND_SOURCE)
-            val result = if (code == Activity.RESULT_OK) {
-                TransportResult.Sent(operationId, MessageTransportKind.MMS, code)
-            } else {
-                TransportResult.Failed(
-                    operationId = operationId,
-                    transport = MessageTransportKind.MMS,
-                    reason = TransportResult.FailureReason.PLATFORM_REJECTED,
-                    retryable = code == SmsManager.MMS_ERROR_RETRY || code == SmsManager.MMS_ERROR_NO_DATA_NETWORK,
-                    platformResultCode = code,
-                )
-            }
+            val result = mmsSendResult(operationId, code)
             entryPoint.onTransportResult(result)
         }
     }
@@ -48,6 +38,23 @@ class MmsSendResultReceiver : BroadcastReceiver() {
                 .putExtra(SmsSentReceiver.EXTRA_OPERATION_ID, operationId.value)
                 .putExtra(EXTRA_STAGED_URI, stagedUri)
     }
+}
+
+internal fun mmsSendResult(
+    operationId: MessageId,
+    platformResultCode: Int,
+): TransportResult = if (platformResultCode == Activity.RESULT_OK) {
+    TransportResult.Sent(operationId, MessageTransportKind.MMS, platformResultCode)
+} else {
+    TransportResult.Failed(
+        operationId = operationId,
+        transport = MessageTransportKind.MMS,
+        reason = TransportResult.FailureReason.PLATFORM_REJECTED,
+        retryable = platformResultCode == SmsManager.MMS_ERROR_RETRY ||
+            platformResultCode == SmsManager.MMS_ERROR_NO_DATA_NETWORK,
+        platformResultCode = platformResultCode,
+        stage = TransportResult.FailureStage.SENT_CALLBACK,
+    )
 }
 
 @Suppress("DEPRECATION")

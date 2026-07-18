@@ -91,6 +91,7 @@ sealed interface IncomingPersistResult {
         MALFORMED_INPUT,
         CODEC_UNAVAILABLE,
         PROVIDER_UNAVAILABLE,
+        NOTIFICATION_UNAVAILABLE,
         STORAGE_FULL,
     }
 }

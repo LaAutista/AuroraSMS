@@ -13,6 +13,8 @@ import java.util.EnumSet
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -49,11 +51,21 @@ import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.app.index.AppIndexCoordinator
 import org.aurorasms.app.message.AppNotificationIntentFactory
 import org.aurorasms.app.message.IncomingMessageOrchestrator
+import org.aurorasms.app.message.IncomingNotificationRecoveryResult
 import org.aurorasms.app.message.InlineReplyOrchestrator
+import org.aurorasms.app.message.InlineReplyProviderUpdateCoordinator
+import org.aurorasms.app.message.InlineReplyTransportDisposition
+import org.aurorasms.app.message.InlineReplyTransportResultHandler
+import org.aurorasms.app.message.ReplyOperationRegistry
+import org.aurorasms.app.message.ReplyOperationFailureKind
+import org.aurorasms.app.message.ReplyOperationPendingFailuresResult
+import org.aurorasms.app.message.ReplyOperationRecoveryResult
 import org.aurorasms.app.message.ReplyTargetRegistry
+import org.aurorasms.app.message.SharedPreferencesReplyOperationStore
 import org.aurorasms.app.message.SharedPreferencesReplyReplayGuard
 import org.aurorasms.app.message.SharedPreferencesReplyTargetStore
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.TransportResult
@@ -94,6 +106,7 @@ import org.aurorasms.core.telephony.MmsAttachmentId
 import org.aurorasms.core.telephony.MmsAttachmentListResult
 import org.aurorasms.core.telephony.MmsAttachmentReadResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
+import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ResolvedContact
 import org.aurorasms.core.telephony.SmsProviderDataSource
 import org.aurorasms.core.telephony.SmsProviderStatus
@@ -151,6 +164,17 @@ class AppContainer(
         maximumEntries = 4_096,
         targetStore = SharedPreferencesReplyTargetStore(application),
     )
+    private val replyOperations = ReplyOperationRegistry(
+        store = SharedPreferencesReplyOperationStore(application),
+    )
+    private var pendingInitialReplyOperationRecovery: ReplyOperationRecoveryResult? =
+        replyOperations.recoverInheritedOperations()
+    private val messagingRecoveryLock = Any()
+    private var messagingRecoveryJob: Job? = null
+    private var messagingRecoveryFollowUpJob: Job? = null
+    private var messagingRecoveryRequested = false
+    private var messagingRecoveryRoleEnabled = true
+    private var replyColdCallbackGraceApplied = false
     private val sentPartTracker = SentPartTracker()
     private val indexSignalLedger = application.getSharedPreferences(
         INDEX_SIGNAL_LEDGER_NAME,
@@ -158,6 +182,9 @@ class AppContainer(
     )
 
     val defaultSmsRoleState: DefaultSmsRoleState = AndroidDefaultSmsRoleState(application)
+    private val defaultSmsRoleLifecycleFence = DefaultSmsRoleLifecycleFence(
+        currentRoleHeld = defaultSmsRoleState::isRoleHeld,
+    )
     val smsProviderDataSource: SmsProviderDataSource =
         AndroidSmsProviderDataSource(application, defaultSmsRoleState)
     val subscriptionRepository: SubscriptionRepository = if (syntheticIndexOnly) {
@@ -264,20 +291,40 @@ class AppContainer(
         context = application,
         intentFactory = AppNotificationIntentFactory(application),
     )
-    val incomingMessageSink: IncomingMessageSink = IncomingMessageOrchestrator(
+    private val inlineReplyTransportResultHandler = InlineReplyTransportResultHandler(
+        replyOperations = replyOperations,
+        messageNotifier = messageNotifier,
+        userVisibleEffectsAllowed = defaultSmsRoleState::isRoleHeld,
+    )
+    private val inlineReplyProviderUpdateCoordinator = InlineReplyProviderUpdateCoordinator(
+        replyOperations = replyOperations,
+        smsProvider = smsProviderDataSource,
+    )
+    private val incomingMessageOrchestrator = IncomingMessageOrchestrator(
         roleState = defaultSmsRoleState,
         smsProvider = smsProviderDataSource,
         contactResolver = contactCache,
         messageNotifier = messageNotifier,
         replyTargets = replyTargets,
-        onProviderInsertComplete = { enqueueIndexSignal(IndexSignal.INCOMING_INSERT) },
+        onProviderInsertComplete = {
+            enqueueIndexSignal(IndexSignal.INCOMING_INSERT)
+            retryPendingInlineReplyOperations()
+        },
     )
+    val incomingMessageSink: IncomingMessageSink = incomingMessageOrchestrator
     val inlineReplyHandler: InlineReplyHandler = InlineReplyOrchestrator(
         roleState = defaultSmsRoleState,
         replyTargets = replyTargets,
         replayGuard = SharedPreferencesReplyReplayGuard(application),
+        replyOperations = replyOperations,
+        transportResultHandler = inlineReplyTransportResultHandler,
         messageTransport = messageTransport,
         messageNotifier = messageNotifier,
+        reconcileProviderUpdate = { operationId ->
+            if (inlineReplyProviderUpdateCoordinator.reconcile(operationId)) {
+                enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
+            }
+        },
     )
 
     private val _lastTransportResult = MutableStateFlow<TransportResult?>(null)
@@ -286,6 +333,7 @@ class AppContainer(
     val lastIndexOutcome: StateFlow<IndexSyncOutcome?> = indexCoordinator.lastOutcome
 
     init {
+        retryPendingInlineReplyOperations()
         if (!syntheticIndexOnly) {
             applicationScope.launch {
                 for (ignored in indexSignalWakeUps) {
@@ -335,24 +383,59 @@ class AppContainer(
         var providerStateChanged = false
         when (result) {
             is TransportResult.Sent -> {
-                val providerId = result.providerMessageId ?: return
-                if (sentPartTracker.record(result)) {
-                    smsProviderDataSource.updateStatus(providerId, SmsProviderStatus.COMPLETE)
-                    providerStateChanged = true
+                val inlineReplyDisposition = inlineReplyTransportResultHandler.handle(result)
+                if (inlineReplyDisposition == InlineReplyTransportDisposition.Untracked) {
+                    val providerId = result.providerMessageId ?: return
+                    if (
+                        sentPartTracker.record(result) &&
+                        smsProviderDataSource.updateStatus(
+                            providerId,
+                            SmsProviderStatus.COMPLETE,
+                        ) is ProviderAccessResult.Success
+                    ) {
+                        providerStateChanged = true
+                    }
+                } else {
+                    providerStateChanged =
+                        inlineReplyProviderUpdateCoordinator.reconcile(result.operationId)
                 }
             }
 
             is TransportResult.Failed -> {
-                sentPartTracker.forget(result.operationId)
-                result.providerMessageId?.let { providerId ->
-                    smsProviderDataSource.updateStatus(providerId, SmsProviderStatus.FAILED)
-                    providerStateChanged = true
+                val inlineReplyDisposition = inlineReplyTransportResultHandler.handle(result)
+                if (inlineReplyDisposition == InlineReplyTransportDisposition.Untracked) {
+                    result.smsProviderFailureStatus()?.let { providerStatus ->
+                        sentPartTracker.forget(result.operationId)
+                        result.providerMessageId?.let { providerId ->
+                            if (
+                                smsProviderDataSource.updateStatus(
+                                    providerId,
+                                    providerStatus,
+                                ) is ProviderAccessResult.Success
+                            ) {
+                                providerStateChanged = true
+                            }
+                        }
+                    }
+                } else {
+                    sentPartTracker.forget(result.operationId)
+                    providerStateChanged =
+                        inlineReplyProviderUpdateCoordinator.reconcile(result.operationId)
                 }
             }
 
-            is TransportResult.Delivered,
+            is TransportResult.Delivered -> {
+                if (
+                    inlineReplyTransportResultHandler.handle(result) !=
+                    InlineReplyTransportDisposition.Untracked
+                ) {
+                    providerStateChanged =
+                        inlineReplyProviderUpdateCoordinator.reconcile(result.operationId)
+                }
+            }
+
+            is TransportResult.Rejected -> inlineReplyTransportResultHandler.handle(result)
             is TransportResult.Downloaded,
-            is TransportResult.Rejected,
             is TransportResult.Submitted -> Unit
         }
         if (providerStateChanged) enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
@@ -366,13 +449,15 @@ class AppContainer(
         // payload until an audited codec is admitted.
     }
 
-    suspend fun onDefaultSmsRoleChanged(isDefaultSmsApp: Boolean) {
+    suspend fun onDefaultSmsRoleChanged(
+        @Suppress("UNUSED_PARAMETER") isDefaultSmsApp: Boolean,
+    ) = defaultSmsRoleLifecycleFence.reconcile { roleHeld ->
+        reconcileMessagingRecoveryForRole(roleHeld)
         previewLoader.clear()
-        if (!isDefaultSmsApp && !syntheticIndexOnly) {
-            replyTargets.clear()
-            sentPartTracker.clear()
+        if (!roleHeld && !syntheticIndexOnly) {
+            if (!defaultSmsRoleState.isRoleHeld()) sentPartTracker.clear()
         }
-        if (!isDefaultSmsApp) {
+        if (!roleHeld && !defaultSmsRoleState.isRoleHeld()) {
             try {
                 (indexRuntimeState.value as? IndexRuntimeState.Ready)
                     ?.runtime
@@ -385,7 +470,7 @@ class AppContainer(
                 // cannot persist its best-effort paused marker.
             }
         }
-        if (isDefaultSmsApp) requestIndexOpen()
+        if (defaultSmsRoleState.isRoleHeld()) requestIndexOpen()
         enqueueIndexSignal(IndexSignal.ROLE_CHANGED)
     }
 
@@ -395,7 +480,12 @@ class AppContainer(
 
     /** Retries observer registration and reconciliation after explicit role/permission UI success. */
     fun onMessagingEligibilityChanged() {
-        applicationScope.launch { previewLoader.clear() }
+        applicationScope.launch {
+            previewLoader.clear()
+            defaultSmsRoleLifecycleFence.reconcile { roleHeld ->
+                reconcileMessagingRecoveryForRole(roleHeld)
+            }
+        }
         requestIndexOpen()
         if (!syntheticIndexOnly) {
             ensureProviderObserverRegistered()
@@ -408,6 +498,7 @@ class AppContainer(
     }
 
     fun onMessagingActivityStarted() {
+        retryPendingInlineReplyOperations()
         if (foregroundIndexReadGate.onActivityStarted()) {
             indexCoordinator.resumeAfterForeground()
         }
@@ -415,6 +506,202 @@ class AppContainer(
 
     fun onMessagingActivityStopped() {
         foregroundIndexReadGate.onActivityStopped()
+    }
+
+    private suspend fun reconcileMessagingRecoveryForRole(roleHeld: Boolean) {
+        synchronized(messagingRecoveryLock) {
+            messagingRecoveryRoleEnabled = roleHeld
+        }
+        if (!roleHeld && !syntheticIndexOnly) {
+            cancelAndJoinPendingMessagingRecovery()
+            incomingMessageOrchestrator.onRoleLost()
+        }
+        if (roleHeld && !syntheticIndexOnly) {
+            retryPendingInlineReplyOperations()
+        }
+    }
+
+    private fun retryPendingInlineReplyOperations() {
+        if (syntheticIndexOnly || !defaultSmsRoleState.isRoleHeld()) return
+        synchronized(messagingRecoveryLock) {
+            if (!messagingRecoveryRoleEnabled || !defaultSmsRoleState.isRoleHeld()) return
+            messagingRecoveryRequested = true
+            if (messagingRecoveryJob?.isActive == true) return
+            val job = applicationScope.launch(
+                context = Dispatchers.IO,
+                start = CoroutineStart.LAZY,
+            ) {
+                drainMessagingRecoveryRequests()
+            }
+            messagingRecoveryJob = job
+            job.start()
+        }
+    }
+
+    private suspend fun drainMessagingRecoveryRequests() {
+        val currentJob = currentCoroutineContext()[Job]
+        try {
+            do {
+                synchronized(messagingRecoveryLock) {
+                    messagingRecoveryRequested = false
+                }
+                runMessagingRecoveryPass()
+            } while (synchronized(messagingRecoveryLock) { messagingRecoveryRequested })
+        } finally {
+            val restart = synchronized(messagingRecoveryLock) {
+                if (messagingRecoveryJob === currentJob) {
+                    messagingRecoveryJob = null
+                    messagingRecoveryRequested &&
+                        messagingRecoveryRoleEnabled &&
+                        defaultSmsRoleState.isRoleHeld()
+                } else {
+                    false
+                }
+            }
+            if (restart) {
+                currentJob?.invokeOnCompletion {
+                    retryPendingInlineReplyOperations()
+                }
+            }
+        }
+    }
+
+    private suspend fun runMessagingRecoveryPass() {
+        val initialRecovery = synchronized(messagingRecoveryLock) {
+            pendingInitialReplyOperationRecovery.also {
+                pendingInitialReplyOperationRecovery = null
+            }
+        }
+        val replyRecovery = initialRecovery
+            ?.takeIf { it is ReplyOperationRecoveryResult.Recovered }
+            ?: replyOperations.recoverInheritedOperations()
+        if (
+            !replyColdCallbackGraceApplied &&
+            replyRecoveryNeedsColdCallbackGrace(replyRecovery)
+        ) {
+            replyColdCallbackGraceApplied = true
+            delay(INLINE_REPLY_COLD_CALLBACK_GRACE_MILLIS)
+        }
+        if (!defaultSmsRoleState.isRoleHeld()) return
+
+        inlineReplyTransportResultHandler.reconcilePendingOperations()
+        var retryDelayMillis = INCOMING_NOTIFICATION_RECOVERY_INITIAL_RETRY_MILLIS
+        var followUpRequired = false
+        for (attempt in 0 until INCOMING_NOTIFICATION_RECOVERY_MAXIMUM_ATTEMPTS) {
+            if (!defaultSmsRoleState.isRoleHeld()) return
+            val result = try {
+                incomingMessageOrchestrator.recoverPendingNotifications()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: RuntimeException) {
+                null
+            }
+            if (result is IncomingNotificationRecoveryResult.Complete) {
+                break
+            }
+            if (attempt == INCOMING_NOTIFICATION_RECOVERY_MAXIMUM_ATTEMPTS - 1) {
+                followUpRequired = true
+                break
+            }
+            val madeProgress =
+                (result as? IncomingNotificationRecoveryResult.Deferred)
+                    ?.recoveredCount
+                    ?.let { it > 0 } == true
+            if (!madeProgress) {
+                delay(retryDelayMillis)
+                retryDelayMillis = (retryDelayMillis * 2L)
+                    .coerceAtMost(INCOMING_NOTIFICATION_RECOVERY_MAXIMUM_RETRY_MILLIS)
+            }
+        }
+        if (!defaultSmsRoleState.isRoleHeld()) return
+        val providerStateChanged = inlineReplyProviderUpdateCoordinator.reconcilePending()
+        if (providerStateChanged) {
+            enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
+        }
+        if (followUpRequired && defaultSmsRoleState.isRoleHeld()) {
+            scheduleMessagingRecoveryFollowUp()
+        }
+    }
+
+    private fun replyRecoveryNeedsColdCallbackGrace(
+        recovery: ReplyOperationRecoveryResult,
+    ): Boolean = recovery.unknownSubmissionMayStillCallback() ||
+        when (val pending = replyOperations.pendingFailures()) {
+            is ReplyOperationPendingFailuresResult.Available ->
+                pending.operations.any { operation ->
+                    operation.failureKind == ReplyOperationFailureKind.SUBMISSION_UNKNOWN
+                }
+            ReplyOperationPendingFailuresResult.PersistenceFailure -> false
+        }
+
+    private fun scheduleMessagingRecoveryFollowUp() {
+        if (syntheticIndexOnly || !defaultSmsRoleState.isRoleHeld()) return
+        synchronized(messagingRecoveryLock) {
+            if (!messagingRecoveryRoleEnabled || !defaultSmsRoleState.isRoleHeld()) return
+            if (messagingRecoveryFollowUpJob?.isActive == true) return
+            val job = applicationScope.launch(
+                context = Dispatchers.IO,
+                start = CoroutineStart.LAZY,
+            ) {
+                runMessagingRecoveryFollowUp()
+            }
+            messagingRecoveryFollowUpJob = job
+            job.start()
+        }
+    }
+
+    private suspend fun runMessagingRecoveryFollowUp() {
+        val currentJob = currentCoroutineContext()[Job]
+        try {
+            delay(INCOMING_NOTIFICATION_RECOVERY_FOLLOW_UP_DELAY_MILLIS)
+            val shouldRequest = synchronized(messagingRecoveryLock) {
+                if (messagingRecoveryFollowUpJob === currentJob) {
+                    messagingRecoveryFollowUpJob = null
+                    messagingRecoveryRoleEnabled
+                } else {
+                    false
+                }
+            }
+            if (shouldRequest && defaultSmsRoleState.isRoleHeld()) {
+                retryPendingInlineReplyOperations()
+            }
+        } finally {
+            synchronized(messagingRecoveryLock) {
+                if (messagingRecoveryFollowUpJob === currentJob) {
+                    messagingRecoveryFollowUpJob = null
+                }
+            }
+        }
+    }
+
+    private suspend fun cancelAndJoinPendingMessagingRecovery() {
+        val jobs = synchronized(messagingRecoveryLock) {
+            messagingRecoveryRequested = false
+            pendingInitialReplyOperationRecovery = null
+            listOfNotNull(messagingRecoveryJob, messagingRecoveryFollowUpJob).distinct()
+        }
+        jobs.forEach { it.cancel() }
+        jobs.forEach { it.join() }
+        synchronized(messagingRecoveryLock) {
+            if (messagingRecoveryJob in jobs) messagingRecoveryJob = null
+            if (messagingRecoveryFollowUpJob in jobs) messagingRecoveryFollowUpJob = null
+            messagingRecoveryRequested = false
+        }
+    }
+
+    private fun cancelPendingMessagingRecoveryForClose() {
+        val jobs = synchronized(messagingRecoveryLock) {
+            messagingRecoveryRoleEnabled = false
+            messagingRecoveryRequested = false
+            pendingInitialReplyOperationRecovery = null
+            listOfNotNull(messagingRecoveryJob, messagingRecoveryFollowUpJob)
+                .distinct()
+                .also {
+                    messagingRecoveryJob = null
+                    messagingRecoveryFollowUpJob = null
+                }
+        }
+        jobs.forEach { it.cancel() }
     }
 
     fun createDraftWriter(
@@ -443,6 +730,7 @@ class AppContainer(
         providerObserverRegistered.set(false)
         indexSignalWakeUps.close()
         indexRetryJob?.cancel()
+        cancelPendingMessagingRecoveryForClose()
         indexCoordinator.close()
         activeIndexDatabase?.let(IndexDatabaseFactory::close)
         stateDatabase?.let(StateDatabaseFactory::close)
@@ -563,6 +851,11 @@ class AppContainer(
     }
 
     private companion object {
+        const val INLINE_REPLY_COLD_CALLBACK_GRACE_MILLIS = 1_000L
+        const val INCOMING_NOTIFICATION_RECOVERY_INITIAL_RETRY_MILLIS = 1_000L
+        const val INCOMING_NOTIFICATION_RECOVERY_MAXIMUM_RETRY_MILLIS = 8_000L
+        const val INCOMING_NOTIFICATION_RECOVERY_MAXIMUM_ATTEMPTS = 6
+        const val INCOMING_NOTIFICATION_RECOVERY_FOLLOW_UP_DELAY_MILLIS = 30_000L
         const val INDEX_SIGNAL_LEDGER_NAME: String = "aurora_index_signal_ledger"
         const val INDEX_SIGNAL_LEDGER_KEY: String = "ambiguous_provider_change_pending"
     }
@@ -999,6 +1292,9 @@ internal fun reconciliationCoversAmbiguousSignalLedger(reasons: Set<IndexSignal>
         signal == IndexSignal.FOREGROUND_RESUME || signal.requiresDurableAmbiguousLedger()
     }
 
+private fun ReplyOperationRecoveryResult.unknownSubmissionMayStillCallback(): Boolean =
+    this is ReplyOperationRecoveryResult.Recovered && submissionUnknownCount > 0
+
 private suspend fun StateFlow<IndexRuntimeState>.awaitReadyRuntime(): IndexRuntime {
     val state = when (val current = value) {
         IndexRuntimeState.Opening -> first { it !is IndexRuntimeState.Opening }
@@ -1043,6 +1339,17 @@ private suspend fun StateFlow<StateRuntimeState>.awaitReadyAppearanceWallpaperRe
 
 private fun AppearanceScope.isUnsupportedWallpaperScreen(): Boolean =
     this is AppearanceScope.Screen && screen != AppearanceScreenScope.GLOBAL_THREAD
+
+internal fun TransportResult.Failed.smsProviderFailureStatus(): SmsProviderStatus? {
+    if (transport != MessageTransportKind.SMS) return null
+    return when (stage) {
+        TransportResult.FailureStage.SUBMISSION,
+        TransportResult.FailureStage.SENT_CALLBACK -> SmsProviderStatus.FAILED
+        TransportResult.FailureStage.DELIVERY_CALLBACK -> SmsProviderStatus.DELIVERY_FAILED
+        TransportResult.FailureStage.SUBMISSION_UNKNOWN,
+        TransportResult.FailureStage.DOWNLOAD_CALLBACK -> null
+    }
+}
 
 private class SentPartTracker {
     private val sentParts = mutableMapOf<MessageId, BooleanArray>()

@@ -71,6 +71,8 @@ ANDROID = "{http://schemas.android.com/apk/res/android}"
 APP_ID = "org.aurorasms.app"
 MACRO_ID = "org.aurorasms.macrobenchmark"
 CONTROL_PERMISSION = f"{APP_ID}.permission.BENCHMARK_CONTROL"
+DEBUG_SMS_SNAPSHOT_AUTHORITY = f"{APP_ID}.debug.sms_snapshot"
+DEBUG_SMS_SNAPSHOT_PROVIDER = f"{APP_ID}.debug.DebugSmsSnapshotProvider"
 MACRO_DYNAMIC_RECEIVER_PERMISSION = f"{MACRO_ID}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
 
 allowed_permissions = {
@@ -163,6 +165,7 @@ def require_component(
 
 def verify_manifest(path: Path) -> None:
     root = ET.parse(path).getroot()
+    is_debug = "debug" in path.parts
     is_benchmark = "benchmark" in path.parts
     has_profile_installer = is_benchmark or "release" in path.parts
     permissions = {
@@ -205,6 +208,12 @@ def verify_manifest(path: Path) -> None:
         }
         or attr(item, "authorities") == f"{APP_ID}.benchmark.fixture"
     ]
+    debug_sms_snapshot_providers = [
+        item
+        for item in application.findall("provider")
+        if attr(item, "name") == DEBUG_SMS_SNAPSHOT_PROVIDER
+        or attr(item, "authorities") == DEBUG_SMS_SNAPSHOT_AUTHORITY
+    ]
     startup_providers = [
         item
         for item in application.findall("provider")
@@ -231,6 +240,22 @@ def verify_manifest(path: Path) -> None:
             raise AssertionError(f"{path}: benchmark fixture provider boundary is invalid")
     elif control_declarations or profileable or fixture_providers:
         raise AssertionError(f"{path}: benchmark control surface leaked into a normal app variant")
+
+    if is_debug:
+        if len(debug_sms_snapshot_providers) != 1:
+            raise AssertionError(
+                f"{path}: debug build must expose exactly one SMS snapshot provider"
+            )
+        snapshot = debug_sms_snapshot_providers[0]
+        if (
+            attr(snapshot, "name") != DEBUG_SMS_SNAPSHOT_PROVIDER
+            or attr(snapshot, "authorities") != DEBUG_SMS_SNAPSHOT_AUTHORITY
+            or attr(snapshot, "exported") != "true"
+            or attr(snapshot, "permission") != "android.permission.DUMP"
+        ):
+            raise AssertionError(f"{path}: debug SMS snapshot provider boundary is invalid")
+    elif debug_sms_snapshot_providers:
+        raise AssertionError(f"{path}: debug SMS snapshot provider leaked into a non-debug build")
 
     if has_profile_installer:
         if len(startup_providers) != 1 or attr(startup_providers[0], "exported") != "false":
@@ -316,6 +341,8 @@ def verify_manifest(path: Path) -> None:
             if attr(component, "exported") != "true":
                 continue
             if component in fixture_providers:
+                continue
+            if component in debug_sms_snapshot_providers:
                 continue
             actions = {
                 attr(action, "name")

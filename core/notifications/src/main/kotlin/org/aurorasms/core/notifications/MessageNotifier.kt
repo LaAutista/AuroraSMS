@@ -62,11 +62,37 @@ interface MessageNotifier {
 
     fun notifyInlineReplyFailure(conversationId: ConversationId): NotificationPostResult
 
-    fun cancelConversation(conversationId: ConversationId)
+    fun cancelIncomingConversation(
+        conversationId: ConversationId,
+        expectedMessageId: MessageId,
+    ): NotificationCancelResult
+
+    /** Cancels every active incoming slot only after validating its exact source generation. */
+    fun cancelAllIncoming(): NotificationCancelResult
+
+    fun cancelInlineReplyFailure(conversationId: ConversationId)
+}
+
+/**
+ * Result of cancelling one exact incoming-notification generation.
+ *
+ * A missing notification or one already replaced by a newer message is a safe,
+ * terminal no-op. A retryable failure means the notification manager could not
+ * establish or apply that result, so the caller must retain durable ownership.
+ */
+sealed interface NotificationCancelResult {
+    data object Cancelled : NotificationCancelResult
+
+    data object AlreadyAbsentOrReplaced : NotificationCancelResult
+
+    data object RetryableFailure : NotificationCancelResult
 }
 
 sealed interface NotificationPostResult {
     data class Posted(val notificationId: Int) : NotificationPostResult
+
+    /** A newer notification already owns this conversation's visible slot. */
+    data object SupersededByNewer : NotificationPostResult
 
     data object NotificationsDisabled : NotificationPostResult
 
@@ -76,6 +102,7 @@ sealed interface NotificationPostResult {
         CONTENT_INTENT_NOT_EXPLICIT,
         CONTENT_INTENT_OUTSIDE_APPLICATION,
         PERMISSION_DENIED,
+        GENERATION_STATE_UNAVAILABLE,
     }
 }
 

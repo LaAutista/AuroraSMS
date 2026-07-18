@@ -14,3 +14,6 @@ enum class ProviderKind {
     val isTelephonyProvider: Boolean
         get() = this == SMS || this == MMS
 }
+
+/** Inline-reply pending-operation IDs occupy this value and the range above it. */
+const val INLINE_REPLY_OPERATION_ID_BOUNDARY: Long = 1L shl 62

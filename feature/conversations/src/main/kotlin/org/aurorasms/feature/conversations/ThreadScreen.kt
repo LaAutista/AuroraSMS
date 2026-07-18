@@ -653,6 +653,8 @@ private fun MessageBubble(
 @Composable
 private fun MessageDeliveryStatus(message: TimelineMessage) {
     val text = when {
+        message.box == MessageBox.SENT && message.status == MessageStatus.FAILED ->
+            stringResource(R.string.delivery_sent_failed)
         message.box == MessageBox.FAILED || message.status == MessageStatus.FAILED ->
             stringResource(R.string.delivery_failed)
         message.status == MessageStatus.PENDING ||

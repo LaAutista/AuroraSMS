@@ -6,6 +6,7 @@ import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.telephony.SmsManager
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
@@ -21,28 +22,16 @@ class SmsSentReceiver : BroadcastReceiver() {
         val unitCount = intent.validUnitCountOrNull() ?: return
         if (unitIndex >= unitCount) return
         val providerMessageId = intent.smsProviderIdOrNull()
+        val operationOrigin = intent.transportOperationOrigin()
         val code = resultCode
-        val result = if (code == Activity.RESULT_OK) {
-            TransportResult.Sent(
-                operationId = operationId,
-                transport = MessageTransportKind.SMS,
-                platformResultCode = code,
-                unitIndex = unitIndex,
-                unitCount = unitCount,
-                providerMessageId = providerMessageId,
-            )
-        } else {
-            TransportResult.Failed(
-                operationId = operationId,
-                transport = MessageTransportKind.SMS,
-                reason = TransportResult.FailureReason.PLATFORM_REJECTED,
-                retryable = code.isRetryableSmsFailure(),
-                platformResultCode = code,
-                unitIndex = unitIndex,
-                unitCount = unitCount,
-                providerMessageId = providerMessageId,
-            )
-        }
+        val result = smsSentResult(
+            operationId,
+            providerMessageId,
+            unitIndex,
+            unitCount,
+            code,
+            operationOrigin,
+        )
         dispatchAsync(context) { it.onTransportResult(result) }
     }
 
@@ -52,6 +41,7 @@ class SmsSentReceiver : BroadcastReceiver() {
         internal const val EXTRA_UNIT_INDEX = "unit_index"
         internal const val EXTRA_UNIT_COUNT = "unit_count"
         internal const val EXTRA_PROVIDER_ID = "provider_id"
+        internal const val EXTRA_INLINE_REPLY_OWNED = "inline_reply_owned_v1"
 
         fun createIntent(
             context: Context,
@@ -59,13 +49,62 @@ class SmsSentReceiver : BroadcastReceiver() {
             providerMessageId: ProviderMessageId,
             unitIndex: Int,
             unitCount: Int,
+            operationOrigin: TransportResult.OperationOrigin =
+                TransportResult.OperationOrigin.UNMARKED,
         ): Intent = Intent(context, SmsSentReceiver::class.java)
             .setAction(ACTION_SMS_SENT)
+            .setData(
+                smsCallbackIdentityUri(
+                    channel = SENT_IDENTITY_CHANNEL,
+                    operationId = operationId,
+                    providerMessageId = providerMessageId,
+                    unitIndex = unitIndex,
+                    unitCount = unitCount,
+                ),
+            )
             .putExtra(EXTRA_OPERATION_ID, operationId.value)
             .putExtra(EXTRA_PROVIDER_ID, providerMessageId.value)
             .putExtra(EXTRA_UNIT_INDEX, unitIndex)
             .putExtra(EXTRA_UNIT_COUNT, unitCount)
+            .putExtra(
+                EXTRA_INLINE_REPLY_OWNED,
+                operationOrigin == TransportResult.OperationOrigin.INLINE_REPLY,
+            )
+
+        private const val SENT_IDENTITY_CHANNEL = "sent"
     }
+}
+
+internal fun smsSentResult(
+    operationId: MessageId,
+    providerMessageId: ProviderMessageId?,
+    unitIndex: Int,
+    unitCount: Int,
+    platformResultCode: Int,
+    operationOrigin: TransportResult.OperationOrigin = TransportResult.OperationOrigin.UNMARKED,
+): TransportResult = if (platformResultCode == Activity.RESULT_OK) {
+    TransportResult.Sent(
+        operationId = operationId,
+        transport = MessageTransportKind.SMS,
+        platformResultCode = platformResultCode,
+        unitIndex = unitIndex,
+        unitCount = unitCount,
+        providerMessageId = providerMessageId,
+        operationOrigin = operationOrigin,
+    )
+} else {
+    TransportResult.Failed(
+        operationId = operationId,
+        transport = MessageTransportKind.SMS,
+        reason = TransportResult.FailureReason.PLATFORM_REJECTED,
+        retryable = platformResultCode.isRetryableSmsFailure(),
+        platformResultCode = platformResultCode,
+        unitIndex = unitIndex,
+        unitCount = unitCount,
+        providerMessageId = providerMessageId,
+        stage = TransportResult.FailureStage.SENT_CALLBACK,
+        operationOrigin = operationOrigin,
+    )
 }
 
 internal fun Intent.pendingOperationIdOrNull(): MessageId? =
@@ -83,6 +122,34 @@ internal fun Intent.smsProviderIdOrNull(): ProviderMessageId? =
     getLongExtra(SmsSentReceiver.EXTRA_PROVIDER_ID, -1L)
         .takeIf { it > 0L }
         ?.let { ProviderMessageId(ProviderKind.SMS, it) }
+
+internal fun Intent.transportOperationOrigin(): TransportResult.OperationOrigin =
+    if (getBooleanExtra(SmsSentReceiver.EXTRA_INLINE_REPLY_OWNED, false)) {
+        TransportResult.OperationOrigin.INLINE_REPLY
+    } else {
+        TransportResult.OperationOrigin.UNMARKED
+    }
+
+internal fun smsCallbackIdentityUri(
+    channel: String,
+    operationId: MessageId,
+    providerMessageId: ProviderMessageId,
+    unitIndex: Int,
+    unitCount: Int,
+): Uri {
+    require(channel == "sent" || channel == "delivered") { "Unknown SMS callback channel" }
+    require(operationId.kind == ProviderKind.PENDING_OPERATION && operationId.value > 0L)
+    require(providerMessageId.kind == ProviderKind.SMS && providerMessageId.value > 0L)
+    require(unitCount in 1..255 && unitIndex in 0 until unitCount)
+    return Uri.Builder()
+        .scheme("aurorasms-sms-callback")
+        .authority(channel)
+        .appendPath(operationId.value.toString())
+        .appendPath(providerMessageId.value.toString())
+        .appendPath(unitIndex.toString())
+        .appendPath(unitCount.toString())
+        .build()
+}
 
 private fun Int.isRetryableSmsFailure(): Boolean =
     this == SmsManager.RESULT_ERROR_GENERIC_FAILURE ||

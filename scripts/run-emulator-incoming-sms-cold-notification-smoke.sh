@@ -4,7 +4,7 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s [--journey cold-notification|multiple-message|notification-denied] [--port EVEN_PORT]\n' \
+    printf 'Usage: %s [--journey cold-notification|multiple-message|notification-denied|inline-reply-permission-denied] [--port EVEN_PORT]\n' \
         "$0" >&2
 }
 
@@ -87,6 +87,25 @@ case "$JOURNEY" in
         INCOMING_BODY="AuroraSMS modem delivery marker-alpha"
         FIRST_INCOMING_BODY=""
         ;;
+    inline-reply-permission-denied)
+        DEFAULT_PORT=5578
+        AVD_NAME="AuroraSMS_SMSRX_API26"
+        AVD_TARGET="android-26"
+        AVD_IMAGE="system-images/android-26/default/x86_64/"
+        EXPECTED_SDK="26"
+        API_LABEL="API 26"
+        TEST_METHOD="realModemSmsSupportsColdInlineReplyPermissionDeniedJourney"
+        GATE_ARGUMENT="auroraEmulatorInlineReplyPermissionDenied"
+        PHASE_ARGUMENT="auroraEmulatorInlineReplyPermissionDeniedPhase"
+        PREPARE_STATUS_CODE=55
+        VERIFY_STATUS_CODE=56
+        CLEANUP_STATUS_CODE=57
+        PREPARE_SENTINEL="auroraInlineReplyPermissionDeniedPrepareResult"
+        VERIFY_SENTINEL="auroraInlineReplyPermissionDeniedVerifyResult"
+        CLEANUP_SENTINEL="auroraInlineReplyPermissionDeniedCleanupResult"
+        INCOMING_BODY="AuroraSMS modem delivery 900017"
+        FIRST_INCOMING_BODY=""
+        ;;
     *)
         usage
         exit 2
@@ -117,13 +136,28 @@ INCOMING_SENDER="15551230017"
 INCOMING_MODEM_SENDER="+15551230017"
 EMITTED_PDU_ARGUMENT="auroraEmulatorIncomingSmsEmittedPduHex"
 JOURNAL_PATH="shared_prefs/aurora_sms_delivery_journal_v1.xml"
+JOURNAL_CHECKSUM_DOMAIN="AuroraSMS.INCOMING_SMS_REPLAY_JOURNAL.v4"
+REPLY_TARGET_PATH="shared_prefs/aurora_inline_reply_targets.xml"
+REPLY_REPLAY_PATH="shared_prefs/aurora_inline_reply_replay.xml"
+REPLY_OPERATION_PATH="shared_prefs/aurora_inline_reply_operations.xml"
+DEBUG_SMS_SNAPSHOT_URI="content://org.aurorasms.app.debug.sms_snapshot/sms"
 PDU_CAPTURE_PATH="shared_prefs/aurora_incoming_sms_pdu_capture_v1.xml"
 PDU_CAPTURE_ARM_ACTIVITY="org.aurorasms.app.message.IncomingSmsPduCaptureArmActivity"
 SYSTEM_UI_PACKAGE="com.android.systemui"
 SYSTEM_UI_PANEL_RESOURCE="$SYSTEM_UI_PACKAGE:id/notification_panel"
 SYSTEM_UI_STACK_RESOURCE="$SYSTEM_UI_PACKAGE:id/notification_stack_scroller"
+SYSTEM_UI_REMOTE_INPUT_TEXT_RESOURCE="$SYSTEM_UI_PACKAGE:id/remote_input_text"
+SYSTEM_UI_REMOTE_INPUT_SEND_RESOURCE="$SYSTEM_UI_PACKAGE:id/remote_input_send"
 GENERIC_NOTIFICATION_TITLE="AuroraSMS"
 GENERIC_NOTIFICATION_BODY="New message"
+REPLY_ACTION_LABEL="Reply"
+INLINE_REPLY_TEXT="AuroraSMSInlineReplyDenied900019"
+INLINE_REPLY_RECEIVER="org.aurorasms.core.notifications.InlineReplyReceiver"
+INLINE_REPLY_FAILURE_TITLE="Check reply status"
+INLINE_REPLY_FAILURE_BODY="Confirm in AuroraSMS before trying again."
+INLINE_REPLY_FAILURE_CHANNEL="aurora_reply_failures_v1"
+INLINE_REPLY_FAILURE_TAG_PREFIX="aurora-reply-failure:"
+EXPECTED_TARGET_RECIPIENT_SHA256="2bd49bec27fdeadb7f63dce372b4b69acdb90467cbc3991dee46f492d1b6d333"
 APP_THREAD_RESOURCE="aurora-thread-screen"
 APP_INBOX_RESOURCE="aurora-inbox-screen"
 APP_MESSAGE_RESOURCE="aurora-message-bubble"
@@ -136,6 +170,7 @@ SETTINGS_PACKAGE="com.android.settings"
 SETTINGS_MAIN_SWITCH_RESOURCE="$SETTINGS_PACKAGE:id/main_switch_bar"
 SETTINGS_SWITCH_WIDGET_RESOURCE="android:id/switch_widget"
 POST_NOTIFICATIONS_PERMISSION="android.permission.POST_NOTIFICATIONS"
+SEND_SMS_PERMISSION="android.permission.SEND_SMS"
 OPEN_CONVERSATION_ACTION="org.aurorasms.app.action.OPEN_CONVERSATION"
 CONVERSATION_CATEGORY_PREFIX="org.aurorasms.core.notifications.category.CONVERSATION."
 
@@ -159,7 +194,7 @@ PERMISSIONS=(
 )
 
 for required_tool in \
-    "$EMULATOR_BIN" "$ADB_BIN" flock rg xmllint timeout sha256sum awk sed ps tee tr; do
+    "$EMULATOR_BIN" "$ADB_BIN" base64 flock rg xmllint timeout sha256sum awk sed ps tee tr; do
     if [[ "$required_tool" == */* ]]; then
         if [[ ! -x "$required_tool" ]]; then
             printf 'Required executable is unavailable: %s\n' "$required_tool" >&2
@@ -807,9 +842,24 @@ delete_test_pdu_capture() {
     [[ "$state" == "absent" ]]
 }
 
+clear_logcat_buffer_window() {
+    local buffer="$1" attempt
+    for attempt in 1 2 3 4; do
+        if timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+            "${ADB[@]}" logcat -b "$buffer" -c >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    return 1
+}
+
 clear_process_start_event_window() {
-    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
-        "${ADB[@]}" logcat -b events -c >/dev/null 2>&1
+    clear_logcat_buffer_window events
+}
+
+clear_privacy_evidence_window() {
+    clear_logcat_buffer_window all
 }
 
 receiver_process_start_pid() {
@@ -831,8 +881,10 @@ process_start_pid_for_receiver() {
                 for (field = 1; field <= NF; field++) {
                     gsub(/^[[:space:]]+|[[:space:]]+$/, "", $field)
                 }
-                if ($1 == "[0" && $2 ~ /^[0-9]+$/ && $4 == package &&
-                    $5 == "broadcast" && $6 == "{" package "/" receiver "}]") {
+                if (NF == 6 && $1 == "[0" && $2 ~ /^[0-9]+$/ &&
+                    $3 ~ /^[0-9]+$/ && $4 == package && $5 == "broadcast" &&
+                    ($6 == package "/" receiver "]" ||
+                        $6 == "{" package "/" receiver "}]")) {
                     if (!seen[$2]++) print $2
                 }
             }
@@ -952,6 +1004,295 @@ run_phase() (
     fi
 )
 
+private_preferences_xml() {
+    local path="$1" exists xml
+    if ! exists="$(
+        timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+            "${ADB[@]}" shell \
+            "run-as '$APP_PACKAGE' sh -c 'if [ -f \"$path\" ]; then printf yes; else printf no; fi'" \
+            2>/dev/null | tr -d '\r'
+    )"; then
+        return 1
+    fi
+    case "$exists" in
+        no)
+            printf '<map />'
+            return 0
+            ;;
+        yes) ;;
+        *) return 1 ;;
+    esac
+    xml="$(
+        timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+            "${ADB[@]}" exec-out run-as "$APP_PACKAGE" cat "$path" 2>/dev/null
+    )" || return 1
+    [[ -n "$xml" ]] || return 1
+    xmllint --nonet --noout - <<<"$xml" 2>/dev/null || return 1
+    printf '%s' "$xml"
+}
+
+canonical_base64url_no_padding() {
+    local encoded
+    encoded="$(printf '%s' "$1" | base64 --wrap=0)" || return 1
+    encoded="${encoded//+/-}"
+    encoded="${encoded//\//_}"
+    encoded="${encoded//=}"
+    [[ "$encoded" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+    printf '%s\n' "$encoded"
+}
+
+canonical_sha256() {
+    local output digest marker remainder
+    output="$(printf '%s' "$1" | sha256sum)" || return 1
+    read -r digest marker remainder <<<"$output"
+    [[ "$digest" =~ ^[0-9a-f]{64}$ && "$marker" == "-" && -z "$remainder" ]] || return 1
+    printf '%s\n' "$digest"
+}
+
+is_canonical_nonnegative_decimal() {
+    [[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]
+}
+
+is_canonical_positive_decimal() {
+    [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+is_canonical_subscription_decimal() {
+    [[ "$1" == "-1" ]] || is_canonical_nonnegative_decimal "$1"
+}
+
+journal_checksum_is_valid() {
+    local key="$1" value="$2" storage_token payload actual output expected marker remainder
+    [[ "$key" =~ ^delivery\.([0-9a-f]{64})$ ]] || return 1
+    storage_token="${key#delivery.}"
+    payload="${value%,*}"
+    actual="${value##*,}"
+    [[ "$payload" != "$value" && "$actual" =~ ^[0-9a-f]{64}$ ]] || return 1
+    output="$({
+        printf '%s\0%s\0%s' "$JOURNAL_CHECKSUM_DOMAIN" "$storage_token" "$payload"
+    } | sha256sum)" || return 1
+    read -r expected marker remainder <<<"$output"
+    [[ "$expected" =~ ^[0-9a-f]{64}$ && "$marker" == "-" && -z "$remainder" ]] || return 1
+    [[ "$actual" == "$expected" ]]
+}
+
+reply_replay_claim_count() {
+    local xml named_count string_count
+    xml="$(private_preferences_xml "$REPLY_REPLAY_PATH")" || return 1
+    named_count="$(
+        xmllint --nonet --xpath \
+            'count(/map/*[starts-with(@name,"claim.")])' - \
+            <<<"$xml" 2>/dev/null
+    )" || return 1
+    string_count="$(
+        xmllint --nonet --xpath \
+            'count(/map/string[starts-with(@name,"claim.")])' - \
+            <<<"$xml" 2>/dev/null
+    )" || return 1
+    [[ "$named_count" =~ ^[0-9]+$ && "$string_count" =~ ^[0-9]+$ ]] || return 1
+    [[ "$named_count" == "$string_count" ]] || return 1
+    printf '%s\n' "$string_count"
+}
+
+reply_operation_count() {
+    local xml total_count named_count string_count
+    xml="$(private_preferences_xml "$REPLY_OPERATION_PATH")" || return 1
+    total_count="$(
+        xmllint --nonet --xpath 'count(/map/*)' - <<<"$xml" 2>/dev/null
+    )" || return 1
+    named_count="$(
+        xmllint --nonet --xpath \
+            'count(/map/*[starts-with(@name,"operation.")])' - \
+            <<<"$xml" 2>/dev/null
+    )" || return 1
+    string_count="$(
+        xmllint --nonet --xpath \
+            'count(/map/string[starts-with(@name,"operation.")])' - \
+            <<<"$xml" 2>/dev/null
+    )" || return 1
+    [[ "$total_count" =~ ^[0-9]+$ && "$named_count" =~ ^[0-9]+$ && \
+        "$string_count" =~ ^[0-9]+$ ]] || return 1
+    [[ "$total_count" == "$named_count" && "$named_count" == "$string_count" ]] || return 1
+    printf '%s\n' "$string_count"
+}
+
+exact_zero_reply_operations() {
+    local count
+    count="$(reply_operation_count)" || return 1
+    [[ "$count" == "0" ]]
+}
+
+exact_single_notified_reply_operation() {
+    local xml count key encoded operation_id canonical expected_checksum index
+    local -a fields
+    is_canonical_positive_decimal "$CONVERSATION_ID" || return 1
+    is_canonical_positive_decimal "$PROVIDER_ID" || return 1
+    xml="$(private_preferences_xml "$REPLY_OPERATION_PATH")" || return 1
+    count="$(xmllint --nonet --xpath 'count(/map/*)' - <<<"$xml" 2>/dev/null)" || return 1
+    [[ "$count" == "1" ]] || return 1
+    [[ "$(xmllint --nonet --xpath 'count(/map/string)' - \
+        <<<"$xml" 2>/dev/null)" == "1" ]] || return 1
+    key="$(xmllint --nonet --xpath 'string(/map/string[1]/@name)' - \
+        <<<"$xml" 2>/dev/null)" || return 1
+    [[ "$key" =~ ^operation\.([1-9][0-9]*)$ ]] || return 1
+    operation_id="${BASH_REMATCH[1]}"
+    encoded="$(xmllint --nonet --xpath 'string(/map/string[1])' - \
+        <<<"$xml" 2>/dev/null)" || return 1
+    IFS='|' read -r -a fields <<<"$encoded"
+    [[ "${#fields[@]}" -eq 13 ]] || return 1
+    [[ "${fields[0]}" == "4" && "${fields[1]}" == "$CONVERSATION_ID" ]] || return 1
+    is_canonical_nonnegative_decimal "${fields[2]}" || return 1
+    is_canonical_positive_decimal "${fields[3]}" || return 1
+    (( fields[3] > fields[2] )) || return 1
+    [[ "${fields[4]}" == "fn" && "${fields[5]}" == "1" && \
+        "${fields[6]}" == "00" && "${fields[7]}" == "s" && \
+        "${fields[8]}" == "$PROVIDER_ID" && "${fields[9]}" == "-" && \
+        "${fields[10]}" == "f" && "${fields[11]}" == "0" ]] || return 1
+    canonical="${fields[0]}"
+    for ((index = 1; index < 12; index++)); do
+        canonical+="|${fields[index]}"
+    done
+    expected_checksum="$(canonical_sha256 "$operation_id|$canonical")" || return 1
+    [[ "${fields[12]}" == "$expected_checksum" ]] || return 1
+    printf '%s\n' "$operation_id"
+}
+
+delete_exact_notified_reply_operation() {
+    exact_single_notified_reply_operation >/dev/null || return 1
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell run-as "$APP_PACKAGE" rm -f "$REPLY_OPERATION_PATH" \
+        >/dev/null 2>&1 || return 1
+    exact_zero_reply_operations
+}
+
+exact_reply_target_expiry() {
+    local xml count key encoded request_id request_id_base64 recipient_base64
+    local canonical expected_checksum index
+    local -a fields
+    is_canonical_positive_decimal "$PROVIDER_ID" || return 1
+    is_canonical_positive_decimal "$CONVERSATION_ID" || return 1
+    is_canonical_nonnegative_decimal "$DELIVERY_SUBSCRIPTION_ID" || return 1
+    request_id="SMS:$PROVIDER_ID"
+    request_id_base64="$(canonical_base64url_no_padding "$request_id")" || return 1
+    recipient_base64="$(canonical_base64url_no_padding "$INCOMING_MODEM_SENDER")" || return 1
+    key="target.$request_id"
+    xml="$(private_preferences_xml "$REPLY_TARGET_PATH")" || return 1
+    count="$(
+        xmllint --nonet --xpath 'count(/map/*)' - <<<"$xml" 2>/dev/null
+    )" || return 1
+    [[ "$count" == "1" ]] || return 1
+    [[ "$(xmllint --nonet --xpath 'string(/map/string[1]/@name)' - \
+        <<<"$xml" 2>/dev/null)" == "$key" ]] || return 1
+    encoded="$(xmllint --nonet --xpath 'string(/map/string[1])' - \
+        <<<"$xml" 2>/dev/null)" || return 1
+    IFS='|' read -r -a fields <<<"$encoded"
+    [[ "${#fields[@]}" -eq 7 ]] || return 1
+    [[ "${fields[0]}" == "2" && "${fields[1]}" == "$request_id_base64" ]] || return 1
+    [[ "${fields[2]}" == "$CONVERSATION_ID" ]] || return 1
+    [[ "${fields[3]}" == "$DELIVERY_SUBSCRIPTION_ID" ]] || return 1
+    is_canonical_positive_decimal "${fields[4]}" || return 1
+    [[ "${fields[5]}" == "$recipient_base64" ]] || return 1
+    canonical="${fields[0]}"
+    for ((index = 1; index < 6; index++)); do
+        canonical+="|${fields[index]}"
+    done
+    expected_checksum="$(canonical_sha256 "$canonical")" || return 1
+    [[ "${fields[6]}" == "$expected_checksum" ]] || return 1
+    printf '%s\n' "${fields[4]}"
+}
+
+exact_reply_replay_claim() {
+    local expected_expiry="$1" xml count key encoded request_id request_id_base64
+    local canonical expected_checksum index
+    local -a fields
+    is_canonical_positive_decimal "$expected_expiry" || return 1
+    is_canonical_positive_decimal "$PROVIDER_ID" || return 1
+    is_canonical_positive_decimal "$CONVERSATION_ID" || return 1
+    is_canonical_nonnegative_decimal "$DELIVERY_SUBSCRIPTION_ID" || return 1
+    request_id="SMS:$PROVIDER_ID"
+    request_id_base64="$(canonical_base64url_no_padding "$request_id")" || return 1
+    key="claim.$request_id"
+    xml="$(private_preferences_xml "$REPLY_REPLAY_PATH")" || return 1
+    count="$(
+        xmllint --nonet --xpath 'count(/map/*)' - <<<"$xml" 2>/dev/null
+    )" || return 1
+    [[ "$count" == "1" ]] || return 1
+    [[ "$(xmllint --nonet --xpath 'string(/map/string[1]/@name)' - \
+        <<<"$xml" 2>/dev/null)" == "$key" ]] || return 1
+    encoded="$(xmllint --nonet --xpath 'string(/map/string[1])' - \
+        <<<"$xml" 2>/dev/null)" || return 1
+    IFS='|' read -r -a fields <<<"$encoded"
+    # Five-field legacy claims are accepted only as migration inputs by the app. This owner gate
+    # requires the durable claim to have converged to the authenticated v2 envelope.
+    [[ "${#fields[@]}" -eq 8 ]] || return 1
+    [[ "${fields[0]}" == "2" && "${fields[1]}" == "$request_id_base64" ]] || return 1
+    is_canonical_nonnegative_decimal "${fields[2]}" || return 1
+    [[ "${fields[3]}" == "$CONVERSATION_ID" ]] || return 1
+    [[ "${fields[4]}" == "$DELIVERY_SUBSCRIPTION_ID" ]] || return 1
+    [[ "${fields[5]}" == "$expected_expiry" ]] || return 1
+    [[ "${fields[6]}" == "$EXPECTED_TARGET_RECIPIENT_SHA256" ]] || return 1
+    (( fields[2] < fields[5] )) || return 1
+    canonical="${fields[0]}"
+    for ((index = 1; index < 7; index++)); do
+        canonical+="|${fields[index]}"
+    done
+    expected_checksum="$(canonical_sha256 "$canonical")" || return 1
+    [[ "${fields[7]}" == "$expected_checksum" ]]
+}
+
+exact_single_incoming_provider_row() {
+    local before_pid output after_pid
+    [[ "$PROVIDER_ID" =~ ^[0-9]+$ && "$CONVERSATION_ID" =~ ^[0-9]+$ ]] || return 1
+    before_pid="$(single_package_pid "$APP_PACKAGE")" || return 1
+    output="$(
+        timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+            "${ADB[@]}" shell content query \
+            --uri "$DEBUG_SMS_SNAPSHOT_URI" --projection _id:thread_id:type 2>/dev/null \
+            | tr -d '\r'
+    )" || return 1
+    after_pid="$(single_package_pid "$APP_PACKAGE")" || return 1
+    [[ "$after_pid" == "$before_pid" ]] || return 1
+    awk -v provider_id="$PROVIDER_ID" -v conversation_id="$CONVERSATION_ID" '
+        /^Row: [0-9]+ / {
+            rows++
+            sub(/^Row: [0-9]+ /, "")
+            count = split($0, pairs, /, /)
+            for (i = 1; i <= count; i++) {
+                separator = index(pairs[i], "=")
+                if (separator <= 1) exit 2
+                name = substr(pairs[i], 1, separator - 1)
+                value = substr(pairs[i], separator + 1)
+                if (name in values) exit 2
+                values[name] = value
+            }
+            valid = count == 3 && values["_id"] == provider_id &&
+                values["thread_id"] == conversation_id && values["type"] == "1"
+            next
+        }
+        NF { unexpected++ }
+        END { exit !(rows == 1 && valid && unexpected == 0) }
+    ' <<<"$output"
+}
+
+send_sms_permission_is_only_denied_sms_permission() {
+    local state false_count
+    state="$(permission_state)" || return 1
+    false_count="$(rg --count '=false$' <<<"$state" || true)"
+    [[ "$false_count" == "1" ]] || return 1
+    rg --fixed-strings --line-regexp --quiet "$SEND_SMS_PERMISSION=false" <<<"$state" && \
+        [[ "$(default_sms_state)" == "$APP_PACKAGE" ]]
+}
+
+delete_exact_reply_replay_claim() {
+    local expected_expiry="$1" state
+    exact_reply_replay_claim "$expected_expiry" || return 1
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell run-as "$APP_PACKAGE" rm -f "$REPLY_REPLAY_PATH" \
+        >/dev/null 2>&1 || return 1
+    state="$(reply_replay_claim_count)" || return 1
+    [[ "$state" == "0" ]]
+}
+
 journal_xml() {
     local exists xml
     if ! exists="$(
@@ -994,7 +1335,7 @@ journal_entry_count() {
 }
 
 complete_journal_identity() {
-    local xml count value
+    local xml count key value
     local -a fields
     xml="$(journal_xml)" || return 1
     count="$(
@@ -1008,14 +1349,23 @@ complete_journal_identity() {
             'string(/map/string[starts-with(@name,"delivery.")][1])' - \
             <<<"$xml" 2>/dev/null
     )" || return 1
+    key="$(
+        xmllint --nonet --xpath \
+            'string(/map/string[starts-with(@name,"delivery.")][1]/@name)' - \
+            <<<"$xml" 2>/dev/null
+    )" || return 1
     IFS=',' read -r -a fields <<<"$value"
-    [[ "${#fields[@]}" -eq 9 ]] || return 1
-    [[ "${fields[0]}" == "2" && "${fields[2]}" == "C" ]] || return 1
+    [[ "${#fields[@]}" -eq 11 ]] || return 1
+    [[ "${fields[0]}" == "4" && "${fields[2]}" == "C" ]] || return 1
+    journal_checksum_is_valid "$key" "$value" || return 1
     [[ "${fields[1]}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || return 1
-    [[ "${fields[3]}" =~ ^[0-9]+$ && "${fields[4]}" =~ ^[0-9]+$ ]] || return 1
-    (( fields[3] > 0 && fields[4] > 0 )) || return 1
-    [[ "${fields[5]}" =~ ^[0-9]+$ && "${fields[6]}" =~ ^[0-9]+$ ]] || return 1
-    [[ "${fields[7]}" =~ ^-?[0-9]+$ && "${fields[8]}" =~ ^[0-9]+$ ]] || return 1
+    is_canonical_positive_decimal "${fields[3]}" || return 1
+    is_canonical_positive_decimal "${fields[4]}" || return 1
+    is_canonical_nonnegative_decimal "${fields[5]}" || return 1
+    is_canonical_nonnegative_decimal "${fields[6]}" || return 1
+    is_canonical_subscription_decimal "${fields[7]}" || return 1
+    is_canonical_nonnegative_decimal "${fields[8]}" || return 1
+    [[ "${fields[9]}" =~ ^[0-9a-f]{64}$ ]] || return 1
     printf '%s|%s|%s\n' "${fields[3]}" "${fields[4]}" "${fields[7]}"
 }
 
@@ -1036,7 +1386,7 @@ wait_for_complete_journal() {
 }
 
 complete_multiple_journal_identity() {
-    local xml count value index provider conversation subscription
+    local xml count key value index provider conversation subscription
     local first_provider="" second_provider="" common_conversation="" common_subscription=""
     local -a fields
     xml="$(journal_xml)" || return 1
@@ -1052,17 +1402,26 @@ complete_multiple_journal_identity() {
                 "string(/map/string[starts-with(@name,\"delivery.\")][$index])" - \
                 <<<"$xml" 2>/dev/null
         )" || return 1
+        key="$(
+            xmllint --nonet --xpath \
+                "string(/map/string[starts-with(@name,\"delivery.\")][$index]/@name)" - \
+                <<<"$xml" 2>/dev/null
+        )" || return 1
         IFS=',' read -r -a fields <<<"$value"
-        [[ "${#fields[@]}" -eq 9 ]] || return 1
-        [[ "${fields[0]}" == "2" && "${fields[2]}" == "C" ]] || return 1
+        [[ "${#fields[@]}" -eq 11 ]] || return 1
+        [[ "${fields[0]}" == "4" && "${fields[2]}" == "C" ]] || return 1
+        journal_checksum_is_valid "$key" "$value" || return 1
         [[ "${fields[1]}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || return 1
         provider="${fields[3]}"
         conversation="${fields[4]}"
         subscription="${fields[7]}"
-        [[ "$provider" =~ ^[0-9]+$ && "$conversation" =~ ^[0-9]+$ ]] || return 1
-        (( provider > 0 && conversation > 0 )) || return 1
-        [[ "${fields[5]}" =~ ^[0-9]+$ && "${fields[6]}" =~ ^[0-9]+$ ]] || return 1
-        [[ "$subscription" =~ ^-?[0-9]+$ && "${fields[8]}" =~ ^[0-9]+$ ]] || return 1
+        is_canonical_positive_decimal "$provider" || return 1
+        is_canonical_positive_decimal "$conversation" || return 1
+        is_canonical_nonnegative_decimal "${fields[5]}" || return 1
+        is_canonical_nonnegative_decimal "${fields[6]}" || return 1
+        is_canonical_subscription_decimal "$subscription" || return 1
+        is_canonical_nonnegative_decimal "${fields[8]}" || return 1
+        [[ "${fields[9]}" =~ ^[0-9a-f]{64}$ ]] || return 1
         if (( index == 1 )); then
             first_provider="$provider"
             common_conversation="$conversation"
@@ -1485,6 +1844,185 @@ active_notification_contract_is_exact() {
     fi
 }
 
+notification_record_for_tag() {
+    local dump="$1" tag="$2" id="$3" expected_app_count="$4"
+    [[ "$id" =~ ^[0-9]+$ && "$expected_app_count" =~ ^[1-9][0-9]*$ ]] || return 1
+    awk \
+        -v package_token="pkg=$APP_PACKAGE" \
+        -v tag_token="tag=$tag" \
+        -v id_token="id=$id" \
+        -v expected_app_count="$expected_app_count" '
+        function trim(line, value) {
+            value = line
+            sub(/^[[:space:]]*/, "", value)
+            sub(/[[:space:]]*$/, "", value)
+            return value
+        }
+        function token(line, expected, fields, count, i) {
+            count = split(line, fields, /[[:space:]]+/)
+            for (i = 1; i <= count; i++) if (fields[i] == expected) return 1
+            return 0
+        }
+        {
+            clean = trim($0)
+            if (clean == "Notification List:") {
+                list_count++
+                active = 1
+                next
+            }
+            if (clean ~ /^mArchive=/) {
+                archive_count++
+                active = 0
+                capture = 0
+                next
+            }
+            if (active && index(clean, "NotificationRecord(") == 1) {
+                is_app = token(clean, package_token)
+                if (is_app) app_count++
+                capture = is_app && token(clean, tag_token) && token(clean, id_token)
+                if (capture) exact_count++
+            }
+            if (active && capture) record = record $0 "\n"
+        }
+        END {
+            if (list_count != 1 || archive_count != 1 ||
+                app_count != expected_app_count || exact_count != 1 || record == "") exit 1
+            printf "%s", record
+        }
+    ' <<<"$dump"
+}
+
+reply_action_pending_intent_identity() {
+    local dump record identities
+    dump="$(notification_dump)" || return 1
+    record="$(
+        notification_record_for_tag \
+            "$dump" "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID" "$1"
+    )" || return 1
+    identities="$(
+        sed -n \
+            's/^[[:space:]]*\[0\] "Reply" -> PendingIntent{\([0-9a-f][0-9a-f]*\): PendingIntentRecord{\([0-9a-f][0-9a-f]*\) .*$/\1|\2/p' \
+            <<<"$record"
+    )"
+    [[ "$identities" =~ ^[0-9a-f]+\|[0-9a-f]+$ ]] || return 1
+    printf '%s\n' "$identities"
+}
+
+reply_failure_notification_id() {
+    [[ "$EXPECTED_NOTIFICATION_ID" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$((EXPECTED_NOTIFICATION_ID ^ 1073741824))"
+}
+
+inline_reply_failure_notifications_are_exact() {
+    local dump conversation_record failure_record failure_id failure_tag
+    local conversation_actions failure_actions title_count body_count
+    dump="$(notification_dump)" || return 1
+    if rg --fixed-strings --quiet "$INCOMING_BODY" <<<"$dump" || \
+        rg --fixed-strings --quiet "$INCOMING_SENDER" <<<"$dump" || \
+        rg --fixed-strings --quiet "$INCOMING_MODEM_SENDER" <<<"$dump" || \
+        rg --fixed-strings --quiet "$INLINE_REPLY_TEXT" <<<"$dump"; then
+        return 1
+    fi
+    failure_id="$(reply_failure_notification_id)" || return 1
+    failure_tag="$INLINE_REPLY_FAILURE_TAG_PREFIX$CONVERSATION_ID"
+    conversation_record="$(
+        notification_record_for_tag \
+            "$dump" "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID" 2
+    )" || return 1
+    failure_record="$(
+        notification_record_for_tag "$dump" "$failure_tag" "$failure_id" 2
+    )" || return 1
+
+    rg --quiet \
+        "NotificationRecord\\(.* pkg=$APP_PACKAGE .* id=$EXPECTED_NOTIFICATION_ID tag=$EXPECTED_NOTIFICATION_TAG importance=4 " \
+        <<<"$conversation_record" || return 1
+    rg --fixed-strings --quiet \
+        'channel=aurora_messages_v1: Notification(channel=aurora_messages_v1' \
+        <<<"$conversation_record" || return 1
+    rg --fixed-strings --quiet 'android.title=String (AuroraSMS)' \
+        <<<"$conversation_record" || return 1
+    rg --fixed-strings --quiet 'android.text=String (New message)' \
+        <<<"$conversation_record" || return 1
+    conversation_actions="$(
+        rg --count '^[[:space:]]+\[[0-9]+\] ".*" -> PendingIntent\{' \
+            <<<"$conversation_record" || true
+    )"
+    [[ "$conversation_actions" == "1" ]] || return 1
+    rg --quiet \
+        "^[[:space:]]+\\[0\\] \"Reply\" -> PendingIntent\\{.* PendingIntentRecord\\{.* $APP_PACKAGE broadcastIntent " \
+        <<<"$conversation_record" || return 1
+
+    rg --quiet \
+        "NotificationRecord\\(.* pkg=$APP_PACKAGE .* id=$failure_id tag=$failure_tag importance=4 " \
+        <<<"$failure_record" || return 1
+    rg --fixed-strings --quiet \
+        "channel=$INLINE_REPLY_FAILURE_CHANNEL: Notification(channel=$INLINE_REPLY_FAILURE_CHANNEL" \
+        <<<"$failure_record" || return 1
+    rg --fixed-strings --quiet 'category=err' <<<"$failure_record" || return 1
+    rg --fixed-strings --quiet 'vis=PRIVATE' <<<"$failure_record" || return 1
+    rg --quiet \
+        "contentIntent=PendingIntent\\{.* PendingIntentRecord\\{.* $APP_PACKAGE startActivity \\(whitelist:" \
+        <<<"$failure_record" || return 1
+    title_count="$(
+        rg --fixed-strings --count \
+            "android.title=String ($INLINE_REPLY_FAILURE_TITLE)" <<<"$failure_record" || true
+    )"
+    body_count="$(
+        rg --fixed-strings --count \
+            "android.text=String ($INLINE_REPLY_FAILURE_BODY)" <<<"$failure_record" || true
+    )"
+    [[ "$title_count" == "1" && "$body_count" == "1" ]] || return 1
+    failure_actions="$(
+        rg --count '^[[:space:]]+\[[0-9]+\] ".*" -> PendingIntent\{' \
+            <<<"$failure_record" || true
+    )"
+    failure_actions="${failure_actions:-0}"
+    [[ "$failure_actions" == "0" ]] || return 1
+    ! rg --fixed-strings --quiet ' broadcastIntent ' <<<"$failure_record"
+}
+
+reply_failure_update_time() {
+    local dump failure_id failure_tag record values
+    dump="$(notification_dump)" || return 1
+    failure_id="$(reply_failure_notification_id)" || return 1
+    failure_tag="$INLINE_REPLY_FAILURE_TAG_PREFIX$CONVERSATION_ID"
+    record="$(notification_record_for_tag "$dump" "$failure_tag" "$failure_id" 2)" || return 1
+    values="$(
+        sed -n 's/^[[:space:]]*mUpdateTimeMs=\([0-9][0-9]*\)$/\1/p' <<<"$record"
+    )"
+    [[ "$values" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$values"
+}
+
+wait_for_inline_reply_failure_state() {
+    local expected_expiry="$1" deadline update last="" stable=0
+    deadline=$((SECONDS + DELIVERY_TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        if exact_reply_replay_claim "$expected_expiry" && \
+            exact_single_notified_reply_operation >/dev/null && \
+            exact_single_incoming_provider_row && \
+            inline_reply_failure_notifications_are_exact && \
+            app_task_is_absent && \
+            update="$(reply_failure_update_time)"; then
+            if [[ "$update" == "$last" ]]; then
+                stable=$((stable + 1))
+            else
+                last="$update"
+                stable=1
+            fi
+            if (( stable >= 3 )); then
+                printf '%s\n' "$update"
+                return 0
+            fi
+        else
+            last=""
+            stable=0
+        fi
+        sleep 0.2
+    done
+    return 1
+}
+
 exact_notification_state() {
     local tag="$1" id="$2" dump parsed
     dump="$(notification_dump)" || {
@@ -1539,6 +2077,56 @@ exact_notification_state() {
         active|inactive) printf '%s\n' "$parsed" ;;
         *) printf 'unknown\n' ;;
     esac
+}
+
+exact_notification_is_absent_with_app_count() {
+    local tag="$1" id="$2" expected_app_count="$3" dump counts
+    [[ -n "$tag" && "$id" =~ ^-?[0-9]+$ && "$expected_app_count" =~ ^[0-9]+$ ]] || \
+        return 1
+    dump="$(notification_dump)" || return 1
+    counts="$(
+        awk \
+            -v package_token="pkg=$APP_PACKAGE" \
+            -v tag_token="tag=$tag" \
+            -v id_token="id=$id" '
+            function trim(line, value) {
+                value = line
+                sub(/^[[:space:]]*/, "", value)
+                sub(/[[:space:]]*$/, "", value)
+                return value
+            }
+            function token(line, expected, fields, count, i) {
+                count = split(line, fields, /[[:space:]]+/)
+                for (i = 1; i <= count; i++) if (fields[i] == expected) return 1
+                return 0
+            }
+            {
+                clean = trim($0)
+                if (clean == "Notification List:") {
+                    list_count++
+                    if (archive_count > 0) invalid = 1
+                    active = 1
+                    next
+                }
+                if (clean ~ /^mArchive=/) {
+                    archive_count++
+                    if (!active) invalid = 1
+                    active = 0
+                    next
+                }
+                if (active && index(clean, "NotificationRecord(") == 1 &&
+                    token(clean, package_token)) {
+                    app_count++
+                    if (token(clean, tag_token) && token(clean, id_token)) exact_count++
+                }
+            }
+            END {
+                if (list_count != 1 || archive_count != 1 || invalid) print "unknown"
+                else print (app_count + 0) ":" (exact_count + 0)
+            }
+        ' <<<"$dump"
+    )" || return 1
+    [[ "$counts" == "${expected_app_count}:0" ]]
 }
 
 wait_for_exact_notification_state() {
@@ -1980,6 +2568,225 @@ shade_row_geometry() {
     printf '%s|%s|%s\n' "$body_bounds" "$row_bounds" "$stack_bounds"
 }
 
+tap_exact_bounds() {
+    local bounds="$1" values left top right bottom size width height
+    values="$(parse_bounds "$bounds")" || return 1
+    IFS=',' read -r left top right bottom <<<"$values"
+    size="$(display_size)" || return 1
+    IFS=',' read -r width height <<<"$size"
+    (( left < right && top < bottom )) || return 1
+    (( left >= 0 && top >= 0 && right <= width && bottom <= height )) || return 1
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell input touchscreen tap \
+        "$(((left + right) / 2))" "$(((top + bottom) / 2))" \
+        >/dev/null 2>&1
+}
+
+shade_reply_action_bounds() {
+    local xml="$1" geometry body_bounds row_bounds stack_bounds
+    local body_xpath row_xpath action_xpath action_count action_bounds
+    geometry="$(shade_row_geometry "$xml")" || return 1
+    IFS='|' read -r body_bounds row_bounds stack_bounds <<<"$geometry"
+    body_xpath="//node[@package='$SYSTEM_UI_PACKAGE' and @text='$GENERIC_NOTIFICATION_BODY' and (@resource-id='android:id/text' or @resource-id='android:id/big_text') and ancestor::node[@resource-id='$SYSTEM_UI_STACK_RESOURCE']]"
+    row_xpath="($body_xpath)/ancestor::node[@clickable='true'][1]"
+    action_xpath="($row_xpath)//node[@package='$SYSTEM_UI_PACKAGE' and @resource-id='android:id/action0' and (@text='$REPLY_ACTION_LABEL' or @content-desc='$REPLY_ACTION_LABEL') and @enabled='true' and @clickable='true']"
+    action_count="$(xpath_value "$xml" "count($action_xpath)")" || return 1
+    [[ "$action_count" == "1" ]] || return 1
+    action_bounds="$(xpath_value "$xml" "string(($action_xpath)[1]/@bounds)")" || return 1
+    parse_bounds "$action_bounds" >/dev/null || return 1
+    printf '%s\n' "$action_bounds"
+}
+
+shade_expand_button_bounds() {
+    local xml="$1" geometry body_bounds row_bounds stack_bounds
+    local body_xpath row_xpath expand_xpath count bounds
+    geometry="$(shade_row_geometry "$xml")" || return 1
+    IFS='|' read -r body_bounds row_bounds stack_bounds <<<"$geometry"
+    body_xpath="//node[@package='$SYSTEM_UI_PACKAGE' and @text='$GENERIC_NOTIFICATION_BODY' and (@resource-id='android:id/text' or @resource-id='android:id/big_text') and ancestor::node[@resource-id='$SYSTEM_UI_STACK_RESOURCE']]"
+    row_xpath="($body_xpath)/ancestor::node[@clickable='true'][1]"
+    expand_xpath="($row_xpath)//node[@package='$SYSTEM_UI_PACKAGE' and @resource-id='android:id/expand_button' and @content-desc='Expand' and @enabled='true' and @clickable='true']"
+    count="$(xpath_value "$xml" "count($expand_xpath)")" || return 1
+    [[ "$count" == "1" ]] || return 1
+    bounds="$(xpath_value "$xml" "string(($expand_xpath)[1]/@bounds)")" || return 1
+    parse_bounds "$bounds" >/dev/null || return 1
+    printf '%s\n' "$bounds"
+}
+
+open_shade_with_exact_reply_action() {
+    local size width height deadline xml bounds expand_bounds next_expand_at=0
+    size="$(display_size)" || return 1
+    IFS=',' read -r width height <<<"$size"
+    collapse_shade_best_effort || return 1
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell input touchscreen swipe \
+        "$((width / 2))" 1 "$((width / 2))" "$((height * 85 / 100))" 500 \
+        >/dev/null 2>&1 || return 1
+    deadline=$((SECONDS + ROUTE_TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        xml="$(ui_hierarchy_xml)" || {
+            sleep 0.2
+            continue
+        }
+        if bounds="$(shade_reply_action_bounds "$xml")"; then
+            printf '%s\n' "$bounds"
+            return 0
+        fi
+        if (( SECONDS >= next_expand_at )) && \
+            expand_bounds="$(shade_expand_button_bounds "$xml")"; then
+            tap_exact_bounds "$expand_bounds" || return 1
+            next_expand_at=$((SECONDS + 1))
+        fi
+        sleep 0.2
+    done
+    if [[ -n "${xml:-}" ]]; then
+        printf '%s\n' "$xml" >"$WORK/inline-reply-shade-timeout.xml"
+    fi
+    return 2
+}
+
+remote_input_editor_state() {
+    local expected_text="$1" expected_send_enabled="$2" xml editor_xpath send_xpath
+    local editor_count send_count text private_count sender_count
+    [[ "$expected_send_enabled" == "true" || "$expected_send_enabled" == "false" ]] || return 1
+    xml="$(ui_hierarchy_xml)" || return 1
+    editor_xpath="//node[@package='$SYSTEM_UI_PACKAGE' and @resource-id='$SYSTEM_UI_REMOTE_INPUT_TEXT_RESOURCE' and @class='android.widget.EditText' and @enabled='true' and @focused='true']"
+    send_xpath="//node[@package='$SYSTEM_UI_PACKAGE' and @resource-id='$SYSTEM_UI_REMOTE_INPUT_SEND_RESOURCE' and @class='android.widget.ImageButton' and @enabled='$expected_send_enabled' and @clickable='true']"
+    editor_count="$(xpath_value "$xml" "count($editor_xpath)")" || return 1
+    send_count="$(xpath_value "$xml" "count($send_xpath)")" || return 1
+    text="$(xpath_value "$xml" "string(($editor_xpath)[1]/@text)")" || return 1
+    private_count="$(
+        xpath_value "$xml" \
+            "count(//node[contains(@text,'$INCOMING_BODY') or contains(@content-desc,'$INCOMING_BODY')])"
+    )" || return 1
+    sender_count="$(
+        xpath_value "$xml" \
+            "count(//node[contains(@text,'$INCOMING_SENDER') or contains(@content-desc,'$INCOMING_SENDER')])"
+    )" || return 1
+    [[ "$editor_count" == "1" && "$send_count" == "1" ]] || return 1
+    if [[ -z "$expected_text" ]]; then
+        [[ -z "$text" || "$text" == "$REPLY_ACTION_LABEL" ]] || return 1
+    else
+        [[ "$text" == "$expected_text" ]] || return 1
+    fi
+    [[ "$private_count" == "0" && "$sender_count" == "0" ]]
+}
+
+wait_for_remote_input_editor_state() {
+    local expected_text="$1" expected_send_enabled="$2" deadline
+    deadline=$((SECONDS + ROUTE_TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        remote_input_editor_state "$expected_text" "$expected_send_enabled" && return 0
+        sleep 0.2
+    done
+    ui_hierarchy_xml >"$WORK/inline-reply-editor-timeout.xml" || true
+    return 1
+}
+
+open_exact_inline_reply_editor() {
+    local action_bounds
+    action_bounds="$(open_shade_with_exact_reply_action)" || return $?
+    tap_exact_bounds "$action_bounds" || return 1
+    wait_for_remote_input_editor_state "" false
+}
+
+enter_exact_inline_reply_text() {
+    remote_input_editor_state "" false || return 1
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell input text "$INLINE_REPLY_TEXT" >/dev/null 2>&1 || return 1
+    wait_for_remote_input_editor_state "$INLINE_REPLY_TEXT" true
+}
+
+submit_exact_inline_reply_once() {
+    local xml send_xpath count bounds
+    remote_input_editor_state "$INLINE_REPLY_TEXT" true || return 1
+    xml="$(ui_hierarchy_xml)" || return 1
+    send_xpath="//node[@package='$SYSTEM_UI_PACKAGE' and @resource-id='$SYSTEM_UI_REMOTE_INPUT_SEND_RESOURCE' and @class='android.widget.ImageButton' and @enabled='true' and @clickable='true']"
+    count="$(xpath_value "$xml" "count($send_xpath)")" || return 1
+    [[ "$count" == "1" ]] || return 1
+    bounds="$(xpath_value "$xml" "string(($send_xpath)[1]/@bounds)")" || return 1
+    tap_exact_bounds "$bounds"
+}
+
+inline_reply_result_shade_is_private() {
+    local size width height xml failure_title_count failure_body_count
+    local reply_count incoming_count sender_count
+    size="$(display_size)" || return 1
+    IFS=',' read -r width height <<<"$size"
+    collapse_shade_best_effort || return 1
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell input touchscreen swipe \
+        "$((width / 2))" 1 "$((width / 2))" "$((height * 85 / 100))" 500 \
+        >/dev/null 2>&1 || return 1
+    sleep 0.35
+    xml="$(ui_hierarchy_xml)" || return 1
+    failure_title_count="$(
+        xpath_value "$xml" \
+            "count(//node[@package='$SYSTEM_UI_PACKAGE' and @text='$INLINE_REPLY_FAILURE_TITLE' and ancestor::node[@resource-id='$SYSTEM_UI_STACK_RESOURCE']])"
+    )" || return 1
+    failure_body_count="$(
+        xpath_value "$xml" \
+            "count(//node[@package='$SYSTEM_UI_PACKAGE' and @text='$INLINE_REPLY_FAILURE_BODY' and ancestor::node[@resource-id='$SYSTEM_UI_STACK_RESOURCE']])"
+    )" || return 1
+    reply_count="$(
+        xpath_value "$xml" \
+            "count(//node[contains(@text,'$INLINE_REPLY_TEXT') or contains(@content-desc,'$INLINE_REPLY_TEXT')])"
+    )" || return 1
+    incoming_count="$(
+        xpath_value "$xml" \
+            "count(//node[contains(@text,'$INCOMING_BODY') or contains(@content-desc,'$INCOMING_BODY')])"
+    )" || return 1
+    sender_count="$(
+        xpath_value "$xml" \
+            "count(//node[contains(@text,'$INCOMING_SENDER') or contains(@content-desc,'$INCOMING_SENDER')])"
+    )" || return 1
+    [[ "$failure_title_count" == "1" && "$failure_body_count" == "1" ]] || return 1
+    [[ "$reply_count" == "0" && "$incoming_count" == "0" && "$sender_count" == "0" ]]
+}
+
+inline_reply_logs_are_private() {
+    local logs
+    logs="$(
+        timeout --foreground --kill-after=2s "${ADB_UI_TIMEOUT_SECONDS}s" \
+            "${ADB[@]}" logcat -b all -d -v threadtime 2>/dev/null \
+            | tr -d '\r'
+    )" || return 1
+    ! rg --fixed-strings --quiet "$INLINE_REPLY_TEXT" <<<"$logs" && \
+        ! rg --fixed-strings --quiet "$INCOMING_BODY" <<<"$logs" && \
+        { [[ -z "$FIRST_INCOMING_BODY" ]] || \
+            ! rg --fixed-strings --quiet "$FIRST_INCOMING_BODY" <<<"$logs"; } && \
+        ! rg --fixed-strings --quiet "$INCOMING_MODEM_SENDER" <<<"$logs" && \
+        ! rg --fixed-strings --quiet "$INCOMING_SENDER" <<<"$logs"
+}
+
+open_shade_and_tap_exact_failure_row() {
+    local size width height deadline xml body_xpath row_xpath count bounds
+    size="$(display_size)" || return 1
+    IFS=',' read -r width height <<<"$size"
+    collapse_shade_best_effort || return 1
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell input touchscreen swipe \
+        "$((width / 2))" 1 "$((width / 2))" "$((height * 85 / 100))" 500 \
+        >/dev/null 2>&1 || return 1
+    deadline=$((SECONDS + ROUTE_TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        xml="$(ui_hierarchy_xml)" || {
+            sleep 0.2
+            continue
+        }
+        body_xpath="//node[@package='$SYSTEM_UI_PACKAGE' and @text='$INLINE_REPLY_FAILURE_BODY' and ancestor::node[@resource-id='$SYSTEM_UI_STACK_RESOURCE']]"
+        row_xpath="($body_xpath)/ancestor::node[@clickable='true'][1]"
+        count="$(xpath_value "$xml" "count($row_xpath)")" || return 1
+        if [[ "$count" == "1" ]] && \
+            [[ "$(xpath_value "$xml" "count(($row_xpath)//node[@package='$SYSTEM_UI_PACKAGE' and @text='$INLINE_REPLY_FAILURE_TITLE'])")" == "1" ]]; then
+            bounds="$(xpath_value "$xml" "string(($body_xpath)[1]/@bounds)")" || return 1
+            tap_exact_bounds "$bounds"
+            return
+        fi
+        sleep 0.2
+    done
+    return 1
+}
+
 open_shade_and_tap_exact_row() {
     local size width height attempt xml geometry
     local body_bounds row_bounds stack_bounds body_values row_values stack_values
@@ -2098,6 +2905,38 @@ wait_for_cold_route() {
     return 1
 }
 
+wait_for_failure_notification_route() {
+    local deadline pid xml failure_id failure_tag
+    failure_id="$(reply_failure_notification_id)" || return 1
+    failure_tag="$INLINE_REPLY_FAILURE_TAG_PREFIX$CONVERSATION_ID"
+    deadline=$((SECONDS + ROUTE_TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        if pid="$(single_package_pid "$APP_PACKAGE")" && \
+            [[ "$pid" != "$INLINE_REPLY_PID" ]] && \
+            main_activity_is_focused_and_resumed && \
+            app_task_is_present && \
+            notification_route_intent_is_exact && \
+            [[ "$(exact_notification_state \
+                "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID")" == "active" ]] && \
+            exact_notification_is_absent_with_app_count "$failure_tag" "$failure_id" 1 && \
+            [[ "$(app_notification_count)" == "1" ]]; then
+            if xml="$(ui_hierarchy_xml)" && thread_ui_is_exact "$xml" && \
+                active_notification_contract_is_exact \
+                    "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID"; then
+                ROUTE_PID="$pid"
+                return 0
+            fi
+        fi
+        sleep 0.2
+    done
+    ui_hierarchy_xml >"$WORK/failure-route-timeout.xml" || true
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell dumpsys activity activities 2>/dev/null \
+        | tr -d '\r' >"$WORK/failure-route-activities.txt" || true
+    notification_dump >"$WORK/failure-route-notifications.txt" || true
+    return 1
+}
+
 kill_receiver_process_without_stopping() {
     local current
     current="$(single_package_pid "$APP_PACKAGE")" || return 1
@@ -2108,6 +2947,22 @@ kill_receiver_process_without_stopping() {
         >/dev/null 2>&1 || return 1
     wait_for_exact_pid_absence "$RECEIVER_PID" || return 1
     [[ "$(package_stopped_state "$APP_PACKAGE")" == "false" ]] || return 1
+}
+
+quiesce_inline_reply_process_without_stopping() {
+    local current pid
+    app_task_is_absent || return 1
+    current="$(package_pids "$APP_PACKAGE")" || return 1
+    if [[ -n "$current" ]]; then
+        [[ "$current" != *$'\n'* ]] || return 1
+        pid="$current"
+        [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+        timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+            "${ADB[@]}" shell run-as "$APP_PACKAGE" kill -9 "$pid" \
+            >/dev/null 2>&1 || return 1
+        wait_for_exact_pid_absence "$pid" || return 1
+    fi
+    target_cold_boundary_is_exact
 }
 
 quiesce_denied_delivery_process_without_stopping() {
@@ -2193,6 +3048,12 @@ cleanup() {
         if [[ "$status" -ne 0 ]]; then
             capture_failure_diagnostics
         fi
+        if [[ "$JOURNEY" == "inline-reply-permission-denied" && \
+            "$TEST_INSTALLED" -eq 1 ]]; then
+            timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+                "${ADB[@]}" shell pm grant "$APP_PACKAGE" "$SEND_SMS_PERMISSION" \
+                >/dev/null 2>&1 || cleanup_ok=0
+        fi
         collapse_shade_best_effort || cleanup_ok=0
         if [[ "$RECOVERY_REQUIRED" -eq 1 && "$CLEANUP_COMPLETE" -eq 0 && \
             "$TEST_INSTALLED" -eq 1 ]]; then
@@ -2224,7 +3085,7 @@ cleanup() {
         rm -rf "$WORK"
         printf 'Owned read-only %s overlay was discarded after exact cleanup.\n' "$API_LABEL"
     else
-        printf 'Owned overlay was discarded; redacted instrumentation logs remain at: %s\n' \
+        printf 'Owned overlay was discarded; synthetic diagnostics remain at: %s\n' \
             "$WORK" >&2
     fi
     exit "$status"
@@ -2536,12 +3397,32 @@ if [[ "$(journal_entry_count)" != "0" || "$(app_notification_count)" != "0" ]]; 
     printf 'Fresh-overlay delivery and notification state was not empty.\n' >&2
     exit 1
 fi
+if [[ "$JOURNEY" == "inline-reply-permission-denied" && \
+    "$(reply_replay_claim_count)" != "0" ]]; then
+    printf 'Fresh-overlay inline-reply replay state was not empty.\n' >&2
+    exit 1
+fi
+if [[ "$JOURNEY" == "inline-reply-permission-denied" ]] && \
+    ! exact_zero_reply_operations; then
+    printf 'Fresh-overlay inline-reply operation state was nonempty or malformed.\n' >&2
+    exit 1
+fi
 
 RECOVERY_REQUIRED=1
 CLEANUP_COMPLETE=0
 run_phase prepare "$WORK/prepare.txt"
 if [[ "$(journal_entry_count)" != "0" || "$(app_notification_count)" != "0" ]]; then
     printf 'Prepare did not preserve the empty delivery and notification baseline.\n' >&2
+    exit 1
+fi
+if [[ "$JOURNEY" == "inline-reply-permission-denied" && \
+    "$(reply_replay_claim_count)" != "0" ]]; then
+    printf 'Prepare did not preserve the empty inline-reply replay baseline.\n' >&2
+    exit 1
+fi
+if [[ "$JOURNEY" == "inline-reply-permission-denied" ]] && \
+    ! exact_zero_reply_operations; then
+    printf 'Prepare did not preserve valid empty inline-reply operation state.\n' >&2
     exit 1
 fi
 if [[ "$JOURNEY" == "notification-denied" ]]; then
@@ -2798,45 +3679,162 @@ if [[ "$JOURNEY" != "notification-denied" ]]; then
         exit 1
     }
 
-    kill_receiver_process_without_stopping || {
-        printf 'The completed background receiver process could not be killed safely.\n' >&2
-        exit 1
-    }
-    app_task_is_absent || {
-        printf 'AuroraSMS gained a task before notification interaction.\n' >&2
-        exit 1
-    }
-    wait_for_exact_notification_state active 3 || {
-        printf 'The exact notification did not survive background process death.\n' >&2
-        exit 1
-    }
-    active_notification_contract_is_exact \
-        "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID" || {
-        printf 'The exact production notification contract changed after process death.\n' >&2
-        exit 1
-    }
+    if [[ "$JOURNEY" == "inline-reply-permission-denied" ]]; then
+        exact_single_incoming_provider_row || {
+            printf 'The inline-reply baseline was not exactly one controlled incoming provider row.\n' >&2
+            exit 1
+        }
+        if [[ "$(reply_replay_claim_count)" != "0" ]]; then
+            printf 'The inline-reply replay journal was not empty before interaction.\n' >&2
+            exit 1
+        fi
+        exact_zero_reply_operations || {
+            printf 'The inline-reply operation journal was nonempty or malformed before interaction.\n' >&2
+            exit 1
+        }
+        REPLY_TARGET_EXPIRY="$(exact_reply_target_expiry)" || {
+            printf 'The reply-bearing notification did not have one exact durable target.\n' >&2
+            exit 1
+        }
+        ORIGINAL_REPLY_PENDING_INTENT="$(reply_action_pending_intent_identity 1)" || {
+            printf 'The original inline-reply PendingIntent identity was unavailable.\n' >&2
+            exit 1
+        }
+        kill_receiver_process_without_stopping || {
+            printf 'The completed SMS receiver process could not be killed at the cold inline-reply boundary.\n' >&2
+            exit 1
+        }
+        timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+            "${ADB[@]}" shell pm revoke "$APP_PACKAGE" "$SEND_SMS_PERMISSION" \
+            >/dev/null || {
+            printf 'SEND_SMS could not be revoked in the disposable inline-reply overlay.\n' >&2
+            exit 1
+        }
+        send_sms_permission_is_only_denied_sms_permission || {
+            printf 'The inline-reply boundary did not revoke SEND_SMS and only SEND_SMS.\n' >&2
+            exit 1
+        }
+        target_cold_boundary_is_exact || {
+            printf 'Permission denial changed the taskless, processless, non-stopped boundary.\n' >&2
+            exit 1
+        }
+        wait_for_exact_notification_state active 3 || {
+            printf 'The exact reply-bearing conversation SBN did not survive SEND_SMS denial.\n' >&2
+            exit 1
+        }
+        active_notification_contract_is_exact \
+            "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID" || {
+            printf 'The reply-bearing notification contract changed before direct reply.\n' >&2
+            exit 1
+        }
+        clear_privacy_evidence_window || {
+            printf 'The inline-reply privacy evidence window could not be cleared.\n' >&2
+            exit 1
+        }
+        clear_process_start_event_window || {
+            printf 'The inline-reply receiver process-start window could not be cleared.\n' >&2
+            exit 1
+        }
+        ensure_awake_and_unlocked || {
+            printf 'Owned emulator was not awake and unlocked before direct reply.\n' >&2
+            exit 1
+        }
+        open_exact_inline_reply_editor || {
+            status=$?
+            if [[ "$status" -eq 2 ]]; then
+                printf 'The unique AOSP Reply action was not exposed deterministically; no reply was submitted.\n' >&2
+            else
+                printf 'The unique AOSP Reply action did not produce one exact empty editor.\n' >&2
+            fi
+            exit 1
+        }
+        enter_exact_inline_reply_text || {
+            printf 'The fixed synthetic reply could not be entered and verified exactly.\n' >&2
+            exit 1
+        }
+        target_cold_boundary_is_exact || {
+            printf 'AuroraSMS was not still cold and taskless immediately before reply submission.\n' >&2
+            exit 1
+        }
+        printf 'Submitting the exact synthetic SystemUI reply once; this tap will never be retried on uncertainty.\n'
+        submit_exact_inline_reply_once || {
+            printf 'The one allowed SystemUI reply tap had an unknown outcome and will not be retried.\n' >&2
+            exit 1
+        }
+        INLINE_REPLY_PID="$(wait_for_receiver_process_start "$INLINE_REPLY_RECEIVER")" || {
+            printf 'The exact InlineReplyReceiver cold process start was not proven once.\n' >&2
+            exit 1
+        }
+        if [[ "$INLINE_REPLY_PID" == "$RECEIVER_PID" || \
+            "$(device_pid_state "$RECEIVER_PID")" != "gone" ]]; then
+            printf 'Direct reply did not use a fresh process after the same-UID cold kill.\n' >&2
+            exit 1
+        fi
+        app_task_is_absent || {
+            printf 'InlineReplyReceiver unexpectedly created an AuroraSMS Activity task.\n' >&2
+            exit 1
+        }
+        [[ "$(package_stopped_state "$APP_PACKAGE")" == "false" ]] || {
+            printf 'Inline reply unexpectedly used stopped-package semantics.\n' >&2
+            exit 1
+        }
+        wait_for_inline_reply_failure_state "$REPLY_TARGET_EXPIRY" >/dev/null || {
+            printf 'Permission-denied reply did not converge on one claim, no outgoing row, the original SBN, and one generic failure SBN.\n' >&2
+            exit 1
+        }
+        [[ "$(reply_action_pending_intent_identity 2)" == "$ORIGINAL_REPLY_PENDING_INTENT" ]] || {
+            printf 'The original conversation reply PendingIntent identity changed after failure.\n' >&2
+            exit 1
+        }
+        inline_reply_result_shade_is_private || {
+            printf 'SystemUI exposed reply, sender, or incoming-message plaintext after failed reply.\n' >&2
+            exit 1
+        }
+        inline_reply_logs_are_private || {
+            printf 'The bounded inline-reply log window exposed reply or sender plaintext.\n' >&2
+            exit 1
+        }
+    else
+        kill_receiver_process_without_stopping || {
+            printf 'The completed background receiver process could not be killed safely.\n' >&2
+            exit 1
+        }
+        app_task_is_absent || {
+            printf 'AuroraSMS gained a task before notification interaction.\n' >&2
+            exit 1
+        }
+        wait_for_exact_notification_state active 3 || {
+            printf 'The exact notification did not survive background process death.\n' >&2
+            exit 1
+        }
+        active_notification_contract_is_exact \
+            "$EXPECTED_NOTIFICATION_TAG" "$EXPECTED_NOTIFICATION_ID" || {
+            printf 'The exact production notification contract changed after process death.\n' >&2
+            exit 1
+        }
 
-    ensure_awake_and_unlocked || {
-        printf 'Owned emulator was not awake and unlocked before shade interaction.\n' >&2
-        exit 1
-    }
-    open_shade_and_tap_exact_row || {
-        printf 'The unique generic API 26 SystemUI notification row could not be proven and tapped.\n' >&2
-        exit 1
-    }
-    wait_for_cold_route || {
-        printf 'The notification tap did not cold-launch the exact provider-backed Thread.\n' >&2
-        exit 1
-    }
-    if [[ "$ROUTE_PID" == "$RECEIVER_PID" || \
-        "$(device_pid_state "$RECEIVER_PID")" != "gone" ]]; then
-        printf 'The notification route did not use a distinct cold target process.\n' >&2
-        exit 1
+        ensure_awake_and_unlocked || {
+            printf 'Owned emulator was not awake and unlocked before shade interaction.\n' >&2
+            exit 1
+        }
+        open_shade_and_tap_exact_row || {
+            printf 'The unique generic API 26 SystemUI notification row could not be proven and tapped.\n' >&2
+            exit 1
+        }
+        wait_for_cold_route || {
+            printf 'The notification tap did not cold-launch the exact provider-backed Thread.\n' >&2
+            exit 1
+        }
+        if [[ "$ROUTE_PID" == "$RECEIVER_PID" || \
+            "$(device_pid_state "$RECEIVER_PID")" != "gone" ]]; then
+            printf 'The notification route did not use a distinct cold target process.\n' >&2
+            exit 1
+        fi
+        wait_for_exact_notification_state inactive 3 || {
+            printf 'The exact notification was not stably auto-cancelled after routing.\n' >&2
+            exit 1
+        }
     fi
-    wait_for_exact_notification_state inactive 3 || {
-        printf 'The exact notification was not stably auto-cancelled after routing.\n' >&2
-        exit 1
-    }
 else
     notification_permission_is_user_denied || {
         printf 'POST_NOTIFICATIONS did not remain user-denied during modem delivery.\n' >&2
@@ -2893,13 +3891,71 @@ else
     }
 fi
 
-timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
-    "${ADB[@]}" shell input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
-quiesce_for_recovery || {
-    printf 'The routed target could not be quiesced before verification.\n' >&2
-    exit 1
-}
-run_phase verify "$WORK/verify.txt"
+if [[ "$JOURNEY" == "inline-reply-permission-denied" ]]; then
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell pm grant "$APP_PACKAGE" "$SEND_SMS_PERMISSION" \
+        >/dev/null || {
+        printf 'SEND_SMS could not be restored before exact inline-reply cleanup.\n' >&2
+        exit 1
+    }
+    if ! RESTORED_PERMISSIONS="$(permission_state)" || \
+        rg --fixed-strings --quiet '=false' <<<"$RESTORED_PERMISSIONS"; then
+        printf 'The exact SMS permission baseline was not restored.\n' >&2
+        exit 1
+    fi
+    collapse_shade_best_effort || {
+        printf 'SystemUI could not be collapsed before inline-reply state cleanup.\n' >&2
+        exit 1
+    }
+    quiesce_inline_reply_process_without_stopping || {
+        printf 'The taskless inline-reply receiver could not be quiesced safely.\n' >&2
+        exit 1
+    }
+    delete_exact_reply_replay_claim "$REPLY_TARGET_EXPIRY" || {
+        printf 'The one controlled inline-reply replay claim could not be deleted exactly.\n' >&2
+        exit 1
+    }
+    delete_exact_notified_reply_operation || {
+        printf 'The one controlled notified inline-reply tombstone could not be deleted exactly.\n' >&2
+        exit 1
+    }
+    inline_reply_failure_notifications_are_exact || {
+        printf 'The two exact notifications changed before cleanup interaction.\n' >&2
+        exit 1
+    }
+    ensure_awake_and_unlocked || {
+        printf 'Owned emulator was not ready for exact failure-notification cleanup.\n' >&2
+        exit 1
+    }
+    open_shade_and_tap_exact_failure_row || {
+        printf 'The unique generic reply-failure row could not be selected for cleanup.\n' >&2
+        exit 1
+    }
+    wait_for_failure_notification_route || {
+        printf 'The failure row did not cold-route to the exact Thread while preserving the conversation SBN.\n' >&2
+        exit 1
+    }
+    if [[ "$ROUTE_PID" == "$INLINE_REPLY_PID" || \
+        "$(device_pid_state "$INLINE_REPLY_PID")" != "gone" ]]; then
+        printf 'The failure-notification route did not use a fresh Activity process.\n' >&2
+        exit 1
+    fi
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
+    quiesce_for_recovery || {
+        printf 'The cleanup route could not be quiesced before controlled teardown.\n' >&2
+        exit 1
+    }
+    run_phase cleanup "$WORK/cleanup.txt"
+else
+    timeout --foreground --kill-after=2s "${ADB_SHORT_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
+    quiesce_for_recovery || {
+        printf 'The routed target could not be quiesced before verification.\n' >&2
+        exit 1
+    }
+    run_phase verify "$WORK/verify.txt"
+fi
 if [[ "$JOURNEY" == "notification-denied" ]]; then
     delete_test_pdu_capture || {
         printf 'The independent exact-PDU observer record was not cleaned.\n' >&2
@@ -2913,6 +3969,21 @@ if [[ "$(journal_entry_count)" != "0" || "$(app_notification_count)" != "0" ]]; 
     printf 'Exact cleanup did not restore empty delivery and notification state.\n' >&2
     exit 1
 fi
+if [[ "$JOURNEY" == "inline-reply-permission-denied" ]]; then
+    if [[ "$(reply_replay_claim_count)" != "0" ]]; then
+        printf 'Exact cleanup did not restore empty inline-reply replay state.\n' >&2
+        exit 1
+    fi
+    exact_zero_reply_operations || {
+        printf 'Exact cleanup did not restore valid empty inline-reply operation state.\n' >&2
+        exit 1
+    }
+    if ! RESTORED_PERMISSIONS="$(permission_state)" || \
+        rg --fixed-strings --quiet '=false' <<<"$RESTORED_PERMISSIONS"; then
+        printf 'Exact cleanup did not preserve the restored SMS permission baseline.\n' >&2
+        exit 1
+    fi
+fi
 
 case "$JOURNEY" in
     cold-notification)
@@ -2923,5 +3994,8 @@ case "$JOURNEY" in
         ;;
     notification-denied)
         printf 'API 36 real notification denial, zero-SBN modem delivery, cold readable Thread, verification, and exact cleanup passed.\n'
+        ;;
+    inline-reply-permission-denied)
+        printf 'API 26 real shade reply, synchronous SEND_SMS preflight denial, cold receiver, durable claim, generic failure alert, privacy scans, and exact cleanup passed.\n'
         ;;
 esac

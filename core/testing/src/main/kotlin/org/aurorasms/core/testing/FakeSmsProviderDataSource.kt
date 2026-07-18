@@ -16,6 +16,8 @@ import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.IncomingSmsRecord
 import org.aurorasms.core.telephony.IncomingDeliveryDisposition
+import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
+import org.aurorasms.core.telephony.IncomingSmsNotificationReplayRequest
 import org.aurorasms.core.telephony.OutgoingSmsRecord
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderPage
@@ -111,6 +113,51 @@ class FakeSmsProviderDataSource(
         }
     }
 
+    override suspend fun readPendingIncomingNotifications(
+        request: IncomingSmsNotificationReplayRequest,
+    ): ProviderAccessResult<List<IncomingSmsNotificationReplay>> = synchronized(lock) {
+        failure ?: run {
+            val replays = ArrayList<IncomingSmsNotificationReplay>(request.limit)
+            for ((fingerprint, delivery) in incomingDeliveries) {
+                if (delivery.complete) continue
+                val stored = delivery.stored
+                val row = messages.singleOrNull { it.id == stored.providerId }
+                    ?: return@synchronized ProviderAccessResult.Unavailable(
+                        "read journaled incoming SMS provider row",
+                    )
+                val sender = row.sender
+                    ?: return@synchronized ProviderAccessResult.Unavailable(
+                        "validate journaled incoming SMS provider row",
+                    )
+                val sentTimestampMillis = row.sentTimestampMillis
+                    ?: return@synchronized ProviderAccessResult.Unavailable(
+                        "validate journaled incoming SMS provider row",
+                    )
+                if (
+                    row.providerThreadId.value != stored.conversationId.value ||
+                    row.direction != MessageDirection.INCOMING ||
+                    row.box != MessageBox.INBOX
+                ) {
+                    return@synchronized ProviderAccessResult.Unavailable(
+                        "validate journaled incoming SMS provider row",
+                    )
+                }
+                replays += IncomingSmsNotificationReplay(
+                    deliveryFingerprint = fingerprint,
+                    providerId = stored.providerId,
+                    conversationId = stored.conversationId,
+                    sender = sender,
+                    body = row.body,
+                    receivedTimestampMillis = row.timestampMillis,
+                    sentTimestampMillis = sentTimestampMillis,
+                    subscriptionId = row.subscriptionId,
+                )
+                if (replays.size == request.limit) break
+            }
+            ProviderAccessResult.Success(replays)
+        }
+    }
+
     override suspend fun markIncomingHandled(
         deliveryFingerprint: MessageDeliveryFingerprint,
         providerId: ProviderMessageId,
@@ -140,7 +187,7 @@ class FakeSmsProviderDataSource(
                 direction = MessageDirection.OUTGOING,
                 box = MessageBox.OUTBOX,
                 status = MessageStatus.PENDING,
-                rawStatus = null,
+                rawStatus = RAW_STATUS_PENDING,
                 rawErrorCode = null,
                 timestampMillis = message.timestampMillis,
                 sentTimestampMillis = null,
@@ -166,12 +213,20 @@ class FakeSmsProviderDataSource(
     ): ProviderAccessResult<Unit> = synchronized(lock) {
         val index = messages.indexOfFirst { it.id == id }
         failure ?: if (index >= 0) {
-            updatedStatuses[id] = status
             val current = messages[index]
+            val currentStatus = current.smsProviderStatusOrNull()
+                ?: return@synchronized ProviderAccessResult.Unavailable("update SMS status")
+            if (status.transitionRank <= currentStatus.transitionRank) {
+                return@synchronized ProviderAccessResult.Success(Unit)
+            }
+            updatedStatuses[id] = status
             val (box, messageStatus, rawStatus) = when (status) {
-                SmsProviderStatus.COMPLETE -> Triple(MessageBox.SENT, MessageStatus.COMPLETE, 0)
-                SmsProviderStatus.FAILED -> Triple(MessageBox.FAILED, MessageStatus.FAILED, 64)
-                SmsProviderStatus.PENDING -> Triple(MessageBox.OUTBOX, MessageStatus.PENDING, 32)
+                SmsProviderStatus.COMPLETE -> Triple(MessageBox.SENT, MessageStatus.COMPLETE, RAW_STATUS_COMPLETE)
+                SmsProviderStatus.DELIVERY_FAILED -> {
+                    Triple(MessageBox.SENT, MessageStatus.FAILED, RAW_STATUS_FAILED)
+                }
+                SmsProviderStatus.FAILED -> Triple(MessageBox.FAILED, MessageStatus.FAILED, RAW_STATUS_FAILED)
+                SmsProviderStatus.PENDING -> Triple(MessageBox.OUTBOX, MessageStatus.PENDING, RAW_STATUS_PENDING)
             }
             messages[index] = current.copy(
                 box = box,
@@ -214,6 +269,34 @@ class FakeSmsProviderDataSource(
         }
         return ProviderPage(items = items, next = next, exhausted = exhausted)
     }
+}
+
+private const val RAW_STATUS_COMPLETE = 0
+private const val RAW_STATUS_PENDING = 32
+private const val RAW_STATUS_FAILED = 64
+
+private val SmsProviderStatus.transitionRank: Int
+    get() = when (this) {
+        SmsProviderStatus.PENDING -> 0
+        SmsProviderStatus.COMPLETE -> 1
+        SmsProviderStatus.DELIVERY_FAILED -> 2
+        SmsProviderStatus.FAILED -> 3
+    }
+
+private fun SmsProviderMessage.smsProviderStatusOrNull(): SmsProviderStatus? = when {
+    box == MessageBox.OUTBOX && status == MessageStatus.PENDING && rawStatus == RAW_STATUS_PENDING -> {
+        SmsProviderStatus.PENDING
+    }
+    box == MessageBox.SENT && status == MessageStatus.COMPLETE && rawStatus == RAW_STATUS_COMPLETE -> {
+        SmsProviderStatus.COMPLETE
+    }
+    box == MessageBox.SENT && status == MessageStatus.FAILED && rawStatus == RAW_STATUS_FAILED -> {
+        SmsProviderStatus.DELIVERY_FAILED
+    }
+    box == MessageBox.FAILED && status == MessageStatus.FAILED && rawStatus == RAW_STATUS_FAILED -> {
+        SmsProviderStatus.FAILED
+    }
+    else -> null
 }
 
 private data class FakeIncomingDelivery(

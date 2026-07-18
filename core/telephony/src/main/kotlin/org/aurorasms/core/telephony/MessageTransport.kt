@@ -5,6 +5,7 @@ package org.aurorasms.core.telephony
 import java.util.Arrays
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.TransportResult
 
@@ -24,6 +25,25 @@ data class SmsSendRequest(
 
     companion object {
         const val MAX_OUTGOING_TEXT_CHARACTERS: Int = 100_000
+    }
+}
+
+/**
+ * Synchronous durability gates around the irreversible SMS platform call.
+ * Implementations must not retain message content or invoke either callback
+ * after the corresponding submission boundary has passed.
+ */
+interface SmsSubmissionObserver {
+    fun onPrepared(providerId: ProviderMessageId, unitCount: Int): Boolean
+
+    fun onSubmitting(providerId: ProviderMessageId, unitCount: Int): Boolean
+
+    companion object {
+        val ALLOW: SmsSubmissionObserver = object : SmsSubmissionObserver {
+            override fun onPrepared(providerId: ProviderMessageId, unitCount: Int): Boolean = true
+
+            override fun onSubmitting(providerId: ProviderMessageId, unitCount: Int): Boolean = true
+        }
     }
 }
 
@@ -123,7 +143,10 @@ data class MmsDownloadRequest(
 }
 
 interface MessageTransport {
-    suspend fun sendSms(request: SmsSendRequest): TransportResult
+    suspend fun sendSms(
+        request: SmsSendRequest,
+        submissionObserver: SmsSubmissionObserver = SmsSubmissionObserver.ALLOW,
+    ): TransportResult
 
     suspend fun sendMms(request: MmsSendRequest): TransportResult
 
