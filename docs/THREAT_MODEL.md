@@ -1,7 +1,8 @@
 # AuroraSMS threat model
 
-Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
-2026-07-14
+Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls and
+implemented Phase 1 durable-message hardening through commit `7c9d848`,
+2026-07-18
 
 ## Security and privacy objectives
 
@@ -31,6 +32,7 @@ AuroraSMS must:
 | Contacts and photos | Sensitive personal data | Optional permission, bounded cache, invalidate on change, no serialization per message |
 | Subscription/SIM choice | Sensitive device data | Minimal access, validated fallback, no identifier logging |
 | Notification content/settings | Sensitive disclosure control | User-selectable privacy levels, lock-screen safe defaults |
+| Delivery/reply claims, accepted reply operations, and notification generations | Critical action metadata | Bounded content-minimized no-backup stores, checksums, explicit state transitions, role-scoped recovery |
 | Appearance profiles, scoped participant fingerprints/thread hints, temporary picker URIs, and managed wallpaper files/digests | Sensitive pseudonymous/private data, especially when user photos are used | Validated declarative data, target-specific access, transient URI capability, bounded no-backup private storage, no executable themes or appearance logs |
 | Backups/exports/shares | Critical portable data | User initiated, versioned, validated, authenticated/encrypted before shipping |
 | Signing key and release metadata | Critical supply-chain asset | Never in Git; encrypted owner-controlled offline backups |
@@ -125,6 +127,16 @@ Controls:
 - request role before associated SMS permissions;
 - handle cancel, deny, revoke, role loss, and reacquisition as first-class
   states;
+- serialize role-change and eligibility reconciliation behind a fence that
+  re-reads authoritative platform role state instead of trusting broadcast
+  extras; on confirmed loss, disable new recovery, cancel and join pending
+  recovery jobs, then fence incoming persistence/recovery before cleanup;
+- cancel only valid Aurora incoming-notification slots with exact generation
+  evidence, rebuild durable generation state from an authoritative active-
+  notification snapshot, and clear reply targets after bounded cleanup;
+- treat role loss after an accepted carrier submission as non-recallable:
+  reconcile exact owned callbacks when possible, but never guess or resubmit an
+  operation whose platform submission boundary is uncertain;
 - stop writes and pending transport safely on role loss;
 - keep drafts and read-only UI truthful without claiming full coverage.
 
@@ -143,6 +155,16 @@ Controls:
 - a bounded private pending/stored/complete delivery journal that fingerprints
   raw SMS PDUs without retaining them, serializes concurrent delivery, and
   recovers the provider-insert/notification boundary after process death;
+- journal v4 binds its preference key to a canonical checksummed record and a
+  redacted, domain-separated provider-content digest. Malformed or poisoned
+  records become checksummed, key-bound `Q1` quarantine tombstones, so they
+  retain ownership of the original delivery key while unrelated valid entries
+  remain recoverable;
+- the `goAsync()` lease watcher may time out and finish the broadcast lease
+  without cancelling already accepted work in the sibling process-local
+  coroutine. This limits receiver-deadline cancellation only: Android process
+  death can still stop that work, so recovery relies on durable checkpoints
+  and later lifecycle triggers, not on coroutine survival;
 - separate rebuildable index from durable state;
 - explicit migrations and migration tests from version 1; never destructive
   fallback;
@@ -220,11 +242,19 @@ Controls:
 - safe channel/lock-screen defaults and explicit inline-reply authentication
   expectations;
 - immutable notification routing plus one narrowly mutable explicit reply
-  intent; app-private target and consumed-claim journals bind provider token,
-  conversation, recipient, subscription, and expiry across process death;
+  intent; app-private target, consumed-claim, reply-operation, and incoming-
+  notification-generation stores use versioned canonical encodings,
+  synchronous security-boundary commits, and checksums. The target retains the
+  exact validated recipient required for cold-process routing but no message
+  body; the claim stores a recipient digest; operation and generation records
+  retain only bounded provider-qualified IDs, lifecycle/progress/status, and
+  exact notification-generation ordering evidence;
 - consume a reply claim durably before platform submission, retain it through
   token expiry, clear targets on role loss, and replace crash-replayed
   notifications without a second alert;
+- make reply-failure alerts generic and body-free: they do not echo the reply,
+  recipient, address, transport error, or message content and route the user
+  back to AuroraSMS to confirm status before retrying;
 - optional secure-recents behavior with honest screenshot/sharing consequences;
 - optional `BiometricPrompt`/device credential gate without encryption claims;
 - no sensitive notification text in logs, analytics, or crash uploads.
@@ -383,6 +413,12 @@ Controls:
 - allow the fixture only fixed seed/shape commands against the known private
   rebuildable index, reject role/permission/provider bypass strings, and expose
   no query/insert/update/delete data plane;
+- permit one debug-only SMS snapshot provider for disposable-emulator evidence:
+  it is exported only in debug, guarded by the platform `DUMP` permission and
+  an explicit Binder shell-UID check, exposes only `_id`, `thread_id`, and
+  `type`, and rejects selection, sorting, writes, calls, and files. Merged-
+  manifest verification requires that exact debug boundary and rejects its
+  authority or class from every non-debug variant;
 - no real device data/private references in tests or CI artifacts;
 - reproducible release instructions, signed checksums, and new signing identity.
 

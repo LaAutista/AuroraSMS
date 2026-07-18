@@ -75,6 +75,16 @@ bubbles; exact cleanup follows. This closes only that sequential same-sender
 API 26 path. Multipart SMS, other-conversation grouping, alert counts, API 27+,
 physical/OEM/carrier/lockscreen, inline reply, MMS, broader acceptance, and gold
 remain open.
+Implementation commit `7c9d848` hardens the durable incoming-message,
+notification-generation, provider-status, role-loss, receiver-work, and inline-
+reply boundaries used by these journeys. Its API 26 AOSP
+`inline-reply-permission-denied` journey passed twice independently from fresh
+disposable overlays: one real SystemUI reply reached a distinct cold receiver,
+only `SEND_SMS` was denied, synchronous preflight prevented transport
+submission and any outgoing row, one durable consumed claim and one private
+generic failure alert remained, the failure alert cold-routed to the exact
+Thread, and exact cleanup passed. Broader device, carrier, API, lifecycle, and
+gold rows remain open.
 
 ## Context
 
@@ -691,6 +701,60 @@ blocked, and animated media remains behind its separate decoder/lifecycle gate.
   27+, physical/OEM shade, carrier-network and lockscreen behavior, inline-
   reply execution, MMS, nonempty-provider baselines, broader acceptance, and
   gold remain open. AuroraSMS is incomplete and not gold.
+- Implementation commit `7c9d848` introduces a durable reply-operation state
+  machine, checksummed reply-target and reply-replay ownership, provider-status
+  transition and callback handling, exact incoming-notification generation
+  ownership, and checksummed incoming replay records with provider-content
+  verification and poison-entry quarantine. Recovery orders same-kind provider
+  IDs before wall-clock time, defers unresolved outgoing `PENDING` rows,
+  serializes default-role loss with exact generation cancellation, and lets
+  accepted receiver work continue in-process after the receiver lease times out
+  while durable checkpoints own later process-loss recovery.
+  The owner-gated command is
+  `scripts/run-emulator-incoming-sms-cold-notification-smoke.sh --journey inline-reply-permission-denied`.
+  Each of two independent passes used a fresh disposable API 26
+  `AuroraSMS_SMSRX_API26` overlay. One fixed modem SMS crossed the production
+  `SMS_DELIVER` receiver into exactly one provider row, one complete journal,
+  one durable reply target, and one private reply-bearing conversation SBN.
+  After exact receiver-process death, only `SEND_SMS` was revoked; the package
+  remained processless, taskless, and non-stopped, and the original SBN and
+  reply `PendingIntent` identity remained unchanged. The runner opened the real
+  AOSP shade, used the unique Reply action, entered and verified one fixed
+  RemoteInput value, and tapped Send exactly once without any retry on
+  uncertainty.
+  A distinct cold `InlineReplyReceiver` handled that tap without an Activity
+  task. One durable claim was consumed and one known-unsent operation reached
+  its notified state; synchronous permission preflight rejected transport
+  before submission, so no outgoing provider row appeared. The original
+  conversation SBN remained and exactly one private, generic, body-free failure
+  SBN appeared. Bounded notification, shade, and log scans excluded sender,
+  incoming-body, and reply plaintext. A real failure-row tap started a fresh
+  `MainActivity` process on the exact provider-backed Thread, cancelled only the
+  failure SBN, and preserved the conversation SBN. Exact teardown restored the
+  empty provider, incoming-journal, reply-target, reply-claim, reply-operation,
+  index, and notification baselines plus the `SEND_SMS` grant. Both fresh-
+  overlay passes completed independently.
+  The full offline host/lint/release/benchmark/privacy/dependency/permission/
+  APK-content/license gate passed 886 tasks and CycloneDX passed separately.
+  Focused durable-store, notification-generation, and incoming-journal suites
+  passed 43/43, 18/18, and 9/9 respectively on API 26 and API 36. The API 36
+  connected runner reported zero failures/errors with module totals of app 135,
+  notifications 22, telephony 24, state 43, index 31, conversations 5, and
+  benchmark 4. API 26 likewise reported zero failures/errors with app 141,
+  notifications 22, telephony 24, state 43, index 31, conversations 5, and
+  benchmark 4; its retained XML reconciles 258 zero-failure results and 12
+  intentional gated skips to 270 runner-discovered cases.
+  Three code residuals remain: a crash after an outgoing provider insert but
+  before `PREPARED` can leave a known-unsent `PENDING` row, although recovery
+  will not retry or duplicate it; a late positive callback can leave the generic
+  failure SBN because cancellation is not yet operation-bound; and the bounded
+  512-entry incoming journal eventually evicts completed ownership, allowing an
+  extremely old exact redelivery to insert again. Successful carrier-send and
+  callback behavior, APIs 27 through 35, physical/OEM shade and lockscreen,
+  Android Auto, background/low-memory races, and process death at every durable
+  checkpoint remain unproven, alongside broader group, multipart, MMS,
+  accessibility, performance, and release rows. AuroraSMS is incomplete and
+  not gold.
 - Inbox treatment, canonical built-ins, GIF lifecycle, live URI references,
   and import/export media remain independently reviewable slices.
 

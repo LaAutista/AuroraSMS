@@ -1,6 +1,7 @@
 # AuroraSMS product requirements
 
-Status: Phase 0 product baseline, 2026-07-12
+Status: Phase 0 product baseline plus implemented Phase 1 durable-message
+hardening through commit `7c9d848`, 2026-07-18
 
 ## Product statement
 
@@ -98,6 +99,11 @@ graph, screen instances, deep links, back behavior, and restored state.
   appearance overrides. A conversation override uses the ADR 0006
   participant-set fingerprint as its stable identity and a provider thread ID
   only as a current routing hint.
+- Bounded app-private Phase 1 journals: redacted incoming-delivery ownership,
+  reply targets and claims, accepted reply-operation progress, and incoming-
+  notification generations. They contain no message/reply body, are excluded
+  from backup, and do not replace the Telephony provider or Aurora state
+  database as a relational authority.
 - No DataStore owner exists in the approved implementation. Adding one for a
   future lightweight preference requires a measured ADR, dependency admission,
   and field ownership that does not overlap the Aurora state database.
@@ -147,6 +153,37 @@ cache; contact graphs and attachment bytes never live in message list rows.
   that pass succeeds. A restart or reconcile must never mistake a partial
   checkpoint for complete index coverage.
 - On default-role loss, stop provider writes safely and report the state.
+
+### Implemented durable messaging hardening
+
+Commit `7c9d848` implements the following Phase 1 foundation controls. This is
+hardening evidence, not a claim that AuroraSMS is complete, release-ready, or
+gold:
+
+- Reply targets, consumed claims, reply operations, and incoming notification
+  generations use bounded private stores with versioned canonical encodings,
+  synchronous security-boundary writes, and checksums. A target keeps the
+  validated recipient needed to route a cold-process reply but no message body;
+  a consumed claim keeps a recipient digest; reply-operation and generation
+  state is limited to provider-qualified identity, lifecycle/progress/status,
+  and exact ordering evidence.
+- The incoming SMS replay journal v4 retains a redacted provider-content digest
+  so recovery can identify an exact provider row after the insert/checkpoint
+  crash boundary. Its checksum binds the delivery key and canonical payload;
+  malformed records become key-bound, checksummed `Q1` quarantine tombstones
+  instead of being mistaken for new deliveries or blocking unrelated valid
+  recovery entries.
+- Default-role lifecycle work is serialized and derived from authoritative
+  platform role state. Confirmed loss disables new recovery, cancels and joins
+  pending recovery jobs, fences live incoming work, and performs exact-
+  generation notification cleanup before reply targets are cleared.
+- A `goAsync()` lease timeout finishes the broadcast lease without cancelling
+  already accepted sibling work in the app process. It does not make that work
+  survive Android process death; durable journal checkpoints and later recovery
+  triggers remain the recovery authority.
+- Inline-reply failures use a generic, body-free alert that asks the user to
+  confirm status in AuroraSMS before trying again. It does not repeat reply
+  text, recipient, address, message content, or a carrier error.
 
 ## AuroraMaterial requirements
 
@@ -428,6 +465,11 @@ Theme Studio with a live preview.
   or telemetry-safe. The bounded target token that combines them for app-private
   `SavedState` follows the same restrictions and is never displayed or exported.
 - Release builds remove debug logging.
+- Disposable-emulator validation may query one debug-only, read-only SMS
+  snapshot provider. It is guarded by `android.permission.DUMP` plus an
+  explicit shell-UID check, returns only `_id`, `thread_id`, and `type`, and
+  accepts no selection, sorting, write, call, or file surface. Manifest
+  verification rejects its class and authority in every non-debug variant.
 - Notification privacy supports sender and body, sender only, or generic.
 - App lock may use `BiometricPrompt`/device credential but must not be called
   database encryption.

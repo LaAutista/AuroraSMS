@@ -2,7 +2,9 @@
 
 Status: Phase 1 source, merged manifests, and APKs locally verified against
 official Android documentation on 2026-07-12; ADR 0007 records a managed-
-wallpaper decision with no new permission on 2026-07-14
+wallpaper decision with no new permission on 2026-07-14; commit `7c9d848`
+adds the ledgered debug snapshot boundary and durable-message hardening on
+2026-07-18
 
 This ledger is the allowlist enforced against the Phase 1 source manifest,
 merged debug/release manifests, and packaged APKs. A permission not listed
@@ -252,6 +254,17 @@ components. Release keeps exactly one non-exported
 permission. These components install the checked-in Baseline Profile for local
 and older-device delivery; they add no app permission or network path.
 
+The debug variant additionally exports exactly one Aurora-owned provider at
+`org.aurorasms.app.debug.sms_snapshot`. The provider is guarded by the platform
+`android.permission.DUMP` permission and independently requires
+`Binder.getCallingUid() == Process.SHELL_UID`; AuroraSMS does not request
+`DUMP` as a `<uses-permission>`. It is a disposable-emulator, read-only probe
+that returns only SMS `_id`, `thread_id`, and `type`, rejects selection,
+selection arguments, sorting, inserts, updates, deletes, calls, and file opens,
+and exposes no body, address, date, or attachment field. The merged-manifest
+verifier requires exactly this boundary in debug and rejects its provider class
+or authority in release, benchmark, and every other non-debug app variant.
+
 The Phase 3 app benchmark target is a separate, local, non-debuggable,
 profileable build identity. It alone declares the signature permission
 `org.aurorasms.app.permission.BENCHMARK_CONTROL`, exposes
@@ -278,12 +291,23 @@ operation; grants go only to the platform telephony operation, are revoked and
 cleaned after result or timeout, and never expose a broad directory or the
 opposite access mode.
 
-Incoming-delivery replay fingerprints and inline-reply target/claim journals
-use bounded app-private shared preferences. They are excluded from OS backup
-and device transfer, contain no message body or raw PDU, and are cleared or
-expired according to role/operation state. Reply routing retains the exact
-conversation, recipient, subscription, provider token, and expiry because a
-notification may legitimately start a fresh app process.
+Incoming-delivery replay fingerprints and inline-reply target, claim,
+operation, and incoming-notification-generation stores use bounded app-private
+shared preferences. They are excluded from OS backup and device transfer and
+use versioned canonical encodings, synchronous security-boundary commits, and
+checksums. The reply target retains the exact validated recipient required for
+cold-process routing but no body; the claim retains a recipient digest; the
+operation and generation stores retain only bounded provider-qualified IDs,
+lifecycle/progress/status, and notification ordering evidence. The incoming
+journal v4 additionally binds its delivery key to the canonical payload and a
+redacted provider-content digest; checksummed, key-bound `Q1` quarantine
+tombstones retain ownership of malformed entries without displacing unrelated
+valid recovery state. Role loss serializes authoritative role reconciliation,
+cancels and joins pending recovery work, performs exact-generation notification
+cleanup, and clears reply targets. A `goAsync()` lease timeout does not cancel
+already accepted process-local sibling work, but no component claims that work
+survives Android process death. Reply-failure notifications are generic and do
+not include reply text, recipient, address, carrier error, or message body.
 
 ## Verification gate
 
@@ -309,7 +333,10 @@ Phase 1 CI/device checks must:
 10. test that the MMS provider is non-exported, confines canonical cache paths,
     grants read-only for send and write-only for download, rejects traversal,
     and revokes both modes on every terminal result;
-11. record the exact device/API and merged permission list as gate evidence.
+11. require the exact `DUMP`-guarded, shell-UID-checked snapshot provider only
+    in debug, exercise its read-only/column boundary, and reject its class or
+    authority from every non-debug merged manifest;
+12. record the exact device/API and merged permission list as gate evidence.
 
 ## Official references
 
