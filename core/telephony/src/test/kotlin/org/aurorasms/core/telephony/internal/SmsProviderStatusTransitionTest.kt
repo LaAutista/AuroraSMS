@@ -131,6 +131,63 @@ class SmsProviderStatusTransitionTest {
         assertEquals(MonotonicSmsStatusUpdateResult.SUCCESS, result)
         assertEquals(0, writes)
     }
+
+    @Test
+    fun exactStatusRetryRechecksOwnershipAfterAStaleWrite() {
+        var reads = 0
+        var writes = 0
+
+        val result = updateExactOutgoingSmsStatusMonotonically(
+            requested = SmsProviderStatus.COMPLETE,
+            maxWriteAttempts = 4,
+            readCurrent = {
+                reads += 1
+                if (reads == 1) {
+                    ExactOutgoingSmsStatusReadResult.Found(SmsProviderStatus.PENDING)
+                } else {
+                    ExactOutgoingSmsStatusReadResult.OwnershipConflict
+                }
+            },
+            conditionalWrite = { _, _ ->
+                writes += 1
+                ConditionalSmsStatusWriteResult.STALE
+            },
+        )
+
+        assertEquals(ExactOutgoingSmsStatusUpdateResult.OWNERSHIP_CONFLICT, result)
+        assertEquals(2, reads)
+        assertEquals(1, writes)
+    }
+
+    @Test
+    fun exactStatusDistinguishesMissingAndUnavailableWithoutWriting() {
+        var writes = 0
+        val write: (SmsProviderStatus, SmsProviderStatus) -> ConditionalSmsStatusWriteResult =
+            { _, _ ->
+                writes += 1
+                ConditionalSmsStatusWriteResult.UPDATED
+            }
+
+        assertEquals(
+            ExactOutgoingSmsStatusUpdateResult.ROW_ABSENT,
+            updateExactOutgoingSmsStatusMonotonically(
+                requested = SmsProviderStatus.FAILED,
+                maxWriteAttempts = 1,
+                readCurrent = { ExactOutgoingSmsStatusReadResult.RowAbsent },
+                conditionalWrite = write,
+            ),
+        )
+        assertEquals(
+            ExactOutgoingSmsStatusUpdateResult.UNAVAILABLE,
+            updateExactOutgoingSmsStatusMonotonically(
+                requested = SmsProviderStatus.FAILED,
+                maxWriteAttempts = 1,
+                readCurrent = { ExactOutgoingSmsStatusReadResult.Unavailable },
+                conditionalWrite = write,
+            ),
+        )
+        assertEquals(0, writes)
+    }
 }
 
 private val SmsProviderStatus.testRank: Int

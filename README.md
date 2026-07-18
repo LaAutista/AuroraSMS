@@ -30,17 +30,66 @@ call. Inherited `SUBMITTING` is conservatively changed to
 keyed by conversation plus operation, so later success can cancel only its own
 alert.
 
-Final-source verification for that follow-on slice is green on the API 26 and
-API 36 AOSP emulators. The 320-task focused host gate passed telephony 75/75,
-core testing 22/22, and app 191/191, together with lint and app/telephony
-`androidTest` compilation. The transport-owned journal passed 7/7 on each API;
-the owner-gated real-provider contract passed 1/1 on each without invoking
-`SmsManager`; notification identity passed 29/29 on each, including real
-`NotificationManager` sibling preservation; and a fresh disposable API 26
-SystemUI denied-inline-reply journey passed with exact cleanup before its
-overlay was discarded. The complete API 26 and API 36 connected matrices and
-the host/release/privacy/license aggregate also passed. This is verified
-hardening evidence, not a completion or gold claim.
+The 2026-07-18 Phase 5A worktree identifies as `0.5.0-phase5` (`versionCode` 4)
+and adds the first intentional Thread composer send behind a deliberately narrow
+gate: an existing provider-backed Thread, one completed verified participant,
+its associated active SMS-capable subscription, and exactly one
+Android-calculated text SMS unit. New/external compose, groups, MMS, multipart
+text, delivery reports, SIM fallback, schedules, delay, Undo Send, and automatic
+retry remain disabled.
+
+Its Room schema-5 operation is bounded and content-free; the exact Room draft
+remains the message-text authority. App-private saved state is only an exact-base
+restoration hint, hidden until Room validation and discarded when stale. An
+atomic writer freeze drains every accepted edit and captures the one durable
+snapshot used for send. Caller-owned `PREPARED` and `SUBMITTING` checkpoints are
+awaited with repeated role/generation fences and a final role check immediately
+before the platform call. Once that snapshot is frozen, cancellation cannot
+abandon the reserve-and-classify envelope. Transient typed storage failures use
+bounded non-sending recovery, exact callbacks retain only their content-free
+identity for bounded checkpoint retry, and Room observation resubscribes after a
+recoverable failure. Recovery never sends, isolates deferred provider cleanup to
+its exact operation so unrelated Threads stay usable, and lets duplicate exact
+success callbacks resume idempotent settlement. Commit-ambiguous terminal draft
+clearance and “Keep as draft” acknowledgement are re-read and boundedly verified;
+deduplicated process-local signals then clear or reopen the composer exactly once.
+
+After durable sent-callback proof or durable pre-boundary known-unsent proof,
+exact provider `Success` dispositions `APPLIED`, `ROW_ABSENT`, and
+`OWNERSHIP_CONFLICT` are terminal; absence and conflict perform no foreign
+mutation, while provider access failure defers. Explicitly acknowledging
+submission uncertainty preserves the draft and warns that another send may
+duplicate it. A late callback is still swallowed, but cleanup of its old provider
+row may remain; that is an explicit Phase 5B residual. Phase 5A automated work
+sends no real carrier SMS, closes no physical/SIM/OEM/carrier gates, and does not
+make AuroraSMS complete or gold.
+
+Phase 5A final-source local acceptance is green on the API 26 and API 36 AOSP
+emulators. The complete offline host/release/privacy/license aggregate was
+`BUILD SUCCESSFUL` in 1m27s across 886 tasks (90 executed, two from cache,
+794 up-to-date); all 508 host JUnit results passed. `bundleRelease` passed 269
+tasks in 7s, and CycloneDX 1.6 passed 15 up-to-date tasks in 7s with 441
+components and 442 dependencies. The full API 26 connected matrix passed 291 tests with 13
+intentional skips (278 executed), and the full API 36 matrix passed 288 tests
+with 10 intentional skips (also 278 executed), with zero failures or errors.
+Focused API 36 root-composer and external-compose-isolation tests each passed
+1/1. These tests use fakes, synthetic data, or deliberately unavailable
+production preconditions and do not send a carrier SMS.
+
+The Phase 5A debug APK is 13,831,154 bytes with SHA-256
+`d8e1dbd75fc4d4ea76c4ebe8d2abb4b6c70828707d9c2eb94cc4697d485d7d31`.
+Artifact inspection confirms package/version identity, minimum API 26, target
+API 36, `debuggable` only on the debug app, and no `INTERNET` or
+`ACCESS_NETWORK_STATE` permission in app variants. The release APK is unsigned,
+so it is verification output rather than an installable distribution. Only the
+API 26 and API 36 emulators were attached for this acceptance; no physical
+device, SIM, OEM, carrier, billing, roaming, sent/delivery, reboot, or live-send
+process-death gate closes. This is local worktree evidence only, not a commit,
+CI, physical-device handoff, release, completion, or gold claim. The exact debug
+APK did install and copy to the API 36 emulator with a matching device-side
+SHA-256, then cold-launched successfully to the expected role-approval screen
+without changing the role or SMS permissions. Exact commands, module totals,
+and all artifact hashes are recorded in `docs/TEST_MATRIX.md`.
 
 Phase 1 established the independently implemented default-SMS foundation:
 
@@ -544,6 +593,12 @@ physical/OEM shade, carrier-network and lockscreen behavior, inline-reply
 execution, MMS, nonempty-provider baselines, broader acceptance, and gold
 remain open. AuroraSMS is incomplete and not gold.
 
+### Historical pre-Phase 5 incoming/reply durability evidence
+
+The evidence through frozen commit `3d7182c` below predates the Phase 5A
+composer worktree and remains a retained baseline; it is not Phase 5A
+acceptance evidence.
+
 Implementation commit `7c9d848` adds a durable reply-operation state machine,
 checksummed reply-target and replay ownership, provider-status transition and
 callback handling, exact incoming-notification generation ownership, and
@@ -688,10 +743,11 @@ timings are not product performance evidence.
 
 End-to-end MMS is not yet claimed. Platform MMS staging and result handling are
 present, but encoding/decoding remains disabled until an independently audited
-codec is admitted and verified on physical carrier hardware. The first
-composer also keeps its send control disabled until the complete, durable
-compose flow is integrated. See `docs/adr/0001-mms-pdu-strategy.md` and the
-phase gates in `docs/TEST_MATRIX.md`.
+codec is admitted and verified on physical carrier hardware. The first composer
+enables only the bounded Phase 5A one-person, one-unit SMS path described above;
+every broader compose, MMS, and carrier claim remains disabled or open. See
+`docs/adr/0001-mms-pdu-strategy.md`, ADR 0008, and the phase gates in
+`docs/TEST_MATRIX.md`.
 
 ## Build
 

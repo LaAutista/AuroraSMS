@@ -34,7 +34,7 @@ class InlineReplyOrchestratorTest {
             remember("SMS:501", conversationId, recipient, AuroraSubscriptionId(2))
         }
         val observedPhases = mutableListOf<String>()
-        val transport = successfulObservedTransport(observedPhases)
+        val transport = successfulObservedTransport(conversationId, observedPhases)
         val notifier = FakeMessageNotifier()
         val operations = replyOperations()
         val orchestrator = InlineReplyOrchestrator(
@@ -57,6 +57,10 @@ class InlineReplyOrchestratorTest {
         assertEquals(1, transport.smsRequests.size)
         assertEquals(recipient, transport.smsRequests.single().recipients.singleSmsRecipientOrNull())
         assertEquals(AuroraSubscriptionId(2), transport.smsRequests.single().subscriptionId)
+        assertEquals(
+            TransportResult.OperationOrigin.INLINE_REPLY,
+            transport.smsRequests.single().operationOrigin,
+        )
         assertEquals(listOf("prepared", "submitting"), observedPhases)
         assertEquals(
             ReplyOperationPendingFailuresResult.Available(emptyList()),
@@ -64,6 +68,58 @@ class InlineReplyOrchestratorTest {
         )
         assertEquals(emptyList<ConversationId>(), notifier.replyFailures)
         assertEquals(emptyList<ConversationId>(), notifier.cancelledConversations)
+    }
+
+    @Test
+    fun providerConversationMismatchRefusesPreparedCheckpoint() = runTest {
+        val conversationId = ConversationId(416)
+        val operations = replyOperations()
+        val notifier = FakeMessageNotifier()
+        val providerId = ProviderMessageId(ProviderKind.SMS, 9_416L)
+        val transport = FakeMessageTransport().apply {
+            smsResponderWithObserver = { request, observer ->
+                assertEquals(
+                    false,
+                    observer.onPrepared(
+                        providerId,
+                        ConversationId(conversationId.value + 1L),
+                        unitCount = 1,
+                    ),
+                )
+                TransportResult.Failed(
+                    operationId = request.operationId,
+                    transport = MessageTransportKind.SMS,
+                    reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                    retryable = false,
+                    providerMessageId = providerId,
+                    providerConversationId = conversationId,
+                    operationOrigin = request.operationOrigin,
+                )
+            }
+        }
+        val orchestrator = InlineReplyOrchestrator(
+            roleState = FakeRoleState(held = true),
+            replyTargets = replyTargets(conversationId),
+            replayGuard = inMemoryReplayGuard(),
+            replyOperations = operations,
+            messageTransport = transport,
+            messageNotifier = notifier,
+            clockMillis = { NOW },
+        )
+
+        assertEquals(
+            InlineReplyDisposition.ACCEPTED,
+            orchestrator.handle(replyRequest(conversationId)),
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf(conversationId), notifier.replyFailures)
+        assertNotifiedFailure(
+            operations = operations,
+            operationId = transport.smsRequests.single().operationId,
+            conversationId = conversationId,
+            failureKind = ReplyOperationFailureKind.KNOWN_UNSENT,
+        )
     }
 
     @Test
@@ -75,10 +131,14 @@ class InlineReplyOrchestratorTest {
         var platformSubmissionCount = 0
         val transport = FakeMessageTransport().apply {
             smsResponderWithObserver = { request, observer ->
-                assertTrue(observer.onPrepared(providerId, unitCount = 1))
+                assertTrue(observer.onPrepared(providerId, conversationId, unitCount = 1))
                 // A changed unit count proves that durable ownership refuses an
                 // inconsistent irreversible-submission checkpoint.
-                val submissionAllowed = observer.onSubmitting(providerId, unitCount = 2)
+                val submissionAllowed = observer.onSubmitting(
+                    providerId,
+                    conversationId,
+                    unitCount = 2,
+                )
                 if (submissionAllowed) platformSubmissionCount += 1
                 assertEquals(false, submissionAllowed)
                 TransportResult.Failed(
@@ -87,7 +147,9 @@ class InlineReplyOrchestratorTest {
                     reason = TransportResult.FailureReason.INTERNAL_ERROR,
                     retryable = true,
                     providerMessageId = providerId,
+                    providerConversationId = conversationId,
                     stage = TransportResult.FailureStage.SUBMISSION,
+                    operationOrigin = request.operationOrigin,
                 )
             }
         }
@@ -126,8 +188,8 @@ class InlineReplyOrchestratorTest {
         val providerId = ProviderMessageId(ProviderKind.SMS, 9_413L)
         val transport = FakeMessageTransport().apply {
             smsResponderWithObserver = { _, observer ->
-                assertTrue(observer.onPrepared(providerId, unitCount = 1))
-                assertTrue(observer.onSubmitting(providerId, unitCount = 1))
+                assertTrue(observer.onPrepared(providerId, conversationId, unitCount = 1))
+                assertTrue(observer.onSubmitting(providerId, conversationId, unitCount = 1))
                 throw IllegalStateException("synthetic failure after submitting checkpoint")
             }
         }
@@ -165,8 +227,8 @@ class InlineReplyOrchestratorTest {
         val providerId = ProviderMessageId(ProviderKind.SMS, 9_414L)
         val transport = FakeMessageTransport().apply {
             smsResponderWithObserver = { _, observer ->
-                assertTrue(observer.onPrepared(providerId, unitCount = 1))
-                assertTrue(observer.onSubmitting(providerId, unitCount = 1))
+                assertTrue(observer.onPrepared(providerId, conversationId, unitCount = 1))
+                assertTrue(observer.onSubmitting(providerId, conversationId, unitCount = 1))
                 throw CancellationException("synthetic caller cancellation")
             }
         }
@@ -211,8 +273,8 @@ class InlineReplyOrchestratorTest {
         val transport = FakeMessageTransport().apply {
             smsResponderWithObserver = { request, observer ->
                 val providerId = ProviderMessageId(ProviderKind.SMS, 9_410L)
-                assertTrue(observer.onPrepared(providerId, unitCount = 1))
-                assertTrue(observer.onSubmitting(providerId, unitCount = 1))
+                assertTrue(observer.onPrepared(providerId, conversationId, unitCount = 1))
+                assertTrue(observer.onSubmitting(providerId, conversationId, unitCount = 1))
                 callbackHandler.handle(
                     TransportResult.Failed(
                         operationId = request.operationId,
@@ -221,6 +283,8 @@ class InlineReplyOrchestratorTest {
                         retryable = true,
                         stage = TransportResult.FailureStage.SENT_CALLBACK,
                         providerMessageId = providerId,
+                        providerConversationId = conversationId,
+                        operationOrigin = request.operationOrigin,
                     ),
                 )
                 TransportResult.Submitted(
@@ -228,6 +292,8 @@ class InlineReplyOrchestratorTest {
                     transport = MessageTransportKind.SMS,
                     unitCount = 1,
                     providerMessageId = providerId,
+                    providerConversationId = conversationId,
+                    operationOrigin = request.operationOrigin,
                 )
             }
         }
@@ -257,8 +323,8 @@ class InlineReplyOrchestratorTest {
         val transport = FakeMessageTransport().apply {
             smsResponderWithObserver = { request, observer ->
                 val providerId = ProviderMessageId(ProviderKind.SMS, 9_415L)
-                assertTrue(observer.onPrepared(providerId, unitCount = 1))
-                assertTrue(observer.onSubmitting(providerId, unitCount = 1))
+                assertTrue(observer.onPrepared(providerId, conversationId, unitCount = 1))
+                assertTrue(observer.onSubmitting(providerId, conversationId, unitCount = 1))
                 callbackHandler.handle(
                     TransportResult.Sent(
                         operationId = request.operationId,
@@ -267,6 +333,8 @@ class InlineReplyOrchestratorTest {
                         unitIndex = 0,
                         unitCount = 1,
                         providerMessageId = providerId,
+                        providerConversationId = conversationId,
+                        operationOrigin = request.operationOrigin,
                     ),
                 )
                 TransportResult.Submitted(
@@ -274,6 +342,8 @@ class InlineReplyOrchestratorTest {
                     transport = MessageTransportKind.SMS,
                     unitCount = 1,
                     providerMessageId = providerId,
+                    providerConversationId = conversationId,
+                    operationOrigin = request.operationOrigin,
                 )
             }
         }
@@ -313,7 +383,7 @@ class InlineReplyOrchestratorTest {
                 AuroraSubscriptionId(2),
             )
         }
-        val transport = successfulObservedTransport()
+        val transport = successfulObservedTransport(conversationId)
         val orchestrator = InlineReplyOrchestrator(
             roleState = FakeRoleState(held = true),
             replyTargets = targets,
@@ -417,7 +487,7 @@ class InlineReplyOrchestratorTest {
         )
         val durableClaims = mutableSetOf<String>()
         val replayGuard = inMemoryReplayGuard(durableClaims)
-        val firstTransport = successfulObservedTransport()
+        val firstTransport = successfulObservedTransport(conversationId)
         val first = orchestrator(
             targets = ReplyTargetRegistry(
                 clockMillis = { NOW },
@@ -431,7 +501,7 @@ class InlineReplyOrchestratorTest {
         assertEquals(InlineReplyDisposition.ACCEPTED, first.handle(request))
         advanceUntilIdle()
 
-        val recreatedTransport = successfulObservedTransport()
+        val recreatedTransport = successfulObservedTransport(conversationId)
         val recreated = orchestrator(
             targets = ReplyTargetRegistry(
                 clockMillis = { NOW },
@@ -463,7 +533,7 @@ class InlineReplyOrchestratorTest {
             )
         }
         val claims = mutableSetOf<String>()
-        val transport = successfulObservedTransport()
+        val transport = successfulObservedTransport(conversationId)
         val orchestrator = InlineReplyOrchestrator(
             roleState = FakeRoleState(held = true),
             replyTargets = targets,
@@ -486,7 +556,7 @@ class InlineReplyOrchestratorTest {
     fun moreThanFormerMemoryBoundDoesNotMakeOldClaimReplayable() = runTest {
         val conversationId = ConversationId(45)
         val claims = mutableSetOf<String>()
-        val transport = successfulObservedTransport()
+        val transport = successfulObservedTransport(conversationId)
         val targets = ReplyTargetRegistry(
             maximumEntries = 512,
             clockMillis = { NOW },
@@ -528,6 +598,7 @@ class InlineReplyOrchestratorTest {
                     operationId = request.operationId,
                     transport = MessageTransportKind.SMS,
                     reason = TransportResult.FailureReason.PLATFORM_REJECTED,
+                    operationOrigin = request.operationOrigin,
                 )
             }
         }
@@ -564,19 +635,22 @@ class InlineReplyOrchestratorTest {
     )
 
     private fun successfulObservedTransport(
+        providerConversationId: ConversationId,
         observedPhases: MutableList<String> = mutableListOf(),
     ) = FakeMessageTransport().apply {
         smsResponderWithObserver = { request, observer ->
             val providerId = ProviderMessageId(ProviderKind.SMS, request.operationId.value)
             observedPhases += "prepared"
-            check(observer.onPrepared(providerId, unitCount = 1))
+            check(observer.onPrepared(providerId, providerConversationId, unitCount = 1))
             observedPhases += "submitting"
-            check(observer.onSubmitting(providerId, unitCount = 1))
+            check(observer.onSubmitting(providerId, providerConversationId, unitCount = 1))
             TransportResult.Submitted(
                 operationId = request.operationId,
                 transport = MessageTransportKind.SMS,
                 unitCount = 1,
                 providerMessageId = providerId,
+                providerConversationId = providerConversationId,
+                operationOrigin = request.operationOrigin,
             )
         }
     }

@@ -10,6 +10,7 @@ import org.aurorasms.core.telephony.MmsSendRequest
 import org.aurorasms.core.telephony.SmsSendRequest
 import org.aurorasms.core.telephony.SmsSubmissionOwnership
 import org.aurorasms.core.telephony.SmsSubmissionObserver
+import org.aurorasms.core.telephony.hasValidOperationOwnership
 
 class FakeMessageTransport : MessageTransport {
     val smsRequests = mutableListOf<SmsSendRequest>()
@@ -22,10 +23,11 @@ class FakeMessageTransport : MessageTransport {
             operationId = request.operationId,
             transport = MessageTransportKind.SMS,
             unitCount = 1,
+            operationOrigin = request.operationOrigin,
         )
     }
     var smsResponderWithObserver:
-        ((SmsSendRequest, SmsSubmissionObserver) -> TransportResult)? = null
+        (suspend (SmsSendRequest, SmsSubmissionObserver) -> TransportResult)? = null
     var mmsResponder: (MmsSendRequest) -> TransportResult = { request ->
         TransportResult.Submitted(
             operationId = request.operationId,
@@ -47,6 +49,15 @@ class FakeMessageTransport : MessageTransport {
     ): TransportResult {
         smsRequests += request
         smsSubmissionOwnership += ownership
+        if (!request.hasValidOperationOwnership(ownership)) {
+            return TransportResult.Failed(
+                operationId = request.operationId,
+                transport = MessageTransportKind.SMS,
+                reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                retryable = false,
+                operationOrigin = request.operationOrigin,
+            )
+        }
         val observer = (ownership as? SmsSubmissionOwnership.CallerOwned)?.observer
         return if (observer != null && smsResponderWithObserver != null) {
             requireNotNull(smsResponderWithObserver).invoke(request, observer)

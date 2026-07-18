@@ -6,12 +6,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -80,6 +82,140 @@ class ConversationUiStateTest {
         compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
         compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).assertDoesNotExist()
         compose.runOnIdle { check(repository.readAttempts == 0) }
+    }
+
+    @Test
+    fun readySendInvokesOnceThenSendingLocksTheActionAndEditor() {
+        val composerState = mutableStateOf(
+            ComposerUiState(
+                body = "Synthetic ready draft",
+                saving = false,
+                failed = false,
+                sendState = ComposerSendState.READY,
+                segmentCount = 1,
+            ),
+        )
+        var sendCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = composerState.value,
+                onSend = {
+                    sendCount += 1
+                    composerState.value = composerState.value.copy(
+                        sendState = ComposerSendState.SENDING,
+                    )
+                },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG)
+            .assertIsEnabled()
+            .performClick()
+
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithText("Sending…").assertIsDisplayed()
+        compose.onNodeWithText("Submitting safely…").assertIsDisplayed()
+        compose.runOnIdle { check(sendCount == 1) }
+    }
+
+    @Test
+    fun knownUnsentOffersAnEnabledRetryThatUsesTheSendCallback() {
+        var sendCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic preserved draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.KNOWN_UNSENT,
+                    segmentCount = 1,
+                ),
+                onSend = { sendCount += 1 },
+            )
+        }
+
+        compose.onNodeWithText("Not sent. Your draft was preserved.").assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG)
+            .assertIsEnabled()
+            .performClick()
+
+        compose.runOnIdle { check(sendCount == 1) }
+    }
+
+    @Test
+    fun submissionUnknownRequiresExplicitKeepAsDraftAcknowledgement() {
+        var acknowledgementCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic uncertain draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.SUBMISSION_UNKNOWN,
+                    segmentCount = 1,
+                ),
+                onAcknowledgeSubmissionUnknown = { acknowledgementCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG)
+            .assertIsEnabled()
+            .performClick()
+        compose.onNodeWithText("Send status unknown").assertIsDisplayed()
+        compose.onNodeWithText("Keep as draft").assertIsDisplayed()
+        compose.runOnIdle { check(acknowledgementCount == 0) }
+
+        compose.onNodeWithText("Wait").performClick()
+        compose.onNodeWithText("Send status unknown").assertDoesNotExist()
+        compose.runOnIdle { check(acknowledgementCount == 0) }
+
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).performClick()
+        compose.onNodeWithText("Keep as draft").performClick()
+        compose.onNodeWithText("Send status unknown").assertDoesNotExist()
+        compose.runOnIdle { check(acknowledgementCount == 1) }
+    }
+
+    @Test
+    fun multipartUnavailableKeepsSendDisabledAndExplainsThePartCount() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic multipart draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.UNAVAILABLE,
+                    unavailableReason = ComposerUnavailableReason.MULTIPART_UNAVAILABLE,
+                    segmentCount = 3,
+                ),
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithText(
+            "This text needs 3 SMS parts. Phase 5A sends one part at a time.",
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun recoveryPendingLocksTheEditorUntilDurableRecoveryFinishes() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic recovering draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.UNAVAILABLE,
+                    unavailableReason = ComposerUnavailableReason.RECOVERY_PENDING,
+                    segmentCount = 1,
+                ),
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithText("Finishing safe send recovery…").assertIsDisplayed()
     }
 
     @Test
@@ -273,6 +409,39 @@ class ConversationUiStateTest {
             check(inboxCount == 1)
             check(defaultsCount == 1)
         }
+    }
+}
+
+@Composable
+private fun SyntheticThreadScreen(
+    composer: ComposerUiState,
+    onSend: () -> Unit = {},
+    onAcknowledgeSubmissionUnknown: () -> Unit = {},
+) {
+    MaterialTheme {
+        ThreadScreen(
+            state = readyThreadState(),
+            composer = composer,
+            attachmentRepository = RejectingAttachmentRepository(),
+            previewLoader = RejectingPreviewLoader,
+            onBack = {},
+            onOpenSearch = {},
+            conversationAppearanceAvailable = false,
+            onOpenConversationAppearance = {},
+            isDialable = { false },
+            onDial = {},
+            onRetry = {},
+            onLoadOlder = {},
+            onLoadNewer = {},
+            onAtNewestChanged = {},
+            onAcceptPending = {},
+            onViewportChanged = {},
+            onAnchorRestored = {},
+            onToggleMessageExpansion = {},
+            onDraftChanged = {},
+            onSend = onSend,
+            onAcknowledgeSubmissionUnknown = onAcknowledgeSubmissionUnknown,
+        )
     }
 }
 

@@ -29,6 +29,20 @@ internal enum class MonotonicSmsStatusUpdateResult {
     UNAVAILABLE,
 }
 
+internal sealed interface ExactOutgoingSmsStatusReadResult {
+    data class Found(val status: SmsProviderStatus) : ExactOutgoingSmsStatusReadResult
+    data object RowAbsent : ExactOutgoingSmsStatusReadResult
+    data object OwnershipConflict : ExactOutgoingSmsStatusReadResult
+    data object Unavailable : ExactOutgoingSmsStatusReadResult
+}
+
+internal enum class ExactOutgoingSmsStatusUpdateResult {
+    APPLIED,
+    ROW_ABSENT,
+    OWNERSHIP_CONFLICT,
+    UNAVAILABLE,
+}
+
 internal enum class OutgoingSmsArmResult {
     ARMED,
     UNAVAILABLE,
@@ -85,6 +99,66 @@ internal fun updateSmsStatusMonotonically(
         MonotonicSmsStatusUpdateResult.SUCCESS
     } else {
         MonotonicSmsStatusUpdateResult.UNAVAILABLE
+    }
+}
+
+/**
+ * Monotonically advances a row while preserving exact app-owner and
+ * conversation fencing across every stale-read retry.
+ */
+internal fun updateExactOutgoingSmsStatusMonotonically(
+    requested: SmsProviderStatus,
+    maxWriteAttempts: Int,
+    readCurrent: () -> ExactOutgoingSmsStatusReadResult,
+    conditionalWrite: (
+        expected: SmsProviderStatus,
+        requested: SmsProviderStatus,
+    ) -> ConditionalSmsStatusWriteResult,
+): ExactOutgoingSmsStatusUpdateResult {
+    require(maxWriteAttempts > 0) { "At least one SMS status write attempt is required" }
+
+    repeat(maxWriteAttempts) {
+        when (val current = readCurrent()) {
+            is ExactOutgoingSmsStatusReadResult.Found -> {
+                if (
+                    smsProviderStatusTransition(current.status, requested) ==
+                    SmsProviderStatusTransition.KEEP_CURRENT
+                ) {
+                    return ExactOutgoingSmsStatusUpdateResult.APPLIED
+                }
+                when (conditionalWrite(current.status, requested)) {
+                    ConditionalSmsStatusWriteResult.UPDATED ->
+                        return ExactOutgoingSmsStatusUpdateResult.APPLIED
+                    ConditionalSmsStatusWriteResult.UNAVAILABLE ->
+                        return ExactOutgoingSmsStatusUpdateResult.UNAVAILABLE
+                    ConditionalSmsStatusWriteResult.STALE -> Unit
+                }
+            }
+            ExactOutgoingSmsStatusReadResult.RowAbsent ->
+                return ExactOutgoingSmsStatusUpdateResult.ROW_ABSENT
+            ExactOutgoingSmsStatusReadResult.OwnershipConflict ->
+                return ExactOutgoingSmsStatusUpdateResult.OWNERSHIP_CONFLICT
+            ExactOutgoingSmsStatusReadResult.Unavailable ->
+                return ExactOutgoingSmsStatusUpdateResult.UNAVAILABLE
+        }
+    }
+
+    return when (val current = readCurrent()) {
+        is ExactOutgoingSmsStatusReadResult.Found ->
+            if (
+                smsProviderStatusTransition(current.status, requested) ==
+                SmsProviderStatusTransition.KEEP_CURRENT
+            ) {
+                ExactOutgoingSmsStatusUpdateResult.APPLIED
+            } else {
+                ExactOutgoingSmsStatusUpdateResult.UNAVAILABLE
+            }
+        ExactOutgoingSmsStatusReadResult.RowAbsent ->
+            ExactOutgoingSmsStatusUpdateResult.ROW_ABSENT
+        ExactOutgoingSmsStatusReadResult.OwnershipConflict ->
+            ExactOutgoingSmsStatusUpdateResult.OWNERSHIP_CONFLICT
+        ExactOutgoingSmsStatusReadResult.Unavailable ->
+            ExactOutgoingSmsStatusUpdateResult.UNAVAILABLE
     }
 }
 

@@ -1,8 +1,10 @@
 # AuroraSMS threat model
 
-Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls and
-implemented Phase 1 durable-message hardening through commit `7c9d848`,
-2026-07-18
+Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
+implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
+bounded ADR 0008 Phase 5A source implementation in the 2026-07-18 worktree.
+Phase 5A local/API 26/API 36 emulator aggregate acceptance passed; all
+physical-device and real-carrier evidence remains open.
 
 ## Security and privacy objectives
 
@@ -137,6 +139,15 @@ Controls:
 - treat role loss after an accepted carrier submission as non-recallable:
   reconcile exact owned callbacks when possible, but never guess or resubmit an
   operation whose platform submission boundary is uncertain;
+- for a caller-owned composer send, capture a fence generation before acceptance,
+  recheck authoritative role plus that generation before and after each awaited
+  `PREPARED` and `SUBMITTING` checkpoint, and check role once more immediately
+  before the `SmsManager` Binder call. A loss proven at that final pre-boundary
+  check is known-unsent; any possible post-boundary acceptance is uncertainty;
+- make the frozen-draft handoff and reserve-through-immediate-classification
+  envelope non-cancellable. If reservation may have committed before a thrown
+  cancellation, consult Room and retain fail-closed ownership; never infer a
+  refusal merely from the caller's cancellation;
 - stop writes and pending transport safely on role loss;
 - keep drafts and read-only UI truthful without claiming full coverage.
 
@@ -172,6 +183,15 @@ Controls:
   exact provider row as `PREPARED` before one conditional arm may consume the
   sentinel and make it `PENDING`, then durably record `SUBMITTING` before the
   irreversible platform call;
+- for the existing-Thread composer, keep one bounded Room schema-5 operation
+  content-free and bind only the exact Thread, draft ID/revision, subscription,
+  phase, prepared provider IDs, one-unit count, and timestamps. The draft remains
+  the sole durable message-content owner until successful completion;
+- treat app-private composer `SavedState` as an untrusted restoration hint rather
+  than send authority. Hide its text until Room is read, require its exact base
+  draft ID/revision to match (or require Room absence for a base-free hint), and
+  discard stale or mismatched content. Atomically freeze edit acceptance and
+  drain every earlier accepted write before capturing the one send snapshot;
 - on synchronous pre-boundary refusal or cancellation, conditionally
   terminalize only an exact Aurora-created row in an allowed staging, armed, or
   terminal state. Treat absence as retired and turn an ownership, creator,
@@ -186,6 +206,33 @@ Controls:
   journal is corrupt, noncanonical, or uncommittable. A transient cleanup
   failure defers only its exact provider record and does not by itself globally
   block independent recovery or unrelated sends;
+- recover composer operations without invoking transport. A valid bounded Room
+  snapshot opens unrelated Threads even when provider access defers one exact
+  operation; the owning Thread stays gated. Only role loss or an unreadable or
+  corrupt operation snapshot globally blocks composer acceptance;
+- commit exact one-unit composer sent-callback proof before provider settlement.
+  Duplicate exact successes resume the same idempotent path. After durable sent
+  proof or durable pre-boundary known-unsent proof, treat exact guarded provider
+  `Success(APPLIED)`, `Success(ROW_ABSENT)`, and
+  `Success(OWNERSHIP_CONFLICT)` as terminal: absence and conflict mutate no
+  foreign row and never authorize an ID-only fallback. Provider access,
+  permission, or storage failure defers the exact operation;
+- retain a transient exact callback only by its content-free operation/binding
+  identity for bounded checkpoint retry, schedule bounded non-sending recovery
+  when typed classification or timeout storage work fails, and resubscribe Room
+  observation after recoverable failures so an open Thread cannot remain stuck
+  on a stale storage error;
+- verify commit-ambiguous terminal transactions by exact operation identity. A
+  proven missing row publishes one bounded, deduplicated process-local completion
+  or acknowledgement signal so a correct atomic draft clear cannot leave stale
+  text frozen, and an acknowledged unknown cannot leave its preserved draft
+  locked;
+- consume malformed, wrong-owner, missing-operation, or late explicit
+  `COMPOSER` callbacks without allowing fallthrough to another outgoing owner.
+  Manual acknowledgement of `SUBMISSION_UNKNOWN` preserves and reopens the draft
+  only after a duplicate-risk warning; because it removes the durable operation,
+  a later callback may leave the old provider row unreconciled. Keep that cleanup
+  limitation explicit as a Phase 5B residual;
 - do not sweep `PENDING` rows left by pre-journal alpha builds: without an exact
   durable record, upgrade recovery has no authority to identify or mutate them
   and does not claim to repair their status;
@@ -493,6 +540,10 @@ Controls:
   pseudonymous identifiers: exclude them from logs, `toString`, telemetry,
   exports, and OS/cloud backup. The private restoration token that combines
   them in bounded `SavedState` has the same restrictions.
+- Composer restoration `SavedState` may contain bounded unsaved draft text only
+  as an exact-Room-base hint. Exclude it from backup, logs, diagnostics, exports,
+  and callback identity; hide it until base validation and discard it on mismatch
+  or successful completion.
 - Contacts permission is optional and denial leaves number-based messaging
   usable.
 - Destructive and external actions require explicit, contextual user intent.
@@ -510,6 +561,13 @@ Every applicable phase gate includes:
 - dependency/provenance/SBOM scan;
 - private-path/tracked-resource/APK inventory scan;
 - no-sensitive-log checks;
+- Phase 5A content-free Room/schema tests, exact saved-state base restoration and
+  stale-discard tests, atomic draft-freeze race tests, awaited checkpoint and
+  role/fence race tests, per-operation recovery isolation, duplicate callback
+  settlement, and all three exact terminal provider dispositions;
+- production Phase 5A preflight on API 26 and API 36 only with role or permission
+  unavailable, a synthetic recipient, and assertions of zero provider mutation,
+  zero checkpoint, and zero platform/carrier send;
 - owner-gated API 26 and API 36 real-provider tests for the exact failed/staging-
   sentinel insert, one-shot pending arm, sentinel consumption, wrong/stale arm
   rejection, conditional terminalization, foreign-row preservation, and exact
@@ -521,7 +579,9 @@ Every applicable phase gate includes:
 - physical-device SMS/MMS behavior where the phase claims transport support;
 - accessibility/contrast/lifecycle tests for privacy-related UI.
 
-Final-source focused verification completed a 320-task host gate with telephony
+The following retained baseline predates the Phase 5A composer worktree.
+Final-source focused verification for the pre-Phase 5 durability slice completed
+a 320-task host gate with telephony
 75/75, core testing 22/22, and app 191/191, plus lint and app/telephony
 `androidTest` compilation. The transport-owned submission journal passed 7/7
 on API 26 and 7/7 on API 36. The owner-gated real-provider contract passed 1/1
@@ -546,10 +606,39 @@ host/release/privacy/license aggregate was `BUILD SUCCESSFUL` in 1m19s across
 The first API 26 aggregate attempt remains diagnostic only: it exposed a
 channel test disabling the production reply-failure channel. The corrected test
 uses a dedicated test-only channel, and only the later clean matrix is pass
-evidence. The implementation and tests are frozen in commit `3d7182c`. Wider
+evidence. That pre-Phase 5 implementation and its tests are frozen in commit
+`3d7182c`. Wider
 carrier, physical/OEM, API 27
 through 35, process-death, MMS, and lifecycle evidence remains open; these green
 baseline gates do not make AuroraSMS complete, release-ready, or gold.
+
+The Phase 5A `0.5.0-phase5` (`versionCode` 4) worktree subsequently passed the
+complete 886-task offline host/release/privacy/license aggregate in 1m27s (90
+executed, two from cache, 794 up-to-date). All 508 host JUnit results passed.
+`bundleRelease` passed 269 tasks in 7s, and CycloneDX 1.6 passed 15 up-to-date tasks in 7s with
+441 components and 442 dependencies. Complete API 26 and API 36 connected
+matrices each executed 278 non-skipped tests with zero failures/errors: API 26
+recorded 291 total with 13 intentional skips in 1m54s; API 36 recorded 288 total
+with 10 intentional skips in 1m31s. Focused API 36 root-composer and external-
+compose-isolation gates each passed 1/1.
+
+Pinned `aapt2` inspection confirms package/version identity, minimum API 26,
+target API 36, `debuggable` only in the debug app, and no `INTERNET` or
+`ACCESS_NETWORK_STATE` in any app variant. The macrobenchmark test APK's
+debuggable/tooling-network surface remains isolated from app variants. The
+release APK is unsigned and is not a distribution artifact. This is local
+worktree evidence; it makes no commit, CI, or physical-device handoff claim. The
+exact debug APK installed and hash-matched on the API 36 emulator, then
+cold-launched to the expected role-approval screen without role or SMS-permission
+mutation.
+
+Only API 26 and API 36 emulators were attached for Phase 5A acceptance. No Phase
+5A automated evidence is a real carrier send. Physical SIM,
+carrier-network, billing, roaming, OEM, sent/delivery callback, and reboot or
+process-death behavior during a real send remain open and require a separately
+approved destination-aware protocol. The acknowledged-unknown provider-row
+cleanup residual also remains open for Phase 5B. AuroraSMS is not complete or
+gold.
 
 ## Open security decisions
 

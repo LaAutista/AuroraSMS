@@ -13,6 +13,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.aurorasms.core.state.storage.AuroraStateDatabase
 import org.aurorasms.core.state.storage.AppearanceSelectionEnforcement
 import org.aurorasms.core.state.storage.AppearanceOverrideSequenceEnforcement
+import org.aurorasms.core.state.storage.ComposerSmsOperationEnforcement
 import org.aurorasms.core.state.storage.DraftIdentityEnforcement
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
@@ -51,11 +52,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionFour_hasBoundedDraftAndAppearanceTables() {
+    fun schemaVersionFive_hasBoundedDraftAppearanceAndContentFreeComposerTables() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(4, AuroraStateDatabase.VERSION)
+            assertEquals(5, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -207,18 +208,56 @@ class StateSchemaCurrentTest {
                     cursor.getLong(0)
                 },
             )
+            assertEquals(
+                setOf(
+                    "local_operation_id",
+                    "provider_thread_id",
+                    "draft_id",
+                    "draft_revision_ms",
+                    "subscription_id",
+                    "phase_code",
+                    "provider_message_id",
+                    "provider_conversation_id",
+                    "unit_count",
+                    "created_timestamp_ms",
+                    "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("composer_sms_operations"),
+            )
+            assertTrue(
+                sqlite.indexNames("composer_sms_operations")
+                    .contains("index_composer_sms_operations_provider_thread_id"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "composer_sms_operations",
+                    "index_composer_sms_operations_provider_thread_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "composer_sms_operations",
+                    "index_composer_sms_operations_provider_message_id",
+                ),
+            )
         } finally {
             database.close()
         }
     }
 
     @Test
-    fun exportedVersionFourStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedVersionFiveStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'drafts'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'composer_sms_operations'",
                 ).use { it.moveToFirst() },
             )
             assertTrue(
@@ -267,6 +306,7 @@ class StateSchemaCurrentTest {
             .addCallback(DraftIdentityEnforcement.callback)
             .addCallback(AppearanceSelectionEnforcement.callback)
             .addCallback(AppearanceOverrideSequenceEnforcement.callback)
+            .addCallback(ComposerSmsOperationEnforcement.callback)
             .build()
         try {
             assertEquals(AuroraStateDatabase.VERSION, database.openHelper.writableDatabase.version)
@@ -304,6 +344,9 @@ class StateSchemaCurrentTest {
         assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.UPDATE_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.DELETE_TRIGGER_NAME)
+        assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
 
         assertThrows(SQLiteConstraintException::class.java) {
             sqlite.execSQL(
@@ -327,6 +370,9 @@ class StateSchemaCurrentTest {
         sqlite.execSQL("DROP TRIGGER ${AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceOverrideSequenceEnforcement.UPDATE_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceOverrideSequenceEnforcement.DELETE_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${ComposerSmsOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
         database.close()
 
         database = openStateDatabase()
@@ -339,6 +385,9 @@ class StateSchemaCurrentTest {
             assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.UPDATE_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.DELETE_TRIGGER_NAME)
+            assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+            assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
             assertThrows(SQLiteConstraintException::class.java) {
                 sqlite.execSQL(
                     "INSERT INTO appearance_selection(" +

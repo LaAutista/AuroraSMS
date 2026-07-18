@@ -1652,6 +1652,7 @@ internal class SharedPreferencesReplyOperationStore(
             if (providerUpdatePending) {
                 ReplyOperationStoredProviderUpdate(
                     operationId = operationId,
+                    conversationId = conversationId,
                     providerMessageId = requireNotNull(providerMessageId),
                     status = requireNotNull(desiredProviderStatus),
                 )

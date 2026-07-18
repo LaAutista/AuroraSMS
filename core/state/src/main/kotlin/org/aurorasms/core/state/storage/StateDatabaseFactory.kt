@@ -47,10 +47,16 @@ object StateDatabaseFactory {
             DATABASE_NAME,
         )
             .openHelperFactory(NonDeletingStateOpenHelperFactory)
-            .addMigrations(STATE_MIGRATION_1_2, STATE_MIGRATION_2_3, STATE_MIGRATION_3_4)
+            .addMigrations(
+                STATE_MIGRATION_1_2,
+                STATE_MIGRATION_2_3,
+                STATE_MIGRATION_3_4,
+                STATE_MIGRATION_4_5,
+            )
             .addCallback(DraftIdentityEnforcement.callback)
             .addCallback(AppearanceSelectionEnforcement.callback)
             .addCallback(AppearanceOverrideSequenceEnforcement.callback)
+            .addCallback(ComposerSmsOperationEnforcement.callback)
             .build()
         return try {
             database.openHelper.writableDatabase

@@ -59,6 +59,7 @@ class InlineReplyProviderUpdateCoordinatorTest {
         assertTrue(firstRegistry.markFailurePending(operationId, providerId) is ReplyOperationFailureResult.Pending)
         val expectedUpdate = ReplyOperationProviderUpdate(
             operationId = operationId,
+            conversationId = CONVERSATION,
             providerMessageId = providerId,
             status = SmsProviderStatus.FAILED,
         )
@@ -160,6 +161,37 @@ class InlineReplyProviderUpdateCoordinatorTest {
         assertFalse(coordinator.reconcilePending())
     }
 
+    @Test
+    fun storedConversationMismatchRetainsOutboxAndDoesNotMutateProvider() = runTest {
+        val provider = FakeSmsProviderDataSource()
+        val providerId = provider.insertOutgoing("wrong conversation")
+        val registry = registry(InMemoryReplyOperationStore(maximumEntries = 4), identifier = 841L)
+        val operationId = (
+            registry.reserve(OTHER_CONVERSATION, SOURCE_MESSAGE) as
+                ReplyOperationReservationResult.Reserved
+            ).operationId
+        prepareSubmitting(registry, operationId, providerId)
+        assertSame(
+            ReplyOperationSubmittedResult.Tracked,
+            registry.recordSubmitted(operationId, unitCount = 1, providerMessageId = providerId),
+        )
+        assertTrue(
+            registry.recordSent(operationId, 0, 1, providerId) is
+                ReplyOperationSentResult.SuccessPending,
+        )
+        val before = provider.snapshot()
+
+        assertFalse(InlineReplyProviderUpdateCoordinator(registry, provider).reconcile(operationId))
+
+        assertEquals(before, provider.snapshot())
+        assertTrue(provider.updatedStatuses.isEmpty())
+        assertEquals(
+            OTHER_CONVERSATION,
+            (registry.pendingProviderUpdate(operationId) as
+                ReplyOperationPendingProviderUpdateResult.Available).update?.conversationId,
+        )
+    }
+
     private fun registry(
         store: InMemoryReplyOperationStore,
         identifier: Long,
@@ -207,7 +239,8 @@ class InlineReplyProviderUpdateCoordinatorTest {
 
     private companion object {
         const val NOW_MILLIS = 10_000L
-        val CONVERSATION = ConversationId(901L)
+        val CONVERSATION = ConversationId(10_000L)
+        val OTHER_CONVERSATION = ConversationId(10_001L)
         val SOURCE_MESSAGE = MessageId(ProviderKind.SMS, 9_001L)
         val OTHER_SOURCE_MESSAGE = MessageId(ProviderKind.MMS, 9_002L)
         val RECIPIENT = ParticipantAddress("+15550009001")

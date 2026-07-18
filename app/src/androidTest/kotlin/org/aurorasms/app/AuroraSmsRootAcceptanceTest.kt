@@ -4,6 +4,7 @@ package org.aurorasms.app
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
@@ -13,8 +14,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasAnyDescendant
@@ -60,6 +63,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -94,8 +98,15 @@ import org.aurorasms.app.appearance.wallpaper.WallpaperMediaFailure
 import org.aurorasms.app.appearance.wallpaper.WallpaperMediaStore
 import org.aurorasms.app.appearance.wallpaper.classifyManagedWallpaperFileName
 import org.aurorasms.app.appearance.wallpaper.wallpaperDerivativeFileName
-import org.aurorasms.app.drafts.DraftEditorContent
+import org.aurorasms.app.compose.ComposeMessageActivity
+import org.aurorasms.app.drafts.DraftRestorationToken
 import org.aurorasms.app.drafts.SerializedDraftWriter
+import org.aurorasms.app.message.ThreadSmsRecoveryResult
+import org.aurorasms.app.message.ThreadSmsSendAttempt
+import org.aurorasms.app.message.ThreadSmsSendCommand
+import org.aurorasms.app.message.ThreadSmsSendController
+import org.aurorasms.app.message.ThreadSmsSendObservation
+import org.aurorasms.app.message.ThreadSmsSendPhase
 import org.aurorasms.app.preview.BoundedMediaDecodeGate
 import org.aurorasms.core.index.AnchorWindowResult
 import org.aurorasms.core.index.IndexCoverage
@@ -118,6 +129,7 @@ import org.aurorasms.core.index.timeline.ThreadTimelineRepository
 import org.aurorasms.core.index.timeline.TimelineContentResult
 import org.aurorasms.core.index.timeline.TimelinePageRequest
 import org.aurorasms.core.index.timeline.TimelinePageResult
+import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
@@ -125,6 +137,7 @@ import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
+import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.state.AppearanceOverride
 import org.aurorasms.core.state.AppearanceOverrideRevision
 import org.aurorasms.core.state.AppearancePalette
@@ -154,6 +167,7 @@ import org.aurorasms.core.state.DraftRepositoryResult
 import org.aurorasms.core.state.DraftRevision
 import org.aurorasms.core.state.NewAppearanceProfile
 import org.aurorasms.core.state.NewDraft
+import org.aurorasms.core.telephony.ActiveSubscription
 import org.aurorasms.core.telephony.ContactCache
 import org.aurorasms.core.telephony.ContactCacheInvalidation
 import org.aurorasms.core.telephony.MmsAttachmentContentReader
@@ -166,6 +180,7 @@ import org.aurorasms.core.telephony.SubscriptionRepository
 import org.aurorasms.core.telephony.SubscriptionSnapshot
 import org.aurorasms.feature.conversations.AttachmentPreviewResult
 import org.aurorasms.feature.conversations.BoundedPreviewLoader
+import org.aurorasms.feature.conversations.COMPOSER_SEND_TEST_TAG
 import org.aurorasms.feature.conversations.COMPOSER_TEST_TAG
 import org.aurorasms.feature.conversations.CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_MORE_ACTION_TEST_TAG
@@ -254,6 +269,101 @@ class AuroraSmsRootAcceptanceTest {
                     AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD),
                 ),
             )
+        }
+    }
+
+    @Test
+    fun eligibleOnePersonComposerFreezesOneExactSendAcrossUnknownRecreationAndAcknowledgement() {
+        val sendController = RecordingUnknownThreadSmsSendController()
+        val fixture = SyntheticFixture(
+            threadSummary = syntheticThreadSummary(
+                participants = SYNTHETIC_SEND_PARTICIPANTS,
+                latestSubscriptionId = SYNTHETIC_SEND_SUBSCRIPTION.id,
+            ),
+            verifiedIdentity = SYNTHETIC_SEND_VERIFIED_IDENTITY,
+            subscriptionRepository = FixedSubscriptionRepository(SYNTHETIC_SEND_SUBSCRIPTION),
+            threadSmsSendController = sendController,
+        )
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+            openSyntheticThread()
+            compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                .performTextReplacement(SYNTHETIC_SEND_DRAFT)
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_SEND_DRAFT)
+            waitForDisplayedText("Draft saved locally · 1 SMS")
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG)
+                .assertIsEnabled()
+                .performClick()
+
+            compose.waitUntil(TIMEOUT_MILLIS) { sendController.sendCount == 1 }
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            waitForDisplayedText("Submitting safely…")
+
+            val command = sendController.commandsSnapshot().single()
+            val storedDraft = checkNotNull(
+                fixture.drafts.snapshot(DraftIdentity.ProviderThread(SYNTHETIC_THREAD_ID)),
+            )
+            assertEquals(SYNTHETIC_SEND_VERIFIED_IDENTITY, command.identity)
+            assertEquals(SYNTHETIC_SEND_SUBSCRIPTION.id, command.subscriptionId)
+            assertEquals(storedDraft.id, command.draftId)
+            assertEquals(storedDraft.revision, command.draftRevision)
+            assertEquals(SYNTHETIC_SEND_DRAFT, storedDraft.body)
+
+            sendController.releaseAsSubmissionUnknown()
+            waitForDisplayedText("Send status unknown. Check the conversation before trying again.")
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsEnabled()
+            assertEquals(1, sendController.sendCount)
+
+            scenario.recreate()
+
+            waitForTag(THREAD_SCREEN_TEST_TAG)
+            waitForTag(THREAD_LIST_TEST_TAG)
+            compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                .assertTextContains(SYNTHETIC_SEND_DRAFT)
+                .assertIsNotEnabled()
+            waitForDisplayedText("Send status unknown. Check the conversation before trying again.")
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG)
+                .assertIsEnabled()
+                .performClick()
+            waitForDisplayedText("Send status unknown")
+            waitForDisplayedText(
+                "Android may have accepted this message. Check the conversation before keeping " +
+                    "this text as a draft; sending it again could create a duplicate.",
+            )
+            compose.onNodeWithText("Keep as draft").performClick()
+
+            compose.waitUntil(TIMEOUT_MILLIS) { sendController.acknowledgementCount == 1 }
+            waitForDisplayedText("Draft saved locally · 1 SMS")
+            compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                .assertTextContains(SYNTHETIC_SEND_DRAFT)
+                .assertIsEnabled()
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsEnabled()
+            assertEquals(1, sendController.sendCount)
+            assertEquals(
+                SYNTHETIC_SEND_DRAFT,
+                fixture.drafts.snapshot(DraftIdentity.ProviderThread(SYNTHETIC_THREAD_ID))?.body,
+            )
+        }
+    }
+
+    @Test
+    fun externalActionSendToComposeRemainsReviewOnlyWithSendDisabled() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val intent = Intent(context, ComposeMessageActivity::class.java).apply {
+            action = Intent.ACTION_SENDTO
+            data = Uri.parse("smsto:+15550100001")
+            putExtra("sms_body", SYNTHETIC_EXTERNAL_COMPOSE_BODY)
+        }
+
+        ActivityScenario.launch<ComposeMessageActivity>(intent).use {
+            compose.onNodeWithText("+15550100001").assertIsDisplayed()
+            compose.onNodeWithText(SYNTHETIC_EXTERNAL_COMPOSE_BODY).assertIsDisplayed()
+            compose.onNodeWithText("Send unavailable in this foundation build")
+                .assertIsDisplayed()
+                .assertIsNotEnabled()
         }
     }
 
@@ -1487,14 +1597,20 @@ private data class ColdRestartEvidence(
 
 private class SyntheticFixture(
     wallpaperControllerOverride: WallpaperController? = null,
+    threadSummary: ConversationSummary = syntheticThreadSummary(),
+    verifiedIdentity: VerifiedConversationIdentity = SYNTHETIC_VERIFIED_IDENTITY,
+    subscriptionRepository: SubscriptionRepository = SyntheticSubscriptions,
+    threadSmsSendController: ThreadSmsSendController = SyntheticIdleThreadSmsSendController,
+    segmentCounter: (String) -> Int? = { body -> body.takeIf(String::isNotBlank)?.let { 1 } },
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    val conversations = SyntheticConversationRepository()
+    val conversations = SyntheticConversationRepository(threadSummary, verifiedIdentity)
     val index = SyntheticMessageIndex()
     val timeline = RejectingTimelineRepository()
     val appearance = InMemoryAppearanceRepository()
     val wallpapers = InMemoryWallpaperRepository()
     val wallpaperStore = SyntheticWallpaperMediaStore()
+    val drafts = InMemoryDraftRepository()
     private val wallpaperController = wallpaperControllerOverride
         ?: WallpaperController(wallpapers, wallpaperStore)
     private val services = SyntheticRootServices(
@@ -1503,6 +1619,10 @@ private class SyntheticFixture(
         index = index,
         timeline = timeline,
         wallpaperController = wallpaperController,
+        drafts = drafts,
+        subscriptionRepository = subscriptionRepository,
+        threadSmsSendController = threadSmsSendController,
+        segmentCounter = segmentCounter,
     )
     private val controller = AppearanceController(appearance, scope) { 20_000L }
     val harness = AuroraSmsRootTestHarness(
@@ -1523,8 +1643,11 @@ private class SyntheticRootServices(
     index: SyntheticMessageIndex,
     timeline: RejectingTimelineRepository,
     override val wallpaperController: WallpaperController,
+    private val drafts: InMemoryDraftRepository,
+    override val subscriptionRepository: SubscriptionRepository,
+    override val threadSmsSendController: ThreadSmsSendController,
+    private val segmentCounter: (String) -> Int?,
 ) : AuroraSmsRootServices, AutoCloseable {
-    private val drafts = InMemoryDraftRepository()
     private val clock = AtomicLong(30_000L)
     private val writers = ConcurrentHashMap.newKeySet<SerializedDraftWriter>()
 
@@ -1532,18 +1655,19 @@ private class SyntheticRootServices(
     override val threadTimelineRepository: ThreadTimelineRepository = timeline
     override val messageIndex: MessageIndex = index
     override val contactCache: ContactCache = SyntheticContactCache
-    override val subscriptionRepository: SubscriptionRepository = SyntheticSubscriptions
     override val mmsAttachmentRepository: MmsAttachmentRepository = RejectingAttachments
     override val previewLoader: BoundedPreviewLoader = RejectingPreviewLoader
 
+    override fun countSmsSegments(body: String): Int? = segmentCounter(body)
+
     override fun createDraftWriter(
         identity: DraftIdentity,
-        restoredUnacknowledged: DraftEditorContent?,
+        restorationToken: DraftRestorationToken?,
     ): SerializedDraftWriter = SerializedDraftWriter(
         repository = drafts,
         identity = identity,
         scope = scope,
-        restoredUnacknowledged = restoredUnacknowledged,
+        restorationToken = restorationToken,
         nowMillis = clock::incrementAndGet,
     ).also(writers::add)
 
@@ -1564,10 +1688,90 @@ private class SyntheticRootServices(
     }
 }
 
-private class SyntheticConversationRepository : ConversationRepository {
+private object SyntheticIdleThreadSmsSendController : ThreadSmsSendController {
+    override fun observe(providerThreadId: ProviderThreadId): Flow<ThreadSmsSendObservation> =
+        flowOf(ThreadSmsSendObservation(ThreadSmsSendPhase.IDLE))
+
+    override suspend fun send(command: ThreadSmsSendCommand): ThreadSmsSendAttempt =
+        ThreadSmsSendAttempt.REFUSED
+
+    override suspend fun acknowledgeSubmissionUnknown(providerThreadId: ProviderThreadId): Boolean = false
+
+    override suspend fun recover(): ThreadSmsRecoveryResult = ThreadSmsRecoveryResult.READY
+
+    override fun fence() = Unit
+
+    override suspend fun handleTransportResult(result: TransportResult): Boolean = false
+}
+
+private class RecordingUnknownThreadSmsSendController : ThreadSmsSendController {
+    private val observation = MutableStateFlow(ThreadSmsSendObservation(ThreadSmsSendPhase.IDLE))
+    private val commands = Collections.synchronizedList(mutableListOf<ThreadSmsSendCommand>())
+    private val releaseSend = CompletableDeferred<Unit>()
+
+    @Volatile
+    var acknowledgementCount: Int = 0
+        private set
+
+    val sendCount: Int
+        get() = commands.size
+
+    fun commandsSnapshot(): List<ThreadSmsSendCommand> = synchronized(commands) { commands.toList() }
+
+    fun releaseAsSubmissionUnknown() {
+        check(releaseSend.complete(Unit)) { "Synthetic send was already released" }
+    }
+
+    override fun observe(providerThreadId: ProviderThreadId): Flow<ThreadSmsSendObservation> {
+        check(providerThreadId == SYNTHETIC_THREAD_ID)
+        return observation
+    }
+
+    override suspend fun send(command: ThreadSmsSendCommand): ThreadSmsSendAttempt {
+        commands += command
+        observation.value = ThreadSmsSendObservation(ThreadSmsSendPhase.SENDING)
+        releaseSend.await()
+        observation.value = ThreadSmsSendObservation(ThreadSmsSendPhase.SUBMISSION_UNKNOWN)
+        return ThreadSmsSendAttempt.STARTED
+    }
+
+    override suspend fun acknowledgeSubmissionUnknown(providerThreadId: ProviderThreadId): Boolean {
+        if (
+            providerThreadId != SYNTHETIC_THREAD_ID ||
+            observation.value.phase != ThreadSmsSendPhase.SUBMISSION_UNKNOWN
+        ) {
+            return false
+        }
+        acknowledgementCount += 1
+        observation.value = ThreadSmsSendObservation(
+            phase = ThreadSmsSendPhase.IDLE,
+            unknownAcknowledgementEpoch = acknowledgementCount.toLong(),
+        )
+        return true
+    }
+
+    override suspend fun recover(): ThreadSmsRecoveryResult = ThreadSmsRecoveryResult.READY
+
+    override fun fence() {
+        observation.value = ThreadSmsSendObservation(ThreadSmsSendPhase.RECOVERY_PENDING)
+    }
+
+    override suspend fun handleTransportResult(result: TransportResult): Boolean = false
+}
+
+private class FixedSubscriptionRepository(
+    private val subscription: ActiveSubscription,
+) : SubscriptionRepository {
+    override suspend fun activeSubscriptions(): SubscriptionSnapshot =
+        SubscriptionSnapshot.Available(listOf(subscription))
+}
+
+private class SyntheticConversationRepository(
+    private val thread: ConversationSummary = syntheticThreadSummary(),
+    private val verifiedIdentity: VerifiedConversationIdentity = SYNTHETIC_VERIFIED_IDENTITY,
+) : ConversationRepository {
     val inboxLoadCount = AtomicInteger()
     private val inbox = (1..30).map(::syntheticInboxSummary)
-    private val thread = syntheticThreadSummary()
     private val mutableInvalidations = MutableSharedFlow<ConversationInvalidation>(extraBufferCapacity = 1)
 
     @Volatile
@@ -1599,7 +1803,7 @@ private class SyntheticConversationRepository : ConversationRepository {
         return ConversationLookupResult.Found(
             summary = thread,
             coverage = COMPLETE_COVERAGE,
-            verifiedIdentity = SYNTHETIC_VERIFIED_IDENTITY.takeIf { verifiedIdentityAvailable },
+            verifiedIdentity = verifiedIdentity.takeIf { verifiedIdentityAvailable },
         )
     }
 
@@ -1937,6 +2141,8 @@ private class InMemoryDraftRepository : DraftRepository {
     private val drafts = HashMap<DraftIdentity, Draft>()
     private var nextId = 1L
 
+    fun snapshot(identity: DraftIdentity): Draft? = synchronized(lock) { drafts[identity] }
+
     override suspend fun create(draft: NewDraft): DraftRepositoryResult<Draft> = synchronized(lock) {
         if (drafts.containsKey(draft.identity)) return DraftRepositoryResult.Conflict
         val stored = Draft(
@@ -2033,7 +2239,10 @@ private fun syntheticInboxSummary(index: Int): ConversationSummary = Conversatio
     participantsTruncated = false,
 )
 
-private fun syntheticThreadSummary(): ConversationSummary = ConversationSummary(
+private fun syntheticThreadSummary(
+    participants: List<ParticipantAddress> = SYNTHETIC_VERIFIED_PARTICIPANTS,
+    latestSubscriptionId: AuroraSubscriptionId? = null,
+): ConversationSummary = ConversationSummary(
     providerThreadId = SYNTHETIC_THREAD_ID,
     latestLocalRowId = EXACT_LOCAL_ROW,
     latestProviderMessageId = ProviderMessageId(ProviderKind.SMS, EXACT_LOCAL_ROW),
@@ -2042,16 +2251,16 @@ private fun syntheticThreadSummary(): ConversationSummary = ConversationSummary(
     latestDirection = MessageDirection.INCOMING,
     latestBox = MessageBox.INBOX,
     latestStatus = MessageStatus.NONE,
-    latestSubscriptionId = null,
-    latestSenderAddress = SYNTHETIC_PARTICIPANT,
+    latestSubscriptionId = latestSubscriptionId,
+    latestSenderAddress = participants.first(),
     latestSnippet = SYNTHETIC_EXACT_ANCHOR,
     latestAttachmentCount = 0,
     latestAttachmentTypeSummary = "",
     latestRead = true,
     indexedMessageCount = ANCHOR_WINDOW_SIZE.toLong(),
     indexedUnreadCount = 0L,
-    participants = SYNTHETIC_VERIFIED_PARTICIPANTS.take(8),
-    indexedParticipantCount = SYNTHETIC_VERIFIED_PARTICIPANTS.size,
+    participants = participants.take(8),
+    indexedParticipantCount = participants.size,
     participantsTruncated = false,
 )
 
@@ -2104,6 +2313,18 @@ private val SYNTHETIC_VERIFIED_PARTICIPANTS = (1..9).map { index ->
     ParticipantAddress("synthetic-thread-${index.toString().padStart(2, '0')}@example.invalid")
 }
 private val SYNTHETIC_PARTICIPANT = SYNTHETIC_VERIFIED_PARTICIPANTS.first()
+private val SYNTHETIC_SEND_PARTICIPANTS = listOf(SYNTHETIC_PARTICIPANT)
+private val SYNTHETIC_SEND_SUBSCRIPTION = ActiveSubscription(
+    id = AuroraSubscriptionId(7),
+    slotIndex = 0,
+    displayLabel = "Synthetic active SIM",
+    smsCapable = true,
+)
+private val SYNTHETIC_SEND_VERIFIED_IDENTITY = VerifiedConversationIdentity(
+    providerThreadId = SYNTHETIC_THREAD_ID,
+    generationId = checkNotNull(COMPLETE_COVERAGE.generationId),
+    participants = SYNTHETIC_SEND_PARTICIPANTS,
+)
 private val SYNTHETIC_VERIFIED_IDENTITY = VerifiedConversationIdentity(
     providerThreadId = SYNTHETIC_THREAD_ID,
     generationId = checkNotNull(COMPLETE_COVERAGE.generationId),
@@ -2139,6 +2360,8 @@ private const val EVENING_NAME = "Synthetic Evening"
 private const val DAYLIGHT_NAME = "Synthetic Daylight"
 private const val SYNTHETIC_QUERY = "synthetic exact query"
 private const val SYNTHETIC_DRAFT = "Synthetic restored draft"
+private const val SYNTHETIC_SEND_DRAFT = "Synthetic one part send draft"
+private const val SYNTHETIC_EXTERNAL_COMPOSE_BODY = "Synthetic external review body"
 private const val SYNTHETIC_EXACT_ANCHOR = "Synthetic exact anchor"
 private const val UPDATED_FOCAL_X = 270
 private const val UPDATED_FOCAL_Y = 830

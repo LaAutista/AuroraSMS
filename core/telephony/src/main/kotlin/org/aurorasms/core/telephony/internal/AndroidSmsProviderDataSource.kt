@@ -36,6 +36,7 @@ import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplayRequest
 import org.aurorasms.core.telephony.OutgoingSmsRecord
 import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
+import org.aurorasms.core.telephony.OutgoingSmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderPage
 import org.aurorasms.core.telephony.ProviderPageCursor
@@ -456,6 +457,50 @@ class AndroidSmsProviderDataSource(
         }
     }
 
+    override suspend fun updateOutgoingStatus(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+        status: SmsProviderStatus,
+    ): ProviderAccessResult<OutgoingSmsStatusUpdateOutcome> =
+        withWriteAccess("update exact outgoing SMS status") {
+            if (id.kind != ProviderKind.SMS || conversationId.value <= 0L) {
+                return@withWriteAccess ProviderAccessResult.InvalidInput("provider message identity")
+            }
+            if (
+                ContextCompat.checkSelfPermission(appContext, Manifest.permission.READ_SMS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                return@withWriteAccess ProviderAccessResult.PermissionDenied
+            }
+            val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id.value)
+            when (
+                updateExactOutgoingSmsStatusMonotonically(
+                    requested = status,
+                    maxWriteAttempts = MAX_STATUS_UPDATE_ATTEMPTS,
+                    readCurrent = {
+                        readExactOwnedOutgoingSmsStatus(uri, conversationId)
+                    },
+                    conditionalWrite = { expected, requested ->
+                        writeExactOwnedSmsProviderStatusConditionally(
+                            uri = uri,
+                            conversationId = conversationId,
+                            expected = expected,
+                            requested = requested,
+                        )
+                    },
+                )
+            ) {
+                ExactOutgoingSmsStatusUpdateResult.APPLIED ->
+                    ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.APPLIED)
+                ExactOutgoingSmsStatusUpdateResult.ROW_ABSENT ->
+                    ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.ROW_ABSENT)
+                ExactOutgoingSmsStatusUpdateResult.OWNERSHIP_CONFLICT ->
+                    ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.OWNERSHIP_CONFLICT)
+                ExactOutgoingSmsStatusUpdateResult.UNAVAILABLE ->
+                    ProviderAccessResult.Unavailable("update exact outgoing SMS status")
+            }
+        }
+
     private fun readSmsProviderStatus(uri: Uri): SmsProviderStatus? {
         val cursor = resolver.query(
             uri,
@@ -474,6 +519,51 @@ class AndroidSmsProviderDataSource(
                 rawStatus = it.getInt(rawStatusIndex),
             )
             if (it.moveToNext()) null else current
+        }
+    }
+
+    private fun readExactOwnedOutgoingSmsStatus(
+        uri: Uri,
+        conversationId: ConversationId,
+    ): ExactOutgoingSmsStatusReadResult {
+        val cursor = resolver.query(
+            uri,
+            arrayOf(
+                Telephony.Sms.THREAD_ID,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.STATUS,
+                Telephony.Sms.ERROR_CODE,
+                Telephony.Sms.CREATOR,
+            ),
+            null,
+            null,
+            null,
+        ) ?: return ExactOutgoingSmsStatusReadResult.Unavailable
+        return cursor.use {
+            if (!it.moveToFirst()) return@use ExactOutgoingSmsStatusReadResult.RowAbsent
+            val threadId = it.getLong(it.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID))
+            val typeIndex = it.getColumnIndexOrThrow(Telephony.Sms.TYPE)
+            val statusIndex = it.getColumnIndexOrThrow(Telephony.Sms.STATUS)
+            val errorIndex = it.getColumnIndexOrThrow(Telephony.Sms.ERROR_CODE)
+            val creator = it.getString(it.getColumnIndexOrThrow(Telephony.Sms.CREATOR))
+            val messageType = if (it.isNull(typeIndex)) null else it.getInt(typeIndex)
+            val rawStatus = if (it.isNull(statusIndex)) null else it.getInt(statusIndex)
+            val rawErrorCode = if (it.isNull(errorIndex)) null else it.getInt(errorIndex)
+            if (it.moveToNext()) return@use ExactOutgoingSmsStatusReadResult.Unavailable
+            if (
+                threadId != conversationId.value ||
+                creator != appContext.packageName ||
+                messageType == null ||
+                rawStatus == null ||
+                rawErrorCode != CLEARED_OUTGOING_ERROR_CODE
+            ) {
+                return@use ExactOutgoingSmsStatusReadResult.OwnershipConflict
+            }
+            val current = smsProviderStatusFromRaw(
+                messageType = messageType,
+                rawStatus = rawStatus,
+            ) ?: return@use ExactOutgoingSmsStatusReadResult.OwnershipConflict
+            ExactOutgoingSmsStatusReadResult.Found(current)
         }
     }
 
@@ -554,6 +644,39 @@ class AndroidSmsProviderDataSource(
             values,
             "${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.STATUS} = ?",
             arrayOf(
+                expectedProjection.messageType.toString(),
+                expectedProjection.rawStatus.toString(),
+            ),
+        )
+        return when (updated) {
+            0 -> ConditionalSmsStatusWriteResult.STALE
+            1 -> ConditionalSmsStatusWriteResult.UPDATED
+            else -> ConditionalSmsStatusWriteResult.UNAVAILABLE
+        }
+    }
+
+    private fun writeExactOwnedSmsProviderStatusConditionally(
+        uri: Uri,
+        conversationId: ConversationId,
+        expected: SmsProviderStatus,
+        requested: SmsProviderStatus,
+    ): ConditionalSmsStatusWriteResult {
+        val expectedProjection = expected.toSmsProviderStatusProjection()
+        val requestedProjection = requested.toSmsProviderStatusProjection()
+        val values = ContentValues().apply {
+            put(Telephony.Sms.STATUS, requestedProjection.rawStatus)
+            put(Telephony.Sms.TYPE, requestedProjection.messageType)
+        }
+        val updated = resolver.update(
+            uri,
+            values,
+            "${Telephony.Sms.CREATOR} = ? AND ${Telephony.Sms.THREAD_ID} = ? AND " +
+                "${Telephony.Sms.ERROR_CODE} = ? AND ${Telephony.Sms.TYPE} = ? AND " +
+                "${Telephony.Sms.STATUS} = ?",
+            arrayOf(
+                appContext.packageName,
+                conversationId.value.toString(),
+                CLEARED_OUTGOING_ERROR_CODE.toString(),
                 expectedProjection.messageType.toString(),
                 expectedProjection.rawStatus.toString(),
             ),

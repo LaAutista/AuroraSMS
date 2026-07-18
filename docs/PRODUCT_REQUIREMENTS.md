@@ -272,6 +272,69 @@ retention bound and all broader carrier, physical/OEM, API 27 through 35,
 process-death, MMS, accessibility, performance, and release limitations remain
 in force; AuroraSMS is not complete or gold.
 
+### Phase 5A existing-Thread one-part SMS composer
+
+The `0.5.0-phase5` (`versionCode` 4) 2026-07-18 worktree implements the first
+intentional Thread send as a deliberately narrow local-safety slice. It is
+available only in an existing provider-backed Thread with one completed verified
+participant, the Thread's associated active SMS-capable subscription, nonblank
+text with no subject or attachment, and exactly one Android-calculated SMS unit.
+New/external compose, groups, MMS, multipart text, delivery reports, SIM fallback,
+schedules/delay, Undo Send, and automatic retry remain disabled.
+
+- Room schema 5 owns one bounded, content-free composer operation per Thread. It
+  binds only the provider Thread, exact draft ID/revision, subscription, phase,
+  exact prepared provider IDs, unit count, and timestamps. It never copies the
+  body, recipient, or subject out of the authoritative draft.
+- App-private `SavedState` is only a bounded restoration hint. Its unsaved
+  content names the exact Room draft ID/revision on which it was based, or has no
+  base only for a still-absent Room draft. The writer hides the hint until Room
+  is read, applies it only on an exact base match, and discards stale content so
+  a successful send cannot be resurrected by configuration/process restoration.
+- `freezeForSend()` atomically stops new edit acceptance, drains every edit
+  accepted before the barrier, and returns one exact acknowledged content,
+  draft-ID, and revision snapshot. Only that snapshot may be reserved and sent.
+- The composer is the single caller-owned pre-submission authority. The
+  transport awaits durable `PREPARED` and `SUBMITTING` Room checkpoints; role
+  and coordinator fence generation are checked before and after both, followed
+  by one final authoritative role check immediately before the `SmsManager`
+  Binder call.
+- After the draft freeze, the reserve-through-immediate-classification handoff
+  is non-cancellable. A commit-then-cancellation race is classified from Room,
+  and transient typed failures schedule bounded, non-sending recovery rather
+  than leaving `RESERVED`, `PLATFORM_ACCEPTED`, or an observation permanently
+  stranded. Exact callback proof is retained only as content-free identity for
+  bounded checkpoint retry.
+- If exact successful completion or unknown acknowledgement commits but Room
+  reports a typed failure, re-read and boundedly verify the exact content-free
+  operation. A proven removal publishes one deduplicated process-local signal:
+  successful completion recreates an empty writer, while acknowledgement reopens
+  the preserved draft.
+- Recovery never submits. A valid bounded Room snapshot reopens unrelated
+  Threads even if exact provider cleanup for one operation is deferred; the
+  owning Thread remains gated. Role loss and unreadable/corrupt Room state remain
+  global fail-closed conditions.
+- An exact one-unit `COMPOSER` sent callback commits
+  `SENT_CALLBACK_SUCCEEDED` before provider settlement. Duplicate exact success
+  callbacks resume that idempotent settlement. After durable callback proof, an
+  exact provider update may complete on terminal `Success(APPLIED)`,
+  `Success(ROW_ABSENT)`, or `Success(OWNERSHIP_CONFLICT)`: the last two mutate no
+  foreign row and do not turn proven success into retryable work. Provider
+  access, permission, or storage failure defers exact completion.
+- Proven pre-boundary refusal and exact failed sent callbacks preserve the draft
+  as known-unsent. Any ambiguity at or after the platform boundary becomes
+  submission-unknown and never retries automatically.
+- The explicit “Keep as draft” uncertainty action warns that another send can
+  duplicate a message, removes only the unknown operation, and reopens the
+  preserved draft. A later composer callback is swallowed rather than routed to
+  another owner, but the old provider row may remain unreconciled; that cleanup
+  is an explicit Phase 5B residual.
+
+Phase 5A automated acceptance uses fakes, Room, emulators, and deliberately
+unavailable production preconditions. It does not send a real carrier SMS and
+does not close physical-device, SIM, OEM, carrier, billing, roaming, sent, or
+delivery gates. AuroraSMS remains incomplete and not gold.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls
@@ -509,6 +572,12 @@ list updates must not restart it.
 - back, identity/title, relevant SIM subtitle, call via a safe system intent,
   and overflow;
 - independently paged history with anchored composer;
+- for Phase 5A, enable Send only for an exact acknowledged frozen draft in an
+  existing verified one-person Thread, on its associated active SMS-capable
+  subscription, when the body is exactly one SMS unit;
+- expose truthful ready, sending, known-unsent, submission-unknown, and exact
+  unavailability states; lock editing during active/unknown work and require the
+  duplicate-risk acknowledgement before reopening an unknown draft;
 - accessible incoming/outgoing bubbles and group sender labels only when the
   identity changes;
 - useful status only, with prominent actionable failures;
@@ -551,6 +620,11 @@ Theme Studio with a live preview.
   from backup, absent from logs/`toString`, and never describe them as anonymous
   or telemetry-safe. The bounded target token that combines them for app-private
   `SavedState` follows the same restrictions and is never displayed or exported.
+- A composer draft-restoration token in app-private `SavedState` may contain
+  bounded message text only as an exact-base restoration hint. It is never send
+  authority, is hidden until Room validates its base draft ID/revision, and is
+  discarded on mismatch or successful completion; it remains excluded from
+  backup, logs, diagnostics, and exports.
 - Release builds remove debug logging.
 - Disposable-emulator validation may query one debug-only, read-only SMS
   snapshot provider. It is guarded by `android.permission.DUMP` plus an
@@ -592,8 +666,10 @@ granular updates. Release builds use R8 and a measured Baseline Profile.
 4. Phase 3: bounded inbox/thread paging and performance evidence.
 5. Phase 4: AuroraMaterial, canonical artwork, Theme Studio, independent
    static/GIF assignments, and accessibility.
-6. Phase 5: schedules, send delay, dual-SIM persistence, group-MMS hardening,
-   and permanent-delete behavior.
+6. Phase 5: first deliver the bounded Phase 5A existing-Thread one-part SMS
+   composer; later slices retain schedules, send delay, dual-SIM persistence,
+   group-MMS hardening, permanent-delete behavior, and the acknowledged-unknown
+   provider cleanup residual.
 7. Phase 6: notifications/reminders, reactions, voice memo, selected-text copy,
    signatures, local spam, backup/restore, and Android Auto.
 8. Phase 7: provenance, migrations, reproducible release, F-Droid metadata,

@@ -4,6 +4,7 @@ package org.aurorasms.core.telephony.receiver
 
 import android.app.Activity
 import android.telephony.SmsManager
+import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
@@ -43,6 +44,7 @@ class TransportFailureStageTest {
 
     @Test
     fun smsCallbackResultPreservesExplicitInlineReplyOwnership() {
+        val providerConversationId = ConversationId(31L)
         val sent = smsSentResult(
             operationId = operationId,
             providerMessageId = providerMessageId,
@@ -50,6 +52,7 @@ class TransportFailureStageTest {
             unitCount = 1,
             platformResultCode = Activity.RESULT_OK,
             operationOrigin = TransportResult.OperationOrigin.INLINE_REPLY,
+            providerConversationId = providerConversationId,
         )
         val delivered = smsDeliveredResult(
             operationId = operationId,
@@ -58,10 +61,16 @@ class TransportFailureStageTest {
             unitCount = 1,
             platformResultCode = Activity.RESULT_CANCELED,
             operationOrigin = TransportResult.OperationOrigin.INLINE_REPLY,
+            providerConversationId = providerConversationId,
         )
 
         assertEquals(TransportResult.OperationOrigin.INLINE_REPLY, sent.operationOrigin)
         assertEquals(TransportResult.OperationOrigin.INLINE_REPLY, delivered.operationOrigin)
+        assertEquals(providerConversationId, (sent as TransportResult.Sent).providerConversationId)
+        assertEquals(
+            providerConversationId,
+            (delivered as TransportResult.Failed).providerConversationId,
+        )
     }
 
     @Test

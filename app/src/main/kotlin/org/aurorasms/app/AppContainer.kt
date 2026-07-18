@@ -41,7 +41,7 @@ import org.aurorasms.app.contacts.AppContactCacheController
 import org.aurorasms.app.appearance.AppearanceController
 import org.aurorasms.app.appearance.wallpaper.ManagedWallpaperStore
 import org.aurorasms.app.appearance.wallpaper.WallpaperController
-import org.aurorasms.app.drafts.DraftEditorContent
+import org.aurorasms.app.drafts.DraftRestorationToken
 import org.aurorasms.app.drafts.SerializedDraftWriter
 import org.aurorasms.app.index.ForegroundIndexReadGate
 import org.aurorasms.app.preview.AndroidBoundedPreviewLoader
@@ -64,6 +64,11 @@ import org.aurorasms.app.message.ReplyTargetRegistry
 import org.aurorasms.app.message.SharedPreferencesReplyOperationStore
 import org.aurorasms.app.message.SharedPreferencesReplyReplayGuard
 import org.aurorasms.app.message.SharedPreferencesReplyTargetStore
+import org.aurorasms.app.message.DeferredThreadSmsSendController
+import org.aurorasms.app.message.ThreadSmsSendController
+import org.aurorasms.app.message.ThreadSmsSendCoordinator
+import org.aurorasms.app.message.UnavailableThreadSmsSendController
+import org.aurorasms.app.message.requiresFollowUp
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ParticipantAddress
@@ -107,6 +112,7 @@ import org.aurorasms.core.telephony.MmsAttachmentListResult
 import org.aurorasms.core.telephony.MmsAttachmentReadResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
 import org.aurorasms.core.telephony.ProviderAccessResult
+import org.aurorasms.core.telephony.OutgoingSmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ResolvedContact
 import org.aurorasms.core.telephony.SmsProviderDataSource
 import org.aurorasms.core.telephony.SmsProviderStatus
@@ -150,6 +156,7 @@ import org.aurorasms.core.state.DraftStorageOperation
 import org.aurorasms.core.state.NewDraft
 import org.aurorasms.core.state.NewAppearanceProfile
 import org.aurorasms.core.state.storage.RoomAppearanceProfileRepository
+import org.aurorasms.core.state.storage.RoomComposerSmsOperationRepository
 import org.aurorasms.core.state.storage.RoomDraftRepository
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
@@ -289,6 +296,8 @@ class AppContainer(
         mmsTransport = mmsTransport,
     )
     val messageTransport: MessageTransport = androidSmsTransport
+    private val deferredThreadSmsSendController = DeferredThreadSmsSendController()
+    internal val threadSmsSendController: ThreadSmsSendController = deferredThreadSmsSendController
     val messageNotifier: MessageNotifier = AndroidMessageNotifier(
         context = application,
         intentFactory = AppNotificationIntentFactory(application),
@@ -351,6 +360,7 @@ class AppContainer(
         }
         requestIndexOpen()
         if (syntheticIndexOnly) {
+            deferredThreadSmsSendController.install(UnavailableThreadSmsSendController)
             stateRuntimeState.value = StateRuntimeState.Ready(
                 draftRepository = EmptyBenchmarkDraftRepository,
                 appearanceProfileRepository = EmptyBenchmarkAppearanceProfileRepository,
@@ -363,6 +373,18 @@ class AppContainer(
                     is StateDatabaseOpenResult.Opened -> {
                         stateDatabase = result.database
                         val appearanceRepository = RoomAppearanceProfileRepository(result.database)
+                        val composerRepository = RoomComposerSmsOperationRepository(result.database)
+                        deferredThreadSmsSendController.install(
+                            ThreadSmsSendCoordinator(
+                                applicationScope = applicationScope,
+                                roleState = defaultSmsRoleState,
+                                conversations = conversationRepository,
+                                subscriptions = subscriptionRepository,
+                                operations = composerRepository,
+                                transport = messageTransport,
+                                smsProvider = smsProviderDataSource,
+                            ),
+                        )
                         stateRuntimeState.value = StateRuntimeState.Ready(
                             draftRepository = RoomDraftRepository(result.database),
                             appearanceProfileRepository = appearanceRepository,
@@ -372,6 +394,7 @@ class AppContainer(
                         _stateStorageStatus.value = StateStorageStatus.Ready
                     }
                     is StateDatabaseOpenResult.Failed -> {
+                        deferredThreadSmsSendController.install(UnavailableThreadSmsSendController)
                         stateRuntimeState.value = StateRuntimeState.Failed(result.reason)
                         _stateStorageStatus.value = StateStorageStatus.Failed(result.reason)
                     }
@@ -382,18 +405,31 @@ class AppContainer(
 
     suspend fun onTransportResult(result: TransportResult) {
         _lastTransportResult.value = result
+        if (result.operationOrigin == TransportResult.OperationOrigin.COMPOSER) {
+            val composerOwned = threadSmsSendController.handleTransportResult(result)
+            if (composerOwned) {
+                enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
+            }
+            // Re-run durable recovery even when the immediate provider write
+            // failed or the operation lookup was temporarily unavailable.
+            retryPendingInlineReplyOperations()
+            // An explicitly composer-owned callback must never fall through to
+            // the legacy or inline-reply mutation paths, even when its durable
+            // operation cannot be recovered.
+            return
+        }
         var providerStateChanged = false
         when (result) {
             is TransportResult.Sent -> {
                 val inlineReplyDisposition = inlineReplyTransportResultHandler.handle(result)
                 if (inlineReplyDisposition == InlineReplyTransportDisposition.Untracked) {
-                    val providerId = result.providerMessageId ?: return
                     if (
                         sentPartTracker.record(result) &&
-                        smsProviderDataSource.updateStatus(
-                            providerId,
-                            SmsProviderStatus.COMPLETE,
-                        ) is ProviderAccessResult.Success
+                        updateExactOutgoingStatus(
+                            providerId = result.providerMessageId,
+                            providerConversationId = result.providerConversationId,
+                            status = SmsProviderStatus.COMPLETE,
+                        )
                     ) {
                         providerStateChanged = true
                     }
@@ -408,15 +444,14 @@ class AppContainer(
                 if (inlineReplyDisposition == InlineReplyTransportDisposition.Untracked) {
                     result.smsProviderFailureStatus()?.let { providerStatus ->
                         sentPartTracker.forget(result.operationId)
-                        result.providerMessageId?.let { providerId ->
-                            if (
-                                smsProviderDataSource.updateStatus(
-                                    providerId,
-                                    providerStatus,
-                                ) is ProviderAccessResult.Success
-                            ) {
-                                providerStateChanged = true
-                            }
+                        if (
+                            updateExactOutgoingStatus(
+                                providerId = result.providerMessageId,
+                                providerConversationId = result.providerConversationId,
+                                status = providerStatus,
+                            )
+                        ) {
+                            providerStateChanged = true
                         }
                     }
                 } else {
@@ -441,6 +476,25 @@ class AppContainer(
             is TransportResult.Submitted -> Unit
         }
         if (providerStateChanged) enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
+    }
+
+    private suspend fun updateExactOutgoingStatus(
+        providerId: org.aurorasms.core.model.ProviderMessageId?,
+        providerConversationId: org.aurorasms.core.model.ConversationId?,
+        status: SmsProviderStatus,
+    ): Boolean {
+        if (providerId == null || providerConversationId == null) return false
+        return when (
+            val update = smsProviderDataSource.updateOutgoingStatus(
+                id = providerId,
+                conversationId = providerConversationId,
+                status = status,
+            )
+        ) {
+            is ProviderAccessResult.Success ->
+                update.value == OutgoingSmsStatusUpdateOutcome.APPLIED
+            else -> false
+        }
     }
 
     fun onDownloadedMms(
@@ -515,6 +569,7 @@ class AppContainer(
             messagingRecoveryRoleEnabled = roleHeld
         }
         if (!roleHeld && !syntheticIndexOnly) {
+            threadSmsSendController.fence()
             cancelAndJoinPendingMessagingRecovery()
             incomingMessageOrchestrator.onRoleLost()
         }
@@ -588,9 +643,11 @@ class AppContainer(
 
         val transportOwnedRecovery =
             androidSmsTransport.recoverTransportOwnedSubmissions()
+        val composerRecovery = threadSmsSendController.recover()
         inlineReplyTransportResultHandler.reconcilePendingOperations()
         var retryDelayMillis = INCOMING_NOTIFICATION_RECOVERY_INITIAL_RETRY_MILLIS
-        var followUpRequired = transportOwnedRecovery.followUpRequired
+        var followUpRequired = transportOwnedRecovery.followUpRequired ||
+            composerRecovery.requiresFollowUp
         for (attempt in 0 until INCOMING_NOTIFICATION_RECOVERY_MAXIMUM_ATTEMPTS) {
             if (!defaultSmsRoleState.isRoleHeld()) return
             val result = try {
@@ -710,12 +767,12 @@ class AppContainer(
 
     fun createDraftWriter(
         identity: DraftIdentity,
-        restoredUnacknowledged: DraftEditorContent?,
+        restorationToken: DraftRestorationToken?,
     ): SerializedDraftWriter = SerializedDraftWriter(
         repository = draftRepository,
         identity = identity,
         scope = applicationScope,
-        restoredUnacknowledged = restoredUnacknowledged,
+        restorationToken = restorationToken,
     )
 
     /** Gives the newest accepted edit a bounded acknowledgement window before release. */

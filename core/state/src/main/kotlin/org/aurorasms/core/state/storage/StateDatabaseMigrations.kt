@@ -173,3 +173,52 @@ val STATE_MIGRATION_3_4: Migration = object : Migration(3, 4) {
         )
     }
 }
+
+val STATE_MIGRATION_4_5: Migration = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `composer_sms_operations` (
+                `local_operation_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `provider_thread_id` INTEGER NOT NULL,
+                `draft_id` INTEGER NOT NULL,
+                `draft_revision_ms` INTEGER NOT NULL,
+                `subscription_id` INTEGER NOT NULL,
+                `phase_code` TEXT NOT NULL,
+                `provider_message_id` INTEGER,
+                `provider_conversation_id` INTEGER,
+                `unit_count` INTEGER,
+                `created_timestamp_ms` INTEGER NOT NULL,
+                `updated_timestamp_ms` INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS `index_composer_sms_operations_provider_thread_id`
+            ON `composer_sms_operations` (`provider_thread_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS `index_composer_sms_operations_provider_message_id`
+            ON `composer_sms_operations` (`provider_message_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS `index_composer_sms_operations_draft_id_draft_revision_ms`
+            ON `composer_sms_operations` (`draft_id`, `draft_revision_ms`)
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS `index_composer_sms_operations_updated_timestamp_ms_local_operation_id`
+            ON `composer_sms_operations` (`updated_timestamp_ms`, `local_operation_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_INSERT_LIMIT_TRIGGER)
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+    }
+}

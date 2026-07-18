@@ -153,10 +153,12 @@ release gate closes from this slice alone.
 | Low-memory device/emulator | Allocation/decode pressure | Phase 3/4/release |
 | Tablet/foldable/large screen | Adaptive navigation and state parity | Phase 4/release |
 
-The current environment has SDK platforms 36 and 37.0, a physical Google Pixel
-8 (`shiba`) running LineageOS Android 16/API 36, and the synthetic-only
-`AuroraSMS_API26` API 26 and `AuroraSMS_API36` API 36 AVDs. Earlier physical
-evidence below covers only the Pixel/API combination. Phase 3 connected
+The historical environment used for the physical evidence in this section had
+SDK platforms 36 and 37.0, a Google Pixel 8 (`shiba`) running LineageOS Android
+16/API 36, and the synthetic-only `AuroraSMS_API26` API 26 and
+`AuroraSMS_API36` API 36 AVDs. That statement is not a claim that the Pixel was
+attached for later phases. Earlier physical evidence below covers only that
+Pixel/API combination. Phase 3 connected
 functional/profile-generation
 evidence used the AVD; its timings are not representative performance
 evidence. In a later owner-approved window, the exact Phase 3 debug APK was
@@ -2651,7 +2653,138 @@ matrix remains open; AuroraSMS is incomplete and not gold.
   bar, static wallpaper, and GIF wallpaper using the same controlled journeys;
   adaptive rail is added on a large-screen target.
 
-## Phase 5 lifecycle/action matrix
+## Phase 5A bounded existing-Thread composer evidence — 2026-07-18
+
+This section records final-source local worktree verification for
+`0.5.0-phase5` (`versionCode` 4). It does not claim a final commit, pushed CI
+run, physical-device handoff, release, or carrier submission. The exact debug
+APK did complete the emulator handoff recorded below.
+
+### Host, governance, and dependency gates
+
+The complete offline aggregate was `BUILD SUCCESSFUL` in 1m27s across all 886
+Gradle tasks (90 executed, two from cache, 794 up-to-date):
+
+```shell
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease \
+    :app:lintBenchmark :app:assembleBenchmark \
+    :macrobenchmark:check :macrobenchmark:assembleBenchmark \
+    verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions \
+    verifyApkContents checkLicense generateLicenseReport \
+    --offline --no-daemon --no-parallel --console=plain \
+    -Pkotlin.incremental=false
+```
+
+All 508 retained host JUnit results passed with zero failures, errors, or skips:
+
+| Module | Tests |
+|---|---:|
+| app | 236 |
+| design | 9 |
+| index | 69 |
+| model | 19 |
+| notifications | 21 |
+| state | 38 |
+| telephony | 79 |
+| testing | 24 |
+| conversations | 13 |
+| **Total** | **508** |
+
+`bundleRelease` separately passed 269 tasks in 7s. `cyclonedxBom` passed 15
+up-to-date tasks in 7s; the generated CycloneDX 1.6 graph contains 441
+components and 442 dependencies.
+
+### Complete connected matrices
+
+Only AOSP emulators were attached for this Phase 5A gate: API 26 on
+`emulator-5556` and API 36 on `emulator-5554`. No physical device participated.
+The full API 26 matrix was `BUILD SUCCESSFUL` in 1m54s across 456 tasks; the
+full API 36 matrix was `BUILD SUCCESSFUL` in 1m31s across 456 tasks. The first
+API 36 invocation is diagnostic only: the AVD had disconnected and Gradle
+stopped before executing a test. After the existing AVD restarted and reported
+boot complete, the definitive matrix below passed.
+
+| Module | API 26 tests | API 26 skips | API 36 tests | API 36 skips |
+|---|---:|---:|---:|---:|
+| app | 134 | 12 | 131 | 9 |
+| benchmark | 3 | 1 | 3 | 1 |
+| index | 31 | 0 | 31 | 0 |
+| notifications | 29 | 0 | 29 | 0 |
+| state | 49 | 0 | 49 | 0 |
+| telephony | 35 | 0 | 35 | 0 |
+| conversations | 10 | 0 | 10 | 0 |
+| **Total** | **291** | **13** | **288** | **10** |
+
+Both matrices executed 278 non-skipped tests with zero failures or errors. The
+API 36 root composer acceptance and external-compose isolation were also rerun
+as focused gates and each passed 1/1. Those tests prove the bounded existing-
+Thread UI/coordinator route and that external compose cannot bypass it; they do
+not invoke a real destination or carrier network.
+
+### Artifact and privacy inventory
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 13,831,154 | `d8e1dbd75fc4d4ea76c4ebe8d2abb4b6c70828707d9c2eb94cc4697d485d7d31` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 1,960,013 | `22fd58161ee3a99b7d849d0389a4b605bd4e7a84aa0d653c02b69d6ff18f21e9` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 1,886,352 | `a9664f9baf4b943fa1df6a2828cfa4e1db5320cae11f25a0670879fbbfe35197` |
+| `macrobenchmark/build/outputs/apk/benchmark/macrobenchmark-benchmark.apk` | 41,212,868 | `d8a00f0c054fab8aa352583c8e3117661f91c80f426b9def64534bae9f1319fb` |
+| `app/build/outputs/bundle/release/app-release.aab` | 4,750,239 | `ac5900eb1372934584d8740be248eff7ed10bb65427be25df1042875f2043fc4` |
+| `build/reports/bom.json` | 1,014,122 | `c4504bdd75de9812810f2ee2911f00adafafa663efe2206cba7db52f58c56194` |
+| `build/reports/bom.xml` | 922,055 | `6e40e26911f021d7fc9b7c3df11987b7c2a8143fc7d4c83d739648f60db79525` |
+
+Pinned build-tools 36.0.0 `aapt2` inspection found the expected AuroraSMS
+package, `versionCode` 4, `versionName` `0.5.0-phase5`, minimum API 26, and
+target API 36 in all app variants. Only the debug app is `debuggable`. No app
+variant requests `INTERNET` or `ACCESS_NETWORK_STATE`. The separate
+macrobenchmark test APK is intentionally debuggable and carries its tooling
+`INTERNET` permission; it is not an app variant. The release APK is unsigned
+and therefore is not a distributable or installable release artifact.
+
+The exact debug APK above installed successfully on the API 36 AOSP emulator
+(`emulator-5554`) and was copied to
+`/sdcard/Download/AuroraSMS-debug.apk`. The copied file was 13,831,154 bytes and
+its device-side SHA-256 exactly matched
+`d8e1dbd75fc4d4ea76c4ebe8d2abb4b6c70828707d9c2eb94cc4697d485d7d31`.
+An explicit cold `MainActivity` launch returned status `ok`, launch state
+`COLD`, and `TotalTime` 455 ms. The synthetic smoke screen rendered the expected
+default-SMS approval route because the clean emulator retained
+`com.android.messaging` as role holder; the smoke did not grant the role or SMS
+permissions and did not submit a message. No screenshot or device data is
+tracked in the repository.
+
+### Closed local rows and remaining acceptance
+
+- [x] Complete host unit, lint, release assembly, benchmark, clean-room,
+  private-asset, dependency, permission, APK-content, and license gates pass.
+- [x] Schema-5 composer operation, schema migration, content-free persistence,
+  exact draft restoration/freeze, cancellation envelope, bounded non-sending
+  recovery, exact callback retry, provider ownership, and terminal settlement
+  suites pass.
+- [x] Complete API 26 and API 36 connected matrices pass with identical 278
+  executed-test coverage and only documented assumption skips.
+- [x] Production composer preflight is exercised only under unavailable role or
+  permission, with zero provider mutation and zero platform/carrier submission.
+- [x] Root existing-Thread composer and external-compose isolation each pass a
+  focused API 36 acceptance run.
+- [x] The exact final debug APK installs, copies to emulator Download with an
+  identical SHA-256, and cold-launches to the expected role-approval route on
+  API 36 without changing role or SMS permissions.
+- [ ] A physical SMS-capable device and active SIM pass the exact one-person,
+  one-unit existing-Thread journey.
+- [ ] Real carrier acceptance/rejection, billing, roaming, airplane/no-service,
+  sent callback, delivery callback, and exact provider reconciliation pass.
+- [ ] Reboot and process death at each real-send lifecycle boundary pass without
+  draft loss, duplicate submission, or foreign provider mutation.
+- [ ] OEM/device coverage and API 27 through 35 release rows pass.
+
+No real carrier SMS was sent. SIM, physical-device, OEM, carrier, billing,
+roaming, sent/delivery, reboot, and live-send process-death gates remain open.
+The Phase 5B manual-unknown residual also remains: acknowledgement removes the
+durable operation, so a later exact callback is swallowed but its old provider
+row may remain unreconciled. AuroraSMS is incomplete and not gold.
+
+## Remaining Phase 5 lifecycle/action matrix
 
 - [ ] Scheduled send survives process death, reboot, and time/timezone change.
 - [ ] Exact-alarm denial/revocation is honest and has documented fallback.

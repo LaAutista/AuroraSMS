@@ -3,6 +3,7 @@
 package org.aurorasms.app.message
 
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.telephony.OutgoingSmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.SmsProviderDataSource
 
@@ -22,10 +23,24 @@ internal class InlineReplyProviderUpdateCoordinator(
                 ReplyOperationPendingProviderUpdateResult.PersistenceFailure ->
                     return providerStateMayHaveChanged
             }
-            if (smsProvider.updateStatus(update.providerMessageId, update.status) !is
-                ProviderAccessResult.Success
+            when (
+                val providerResult = smsProvider.updateOutgoingStatus(
+                    id = update.providerMessageId,
+                    conversationId = update.conversationId,
+                    status = update.status,
+                )
             ) {
-                return providerStateMayHaveChanged
+                is ProviderAccessResult.Success -> {
+                    if (providerResult.value != OutgoingSmsStatusUpdateOutcome.APPLIED) {
+                        return providerStateMayHaveChanged
+                    }
+                }
+                ProviderAccessResult.PermissionDenied,
+                ProviderAccessResult.RoleRequired,
+                is ProviderAccessResult.InvalidInput,
+                is ProviderAccessResult.Unavailable,
+                is ProviderAccessResult.Unsupported,
+                -> return providerStateMayHaveChanged
             }
             providerStateMayHaveChanged = true
             when (replyOperations.acknowledgeProviderUpdate(update)) {

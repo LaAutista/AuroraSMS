@@ -8,8 +8,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.UUID
-import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
+import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
@@ -99,6 +100,38 @@ class OutgoingSmsSubmissionJournalTest {
             journal.recoverySnapshot(),
         )
     }
+
+    @Test
+    fun grandfatheredTransportRecordInComposerRangeRemainsReadableAfterReopen() =
+        withStore { name ->
+            val inheritedOperation = MessageId(
+                ProviderKind.PENDING_OPERATION,
+                COMPOSER_OPERATION_ID_BOUNDARY + 17L,
+            )
+            val first = journal(name)
+
+            assertTrue(
+                first.recordPrepared(
+                    inheritedOperation,
+                    PROVIDER,
+                    CONVERSATION,
+                    UNIT_COUNT,
+                ),
+            )
+
+            val reopened = journal(name)
+            val snapshot = reopened.recoverySnapshot() as
+                OutgoingSmsSubmissionJournal.RecoverySnapshotResult.Available
+            assertEquals(listOf(inheritedOperation.value), snapshot.records.map { it.operationId })
+            assertTrue(
+                reopened.recordSubmitting(
+                    inheritedOperation,
+                    PROVIDER,
+                    CONVERSATION,
+                    UNIT_COUNT,
+                ),
+            )
+        }
 
     @Test
     fun knownUnsentQuarantineIsContentFreeAndExpiresAsTombstone() = withStore { name ->

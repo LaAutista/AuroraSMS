@@ -343,6 +343,7 @@ internal class ReplyOperationRegistry(
                                 ProviderKind.PENDING_OPERATION,
                                 update.operationId,
                             ),
+                            conversationId = update.conversationId,
                             providerMessageId = update.providerMessageId,
                             status = update.status,
                         )
@@ -369,6 +370,7 @@ internal class ReplyOperationRegistry(
                     result.update?.let { update ->
                         ReplyOperationProviderUpdate(
                             operationId = operationId,
+                            conversationId = update.conversationId,
                             providerMessageId = update.providerMessageId,
                             status = update.status,
                         )
@@ -1316,6 +1318,7 @@ internal class InMemoryReplyOperationStore(
                 .map { operation ->
                     ReplyOperationStoredProviderUpdate(
                         operationId = operation.record.operationId,
+                        conversationId = operation.record.conversationId,
                         providerMessageId = requireNotNull(operation.providerMessageId),
                         status = requireNotNull(operation.desiredProviderStatus),
                     )
@@ -1338,6 +1341,7 @@ internal class InMemoryReplyOperationStore(
             operation.takeIf(InMemoryOperation::providerUpdatePending)?.let { pending ->
                 ReplyOperationStoredProviderUpdate(
                     operationId = pending.record.operationId,
+                    conversationId = pending.record.conversationId,
                     providerMessageId = requireNotNull(pending.providerMessageId),
                     status = requireNotNull(pending.desiredProviderStatus),
                 )
@@ -1804,11 +1808,13 @@ internal data class ReplyOperationStoredPendingFailure(
 
 internal data class ReplyOperationProviderUpdate(
     val operationId: MessageId,
+    val conversationId: ConversationId,
     val providerMessageId: ProviderMessageId,
     val status: SmsProviderStatus,
 ) {
     init {
         require(operationId.kind == ProviderKind.PENDING_OPERATION)
+        require(conversationId.value > 0L)
         require(providerMessageId.kind == ProviderKind.SMS)
         require(status in PROVIDER_TERMINAL_STATUSES)
     }
@@ -1816,6 +1822,7 @@ internal data class ReplyOperationProviderUpdate(
 
 internal data class ReplyOperationStoredProviderUpdate(
     val operationId: Long,
+    val conversationId: ConversationId,
     val providerMessageId: ProviderMessageId,
     val status: SmsProviderStatus,
 )

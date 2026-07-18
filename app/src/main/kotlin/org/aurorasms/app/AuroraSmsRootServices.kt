@@ -2,9 +2,12 @@
 
 package org.aurorasms.app
 
-import org.aurorasms.app.drafts.DraftEditorContent
+import org.aurorasms.app.drafts.DraftRestorationToken
 import org.aurorasms.app.drafts.SerializedDraftWriter
 import org.aurorasms.app.appearance.wallpaper.WallpaperController
+import org.aurorasms.app.message.AndroidSmsSegmentCounter
+import org.aurorasms.app.message.ThreadSmsSendController
+import org.aurorasms.app.message.UnavailableThreadSmsSendController
 import org.aurorasms.core.index.MessageIndex
 import org.aurorasms.core.index.conversation.ConversationRepository
 import org.aurorasms.core.index.timeline.ThreadTimelineRepository
@@ -25,10 +28,14 @@ internal interface AuroraSmsRootServices {
     val previewLoader: BoundedPreviewLoader
     val wallpaperController: WallpaperController?
         get() = null
+    val threadSmsSendController: ThreadSmsSendController
+        get() = UnavailableThreadSmsSendController
+
+    fun countSmsSegments(body: String): Int? = null
 
     fun createDraftWriter(
         identity: DraftIdentity,
-        restoredUnacknowledged: DraftEditorContent?,
+        restorationToken: DraftRestorationToken?,
     ): SerializedDraftWriter
 
     fun releaseDraftWriter(writer: SerializedDraftWriter)
@@ -54,11 +61,15 @@ internal class AppContainerAuroraSmsRootServices(
         get() = container.previewLoader
     override val wallpaperController: WallpaperController
         get() = container.wallpaperController
+    override val threadSmsSendController: ThreadSmsSendController
+        get() = container.threadSmsSendController
+
+    override fun countSmsSegments(body: String): Int? = AndroidSmsSegmentCounter.count(body)
 
     override fun createDraftWriter(
         identity: DraftIdentity,
-        restoredUnacknowledged: DraftEditorContent?,
-    ): SerializedDraftWriter = container.createDraftWriter(identity, restoredUnacknowledged)
+        restorationToken: DraftRestorationToken?,
+    ): SerializedDraftWriter = container.createDraftWriter(identity, restorationToken)
 
     override fun releaseDraftWriter(writer: SerializedDraftWriter) {
         container.releaseDraftWriter(writer)

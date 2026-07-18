@@ -10,6 +10,7 @@ import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.telephony.OutgoingSmsRecord
 import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
+import org.aurorasms.core.telephony.OutgoingSmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderStoredMessage
 import org.aurorasms.core.telephony.SmsProviderStatus
@@ -180,6 +181,71 @@ class FakeSmsProviderStatusTransitionTest {
             result,
         )
         assertEquals(listOf(original), fake.snapshot())
+    }
+
+    @Test
+    fun exactOutgoingStatusRequiresAppOwnerConversationAndArmedState() = runTest {
+        val fake = FakeSmsProviderDataSource()
+        val stored = fake.insertTestOutgoing()
+        val staged = fake.snapshot()
+
+        assertEquals(
+            ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.OWNERSHIP_CONFLICT),
+            fake.updateOutgoingStatus(
+                stored.providerId,
+                stored.conversationId,
+                SmsProviderStatus.COMPLETE,
+            ),
+        )
+        assertEquals(staged, fake.snapshot())
+
+        assertTrue(fake.armOutgoing(stored.providerId) is ProviderAccessResult.Success)
+        val armed = fake.snapshot()
+        assertEquals(
+            ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.OWNERSHIP_CONFLICT),
+            fake.updateOutgoingStatus(
+                stored.providerId,
+                ConversationId(stored.conversationId.value + 1L),
+                SmsProviderStatus.COMPLETE,
+            ),
+        )
+        assertEquals(armed, fake.snapshot())
+
+        assertEquals(
+            ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.APPLIED),
+            fake.updateOutgoingStatus(
+                stored.providerId,
+                stored.conversationId,
+                SmsProviderStatus.COMPLETE,
+            ),
+        )
+        assertEquals(MessageBox.SENT, fake.snapshot().single().box)
+        assertEquals(SmsProviderStatus.COMPLETE, fake.updatedStatuses[stored.providerId])
+    }
+
+    @Test
+    fun exactOutgoingStatusDistinguishesMissingAndForeignRowsWithoutMutation() = runTest {
+        val original = SyntheticMessages.smsProviderMessage()
+        val fake = FakeSmsProviderDataSource(listOf(original))
+
+        assertEquals(
+            ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.ROW_ABSENT),
+            fake.updateOutgoingStatus(
+                ProviderMessageId(ProviderKind.SMS, Long.MAX_VALUE),
+                ConversationId(original.providerThreadId.value),
+                SmsProviderStatus.FAILED,
+            ),
+        )
+        assertEquals(
+            ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.OWNERSHIP_CONFLICT),
+            fake.updateOutgoingStatus(
+                original.id,
+                ConversationId(original.providerThreadId.value),
+                SmsProviderStatus.FAILED,
+            ),
+        )
+        assertEquals(listOf(original), fake.snapshot())
+        assertTrue(fake.updatedStatuses.isEmpty())
     }
 }
 

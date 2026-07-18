@@ -4,6 +4,7 @@ package org.aurorasms.app.drafts
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.aurorasms.core.model.ProviderThreadId
@@ -50,16 +51,19 @@ class SerializedDraftWriterTest {
     }
 
     @Test
-    fun `restored unacknowledged content is persisted before it is acknowledged`() = runTest {
-        val repository = InMemoryDraftRepository(
-            initial = draft(body = "persisted", subject = null, updated = 10L),
-        )
+    fun `restoration based on the exact Room revision is replayed`() = runTest {
+        val persisted = draft(body = "persisted", subject = null, updated = 10L)
+        val repository = InMemoryDraftRepository(initial = persisted)
         val restored = DraftEditorContent("restored", "restored subject")
         val writer = SerializedDraftWriter(
             repository = repository,
             identity = IDENTITY,
             scope = backgroundScope,
-            restoredUnacknowledged = restored,
+            restorationToken = DraftRestorationToken(
+                content = restored,
+                expectedDraftId = persisted.id,
+                expectedRevision = persisted.revision,
+            ),
             nowMillis = { 20L },
         )
 
@@ -68,6 +72,125 @@ class SerializedDraftWriterTest {
         assertEquals(restored, repository.stored?.editorContent())
         assertEquals(restored, (writer.status.value as DraftWriteStatus.Active).latest)
         assertFalse((writer.status.value as DraftWriteStatus.Active).saving)
+        writer.close()
+    }
+
+    @Test
+    fun `stale post-send restoration cannot resurrect a draft deleted from Room`() = runTest {
+        val stale = DraftRestorationToken(
+            content = DraftEditorContent("already sent", null),
+            expectedDraftId = DraftId(1L),
+            expectedRevision = DraftRevision(10L),
+        )
+        val repository = InMemoryDraftRepository(initial = null)
+        val writer = SerializedDraftWriter(
+            repository = repository,
+            identity = IDENTITY,
+            scope = backgroundScope,
+            restorationToken = stale,
+            nowMillis = { 20L },
+        )
+
+        assertTrue(writer.flush())
+
+        assertEquals(null, repository.stored)
+        assertTrue(repository.acceptedWrites.isEmpty())
+        assertEquals(
+            DraftEditorContent.EMPTY,
+            (writer.status.value as DraftWriteStatus.Active).latest,
+        )
+        writer.close()
+    }
+
+    @Test
+    fun `base-free restoration survives only when Room also has no draft`() = runTest {
+        val restored = DraftEditorContent("first unsaved edit", null)
+        val repository = InMemoryDraftRepository(initial = null)
+        val writer = SerializedDraftWriter(
+            repository = repository,
+            identity = IDENTITY,
+            scope = backgroundScope,
+            restorationToken = DraftRestorationToken(
+                content = restored,
+                expectedDraftId = null,
+                expectedRevision = null,
+            ),
+            nowMillis = { 20L },
+        )
+
+        assertTrue(writer.flush())
+
+        assertEquals(restored, repository.stored?.editorContent())
+        assertEquals(listOf(restored), repository.acceptedWrites)
+        writer.close()
+    }
+
+    @Test
+    fun `restoration with a different Room base is discarded`() = runTest {
+        val current = draft(body = "new Room authority", subject = null, updated = 50L)
+        val repository = InMemoryDraftRepository(initial = current)
+        val writer = SerializedDraftWriter(
+            repository = repository,
+            identity = IDENTITY,
+            scope = backgroundScope,
+            restorationToken = DraftRestorationToken(
+                content = DraftEditorContent("stale edit", null),
+                expectedDraftId = current.id,
+                expectedRevision = DraftRevision(49L),
+            ),
+        )
+
+        assertTrue(writer.flush())
+
+        assertEquals(current, repository.stored)
+        assertTrue(repository.acceptedWrites.isEmpty())
+        assertEquals(
+            current.editorContent(),
+            (writer.status.value as DraftWriteStatus.Active).latest,
+        )
+        writer.close()
+    }
+
+    @Test
+    fun `freeze linearizes against edits and returns the exact acknowledged snapshot`() = runTest {
+        val createGate = CompletableDeferred<Unit>()
+        val repository = InMemoryDraftRepository(createGate = createGate)
+        val writer = SerializedDraftWriter(repository, IDENTITY, backgroundScope, nowMillis = { 100L })
+        runCurrent()
+        val accepted = DraftEditorContent("accepted before freeze", null)
+
+        assertTrue(writer.submit(accepted))
+        runCurrent()
+        val frozen = async { writer.freezeForSend() }
+        runCurrent()
+
+        assertFalse(writer.submit(DraftEditorContent("raced after freeze", null)))
+        createGate.complete(Unit)
+        val snapshot = frozen.await()
+
+        assertEquals(accepted, snapshot?.content)
+        assertEquals(repository.stored?.id, snapshot?.draftId)
+        assertEquals(repository.stored?.revision, snapshot?.revision)
+        assertEquals(listOf(accepted), repository.acceptedWrites)
+        writer.close()
+    }
+
+    @Test
+    fun `explicit refused-send unfreeze reopens edit acceptance`() = runTest {
+        val repository = InMemoryDraftRepository()
+        val writer = SerializedDraftWriter(repository, IDENTITY, backgroundScope, nowMillis = { 100L })
+        runCurrent()
+        assertTrue(writer.submit(DraftEditorContent("send candidate", null)))
+        assertTrue(writer.flush())
+        assertTrue(writer.freezeForSend() != null)
+        assertFalse(writer.submit(DraftEditorContent("blocked while frozen", null)))
+
+        assertTrue(writer.unfreezeAfterSendSettled(DraftUnfreezeReason.SEND_REFUSED))
+        val replacement = DraftEditorContent("editable again", null)
+        assertTrue(writer.submit(replacement))
+        assertTrue(writer.flush())
+
+        assertEquals(replacement, repository.stored?.editorContent())
         writer.close()
     }
 

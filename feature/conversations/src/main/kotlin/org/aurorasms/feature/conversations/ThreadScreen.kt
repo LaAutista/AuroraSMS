@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -95,6 +96,8 @@ fun ThreadScreen(
     onAnchorRestored: () -> Unit,
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
     onDraftChanged: (String) -> Unit,
+    onSend: () -> Unit = {},
+    onAcknowledgeSubmissionUnknown: () -> Unit = {},
     timelineBackground: @Composable BoxScope.() -> Unit = {},
 ) {
     val focusManager = LocalFocusManager.current
@@ -160,6 +163,8 @@ fun ThreadScreen(
                 state = composer,
                 onBodyChanged = onDraftChanged,
                 onFocusChanged = { composerFocused = it },
+                onSend = onSend,
+                onAcknowledgeSubmissionUnknown = onAcknowledgeSubmissionUnknown,
             )
         }
     }
@@ -745,7 +750,35 @@ private fun Composer(
     state: ComposerUiState,
     onBodyChanged: (String) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
+    onSend: () -> Unit,
+    onAcknowledgeSubmissionUnknown: () -> Unit,
 ) {
+    var showUnknownConfirmation by remember { mutableStateOf(false) }
+    LaunchedEffect(state.sendState) {
+        if (state.sendState != ComposerSendState.SUBMISSION_UNKNOWN) {
+            showUnknownConfirmation = false
+        }
+    }
+    if (showUnknownConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showUnknownConfirmation = false },
+            title = { Text(stringResource(R.string.send_status_unknown_title)) },
+            text = { Text(stringResource(R.string.send_status_unknown_explanation)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showUnknownConfirmation = false
+                        onAcknowledgeSubmissionUnknown()
+                    },
+                ) { Text(stringResource(R.string.keep_as_draft)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnknownConfirmation = false }) {
+                    Text(stringResource(R.string.wait_for_send_status))
+                }
+            },
+        )
+    }
     HorizontalDivider()
     Row(
         modifier = Modifier
@@ -759,7 +792,10 @@ private fun Composer(
             onValueChange = { value ->
                 if (value.length <= MAXIMUM_COMPOSER_CHARACTERS) onBodyChanged(value)
             },
-            enabled = !state.failed,
+            enabled = !state.failed &&
+                state.sendState != ComposerSendState.SENDING &&
+                state.sendState != ComposerSendState.SUBMISSION_UNKNOWN &&
+                state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING,
             modifier = Modifier
                 .weight(1f)
                 .onFocusChanged { onFocusChanged(it.isFocused) }
@@ -772,12 +808,64 @@ private fun Composer(
                     when {
                         state.failed -> stringResource(R.string.draft_failed)
                         state.saving -> stringResource(R.string.saving_draft)
+                        state.sendState == ComposerSendState.SENDING ->
+                            stringResource(R.string.submitting_message)
+                        state.sendState == ComposerSendState.KNOWN_UNSENT ->
+                            stringResource(R.string.message_not_sent_draft_preserved)
+                        state.sendState == ComposerSendState.SUBMISSION_UNKNOWN ->
+                            stringResource(R.string.send_status_unknown_supporting)
+                        state.unavailableReason == ComposerUnavailableReason.CONVERSATION_UNVERIFIED ->
+                            stringResource(R.string.verifying_conversation_for_send)
+                        state.unavailableReason == ComposerUnavailableReason.GROUP_REQUIRES_MMS ->
+                            stringResource(R.string.group_send_requires_mms)
+                        state.unavailableReason == ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE ->
+                            stringResource(R.string.conversation_sim_unavailable)
+                        state.unavailableReason == ComposerUnavailableReason.MULTIPART_UNAVAILABLE ->
+                            stringResource(
+                                R.string.multipart_send_unavailable,
+                                state.segmentCount ?: 2,
+                            )
+                        state.unavailableReason == ComposerUnavailableReason.RECOVERY_PENDING ->
+                            stringResource(R.string.finishing_send_recovery)
+                        state.unavailableReason == ComposerUnavailableReason.MESSAGING_UNAVAILABLE ->
+                            stringResource(R.string.messaging_send_unavailable)
+                        state.unavailableReason == ComposerUnavailableReason.EMPTY_MESSAGE ->
+                            stringResource(R.string.type_message_to_send)
+                        state.unavailableReason == ComposerUnavailableReason.DRAFT_NOT_DURABLE ->
+                            stringResource(R.string.saving_draft)
+                        state.sendState == ComposerSendState.READY ->
+                            stringResource(R.string.draft_saved_one_sms)
                         else -> stringResource(R.string.draft_saved)
                     },
                 )
             },
         )
-        Button(onClick = {}, enabled = false) { Text(stringResource(R.string.send_unavailable)) }
+        val actionEnabled = state.sendState == ComposerSendState.READY ||
+            state.sendState == ComposerSendState.KNOWN_UNSENT ||
+            state.sendState == ComposerSendState.SUBMISSION_UNKNOWN
+        Button(
+            onClick = {
+                if (state.sendState == ComposerSendState.SUBMISSION_UNKNOWN) {
+                    showUnknownConfirmation = true
+                } else {
+                    onSend()
+                }
+            },
+            enabled = actionEnabled,
+            modifier = Modifier.testTag(COMPOSER_SEND_TEST_TAG),
+        ) {
+            Text(
+                stringResource(
+                    when (state.sendState) {
+                        ComposerSendState.READY -> R.string.send
+                        ComposerSendState.SENDING -> R.string.sending
+                        ComposerSendState.KNOWN_UNSENT -> R.string.retry_send
+                        ComposerSendState.SUBMISSION_UNKNOWN -> R.string.review_send
+                        ComposerSendState.UNAVAILABLE -> R.string.send_unavailable
+                    },
+                ),
+            )
+        }
     }
 }
 
@@ -814,5 +902,6 @@ const val THREAD_SCREEN_TEST_TAG: String = "aurora-thread-screen"
 const val THREAD_LIST_TEST_TAG: String = "aurora-thread-list"
 const val MESSAGE_BUBBLE_TEST_TAG: String = "aurora-message-bubble"
 const val COMPOSER_TEST_TAG: String = "aurora-composer"
+const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"
 const val THREAD_MORE_ACTION_TEST_TAG: String = "aurora-thread-more-action"
 const val THREAD_APPEARANCE_ACTION_TEST_TAG: String = "aurora-thread-appearance-action"

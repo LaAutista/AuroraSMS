@@ -522,6 +522,7 @@ class SharedPreferencesReplyOperationStoreTest {
         val recreated = registry(identifierGenerator = { 7_652L })
         val complete = ReplyOperationProviderUpdate(
             operationId,
+            CONVERSATION,
             providerId,
             SmsProviderStatus.COMPLETE,
         )

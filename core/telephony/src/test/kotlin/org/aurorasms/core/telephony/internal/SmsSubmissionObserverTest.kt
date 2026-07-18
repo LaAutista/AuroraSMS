@@ -3,34 +3,20 @@
 package org.aurorasms.core.telephony.internal
 
 import java.util.concurrent.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
-import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
-import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.telephony.ProviderAccessResult
+import org.aurorasms.core.telephony.ProviderStoredMessage
 import org.aurorasms.core.telephony.SmsSubmissionObserver
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SmsSubmissionObserverTest {
-    @Test
-    fun transportOwnedNamespaceAcceptsOnlyOrdinaryPendingOperationIds() {
-        assertEquals(
-            true,
-            MessageId(ProviderKind.PENDING_OPERATION, INLINE_REPLY_OPERATION_ID_BOUNDARY - 1L)
-                .isTransportOwnedSmsOperation(),
-        )
-        assertEquals(
-            false,
-            MessageId(ProviderKind.PENDING_OPERATION, INLINE_REPLY_OPERATION_ID_BOUNDARY)
-                .isTransportOwnedSmsOperation(),
-        )
-        assertEquals(
-            false,
-            MessageId(ProviderKind.SMS, 1L).isTransportOwnedSmsOperation(),
-        )
-    }
-
     @Test
     fun acceptedObserverRunsInExactOrderImmediatelyBeforePlatformSubmission() = runTest {
         val events = mutableListOf<String>()
@@ -43,6 +29,7 @@ class SmsSubmissionObserverTest {
         val result = runObservedSmsSubmission(
             observer = observer,
             providerId = PROVIDER_ID,
+            providerConversationId = PROVIDER_CONVERSATION_ID,
             unitCount = UNIT_COUNT,
             markFailed = { events += "provider-failed" },
             armProvider = {
@@ -85,6 +72,7 @@ class SmsSubmissionObserverTest {
             val result = runObservedSmsSubmission(
                 observer = observer,
                 providerId = PROVIDER_ID,
+                providerConversationId = PROVIDER_CONVERSATION_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = { events += "provider-failed" },
                 armProvider = { error("provider must not be armed") },
@@ -115,6 +103,7 @@ class SmsSubmissionObserverTest {
             val result = runObservedSmsSubmission(
                 observer = observer,
                 providerId = PROVIDER_ID,
+                providerConversationId = PROVIDER_CONVERSATION_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = {
                     events += "provider-failed"
@@ -146,6 +135,49 @@ class SmsSubmissionObserverTest {
     }
 
     @Test
+    fun roleLossAtFinalBoundaryCheckRollsBackWithoutInvokingPlatform() = runTest {
+        val events = mutableListOf<String>()
+
+        val result = runObservedSmsSubmission(
+            observer = recordingObserver(
+                events = events,
+                prepared = { true },
+                submitting = { true },
+            ),
+            providerId = PROVIDER_ID,
+            providerConversationId = PROVIDER_CONVERSATION_ID,
+            unitCount = UNIT_COUNT,
+            markFailed = { events += "provider-failed" },
+            armProvider = {
+                events += "provider-armed"
+                true
+            },
+            submissionBoundaryAllowed = {
+                events += "boundary-role-check"
+                false
+            },
+            prepareSubmission = {
+                events += "platform-prepared"
+                val submit: () -> Unit = { events += "platform-submitted" }
+                submit
+            },
+        )
+
+        assertEquals(ObservedSmsSubmissionResult.OBSERVER_REJECTED, result)
+        assertEquals(
+            listOf(
+                "observer-prepared:SMS:73:3",
+                "platform-prepared",
+                "provider-armed",
+                "observer-submitting:SMS:73:3",
+                "boundary-role-check",
+                "provider-failed",
+            ),
+            events,
+        )
+    }
+
+    @Test
     fun exceptionFromIrreversiblePlatformCallIsSubmissionUnknownAndDoesNotFailProvider() = runTest {
         val events = mutableListOf<String>()
 
@@ -156,6 +188,7 @@ class SmsSubmissionObserverTest {
                 submitting = { true },
             ),
             providerId = PROVIDER_ID,
+            providerConversationId = PROVIDER_CONVERSATION_ID,
             unitCount = UNIT_COUNT,
             markFailed = { events += "provider-failed" },
             armProvider = {
@@ -186,7 +219,7 @@ class SmsSubmissionObserverTest {
     }
 
     @Test
-    fun observerCancellationPropagatesBeforePlatformSubmission() = runTest {
+    fun preparedCheckpointCancellationRollsBackThenPropagatesBeforePlatformSubmission() = runTest {
         val events = mutableListOf<String>()
         var cancelled = false
 
@@ -198,6 +231,7 @@ class SmsSubmissionObserverTest {
                     submitting = { error("onSubmitting must not run") },
                 ),
                 providerId = PROVIDER_ID,
+                providerConversationId = PROVIDER_CONVERSATION_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = { events += "provider-failed" },
                 armProvider = { error("provider must not be armed") },
@@ -208,7 +242,44 @@ class SmsSubmissionObserverTest {
         }
 
         assertEquals(true, cancelled)
-        assertEquals(listOf("observer-prepared:SMS:73:3"), events)
+        assertEquals(listOf("observer-prepared:SMS:73:3", "provider-failed"), events)
+    }
+
+    @Test
+    fun parentCancellationAfterOutgoingInsertRollsBackExactBindingBeforeAnyCheckpoint() = runTest {
+        val insertStarted = CompletableDeferred<Unit>()
+        val releaseInsert = CompletableDeferred<Unit>()
+        val events = mutableListOf<String>()
+        var returned: ProviderAccessResult<ProviderStoredMessage>? = null
+        var cancellationPropagated = false
+        val job = backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            returned = awaitOutgoingInsertResult {
+                insertStarted.complete(Unit)
+                releaseInsert.await()
+                ProviderAccessResult.Success(STORED_PROVIDER_MESSAGE)
+            }
+            try {
+                ensureActiveOutgoingSmsOrRollback {
+                    val exact = (returned as ProviderAccessResult.Success<ProviderStoredMessage>).value
+                    events += "provider-failed:${exact.providerId.value}:${exact.conversationId.value}"
+                }
+                events += "observer-prepared"
+                events += "provider-armed"
+                events += "platform-submitted"
+            } catch (cancelled: CancellationException) {
+                cancellationPropagated = true
+                throw cancelled
+            }
+        }
+        insertStarted.await()
+
+        job.cancel()
+        releaseInsert.complete(Unit)
+        job.join()
+
+        assertEquals(ProviderAccessResult.Success(STORED_PROVIDER_MESSAGE), returned)
+        assertEquals(true, cancellationPropagated)
+        assertEquals(listOf("provider-failed:73:79"), events)
     }
 
     @Test
@@ -224,6 +295,7 @@ class SmsSubmissionObserverTest {
                     submitting = { throw CancellationException("synthetic submitting cancellation") },
                 ),
                 providerId = PROVIDER_ID,
+                providerConversationId = PROVIDER_CONVERSATION_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = { events += "provider-failed" },
                 armProvider = {
@@ -266,6 +338,7 @@ class SmsSubmissionObserverTest {
                     submitting = { throw CancellationException("synthetic submitting cancellation") },
                 ),
                 providerId = PROVIDER_ID,
+                providerConversationId = PROVIDER_CONVERSATION_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = { events += "provider-failed" },
                 armProvider = {
@@ -308,6 +381,7 @@ class SmsSubmissionObserverTest {
                     submitting = { true },
                 ),
                 providerId = PROVIDER_ID,
+                providerConversationId = PROVIDER_CONVERSATION_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = { events += "provider-failed" },
                 armProvider = {
@@ -355,6 +429,7 @@ class SmsSubmissionObserverTest {
                     submitting = { error("onSubmitting must not run") },
                 ),
                 providerId = PROVIDER_ID,
+                providerConversationId = PROVIDER_CONVERSATION_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = { events += "provider-failed" },
                 armProvider = arm,
@@ -390,6 +465,7 @@ class SmsSubmissionObserverTest {
                     submitting = { error("onSubmitting must not run") },
                 ),
                 providerId = PROVIDER_ID,
+                providerConversationId = PROVIDER_CONVERSATION_ID,
                 unitCount = UNIT_COUNT,
                 markFailed = { events += "provider-failed" },
                 armProvider = {
@@ -423,12 +499,22 @@ class SmsSubmissionObserverTest {
         prepared: () -> Boolean,
         submitting: () -> Boolean,
     ) = object : SmsSubmissionObserver {
-        override fun onPrepared(providerId: ProviderMessageId, unitCount: Int): Boolean {
+        override suspend fun onPrepared(
+            providerId: ProviderMessageId,
+            providerConversationId: ConversationId,
+            unitCount: Int,
+        ): Boolean {
+            assertEquals(PROVIDER_CONVERSATION_ID, providerConversationId)
             events += "observer-prepared:${providerId.kind}:${providerId.value}:$unitCount"
             return prepared()
         }
 
-        override fun onSubmitting(providerId: ProviderMessageId, unitCount: Int): Boolean {
+        override suspend fun onSubmitting(
+            providerId: ProviderMessageId,
+            providerConversationId: ConversationId,
+            unitCount: Int,
+        ): Boolean {
+            assertEquals(PROVIDER_CONVERSATION_ID, providerConversationId)
             events += "observer-submitting:${providerId.kind}:${providerId.value}:$unitCount"
             return submitting()
         }
@@ -436,6 +522,11 @@ class SmsSubmissionObserverTest {
 
     private companion object {
         val PROVIDER_ID = ProviderMessageId(ProviderKind.SMS, 73L)
+        val PROVIDER_CONVERSATION_ID = ConversationId(79L)
+        val STORED_PROVIDER_MESSAGE = ProviderStoredMessage(
+            providerId = PROVIDER_ID,
+            conversationId = PROVIDER_CONVERSATION_ID,
+        )
         const val UNIT_COUNT = 3
     }
 }

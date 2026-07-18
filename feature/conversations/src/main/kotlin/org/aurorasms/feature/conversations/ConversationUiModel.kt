@@ -124,9 +124,43 @@ data class ComposerUiState(
     val body: String,
     val saving: Boolean,
     val failed: Boolean,
+    val sendState: ComposerSendState = ComposerSendState.UNAVAILABLE,
+    val unavailableReason: ComposerUnavailableReason? = null,
+    val segmentCount: Int? = null,
 ) {
+    init {
+        require(segmentCount == null || segmentCount > 0) { "SMS segment count must be positive" }
+        require(sendState != ComposerSendState.READY || unavailableReason == null) {
+            "A ready composer cannot have an unavailable reason"
+        }
+        require(sendState == ComposerSendState.UNAVAILABLE || unavailableReason == null) {
+            "Only an unavailable composer can have an unavailable reason"
+        }
+    }
+
     override fun toString(): String =
-        "ComposerUiState(bodyLength=${body.length}, saving=$saving, failed=$failed, REDACTED)"
+        "ComposerUiState(bodyLength=${body.length}, saving=$saving, failed=$failed, " +
+            "sendState=$sendState, unavailableReason=$unavailableReason, " +
+            "segmentCount=$segmentCount, REDACTED)"
+}
+
+enum class ComposerSendState {
+    UNAVAILABLE,
+    READY,
+    SENDING,
+    KNOWN_UNSENT,
+    SUBMISSION_UNKNOWN,
+}
+
+enum class ComposerUnavailableReason {
+    EMPTY_MESSAGE,
+    DRAFT_NOT_DURABLE,
+    CONVERSATION_UNVERIFIED,
+    GROUP_REQUIRES_MMS,
+    SUBSCRIPTION_UNAVAILABLE,
+    MULTIPART_UNAVAILABLE,
+    RECOVERY_PENDING,
+    MESSAGING_UNAVAILABLE,
 }
 
 internal fun conversationAddresses(items: List<ConversationSummary>): List<ParticipantAddress> =

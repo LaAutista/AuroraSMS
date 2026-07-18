@@ -23,7 +23,10 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.aurorasms.app.appearance.AppAppearanceOverrideObservation
 import org.aurorasms.app.appearance.AppAppearanceState
 import org.aurorasms.app.appearance.AppearanceController
@@ -40,7 +43,14 @@ import org.aurorasms.app.appearance.wallpaper.WallpaperControllerError
 import org.aurorasms.app.appearance.wallpaper.WallpaperRenderRequestEpoch
 import org.aurorasms.app.appearance.wallpaper.resolveWallpaperCandidates
 import org.aurorasms.app.drafts.DraftEditorContent
+import org.aurorasms.app.drafts.DraftRestorationToken
+import org.aurorasms.app.drafts.DraftUnfreezeReason
 import org.aurorasms.app.drafts.DraftWriteStatus
+import org.aurorasms.app.drafts.FrozenDraftSnapshot
+import org.aurorasms.app.message.ThreadSmsSendAttempt
+import org.aurorasms.app.message.ThreadSmsSendCommand
+import org.aurorasms.app.message.ThreadSmsSendObservation
+import org.aurorasms.app.message.ThreadSmsSendPhase
 import org.aurorasms.core.index.SearchAnchor
 import org.aurorasms.core.index.SearchHit
 import org.aurorasms.core.model.ConversationId
@@ -53,10 +63,14 @@ import org.aurorasms.core.model.asProviderThreadId
 import org.aurorasms.core.designsystem.AuroraMaterialProfile
 import org.aurorasms.core.designsystem.AuroraMaterialTheme
 import org.aurorasms.core.state.DraftIdentity
+import org.aurorasms.core.state.DraftId
+import org.aurorasms.core.state.DraftRevision
 import org.aurorasms.core.state.AppearanceParticipantSetKey
 import org.aurorasms.core.state.AppearanceScope
 import org.aurorasms.core.state.AppearanceScreenScope
 import org.aurorasms.feature.conversations.ComposerUiState
+import org.aurorasms.feature.conversations.ComposerSendState
+import org.aurorasms.feature.conversations.ComposerUnavailableReason
 import org.aurorasms.feature.conversations.InboxScreen
 import org.aurorasms.feature.conversations.InboxStateHolder
 import org.aurorasms.feature.conversations.InboxUiState
@@ -553,25 +567,88 @@ private fun ThreadRoute(
         }
     }
 
-    var savedBody by rememberSaveable(route.providerThreadId.value) { mutableStateOf<String?>(null) }
-    val writer = remember(services, route.providerThreadId) {
+    val sendController = services.threadSmsSendController
+    val sendObservationFlow = remember(sendController, route.providerThreadId) {
+        sendController.observe(route.providerThreadId)
+    }
+    val sendObservation by sendObservationFlow.collectAsStateWithLifecycle(
+        initialValue = ThreadSmsSendObservation(ThreadSmsSendPhase.RECOVERY_PENDING),
+    )
+    var savedDraftRestoration by rememberSaveable(
+        route.providerThreadId.value,
+        stateSaver = SAVED_DRAFT_RESTORATION_SAVER,
+    ) {
+        mutableStateOf(SavedDraftRestoration())
+    }
+    var writerGeneration by rememberSaveable(route.providerThreadId.value) { mutableStateOf(0L) }
+    // Controller epochs are process-local. This observer must reset with the
+    // process too, otherwise a restored larger value could hide a later send.
+    var observedCompletionEpoch by remember(route.providerThreadId) {
+        mutableStateOf(0L)
+    }
+    var observedUnknownAcknowledgementEpoch by remember(route.providerThreadId) {
+        mutableStateOf(0L)
+    }
+    LaunchedEffect(sendObservation.completionEpoch) {
+        if (sendObservation.completionEpoch > observedCompletionEpoch) {
+            observedCompletionEpoch = sendObservation.completionEpoch
+            savedDraftRestoration = SavedDraftRestoration()
+            writerGeneration += 1L
+        }
+    }
+    val writerCreationGeneration = writerGeneration
+    val writer = remember(services, route.providerThreadId, writerCreationGeneration) {
         services.createDraftWriter(
             identity = DraftIdentity.ProviderThread(route.providerThreadId),
-            restoredUnacknowledged = savedBody?.let { body ->
-                DraftEditorContent(body = body.takeIf(String::isNotEmpty), subject = null)
-            },
+            restorationToken = savedDraftRestoration.token,
         )
     }
     DisposableEffect(writer) { onDispose { services.releaseDraftWriter(writer) } }
     val draftStatus by writer.status.collectAsStateWithLifecycle()
-    LaunchedEffect(draftStatus) {
+    LaunchedEffect(writer, draftStatus) {
+        if (writerCreationGeneration != writerGeneration) return@LaunchedEffect
         when (val status = draftStatus) {
             DraftWriteStatus.Loading -> Unit
-            is DraftWriteStatus.Active -> savedBody = status.latest.body.orEmpty()
-            is DraftWriteStatus.Failed -> savedBody = status.latest.body.orEmpty()
+            is DraftWriteStatus.Active -> {
+                savedDraftRestoration = SavedDraftRestoration(status.toRestorationToken())
+            }
+            is DraftWriteStatus.Failed -> {
+                savedDraftRestoration = SavedDraftRestoration(status.toRestorationToken())
+            }
         }
     }
-    val composer = draftStatus.toComposerUiState(savedBody.orEmpty())
+    LaunchedEffect(writer, sendObservation.phase) {
+        if (sendObservation.phase == ThreadSmsSendPhase.KNOWN_UNSENT) {
+            writer.unfreezeAfterSendSettled(DraftUnfreezeReason.KNOWN_UNSENT)
+        }
+    }
+    LaunchedEffect(writer, sendObservation.unknownAcknowledgementEpoch) {
+        if (
+            sendObservation.unknownAcknowledgementEpoch >
+            observedUnknownAcknowledgementEpoch
+        ) {
+            observedUnknownAcknowledgementEpoch = sendObservation.unknownAcknowledgementEpoch
+            writer.unfreezeAfterSendSettled(
+                DraftUnfreezeReason.SUBMISSION_UNKNOWN_ACKNOWLEDGED,
+            )
+        }
+    }
+    var sendAttemptInFlight by remember(route.providerThreadId) { mutableStateOf(false) }
+    val visibleBody = when (val status = draftStatus) {
+        // Saved-state text is untrusted until the writer compares its exact
+        // base token with Room. Avoid even a transient post-send resurrection.
+        DraftWriteStatus.Loading -> ""
+        is DraftWriteStatus.Active -> status.latest.body.orEmpty()
+        is DraftWriteStatus.Failed -> status.latest.body.orEmpty()
+    }
+    val segmentCount = visibleBody.takeIf(String::isNotBlank)?.let(services::countSmsSegments)
+    val composer = draftStatus.toComposerUiState(
+        restoredBody = "",
+        threadState = threadState,
+        sendObservation = sendObservation,
+        sendAttemptInFlight = sendAttemptInFlight,
+        segmentCount = segmentCount,
+    )
     val globalThreadScope = remember { AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD) }
     val globalThreadOverrideObservation by remember(appearanceController, globalThreadScope) {
         appearanceController.observeOverride(globalThreadScope)
@@ -703,7 +780,70 @@ private fun ThreadRoute(
             onToggleMessageExpansion = holder::toggleMessageExpansion,
             onDraftChanged = { body ->
                 val content = DraftEditorContent(body = body.takeIf(String::isNotEmpty), subject = null)
-                if (writer.submit(content)) savedBody = body
+                if (writer.submit(content)) {
+                    val token = (writer.status.value as? DraftWriteStatus.Active)
+                        ?.toRestorationToken()
+                    if (token != null) savedDraftRestoration = SavedDraftRestoration(token)
+                }
+            },
+            onSend = {
+                if (!sendAttemptInFlight) {
+                    sendAttemptInFlight = true
+                    scope.launch {
+                        var coordinatorEntered = false
+                        var sendAttempt: ThreadSmsSendAttempt? = null
+                        try {
+                            val frozen = writer.freezeForSend() ?: return@launch
+                            // Close the base-free SavedState ABA window before
+                            // the durable coordinator can clear this revision.
+                            savedDraftRestoration = SavedDraftRestoration(
+                                frozen.toExactRestorationToken(),
+                            )
+                            if (frozen.content.body.isNullOrBlank()) return@launch
+                            val ready = threadState as? ThreadUiState.Ready ?: return@launch
+                            val identity = ready.verifiedConversationIdentity ?: return@launch
+                            val subscription = ready.activeSubscription
+                                ?.takeIf { it.smsCapable }
+                                ?: return@launch
+                            if (
+                                identity.providerThreadId != route.providerThreadId ||
+                                identity.participants.size != 1 ||
+                                services.countSmsSegments(frozen.content.body.orEmpty()) != 1
+                            ) {
+                                return@launch
+                            }
+                            // Once control enters the durable coordinator, a
+                            // cancellation or unexpected exception is not proof
+                            // that submission was refused. Keep the writer
+                            // frozen until recovery classifies the operation.
+                            coordinatorEntered = true
+                            sendAttempt = withContext(NonCancellable) {
+                                sendController.send(
+                                    ThreadSmsSendCommand(
+                                        identity = identity,
+                                        subscriptionId = subscription.id,
+                                        draftId = frozen.draftId,
+                                        draftRevision = frozen.revision,
+                                    ),
+                                )
+                            }
+                        } finally {
+                            if (shouldUnfreezeComposerAsRefused(coordinatorEntered, sendAttempt)) {
+                                writer.unfreezeAfterSendSettled(DraftUnfreezeReason.SEND_REFUSED)
+                            }
+                            sendAttemptInFlight = false
+                        }
+                    }
+                }
+            },
+            onAcknowledgeSubmissionUnknown = {
+                scope.launch {
+                    if (sendController.acknowledgeSubmissionUnknown(route.providerThreadId)) {
+                        writer.unfreezeAfterSendSettled(
+                            DraftUnfreezeReason.SUBMISSION_UNKNOWN_ACKNOWLEDGED,
+                        )
+                    }
+                }
             },
         )
         if (appearanceEditorOpen && !wallpaperEditorOpen) {
@@ -867,19 +1007,141 @@ internal fun AppearanceScope.privateScopedAppearanceRestorationKey(): String = w
         "conversation:${providerThreadId.value}:${participantSetKey.toPrivateStorageToken()}"
 }
 
-private fun DraftWriteStatus.toComposerUiState(restoredBody: String): ComposerUiState = when (this) {
-    DraftWriteStatus.Loading -> ComposerUiState(body = restoredBody, saving = true, failed = false)
-    is DraftWriteStatus.Active -> ComposerUiState(
-        body = latest.body.orEmpty(),
-        saving = saving,
-        failed = false,
+private data class SavedDraftRestoration(
+    val token: DraftRestorationToken? = null,
+)
+
+private val SAVED_DRAFT_RESTORATION_SAVER: Saver<SavedDraftRestoration, Bundle> = Saver(
+    save = { state ->
+        Bundle().apply {
+            val token = state.token
+            putBoolean(SAVED_DRAFT_TOKEN_PRESENT_KEY, token != null)
+            if (token != null) {
+                putString(SAVED_DRAFT_BODY_KEY, token.content.body)
+                putString(SAVED_DRAFT_SUBJECT_KEY, token.content.subject)
+                val hasBase = token.expectedDraftId != null
+                putBoolean(SAVED_DRAFT_BASE_PRESENT_KEY, hasBase)
+                if (hasBase) {
+                    putLong(SAVED_DRAFT_ID_KEY, checkNotNull(token.expectedDraftId).value)
+                    putLong(
+                        SAVED_DRAFT_REVISION_KEY,
+                        checkNotNull(token.expectedRevision).updatedTimestampMillis,
+                    )
+                }
+            }
+        }
+    },
+    restore = { bundle ->
+        if (!bundle.getBoolean(SAVED_DRAFT_TOKEN_PRESENT_KEY)) {
+            SavedDraftRestoration()
+        } else {
+            runCatching {
+                val hasBase = bundle.getBoolean(SAVED_DRAFT_BASE_PRESENT_KEY)
+                SavedDraftRestoration(
+                    DraftRestorationToken(
+                        content = DraftEditorContent(
+                            body = bundle.getString(SAVED_DRAFT_BODY_KEY),
+                            subject = bundle.getString(SAVED_DRAFT_SUBJECT_KEY),
+                        ),
+                        expectedDraftId = if (hasBase) {
+                            DraftId(bundle.getLong(SAVED_DRAFT_ID_KEY))
+                        } else {
+                            null
+                        },
+                        expectedRevision = if (hasBase) {
+                            DraftRevision(bundle.getLong(SAVED_DRAFT_REVISION_KEY))
+                        } else {
+                            null
+                        },
+                    ),
+                )
+            }.getOrDefault(SavedDraftRestoration())
+        }
+    },
+)
+
+private fun DraftWriteStatus.Active.toRestorationToken(): DraftRestorationToken =
+    DraftRestorationToken(
+        content = latest,
+        expectedDraftId = acknowledgedDraftId,
+        expectedRevision = acknowledgedRevision,
     )
-    is DraftWriteStatus.Failed -> ComposerUiState(
-        body = latest.body.orEmpty(),
-        saving = false,
-        failed = true,
+
+private fun DraftWriteStatus.Failed.toRestorationToken(): DraftRestorationToken =
+    DraftRestorationToken(
+        content = latest,
+        expectedDraftId = acknowledgedDraftId,
+        expectedRevision = acknowledgedRevision,
+    )
+
+internal fun FrozenDraftSnapshot.toExactRestorationToken(): DraftRestorationToken =
+    DraftRestorationToken(
+        content = content,
+        expectedDraftId = draftId,
+        expectedRevision = revision,
+    )
+
+private fun DraftWriteStatus.toComposerUiState(
+    restoredBody: String,
+    threadState: ThreadUiState,
+    sendObservation: ThreadSmsSendObservation,
+    sendAttemptInFlight: Boolean,
+    segmentCount: Int?,
+): ComposerUiState {
+    val body = when (this) {
+        DraftWriteStatus.Loading -> restoredBody
+        is DraftWriteStatus.Active -> latest.body.orEmpty()
+        is DraftWriteStatus.Failed -> latest.body.orEmpty()
+    }
+    val saving = this is DraftWriteStatus.Loading ||
+        (this is DraftWriteStatus.Active && this.saving)
+    val failed = this is DraftWriteStatus.Failed
+    val ready = threadState as? ThreadUiState.Ready
+    val verifiedIdentity = ready?.verifiedConversationIdentity
+    val unavailableReason = when {
+        sendObservation.phase == ThreadSmsSendPhase.RECOVERY_PENDING ->
+            ComposerUnavailableReason.RECOVERY_PENDING
+        failed || saving ->
+            ComposerUnavailableReason.DRAFT_NOT_DURABLE
+        body.isBlank() -> ComposerUnavailableReason.EMPTY_MESSAGE
+        (this as? DraftWriteStatus.Active)?.acknowledgedRevision == null ->
+            ComposerUnavailableReason.DRAFT_NOT_DURABLE
+        ready == null || !ready.verifiedConversationIdentityResolved || verifiedIdentity == null ->
+            ComposerUnavailableReason.CONVERSATION_UNVERIFIED
+        verifiedIdentity.participants.size != 1 ->
+            ComposerUnavailableReason.GROUP_REQUIRES_MMS
+        ready.activeSubscription?.smsCapable != true ->
+            ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE
+        segmentCount == null -> ComposerUnavailableReason.MESSAGING_UNAVAILABLE
+        segmentCount != 1 -> ComposerUnavailableReason.MULTIPART_UNAVAILABLE
+        else -> null
+    }
+    val sendState = when {
+        sendAttemptInFlight || sendObservation.phase == ThreadSmsSendPhase.SENDING ->
+            ComposerSendState.SENDING
+        sendObservation.phase == ThreadSmsSendPhase.SUBMISSION_UNKNOWN ->
+            ComposerSendState.SUBMISSION_UNKNOWN
+        (this as? DraftWriteStatus.Active)?.frozenForSend == true ->
+            ComposerSendState.SENDING
+        unavailableReason != null -> ComposerSendState.UNAVAILABLE
+        sendObservation.phase == ThreadSmsSendPhase.KNOWN_UNSENT ->
+            ComposerSendState.KNOWN_UNSENT
+        else -> ComposerSendState.READY
+    }
+    return ComposerUiState(
+        body = body,
+        saving = saving,
+        failed = failed,
+        sendState = sendState,
+        unavailableReason = unavailableReason.takeIf { sendState == ComposerSendState.UNAVAILABLE },
+        segmentCount = segmentCount,
     )
 }
+
+internal fun shouldUnfreezeComposerAsRefused(
+    coordinatorEntered: Boolean,
+    attempt: ThreadSmsSendAttempt?,
+): Boolean = !coordinatorEntered || attempt == ThreadSmsSendAttempt.REFUSED
 
 private fun isConservativeDialAddress(address: ParticipantAddress): Boolean {
     val value = address.value
@@ -1034,6 +1296,12 @@ private const val ROUTE_THREAD_STATE_ENTRY_KEY: String = "thread_state_entry_id"
 private const val ROUTE_ANCHOR_ROW_KEY: String = "anchor_row"
 private const val ROUTE_ANCHOR_KIND_KEY: String = "anchor_kind"
 private const val ROUTE_ANCHOR_PROVIDER_ID_KEY: String = "anchor_provider_id"
+private const val SAVED_DRAFT_TOKEN_PRESENT_KEY: String = "draft_token_present"
+private const val SAVED_DRAFT_BODY_KEY: String = "draft_body"
+private const val SAVED_DRAFT_SUBJECT_KEY: String = "draft_subject"
+private const val SAVED_DRAFT_BASE_PRESENT_KEY: String = "draft_base_present"
+private const val SAVED_DRAFT_ID_KEY: String = "draft_id"
+private const val SAVED_DRAFT_REVISION_KEY: String = "draft_revision"
 private const val ROUTE_INBOX: String = "inbox"
 private const val ROUTE_APPEARANCE: String = "appearance"
 private const val ROUTE_SEARCH: String = "search"

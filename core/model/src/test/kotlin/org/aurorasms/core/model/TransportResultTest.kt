@@ -31,4 +31,30 @@ class TransportResultTest {
             )
         }
     }
+
+    @Test
+    fun submittedAndRejectedPreserveExplicitComposerOrigin() {
+        val operationId = MessageId(
+            ProviderKind.PENDING_OPERATION,
+            COMPOSER_OPERATION_ID_BOUNDARY,
+        )
+        val submitted = TransportResult.Submitted(
+            operationId = operationId,
+            transport = MessageTransportKind.SMS,
+            unitCount = 1,
+            providerMessageId = ProviderMessageId(ProviderKind.SMS, 81L),
+            providerConversationId = ConversationId(82L),
+            operationOrigin = TransportResult.OperationOrigin.COMPOSER,
+        )
+        val rejected = TransportResult.Rejected(
+            operationId = operationId,
+            transport = MessageTransportKind.SMS,
+            reason = TransportResult.FailureReason.ROLE_NOT_HELD,
+            operationOrigin = TransportResult.OperationOrigin.COMPOSER,
+        )
+
+        assertEquals(TransportResult.OperationOrigin.COMPOSER, submitted.operationOrigin)
+        assertEquals(ConversationId(82L), submitted.providerConversationId)
+        assertEquals(TransportResult.OperationOrigin.COMPOSER, rejected.operationOrigin)
+    }
 }

@@ -8,6 +8,7 @@ import android.content.SharedPreferences
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
@@ -324,8 +325,9 @@ internal class OutgoingSmsSubmissionJournal(
         return editor.commit()
     }
 
+    /** Existing journals may contain IDs from the pre-partition ordinary range. */
     private fun MessageId.isValidOperation(): Boolean =
-        isTransportOwnedSmsOperation()
+        kind == ProviderKind.PENDING_OPERATION && value in 1 until INLINE_REPLY_OPERATION_ID_BOUNDARY
 
     private fun ProviderMessageId.isValidSms(): Boolean = kind == ProviderKind.SMS && value > 0L
 

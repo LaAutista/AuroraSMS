@@ -20,6 +20,7 @@ import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplayRequest
 import org.aurorasms.core.telephony.OutgoingSmsRecord
 import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
+import org.aurorasms.core.telephony.OutgoingSmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderPage
 import org.aurorasms.core.telephony.ProviderPageCursor
@@ -313,43 +314,84 @@ class FakeSmsProviderDataSource(
     ): ProviderAccessResult<Unit> = synchronized(lock) {
         val index = messages.indexOfFirst { it.id == id }
         failure ?: if (index >= 0) {
-            val current = messages[index]
-            val currentStatus = current.smsProviderStatusOrNull()
-                ?: return@synchronized ProviderAccessResult.Unavailable("update SMS status")
-            if (status.transitionRank <= currentStatus.transitionRank) {
-                return@synchronized ProviderAccessResult.Success(Unit)
+            if (applyMonotonicStatus(index, status)) {
+                ProviderAccessResult.Success(Unit)
+            } else {
+                ProviderAccessResult.Unavailable("update SMS status")
             }
-            updatedStatuses[id] = status
-            val (box, messageStatus, rawStatus) = when (status) {
-                SmsProviderStatus.COMPLETE -> Triple(MessageBox.SENT, MessageStatus.COMPLETE, RAW_STATUS_COMPLETE)
-                SmsProviderStatus.DELIVERY_FAILED -> {
-                    Triple(MessageBox.SENT, MessageStatus.FAILED, RAW_STATUS_FAILED)
-                }
-                SmsProviderStatus.FAILED -> Triple(MessageBox.FAILED, MessageStatus.FAILED, RAW_STATUS_FAILED)
-                SmsProviderStatus.PENDING -> Triple(MessageBox.OUTBOX, MessageStatus.PENDING, RAW_STATUS_PENDING)
-            }
-            messages[index] = current.copy(
-                box = box,
-                status = messageStatus,
-                rawStatus = rawStatus,
-                syncFingerprint = fakeSyncFingerprint(
-                    current.id.value,
-                    current.providerThreadId.value,
-                    current.sender?.value,
-                    current.body,
-                    current.timestampMillis,
-                    box.toStorageCode(),
-                    messageStatus.toStorageCode(),
-                    rawStatus,
-                ),
-            )
-            ProviderAccessResult.Success(Unit)
         } else {
             ProviderAccessResult.InvalidInput("id")
         }
     }
 
+    override suspend fun updateOutgoingStatus(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+        status: SmsProviderStatus,
+    ): ProviderAccessResult<OutgoingSmsStatusUpdateOutcome> = synchronized(lock) {
+        if (id.kind != ProviderKind.SMS || conversationId.value <= 0L) {
+            return@synchronized ProviderAccessResult.InvalidInput("provider message identity")
+        }
+        failure?.let { return@synchronized it }
+        val index = messages.indexOfFirst { it.id == id }
+        if (index < 0) {
+            return@synchronized ProviderAccessResult.Success(
+                OutgoingSmsStatusUpdateOutcome.ROW_ABSENT,
+            )
+        }
+        val current = messages[index]
+        if (
+            id !in appOwnedOutgoingIds ||
+            current.providerThreadId.value != conversationId.value ||
+            current.rawErrorCode != CLEARED_OUTGOING_ERROR_CODE ||
+            current.smsProviderStatusOrNull() == null
+        ) {
+            return@synchronized ProviderAccessResult.Success(
+                OutgoingSmsStatusUpdateOutcome.OWNERSHIP_CONFLICT,
+            )
+        }
+        if (!applyMonotonicStatus(index, status)) {
+            return@synchronized ProviderAccessResult.Success(
+                OutgoingSmsStatusUpdateOutcome.OWNERSHIP_CONFLICT,
+            )
+        }
+        ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.APPLIED)
+    }
+
     fun snapshot(): List<SmsProviderMessage> = synchronized(lock) { messages.toList() }
+
+    private fun applyMonotonicStatus(index: Int, requested: SmsProviderStatus): Boolean {
+        val current = messages[index]
+        val currentStatus = current.smsProviderStatusOrNull() ?: return false
+        if (requested.transitionRank <= currentStatus.transitionRank) return true
+        updatedStatuses[current.id] = requested
+        val (box, messageStatus, rawStatus) = when (requested) {
+            SmsProviderStatus.COMPLETE ->
+                Triple(MessageBox.SENT, MessageStatus.COMPLETE, RAW_STATUS_COMPLETE)
+            SmsProviderStatus.DELIVERY_FAILED ->
+                Triple(MessageBox.SENT, MessageStatus.FAILED, RAW_STATUS_FAILED)
+            SmsProviderStatus.FAILED ->
+                Triple(MessageBox.FAILED, MessageStatus.FAILED, RAW_STATUS_FAILED)
+            SmsProviderStatus.PENDING ->
+                Triple(MessageBox.OUTBOX, MessageStatus.PENDING, RAW_STATUS_PENDING)
+        }
+        messages[index] = current.copy(
+            box = box,
+            status = messageStatus,
+            rawStatus = rawStatus,
+            syncFingerprint = fakeSyncFingerprint(
+                current.id.value,
+                current.providerThreadId.value,
+                current.sender?.value,
+                current.body,
+                current.timestampMillis,
+                box.toStorageCode(),
+                messageStatus.toStorageCode(),
+                rawStatus,
+            ),
+        )
+        return true
+    }
 
     private fun conversationIdFor(address: ParticipantAddress): ConversationId =
         conversationIds.getOrPut(address.value) { ConversationId(nextConversationId++) }

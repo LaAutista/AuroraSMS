@@ -89,12 +89,22 @@ class InlineReplyOrchestrator internal constructor(
         }
 
         val submissionObserver = object : SmsSubmissionObserver {
-            override fun onPrepared(providerId: ProviderMessageId, unitCount: Int): Boolean =
-                replyOperations.recordPrepared(operationId, providerId, unitCount)
+            override suspend fun onPrepared(
+                providerId: ProviderMessageId,
+                providerConversationId: ConversationId,
+                unitCount: Int,
+            ): Boolean =
+                providerConversationId == request.conversationId &&
+                    replyOperations.recordPrepared(operationId, providerId, unitCount)
                     .allowsSubmissionCheckpoint()
 
-            override fun onSubmitting(providerId: ProviderMessageId, unitCount: Int): Boolean =
-                replyOperations.recordSubmitting(operationId, providerId, unitCount)
+            override suspend fun onSubmitting(
+                providerId: ProviderMessageId,
+                providerConversationId: ConversationId,
+                unitCount: Int,
+            ): Boolean =
+                providerConversationId == request.conversationId &&
+                    replyOperations.recordSubmitting(operationId, providerId, unitCount)
                     .allowsSubmissionCheckpoint()
         }
         val result = try {
@@ -104,6 +114,7 @@ class InlineReplyOrchestrator internal constructor(
                     recipients = recipients,
                     body = text,
                     subscriptionId = target.subscriptionId,
+                    operationOrigin = TransportResult.OperationOrigin.INLINE_REPLY,
                 ),
                 ownership = SmsSubmissionOwnership.CallerOwned(submissionObserver),
             )
@@ -116,7 +127,12 @@ class InlineReplyOrchestrator internal constructor(
             recoverAfterInterruption(operationId, request.conversationId)
             return InlineReplyDisposition.ACCEPTED
         }
-        if (result.operationId != operationId || result.transport != MessageTransportKind.SMS) {
+        if (
+            result.operationId != operationId ||
+            result.transport != MessageTransportKind.SMS ||
+            result.operationOrigin != TransportResult.OperationOrigin.INLINE_REPLY ||
+            !result.matchesProviderConversation(request.conversationId)
+        ) {
             recoverAfterInterruption(operationId, request.conversationId)
             return InlineReplyDisposition.ACCEPTED
         }
@@ -218,6 +234,21 @@ class InlineReplyOrchestrator internal constructor(
 private fun ReplyOperationPhaseTransitionResult.allowsSubmissionCheckpoint(): Boolean =
     this == ReplyOperationPhaseTransitionResult.Transitioned ||
         this == ReplyOperationPhaseTransitionResult.AlreadyInPhase
+
+private fun TransportResult.matchesProviderConversation(expected: ConversationId): Boolean =
+    when (this) {
+        is TransportResult.Submitted ->
+            providerMessageId == null || providerConversationId == expected
+        is TransportResult.Sent ->
+            providerMessageId == null || providerConversationId == expected
+        is TransportResult.Delivered ->
+            providerMessageId == null || providerConversationId == expected
+        is TransportResult.Failed ->
+            providerMessageId == null || providerConversationId == expected
+        is TransportResult.Downloaded,
+        is TransportResult.Rejected,
+        -> true
+    }
 
 private fun String.toSourceMessageIdOrNull(): MessageId? {
     val separator = indexOf(':')

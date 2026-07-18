@@ -4,10 +4,13 @@ package org.aurorasms.core.telephony
 
 import java.util.Arrays
 import org.aurorasms.core.model.AuroraSubscriptionId
+import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.PendingOperationNamespace
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.TransportResult
+import org.aurorasms.core.model.pendingOperationNamespaceOrNull
 
 data class SmsSendRequest(
     val operationId: MessageId,
@@ -15,6 +18,7 @@ data class SmsSendRequest(
     val body: String,
     val subscriptionId: AuroraSubscriptionId,
     val requestDeliveryReport: Boolean = true,
+    val operationOrigin: TransportResult.OperationOrigin = TransportResult.OperationOrigin.UNMARKED,
 ) {
     init {
         require(operationId.kind == ProviderKind.PENDING_OPERATION) {
@@ -29,28 +33,55 @@ data class SmsSendRequest(
 }
 
 /**
- * Synchronous durability gates around the irreversible SMS platform call.
- * Implementations must not retain message content or invoke either callback
- * after the corresponding submission boundary has passed.
+ * Durability gates awaited inline around the irreversible SMS platform call.
+ * A callback may suspend for its durable commit, but the transport must await
+ * its result and must not cross the corresponding boundary first. Implementations
+ * must not retain message content or invoke either callback after that boundary.
  */
 interface SmsSubmissionObserver {
-    fun onPrepared(providerId: ProviderMessageId, unitCount: Int): Boolean
+    suspend fun onPrepared(
+        providerId: ProviderMessageId,
+        providerConversationId: ConversationId,
+        unitCount: Int,
+    ): Boolean
 
-    fun onSubmitting(providerId: ProviderMessageId, unitCount: Int): Boolean
-
+    suspend fun onSubmitting(
+        providerId: ProviderMessageId,
+        providerConversationId: ConversationId,
+        unitCount: Int,
+    ): Boolean
 }
 
 /**
  * Selects the single durable owner of the pre-submission SMS lifecycle.
  *
  * [TransportOwned] uses the transport's private, content-free journal. A
- * [CallerOwned] observer must synchronously persist both callbacks and fail
- * closed when either checkpoint cannot be committed.
+ * [CallerOwned] observer must durably persist both callbacks before returning
+ * success and fail closed when either checkpoint cannot be committed.
  */
 sealed interface SmsSubmissionOwnership {
     data object TransportOwned : SmsSubmissionOwnership
 
     data class CallerOwned(val observer: SmsSubmissionObserver) : SmsSubmissionOwnership
+}
+
+/**
+ * Checks only the structural origin/range pairing for a new submission.
+ * Durable journal or state-store membership remains the ownership authority.
+ */
+fun SmsSendRequest.hasValidOperationOwnership(
+    ownership: SmsSubmissionOwnership,
+): Boolean = when (ownership) {
+    SmsSubmissionOwnership.TransportOwned ->
+        operationOrigin == TransportResult.OperationOrigin.UNMARKED &&
+            operationId.pendingOperationNamespaceOrNull() == PendingOperationNamespace.RESPOND_VIA
+    is SmsSubmissionOwnership.CallerOwned -> when (operationOrigin) {
+        TransportResult.OperationOrigin.UNMARKED -> false
+        TransportResult.OperationOrigin.COMPOSER ->
+            operationId.pendingOperationNamespaceOrNull() == PendingOperationNamespace.COMPOSER
+        TransportResult.OperationOrigin.INLINE_REPLY ->
+            operationId.pendingOperationNamespaceOrNull() == PendingOperationNamespace.INLINE_REPLY
+    }
 }
 
 /** Startup disposition for the transport-owned, content-free SMS journal. */

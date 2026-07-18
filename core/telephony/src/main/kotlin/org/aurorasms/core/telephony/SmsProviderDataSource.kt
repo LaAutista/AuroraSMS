@@ -268,6 +268,18 @@ enum class OutgoingSmsRollbackOutcome {
     OWNERSHIP_CONFLICT,
 }
 
+/** Exact disposition of a terminal status update for one app-owned outgoing row. */
+enum class OutgoingSmsStatusUpdateOutcome {
+    /** The requested status was written or an equal/stronger status was already present. */
+    APPLIED,
+
+    /** No provider row currently exists at the exact provider URI. */
+    ROW_ABSENT,
+
+    /** The row is foreign, belongs to another conversation, or is not an owned SMS state. */
+    OWNERSHIP_CONFLICT,
+}
+
 interface SmsProviderDataSource {
     suspend fun count(): ProviderAccessResult<Long>
 
@@ -312,6 +324,18 @@ interface SmsProviderDataSource {
     ): ProviderAccessResult<OutgoingSmsRollbackOutcome> =
         ProviderAccessResult.Unsupported("rollback outgoing SMS")
 
+    /**
+     * Monotonically updates one exact app-created outgoing row only while both
+     * its provider identity and provider conversation still match.
+     */
+    suspend fun updateOutgoingStatus(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+        status: SmsProviderStatus,
+    ): ProviderAccessResult<OutgoingSmsStatusUpdateOutcome> =
+        ProviderAccessResult.Unsupported("update exact outgoing SMS status")
+
+    /** Legacy unfenced update retained for non-owner compatibility. */
     suspend fun updateStatus(
         id: ProviderMessageId,
         status: SmsProviderStatus,

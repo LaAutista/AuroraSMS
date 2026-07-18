@@ -267,6 +267,7 @@ class ReplyOperationRegistryTest {
         )
         val complete = ReplyOperationProviderUpdate(
             operationId,
+            CONVERSATION,
             providerId,
             SmsProviderStatus.COMPLETE,
         )

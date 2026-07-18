@@ -110,6 +110,7 @@ class InlineReplyTransportResultHandlerTest {
             ReplyOperationPendingProviderUpdateResult.Available(
                 ReplyOperationProviderUpdate(
                     operationId,
+                    OTHER_CONVERSATION,
                     providerMessageId,
                     SmsProviderStatus.DELIVERY_FAILED,
                 ),
@@ -140,6 +141,7 @@ class InlineReplyTransportResultHandlerTest {
             ReplyOperationPendingProviderUpdateResult.Available(
                 ReplyOperationProviderUpdate(
                     operationId,
+                    OTHER_CONVERSATION,
                     providerMessageId,
                     SmsProviderStatus.DELIVERY_FAILED,
                 ),
@@ -180,6 +182,7 @@ class InlineReplyTransportResultHandlerTest {
             ReplyOperationPendingProviderUpdateResult.Available(
                 ReplyOperationProviderUpdate(
                     operationId,
+                    CONVERSATION,
                     providerMessageId,
                     SmsProviderStatus.FAILED,
                 ),
@@ -221,6 +224,7 @@ class InlineReplyTransportResultHandlerTest {
             ReplyOperationPendingProviderUpdateResult.Available(
                 ReplyOperationProviderUpdate(
                     operationId,
+                    CONVERSATION,
                     providerMessageId,
                     SmsProviderStatus.DELIVERY_FAILED,
                 ),
