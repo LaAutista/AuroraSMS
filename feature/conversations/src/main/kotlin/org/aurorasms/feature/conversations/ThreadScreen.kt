@@ -64,6 +64,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -1049,7 +1050,16 @@ private fun MessageBubble(
                         Text(subject, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(3.dp))
                     }
-                    displayedBody?.takeIf(String::isNotEmpty)?.let { Text(it) }
+                    displayedBody?.takeIf(String::isNotEmpty)?.let { body ->
+                        val reaction = body
+                            .takeIf { !displayedBodyTruncated }
+                            ?.let(::parseReactionFallback)
+                        if (reaction == null) {
+                            Text(body)
+                        } else {
+                            ReactionFallbackCard(reaction, bubbleMetadataColor)
+                        }
+                    }
                     if (displayedBodyTruncated) {
                         Text(
                             stringResource(R.string.message_truncated),
@@ -1133,6 +1143,79 @@ private fun MessageBubble(
             }
         }
     }
+}
+
+@Composable
+private fun ReactionFallbackCard(
+    reaction: ReactionFallback,
+    supportingColor: androidx.compose.ui.graphics.Color,
+) {
+    val label = stringResource(reaction.kind.labelResource())
+    val symbol = reaction.kind.symbol()
+    val accessibilityLabel = stringResource(
+        R.string.reaction_accessibility,
+        label,
+        reaction.targetText,
+    )
+    Surface(
+        modifier = Modifier
+            .semantics(mergeDescendants = true) {
+                contentDescription = accessibilityLabel
+            }
+            .testTag(REACTION_FALLBACK_TEST_TAG),
+        shape = RoundedCornerShape(12.dp),
+        color = supportingColor.copy(alpha = 0.14f),
+        border = BorderStroke(1.dp, supportingColor.copy(alpha = 0.52f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Text(symbol, style = MaterialTheme.typography.titleMedium)
+            Column {
+                Text(label, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = "“${reaction.targetText}”",
+                    color = supportingColor,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+private fun ReactionFallbackKind.labelResource(): Int = when (this) {
+    ReactionFallbackKind.LIKE_ADDED -> R.string.reaction_liked
+    ReactionFallbackKind.LOVE_ADDED -> R.string.reaction_loved
+    ReactionFallbackKind.LAUGH_ADDED -> R.string.reaction_laughed
+    ReactionFallbackKind.EMPHASIS_ADDED -> R.string.reaction_emphasized
+    ReactionFallbackKind.QUESTION_ADDED -> R.string.reaction_questioned
+    ReactionFallbackKind.DISLIKE_ADDED -> R.string.reaction_disliked
+    ReactionFallbackKind.LIKE_REMOVED -> R.string.reaction_removed_like
+    ReactionFallbackKind.LOVE_REMOVED -> R.string.reaction_removed_love
+    ReactionFallbackKind.LAUGH_REMOVED -> R.string.reaction_removed_laugh
+    ReactionFallbackKind.EMPHASIS_REMOVED -> R.string.reaction_removed_emphasis
+    ReactionFallbackKind.QUESTION_REMOVED -> R.string.reaction_removed_question
+    ReactionFallbackKind.DISLIKE_REMOVED -> R.string.reaction_removed_dislike
+}
+
+private fun ReactionFallbackKind.symbol(): String = when (this) {
+    ReactionFallbackKind.LIKE_ADDED -> "👍"
+    ReactionFallbackKind.LOVE_ADDED -> "♥"
+    ReactionFallbackKind.LAUGH_ADDED -> "😂"
+    ReactionFallbackKind.EMPHASIS_ADDED -> "‼"
+    ReactionFallbackKind.QUESTION_ADDED -> "?"
+    ReactionFallbackKind.DISLIKE_ADDED -> "👎"
+    ReactionFallbackKind.LIKE_REMOVED,
+    ReactionFallbackKind.LOVE_REMOVED,
+    ReactionFallbackKind.LAUGH_REMOVED,
+    ReactionFallbackKind.EMPHASIS_REMOVED,
+    ReactionFallbackKind.QUESTION_REMOVED,
+    ReactionFallbackKind.DISLIKE_REMOVED,
+    -> "−"
 }
 
 @Composable
@@ -1579,6 +1662,7 @@ private const val MAXIMUM_COMPOSER_CHARACTERS: Int = 100_000
 const val THREAD_SCREEN_TEST_TAG: String = "aurora-thread-screen"
 const val THREAD_LIST_TEST_TAG: String = "aurora-thread-list"
 const val MESSAGE_BUBBLE_TEST_TAG: String = "aurora-message-bubble"
+const val REACTION_FALLBACK_TEST_TAG: String = "aurora-reaction-fallback"
 const val COMPOSER_TEST_TAG: String = "aurora-composer"
 const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"
 const val COMPOSER_SCHEDULE_TEST_TAG: String = "aurora-composer-schedule"

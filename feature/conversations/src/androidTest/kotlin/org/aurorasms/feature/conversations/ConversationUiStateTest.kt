@@ -90,6 +90,75 @@ class ConversationUiStateTest {
     }
 
     @Test
+    fun exactReactionFallbackUsesStructuredPresentationWithoutChangingTheModelBody() {
+        val source = "Liked “Synthetic original”"
+        val state = readyThreadState(body = source)
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = state,
+                    composer = ComposerUiState(body = "", saving = false, failed = false),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag(REACTION_FALLBACK_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("Liked").assertIsDisplayed()
+        compose.onNodeWithText("“Synthetic original”").assertIsDisplayed()
+        compose.runOnIdle { check(state.window.items.single().bodyPreview == source) }
+    }
+
+    @Test
+    fun ambiguousOrTruncatedReactionLikeTextRemainsRaw() {
+        val ambiguous = "Liked “Synthetic original” trailing"
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = readyThreadState(body = ambiguous, bodyTruncated = true),
+                    composer = ComposerUiState(body = "", saving = false, failed = false),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag(REACTION_FALLBACK_TEST_TAG).assertDoesNotExist()
+        compose.onNodeWithText(ambiguous).assertIsDisplayed()
+    }
+
+    @Test
     fun readySendInvokesOnceThenSendingLocksTheActionAndEditor() {
         val composerState = mutableStateOf(
             ComposerUiState(
@@ -704,7 +773,10 @@ private fun SyntheticThreadScreen(
     }
 }
 
-private fun readyThreadState(): ThreadUiState.Ready = ThreadUiState.Ready(
+private fun readyThreadState(
+    body: String = "Synthetic message",
+    bodyTruncated: Boolean = false,
+): ThreadUiState.Ready = ThreadUiState.Ready(
     window = BoundedThreadWindow(
         items = listOf(
             TimelineMessage(
@@ -718,8 +790,8 @@ private fun readyThreadState(): ThreadUiState.Ready = ThreadUiState.Ready(
                 status = MessageStatus.NONE,
                 subscriptionId = null,
                 senderAddress = null,
-                bodyPreview = "Synthetic message",
-                bodyTruncated = false,
+                bodyPreview = body,
+                bodyTruncated = bodyTruncated,
                 subject = null,
                 attachmentCount = 0,
                 attachmentTypeSummary = "",

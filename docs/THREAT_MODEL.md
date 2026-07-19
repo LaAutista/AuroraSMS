@@ -3,8 +3,9 @@
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
 bounded ADR 0008 Phase 5A source implementation in commit `17fc421`, followed
-by accepted Phase 5B–5G controls through ADR 0014 and Room schema 10.
-Local/API 26/API 36 acceptance passed through Phase 5G. Safe install/migration
+by accepted Phase 5B–5G controls and Phase 6A presentation through ADR 0015 and
+Room schema 10. Local/API 26/API 36 acceptance passed through Phase 6A. Safe
+install/migration
 and locked-device cold launch passed on a Pixel 8. Real-carrier, radio, billing,
 and invasive physical lifecycle evidence remains open.
 
@@ -712,6 +713,13 @@ also retain independent one-person verification before durable ownership. This
 prevents silent recipient fan-out, privacy leakage, and unexpected per-message
 billing in current surfaces. Full group-MMS encoding, addressing, reply,
 carrier, and physical-device behavior remains open.
+
+Phase 6A treats reaction-looking SMS as untrusted presentation input. ADR 0015
+uses a whole-message allowlist, bounded matched quotes, complete non-truncated
+text, and fail-open raw rendering. It never rewrites provider/index content,
+hides the fallback row, guesses a target row, or logs the quoted text. This
+prevents malformed or adversarial prose from masquerading as a reaction while
+still presenting exact common fallback forms clearly.
 
 ## Open security decisions
 

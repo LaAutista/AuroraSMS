@@ -475,6 +475,24 @@ This proves no fan-out across current paths. It does not claim the full group-
 MMS composer, codec, provider-addressing, group-reply, or carrier matrix, which
 remains open.
 
+### Phase 6A conservative reaction fallback presentation
+
+The `0.6.0-phase6` (`versionCode` 11) 2026-07-19 source implements ADR 0015
+without a database migration.
+
+- Only exact whole-message, bounded common English fallback forms with matched
+  straight or curly quotes are recognized.
+- Truncated, malformed, differently cased, multiline, unknown, trailing, blank,
+  or oversized input remains the original raw SMS.
+- An exact match renders a structured reaction card containing the action and
+  quoted target. It is not associated with or hidden behind another provider
+  row.
+- Parsing is presentation-only. The Telephony provider body, rebuildable index,
+  timeline/search model, and durable state are never changed.
+
+This is compatible fallback presentation, not native reaction transport or an
+outgoing reaction feature.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls

@@ -9,6 +9,19 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+The 2026-07-19 Phase 6A source identifies as `0.6.0-phase6` (`versionCode` 11)
+and implements ADR 0015's conservative reaction-fallback presentation. Exact,
+bounded common forms such as `Liked “…”` render as a structured local card only
+when the complete body is unambiguous. Unknown, malformed, multiline,
+truncated, or oversized text remains the original raw SMS. Parsing is confined
+to the UI; provider, index, search, and timeline bodies are never rewritten.
+The complete host gate and API 26/API 36 connected matrices pass with zero
+failures or errors; see `docs/TEST_MATRIX.md` for counts, skips, and artifact
+hashes. Pixel 8 installation of this exact checkpoint remains pending because
+the physical device was not enumerated by ADB during acceptance.
+Phase 6 and the broader release matrix remain incomplete, so AuroraSMS is not
+gold.
+
 The 2026-07-19 Phase 5G source identifies as `0.5.6-phase5` (`versionCode` 10)
 and implements ADR 0014's shared no-group-SMS boundary. Every `SmsSendRequest`
 is structurally limited to one canonical recipient. Existing Thread, delayed,

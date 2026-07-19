@@ -3063,6 +3063,48 @@ used only synthetic recipients and unavailable/fake transport boundaries; no
 carrier SMS/MMS was submitted. The broader group-MMS codec, provider addressing,
 reply identity, failure UI, carrier, and physical release rows remain open.
 
+### Phase 6A conservative reaction-fallback acceptance — 2026-07-19
+
+This source identifies as `0.6.0-phase6` (`versionCode` 11), Room schema 10,
+and ADR 0015. Only exact, complete, bounded whole-message fallback forms render
+as a structured reaction card. Truncated, malformed, differently cased,
+multiline, unknown, trailing, blank, or oversized input remains the original
+raw SMS. The presentation path does not rewrite, hide, or associate a provider
+row and does not change index, search, timeline, or durable state.
+
+The complete offline host/release/privacy/license aggregate passed. All 555
+host JUnit results passed with zero failures, errors, or skips: app 262, design
+system 11, index 69, model 19, notifications 21, state 51, telephony 82,
+testing 24, and conversations 16. Debug, R8 release, and benchmark assembly;
+debug/release/benchmark lint; clean-room/private-art scans; dependency locks;
+permission and APK-content ledgers; and license gates passed. `bundleRelease`
+and CycloneDX 1.6 also passed separately; the SBOM reports 441 components and
+442 dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m36s
+across 456 tasks. It passed 311 tests with 10 intentional assumption skips,
+301 executed, and zero failures/errors: app 132/9 skips, benchmark 3/1, index
+31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations 20/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m00s
+across 456 tasks. Authoritative XML reports 314 tests, 13 intentional assumption
+skips, 301 executed, and zero failures/errors: app 135/12 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations
+20/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,754,958 | `eaf39a3454b5ba283dc2bdadcf035b33ed95cf02d14014ed0f46e4bea3ed0314` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,851,681 | `f0bcc5a9d153abb0f7e982c13c882a009424ec644b0f5ba627285e2b24256014` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,696,137 | `4145b0d5ba2accd65e39582dc2c1e0a9b3bf54f769023d3823be0d6212589297` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,804,008 | `d02f762878bb80abd190e7e863135853d88ee927bb8315532ba36563f5235b03` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+Only the API 36 and API 26 emulators were enumerated by ADB at Phase 6A
+handoff. The Pixel 8 install/copy/metadata-only launch therefore remains
+pending. All reaction fixtures were synthetic strings; no message content was
+read, no default-SMS role changed, and no carrier SMS/MMS was submitted.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
@@ -3095,7 +3137,9 @@ reply identity, failure UI, carrier, and physical release rows remain open.
 ## Phase 6 feature/privacy matrix
 
 - [ ] Notification reminder scheduling is local and battery-conscious.
-- [ ] Reaction fallback parsing never mutates stored SMS and handles ambiguity.
+- [x] Reaction fallback parsing never mutates stored SMS and handles ambiguity.
+  Exact bounded whole-message forms render locally; all ambiguous or incomplete
+  forms fail open to the original raw text.
 - [ ] Voice memo requests microphone only from explicit Record action, indicates
   recording, limits output, and cleans temporary files.
 - [ ] Selected-text copy exposes only the selected content.
