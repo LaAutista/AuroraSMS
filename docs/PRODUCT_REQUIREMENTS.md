@@ -23,7 +23,7 @@ These decisions apply before the first production module is created:
 |---|---|---|
 | Product name | AuroraSMS | Original identity |
 | Application ID | `org.aurorasms.app` | Must be changed before Phase 1 if the owner rejects it |
-| Source license | GPL-3.0-or-later | Applies to original AuroraSMS source; artwork licensing is separate |
+| Source license | GPL-3.0-or-later | Applies to original AuroraSMS source and tracked launcher artwork; other artwork is gated separately |
 | Minimum SDK | API 26 | Required test baseline |
 | Compile SDK | API 37 | Required by the approved current AndroidX artifacts; build surface only |
 | Target SDK | API 36 | Preserves the blueprint's reviewed target behavior until a separate target-37 audit |
@@ -33,10 +33,13 @@ These decisions apply before the first production module is created:
 | Network permission | Absent | `INTERNET` is forbidden in the FOSS build |
 | Signing | A new AuroraSMS release key | Generate outside Git; keep encrypted owner-controlled offline backups |
 
-The signing key is not generated in Phase 0. The artwork license and original
-AuroraSMS launcher icon remain explicit owner decisions; see
-`docs/ARTWORK_CATALOG.md`. The project source grant and SPDX policy are recorded
-in `LICENSE_POLICY.md` without modifying the canonical GPL text in `LICENSE`.
+The signing key is not generated in Phase 0. The owner retained the Variant 2
+neon SMS-bubble and portrait composition, required exactly two simple purple
+hairpins and no `A` or other letter marks, and offered the tracked launcher
+artwork under GPL-3.0-or-later. `docs/ARTWORK_CATALOG.md` records that direction;
+the private wallpaper replacement set remains a separate per-asset approval
+gate. The project source grant and SPDX policy are recorded in
+`LICENSE_POLICY.md` without modifying the canonical GPL text in `LICENSE`.
 Compiling against API 37 does not enable or imply RCS or an alternative message
 transport; AuroraSMS's approved runtime scope remains SMS/MMS.
 
@@ -500,6 +503,10 @@ the app supports TalkBack, RTL, high contrast, reduced motion, dark/light, and
 dynamic color. Hot paths use opaque/static surfaces rather than live blur.
 
 ## Canonical artwork and wallpaper behavior
+
+- Aurora herself has no `A`, monogram, letter, or logo-like brand marks.
+- Aurora's only fixed hair ornaments are exactly two simple parallel purple
+  hairpins; launcher art combines her portrait with an unmistakable SMS bubble.
 
 - Inbox: Aurora Night.
 - Archive: Aurora Cabinet.

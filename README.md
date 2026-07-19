@@ -783,7 +783,9 @@ must never infer a destination from private reference material.
 ## Clean-room and licensing
 
 Read `CLEAN_ROOM.md` before contributing. Private screenshots, PDFs, handoff
-materials, and reference-app code or resources must not enter the repository,
-tests, reports, or APK. Original source is licensed under
-GPL-3.0-or-later; artwork has a separate rights gate described in
+materials, raw source artwork, high-resolution masters, and reference-app code
+or resources must not enter the repository, tests, reports, or APK. The
+owner-selected public launcher derivative is the documented artwork exception.
+Original source and the tracked launcher artwork are licensed under
+GPL-3.0-or-later; other artwork has a separate per-asset rights gate described in
 `docs/ARTWORK_CATALOG.md`.

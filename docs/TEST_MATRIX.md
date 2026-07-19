@@ -171,9 +171,11 @@ required API and OEM rows stay pending.
 
 - [x] Independent `main` repository initialized with zero inherited commits.
 - [x] Private handoff ignored and absent from tracked paths.
-- [x] All 34 supplied SHA-256 entries verified.
-- [x] Full blueprint, HTML concept, 66-page PDF, nineteen screenshot files, and
-  nine artwork files reviewed under the private-reference policy.
+- [x] All 34 originally supplied SHA-256 entries verified at the Phase 0 gate.
+- [x] Full blueprint, HTML concept, 66-page PDF, nineteen originally supplied
+  screenshot files, and nine original artwork files reviewed under the
+  private-reference policy. One screenshot is no longer locally present; its
+  historical fingerprint remains protected by the clean-room denylist.
 - [x] Clean-room allowed/prohibited input charter created.
 - [x] Product identity, scope, architecture, and non-negotiable behavior
   documented.

@@ -23,8 +23,8 @@ mapfile -t PRIVATE_HASHES < <(
     sed -nE 's/^([[:xdigit:]]{64})$/\L\1/p' "$DENYLIST" | sort -u
 )
 
-if [[ ${#PRIVATE_HASHES[@]} -ne 19 ]]; then
-    printf 'Expected exactly 19 unique private-reference hashes; found %d.\n' \
+if [[ ${#PRIVATE_HASHES[@]} -ne 41 ]]; then
+    printf 'Expected exactly 41 unique private-input hashes; found %d.\n' \
         "${#PRIVATE_HASHES[@]}" >&2
     exit 1
 fi
@@ -87,7 +87,7 @@ fi
 while IFS= read -r -d '' candidate; do
     candidate_hash="$(sha256sum "$candidate" | awk '{print tolower($1)}')"
     if [[ -n "${PRIVATE_HASH_SET[$candidate_hash]:-}" ]]; then
-        printf 'Repository file matches a private visual reference: %s\n' \
+        printf 'Repository file matches a denied private input: %s\n' \
             "${candidate#"$ROOT"/}" >&2
         exit 1
     fi

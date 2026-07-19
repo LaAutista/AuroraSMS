@@ -53,8 +53,28 @@ Kotlin, coroutine, AndroidX Core/Activity/Lifecycle, Compose, and JUnit graph
 already inventoried above. Its strict lockfile aligns to the existing verified
 graph and does not require a new dependency-verification checksum.
 
-The private AuroraSMS handoff, private screenshots, and original source
-artwork are not distributed repository content. Artwork ownership
-and publication rights remain unresolved; artwork may enter the repository
-only after its separate owner-approved license and attribution are recorded in
-`docs/ARTWORK_CATALOG.md`.
+The private AuroraSMS handoff, private screenshots, original source artwork,
+and all private high-resolution working masters are not distributed repository
+content.
+The owner-selected launcher derivative and launcher XML layers are first-party
+AuroraSMS artwork offered under GPL-3.0-or-later and recorded in
+`docs/ARTWORK_CATALOG.md`. They contain no letter or monogram marks. Other
+artwork may enter the repository only after its per-asset owner approval,
+license boundary, and attribution are recorded there.
+
+## Tux
+
+Tux was created by Larry Ewing using The GIMP. Larry Ewing permits use and
+modification of Tux when he and The GIMP are acknowledged:
+
+- <https://isc.tamu.edu/~lewing/linux/>
+
+The Linux Foundation confirms that it does not own Tux and identifies Larry
+Ewing as its creator:
+
+- <https://www.linuxfoundation.org/legal/the-linux-mark>
+
+No original Tux bitmap is currently packaged in AuroraSMS. If a future
+owner-approved wallpaper contains a recognizable Tux rather than a generic
+penguin, preserve this notice with the distributed artwork. Use of the word
+Linux as a trademark is a separate issue from the Tux artwork permission.
