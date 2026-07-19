@@ -34,6 +34,7 @@ data class StoredTimelineMessage(
     @ColumnInfo(name = "is_read") val isRead: Boolean,
     @ColumnInfo(name = "is_seen") val isSeen: Boolean,
     @ColumnInfo(name = "is_locked") val isLocked: Boolean,
+    @ColumnInfo(name = "sync_fingerprint") val syncFingerprint: String,
 ) {
     override fun toString(): String = "StoredTimelineMessage(REDACTED)"
 }
@@ -204,7 +205,7 @@ abstract class ConversationDao {
                substr(body, 1, :bodyLimit) AS body_preview,
                CASE WHEN body IS NOT NULL AND length(body) > :bodyLimit THEN 1 ELSE 0 END AS body_truncated,
                subject, attachment_count, attachment_type_summary,
-               is_read, is_seen, is_locked
+               is_read, is_seen, is_locked, sync_fingerprint
         FROM indexed_messages
         INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
         WHERE provider_thread_id = :providerThreadId
@@ -228,7 +229,7 @@ abstract class ConversationDao {
                substr(body, 1, :bodyLimit) AS body_preview,
                CASE WHEN body IS NOT NULL AND length(body) > :bodyLimit THEN 1 ELSE 0 END AS body_truncated,
                subject, attachment_count, attachment_type_summary,
-               is_read, is_seen, is_locked
+               is_read, is_seen, is_locked, sync_fingerprint
         FROM indexed_messages
         INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
         WHERE provider_thread_id = :providerThreadId
@@ -255,7 +256,7 @@ abstract class ConversationDao {
                substr(body, 1, :bodyLimit) AS body_preview,
                CASE WHEN body IS NOT NULL AND length(body) > :bodyLimit THEN 1 ELSE 0 END AS body_truncated,
                subject, attachment_count, attachment_type_summary,
-               is_read, is_seen, is_locked
+               is_read, is_seen, is_locked, sync_fingerprint
         FROM indexed_messages
         INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
         WHERE provider_thread_id = :providerThreadId

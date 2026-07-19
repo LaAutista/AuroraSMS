@@ -20,6 +20,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlin.math.absoluteValue
 import kotlinx.coroutines.delay
@@ -30,6 +32,7 @@ import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.MessageSyncFingerprint
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
@@ -466,6 +469,69 @@ class ConversationUiStateTest {
     }
 
     @Test
+    fun exactMessageDeletionRequiresConfirmationAfterLongPress() {
+        var requested: TimelineMessage? = null
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(body = "", saving = false, failed = false),
+                onRequestDeleteMessage = { requested = it },
+            )
+        }
+
+        compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).performTouchInput { longClick() }
+        compose.onNodeWithText("Permanently delete this message?").assertIsDisplayed()
+        compose.onNodeWithTag(CONFIRM_DELETE_MESSAGE_TEST_TAG).performClick()
+        compose.runOnIdle { check(requested?.providerMessageId == ProviderMessageId(ProviderKind.SMS, 1L)) }
+    }
+
+    @Test
+    fun wholeConversationDeletionUsesTwoDistinctConfirmationSteps() {
+        var requests = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(body = "", saving = false, failed = false),
+                onRequestDeleteThread = { requests += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_DELETE_ACTION_TEST_TAG).assertIsEnabled().performClick()
+        compose.onNodeWithText("Delete this conversation?").assertIsDisplayed()
+        compose.onNodeWithTag(CONTINUE_DELETE_THREAD_TEST_TAG).performClick()
+        compose.onNodeWithText("Last chance").assertIsDisplayed()
+        compose.onNodeWithTag(CONFIRM_DELETE_THREAD_TEST_TAG).performClick()
+        compose.runOnIdle { check(requests == 1) }
+    }
+
+    @Test
+    fun pendingDeletionShowsUndoWhileCommittingDoesNot() {
+        val deletion = mutableStateOf<PermanentDeletionUiState>(
+            PermanentDeletionUiState.Pending(
+                targetKind = PermanentDeletionTargetUiKind.MESSAGE,
+                providerMessageId = ProviderMessageId(ProviderKind.SMS, 1L),
+                dueTimestampMillis = 5_000L,
+            ),
+        )
+        var undoCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(body = "", saving = false, failed = false),
+                deletion = deletion.value,
+                onUndoDeletion = { undoCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(PERMANENT_DELETION_BANNER_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithTag(UNDO_DELETION_TEST_TAG).performClick()
+        compose.runOnIdle {
+            check(undoCount == 1)
+            deletion.value = PermanentDeletionUiState.Committing(PermanentDeletionTargetUiKind.MESSAGE)
+        }
+        compose.onNodeWithText("Deleting permanently…").assertIsDisplayed()
+        compose.onNodeWithTag(UNDO_DELETION_TEST_TAG).assertDoesNotExist()
+    }
+
+    @Test
     fun timelineBackgroundIsReadyOnlyAndDrawnBehindTimelineOutsideHeaderAndComposer() {
         val threadState = mutableStateOf<ThreadUiState>(ThreadUiState.Loading)
         compose.setContent {
@@ -597,6 +663,10 @@ private fun SyntheticThreadScreen(
     onAcknowledgeSubmissionUnknown: () -> Unit = {},
     onSchedule: () -> Unit = {},
     onCancelSchedule: () -> Unit = {},
+    deletion: PermanentDeletionUiState = PermanentDeletionUiState.None,
+    onRequestDeleteMessage: (TimelineMessage) -> Unit = {},
+    onRequestDeleteThread: () -> Unit = {},
+    onUndoDeletion: () -> Unit = {},
 ) {
     MaterialTheme {
         ThreadScreen(
@@ -626,6 +696,10 @@ private fun SyntheticThreadScreen(
             onSchedule = onSchedule,
             onCancelSchedule = onCancelSchedule,
             onAcknowledgeSubmissionUnknown = onAcknowledgeSubmissionUnknown,
+            deletion = deletion,
+            onRequestDeleteMessage = onRequestDeleteMessage,
+            onRequestDeleteThread = onRequestDeleteThread,
+            onUndoDeletion = onUndoDeletion,
         )
     }
 }
@@ -652,6 +726,7 @@ private fun readyThreadState(): ThreadUiState.Ready = ThreadUiState.Ready(
                 read = true,
                 seen = true,
                 locked = false,
+                syncFingerprint = MessageSyncFingerprint.fromSha256(ByteArray(32) { 1 }),
             ),
         ),
         olderCursor = null,

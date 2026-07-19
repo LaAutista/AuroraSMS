@@ -6,6 +6,7 @@ import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.MessageSyncFingerprint
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
@@ -29,6 +30,7 @@ data class TimelineMessage(
     val read: Boolean,
     val seen: Boolean,
     val locked: Boolean,
+    val syncFingerprint: MessageSyncFingerprint? = null,
 ) {
     init {
         require(localRowId > 0L) { "Timeline local rows must be positive" }

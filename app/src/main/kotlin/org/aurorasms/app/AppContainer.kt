@@ -81,6 +81,12 @@ import org.aurorasms.app.message.SendDelayCoordinator
 import org.aurorasms.app.message.SendDelayRecoveryReason
 import org.aurorasms.app.message.SharedPreferencesSendDelayPreferenceStore
 import org.aurorasms.app.message.UnavailableSendDelayController
+import org.aurorasms.app.message.AndroidPermanentDeletionAlarmDriver
+import org.aurorasms.app.message.DeferredPermanentDeletionController
+import org.aurorasms.app.message.PermanentDeletionController
+import org.aurorasms.app.message.PermanentDeletionCoordinator
+import org.aurorasms.app.message.PermanentDeletionRecoveryReason
+import org.aurorasms.app.message.UnavailablePermanentDeletionController
 import org.aurorasms.app.message.requiresFollowUp
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
@@ -180,11 +186,14 @@ import org.aurorasms.core.state.storage.RoomConversationSubscriptionPreferenceRe
 import org.aurorasms.core.state.storage.RoomDraftRepository
 import org.aurorasms.core.state.storage.RoomScheduledSmsRepository
 import org.aurorasms.core.state.storage.RoomSendDelayRepository
+import org.aurorasms.core.state.storage.RoomPermanentDeletionRepository
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
 import org.aurorasms.core.state.storage.StateDatabaseOpenResult
 import org.aurorasms.core.state.ScheduledSmsId
 import org.aurorasms.core.state.SendDelayId
+import org.aurorasms.core.state.PermanentDeletionId
+import org.aurorasms.core.telephony.internal.AndroidPermanentDeletionProvider
 import org.aurorasms.feature.conversations.BoundedPreviewLoader
 
 class AppContainer(
@@ -236,6 +245,12 @@ class AppContainer(
     }
     val contactCache: ContactCache = contactCacheController?.cache ?: AddressOnlyContactCache
     val mmsProviderDataSource = AndroidMmsProviderDataSource(application, defaultSmsRoleState)
+    private val permanentDeletionProvider = AndroidPermanentDeletionProvider(
+        context = application,
+        roleState = defaultSmsRoleState,
+        sms = smsProviderDataSource,
+        mms = mmsProviderDataSource,
+    )
     val mmsAttachmentRepository: MmsAttachmentRepository = if (syntheticIndexOnly) {
         UnavailableMmsAttachmentRepository
     } else {
@@ -330,6 +345,9 @@ class AppContainer(
     internal val scheduledSmsController: ScheduledSmsController = deferredScheduledSmsController
     private val deferredSendDelayController = DeferredSendDelayController()
     internal val sendDelayController: SendDelayController = deferredSendDelayController
+    private val deferredPermanentDeletionController = DeferredPermanentDeletionController()
+    internal val permanentDeletionController: PermanentDeletionController =
+        deferredPermanentDeletionController
     internal val sendDelayPreferenceStore = SharedPreferencesSendDelayPreferenceStore(application)
     val messageNotifier: MessageNotifier = AndroidMessageNotifier(
         context = application,
@@ -396,6 +414,7 @@ class AppContainer(
             deferredThreadSmsSendController.install(UnavailableThreadSmsSendController)
             deferredScheduledSmsController.install(UnavailableScheduledSmsController)
             deferredSendDelayController.install(UnavailableSendDelayController)
+            deferredPermanentDeletionController.install(UnavailablePermanentDeletionController)
             stateRuntimeState.value = StateRuntimeState.Ready(
                 draftRepository = EmptyBenchmarkDraftRepository,
                 appearanceProfileRepository = EmptyBenchmarkAppearanceProfileRepository,
@@ -448,6 +467,18 @@ class AppContainer(
                                 sender = threadSmsSendController,
                             ),
                         )
+                        deferredPermanentDeletionController.install(
+                            PermanentDeletionCoordinator(
+                                applicationScope = applicationScope,
+                                roleState = defaultSmsRoleState,
+                                repository = RoomPermanentDeletionRepository(result.database),
+                                provider = permanentDeletionProvider,
+                                alarms = AndroidPermanentDeletionAlarmDriver(application),
+                                onProviderChanged = {
+                                    enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
+                                },
+                            ),
+                        )
                         stateRuntimeState.value = StateRuntimeState.Ready(
                             draftRepository = RoomDraftRepository(result.database),
                             appearanceProfileRepository = appearanceRepository,
@@ -462,6 +493,9 @@ class AppContainer(
                         deferredThreadSmsSendController.install(UnavailableThreadSmsSendController)
                         deferredScheduledSmsController.install(UnavailableScheduledSmsController)
                         deferredSendDelayController.install(UnavailableSendDelayController)
+                        deferredPermanentDeletionController.install(
+                            UnavailablePermanentDeletionController,
+                        )
                         stateRuntimeState.value = StateRuntimeState.Failed(result.reason)
                         _stateStorageStatus.value = StateStorageStatus.Failed(result.reason)
                     }
@@ -611,9 +645,14 @@ class AppContainer(
         sendDelayController.handleAlarm(id)
     }
 
+    suspend fun onPermanentDeletionAlarm(id: PermanentDeletionId) {
+        permanentDeletionController.handleAlarm(id)
+    }
+
     internal suspend fun onScheduledSmsRecovery(reason: ScheduledSmsRecoveryReason) {
         scheduledSmsController.recover(reason)
         sendDelayController.recover(reason.toSendDelayRecoveryReason())
+        permanentDeletionController.recover(reason.toPermanentDeletionRecoveryReason())
     }
 
     /** Retries observer registration and reconciliation after explicit role/permission UI success. */
@@ -654,6 +693,7 @@ class AppContainer(
             threadSmsSendController.fence()
             scheduledSmsController.fence()
             sendDelayController.fence()
+            permanentDeletionController.fence()
             cancelAndJoinPendingMessagingRecovery()
             incomingMessageOrchestrator.onRoleLost()
         }
@@ -731,10 +771,12 @@ class AppContainer(
         if (scheduledStartupRecoveryPending) {
             scheduledSmsController.recover(ScheduledSmsRecoveryReason.APP_STARTUP)
             sendDelayController.recover(SendDelayRecoveryReason.APP_STARTUP)
+            permanentDeletionController.recover(PermanentDeletionRecoveryReason.APP_STARTUP)
             scheduledStartupRecoveryPending = false
         } else {
             scheduledSmsController.reconcileDispatches()
             sendDelayController.reconcileDispatches()
+            permanentDeletionController.recover(PermanentDeletionRecoveryReason.APP_STARTUP)
         }
         inlineReplyTransportResultHandler.reconcilePendingOperations()
         var retryDelayMillis = INCOMING_NOTIFICATION_RECOVERY_INITIAL_RETRY_MILLIS
@@ -1506,6 +1548,17 @@ private fun ScheduledSmsRecoveryReason.toSendDelayRecoveryReason(): SendDelayRec
         ScheduledSmsRecoveryReason.EXACT_ACCESS_CHANGED,
         -> SendDelayRecoveryReason.PACKAGE_REPLACED
     }
+
+private fun ScheduledSmsRecoveryReason.toPermanentDeletionRecoveryReason():
+    PermanentDeletionRecoveryReason = when (this) {
+    ScheduledSmsRecoveryReason.APP_STARTUP -> PermanentDeletionRecoveryReason.APP_STARTUP
+    ScheduledSmsRecoveryReason.BOOT_COMPLETED -> PermanentDeletionRecoveryReason.BOOT_COMPLETED
+    ScheduledSmsRecoveryReason.WALL_CLOCK_CHANGED -> PermanentDeletionRecoveryReason.TIME_CHANGED
+    ScheduledSmsRecoveryReason.TIMEZONE_CHANGED,
+    ScheduledSmsRecoveryReason.PACKAGE_REPLACED,
+    ScheduledSmsRecoveryReason.EXACT_ACCESS_CHANGED,
+    -> PermanentDeletionRecoveryReason.PACKAGE_REPLACED
+}
 
 private suspend fun StateFlow<IndexRuntimeState>.awaitReadyRuntime(): IndexRuntime {
     val state = when (val current = value) {

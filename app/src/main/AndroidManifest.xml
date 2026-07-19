@@ -67,6 +67,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".receiver.PermanentDeletionAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".receiver.ScheduledSmsRecoveryReceiver"
             android:directBootAware="false"
             android:exported="false">

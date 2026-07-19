@@ -285,6 +285,12 @@ interface SmsProviderDataSource {
 
     suspend fun readPage(request: ProviderPageRequest): ProviderAccessResult<ProviderPage<SmsProviderMessage>>
 
+    /** Reads one exact provider identity for guarded local mutations. */
+    suspend fun readExact(
+        id: ProviderMessageId,
+    ): ProviderAccessResult<SmsProviderMessage?> =
+        ProviderAccessResult.Unsupported("read exact SMS")
+
     suspend fun insertIncoming(message: IncomingSmsRecord): ProviderAccessResult<ProviderStoredMessage>
 
     suspend fun readPendingIncomingNotifications(

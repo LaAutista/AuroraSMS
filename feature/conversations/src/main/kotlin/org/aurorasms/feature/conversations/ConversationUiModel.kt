@@ -224,7 +224,41 @@ enum class ComposerUnavailableReason {
     SUBSCRIPTION_UNAVAILABLE,
     MULTIPART_UNAVAILABLE,
     RECOVERY_PENDING,
+    PERMANENT_DELETION_ACTIVE,
     MESSAGING_UNAVAILABLE,
+}
+
+enum class PermanentDeletionTargetUiKind {
+    MESSAGE,
+    THREAD,
+}
+
+sealed interface PermanentDeletionUiState {
+    data object Loading : PermanentDeletionUiState
+    data object None : PermanentDeletionUiState
+
+    data class Pending(
+        val targetKind: PermanentDeletionTargetUiKind,
+        val providerMessageId: ProviderMessageId?,
+        val dueTimestampMillis: Long,
+    ) : PermanentDeletionUiState {
+        init {
+            require(
+                (targetKind == PermanentDeletionTargetUiKind.MESSAGE) ==
+                    (providerMessageId != null),
+            ) { "Only message deletion carries a provider message id" }
+            require(dueTimestampMillis >= 0L)
+        }
+    }
+
+    data class Committing(
+        val targetKind: PermanentDeletionTargetUiKind,
+    ) : PermanentDeletionUiState
+
+    data class ReviewRequired(
+        val targetKind: PermanentDeletionTargetUiKind,
+        val commitMayHaveStarted: Boolean,
+    ) : PermanentDeletionUiState
 }
 
 internal fun conversationAddresses(items: List<ConversationSummary>): List<ParticipantAddress> =

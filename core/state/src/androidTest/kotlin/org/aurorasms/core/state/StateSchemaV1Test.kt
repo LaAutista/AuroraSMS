@@ -18,6 +18,7 @@ import org.aurorasms.core.state.storage.ConversationSubscriptionPreferenceEnforc
 import org.aurorasms.core.state.storage.DraftIdentityEnforcement
 import org.aurorasms.core.state.storage.ScheduledSmsEnforcement
 import org.aurorasms.core.state.storage.SendDelayEnforcement
+import org.aurorasms.core.state.storage.PermanentDeletionEnforcement
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
 import org.aurorasms.core.state.storage.StateDatabaseOpenResult
@@ -55,11 +56,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionNine_hasBoundedContentFreeStateTables() {
+    fun schemaVersionTen_hasBoundedContentFreeStateTables() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(9, AuroraStateDatabase.VERSION)
+            assertEquals(10, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -346,18 +347,52 @@ class StateSchemaCurrentTest {
                 sqlite.indexNames("send_delay_operations")
                     .contains("index_send_delay_operations_due_timestamp_ms_send_delay_id"),
             )
+            assertEquals(
+                setOf(
+                    "deletion_id", "target_kind_code", "provider_thread_id", "provider_kind",
+                    "provider_message_id", "sync_fingerprint", "sms_count", "latest_sms_id",
+                    "mms_count", "latest_mms_id", "draft_id", "draft_revision_ms",
+                    "due_timestamp_ms", "phase_code", "review_reason_code",
+                    "armed_wall_timestamp_ms", "armed_elapsed_realtime_ms",
+                    "created_timestamp_ms", "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("permanent_deletion_operations"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "permanent_deletion_operations",
+                    "index_permanent_deletion_operations_provider_thread_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "permanent_deletion_operations",
+                    "index_permanent_deletion_operations_provider_kind_provider_message_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexNames("permanent_deletion_operations").contains(
+                    "index_permanent_deletion_operations_due_timestamp_ms_deletion_id",
+                ),
+            )
         } finally {
             database.close()
         }
     }
 
     @Test
-    fun exportedVersionNineStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedVersionTenStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'drafts'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'permanent_deletion_operations'",
                 ).use { it.moveToFirst() },
             )
             assertTrue(
@@ -434,6 +469,7 @@ class StateSchemaCurrentTest {
             .addCallback(ConversationSubscriptionPreferenceEnforcement.callback)
             .addCallback(ScheduledSmsEnforcement.callback)
             .addCallback(SendDelayEnforcement.callback)
+            .addCallback(PermanentDeletionEnforcement.callback)
             .build()
         try {
             assertEquals(AuroraStateDatabase.VERSION, database.openHelper.writableDatabase.version)
@@ -488,6 +524,9 @@ class StateSchemaCurrentTest {
         assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_LIMIT_TRIGGER_NAME)
         assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
         assertTriggerExists(sqlite, SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, PermanentDeletionEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
 
         assertThrows(SQLiteConstraintException::class.java) {
             sqlite.execSQL(
@@ -528,6 +567,9 @@ class StateSchemaCurrentTest {
         sqlite.execSQL("DROP TRIGGER ${SendDelayEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${PermanentDeletionEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${PermanentDeletionEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${PermanentDeletionEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
         database.close()
 
         database = openStateDatabase()
@@ -557,6 +599,9 @@ class StateSchemaCurrentTest {
             assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_LIMIT_TRIGGER_NAME)
             assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
             assertTriggerExists(sqlite, SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+            assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(sqlite, PermanentDeletionEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
             assertThrows(SQLiteConstraintException::class.java) {
                 sqlite.execSQL(
                     "INSERT INTO appearance_selection(" +

@@ -2977,6 +2977,49 @@ install/schema/launch evidence does not close real process-kill timing, reboot,
 SIM removal, carrier, radio, billing, or OEM lifecycle gates. AuroraSMS remains
 incomplete and not gold.
 
+### Phase 5F guarded permanent-deletion local and safe-device acceptance — 2026-07-19
+
+This source identifies as `0.5.5-phase5` (`versionCode` 9), Room schema 10, and
+ADR 0013. One exact SMS/MMS row has one confirmation; a whole Thread has a
+two-step confirmation. Both enter a fixed five-second Undo window before an
+exact-target provider commit. Durable recovery stores no address or message
+content and never blindly repeats an interrupted delete.
+
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 2m04s across 886 tasks (255 executed, 11 from cache, 620
+up-to-date). All 546 host JUnit results passed with zero failures, errors, or
+skips: app 259, design system 11, index 69, model 19, notifications 21, state
+51, telephony 79, testing 24, and conversations 13. Debug, R8 release, and
+benchmark assembly; debug/release/benchmark lint; clean-room/private-art scans;
+dependency locks; permission and APK-content ledgers; and license gates passed.
+`bundleRelease` separately passed 269 tasks in 8s. CycloneDX 1.6 separately
+passed 15 up-to-date tasks in 7s and reports 441 components and 442
+dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m36s
+across 456 tasks. It passed 308 tests with 10 intentional assumption skips, 298
+executed, and zero failures/errors: app 131/9 skips, benchmark 3/1, index 31/0,
+notifications 29/0, state 61/0, telephony 35/0, and conversations 18/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m00s
+across 456 tasks. Authoritative XML reports 311 tests, 13 intentional assumption
+skips, 298 executed, and zero failures/errors: app 134/12 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations
+18/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,749,634 | `b72761cef9e98147c1639613081e5f9fb4c0a6d8ec56344d4e126a819c44d99c` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,846,357 | `ff37c6cc419517edb533bb3859ec4a657bbc9c24679e51fef966b66b620efd25` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,690,809 | `06ae33148ace3fe3897abb50ec90f53f3632c235f8dc5b622160b927f329908c` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,797,617 | `4352cc8f4fd577660efc4cd65f062b0902e39c5718e91bb98e9ba7dd92030d73` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The Pixel 8 was not enumerated by ADB at Phase 5F handoff; its prior wireless
+endpoint was unreachable, so physical install/migration/launch acceptance
+remains pending. No automated or manual Phase 5F test read or deleted a live
+message, changed the default SMS app, or submitted a carrier message.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
@@ -2988,7 +3031,9 @@ incomplete and not gold.
 - [x] Send-delay Undo has content-free process-death recovery, duplicate-alarm
   idempotence, clock/lateness fail-closed handling, and no Undo after dispatch
   ownership. Real carrier and unlocked physical lifecycle timing remain open.
-- [ ] Pending deletion has deterministic process-death behavior.
+- [x] Pending deletion has deterministic process-death behavior. Pending work is
+  recoverable; an interrupted provider commit is inspected and never blindly
+  replayed.
 - [x] Remembered subscription is durable and scoped per conversation for the
   verified one-person Thread composer path.
 - [x] A removed/disabled remembered SIM prompts a safe fallback; scheduled and
@@ -2996,9 +3041,9 @@ incomplete and not gold.
   The existing one-part composer now disables Send and requires an explicit
   replacement in synthetic API 26/API 36 tests; scheduled dispatch also pauses
   for review without fallback. Physical removal plus group paths remain open.
-- [ ] Whole-thread deletion uses stronger confirmation.
-- [ ] After provider deletion commits, UI never claims recoverability.
-- [ ] No recycle-bin UI/schema/preference/worker exists.
+- [x] Whole-thread deletion uses stronger two-step confirmation.
+- [x] After provider deletion commits, UI never claims recoverability.
+- [x] No recycle-bin UI/schema/preference/worker exists.
 - [ ] Every group path still proves no individual fan-out.
 
 ## Phase 6 feature/privacy matrix

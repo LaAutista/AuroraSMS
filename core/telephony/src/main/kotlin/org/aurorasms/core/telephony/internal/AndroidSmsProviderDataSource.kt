@@ -155,6 +155,55 @@ class AndroidSmsProviderDataSource(
         } ?: ProviderAccessResult.Unavailable("read SMS page")
     }
 
+    override suspend fun readExact(
+        id: ProviderMessageId,
+    ): ProviderAccessResult<SmsProviderMessage?> = withReadAccess("read exact SMS") {
+        if (id.kind != ProviderKind.SMS) {
+            return@withReadAccess ProviderAccessResult.InvalidInput("provider message kind")
+        }
+        val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id.value)
+        val projection = arrayOf(
+            BaseColumns._ID,
+            Telephony.Sms.THREAD_ID,
+            Telephony.Sms.ADDRESS,
+            Telephony.Sms.BODY,
+            Telephony.Sms.TYPE,
+            Telephony.Sms.DATE,
+            Telephony.Sms.DATE_SENT,
+            Telephony.Sms.SUBSCRIPTION_ID,
+            Telephony.Sms.READ,
+            Telephony.Sms.SEEN,
+            Telephony.Sms.LOCKED,
+            Telephony.Sms.STATUS,
+            Telephony.Sms.ERROR_CODE,
+        )
+        resolver.query(uri, projection, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use ProviderAccessResult.Success(null)
+            val raw = RawSmsProviderRow(
+                id = cursor.getLong(cursor.getColumnIndexOrThrow(BaseColumns._ID)),
+                threadId = cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID)),
+                address = cursor.getString(cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)),
+                body = cursor.getString(cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)),
+                type = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.TYPE)),
+                timestampMillis = cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Sms.DATE)),
+                sentTimestampMillis = cursor.nullableLong(
+                    cursor.getColumnIndexOrThrow(Telephony.Sms.DATE_SENT),
+                ),
+                subscriptionId = cursor.nullableInt(
+                    cursor.getColumnIndexOrThrow(Telephony.Sms.SUBSCRIPTION_ID),
+                ),
+                read = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.READ)) != 0,
+                seen = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.SEEN)) != 0,
+                locked = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.LOCKED)) != 0,
+                rawStatus = cursor.nullableInt(cursor.getColumnIndexOrThrow(Telephony.Sms.STATUS)),
+                rawErrorCode = cursor.nullableInt(
+                    cursor.getColumnIndexOrThrow(Telephony.Sms.ERROR_CODE),
+                ),
+            )
+            ProviderAccessResult.Success(raw.toProviderMessageOrNull())
+        } ?: ProviderAccessResult.Unavailable("read exact SMS")
+    }
+
     override suspend fun insertIncoming(
         message: IncomingSmsRecord,
     ): ProviderAccessResult<ProviderStoredMessage> = incomingInsertMutex.withLock {

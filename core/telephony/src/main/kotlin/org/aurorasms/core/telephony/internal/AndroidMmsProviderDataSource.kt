@@ -4,6 +4,7 @@ package org.aurorasms.core.telephony.internal
 
 import android.Manifest
 import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -145,6 +146,61 @@ class AndroidMmsProviderDataSource(
                 ),
             )
         } ?: ProviderAccessResult.Unavailable("read MMS page")
+    }
+
+    override suspend fun readExact(
+        id: ProviderMessageId,
+    ): ProviderAccessResult<MmsProviderMessage?> = withReadAccess("read exact MMS") {
+        if (id.kind != ProviderKind.MMS) {
+            return@withReadAccess ProviderAccessResult.InvalidInput("provider message kind")
+        }
+        val uri = ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, id.value)
+        val projection = arrayOf(
+            BaseColumns._ID,
+            Telephony.Mms.THREAD_ID,
+            Telephony.Mms.SUBJECT,
+            Telephony.Mms.MESSAGE_BOX,
+            Telephony.Mms.DATE,
+            Telephony.Mms.DATE_SENT,
+            Telephony.Mms.SUBSCRIPTION_ID,
+            Telephony.Mms.READ,
+            Telephony.Mms.SEEN,
+            Telephony.Mms.LOCKED,
+            Telephony.Mms.STATUS,
+            Telephony.Mms.RESPONSE_STATUS,
+            Telephony.Mms.RETRIEVE_STATUS,
+            Telephony.Mms.MESSAGE_SIZE,
+        )
+        resolver.query(uri, projection, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use ProviderAccessResult.Success(null)
+            val raw = RawMmsProviderRow(
+                id = cursor.getLong(cursor.getColumnIndexOrThrow(BaseColumns._ID)),
+                threadId = cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Mms.THREAD_ID)),
+                subject = cursor.getString(cursor.getColumnIndexOrThrow(Telephony.Mms.SUBJECT)),
+                messageBox = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Mms.MESSAGE_BOX)),
+                timestampSeconds = cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Mms.DATE)),
+                sentTimestampSeconds = cursor.nullableLong(
+                    cursor.getColumnIndexOrThrow(Telephony.Mms.DATE_SENT),
+                ),
+                subscriptionId = cursor.nullableInt(
+                    cursor.getColumnIndexOrThrow(Telephony.Mms.SUBSCRIPTION_ID),
+                ),
+                read = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Mms.READ)) != 0,
+                seen = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Mms.SEEN)) != 0,
+                locked = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Mms.LOCKED)) != 0,
+                rawStatus = cursor.nullableInt(cursor.getColumnIndexOrThrow(Telephony.Mms.STATUS)),
+                rawResponseStatus = cursor.nullableInt(
+                    cursor.getColumnIndexOrThrow(Telephony.Mms.RESPONSE_STATUS),
+                ),
+                rawRetrieveStatus = cursor.nullableInt(
+                    cursor.getColumnIndexOrThrow(Telephony.Mms.RETRIEVE_STATUS),
+                ),
+                messageSizeBytes = cursor.nullableLong(
+                    cursor.getColumnIndexOrThrow(Telephony.Mms.MESSAGE_SIZE),
+                ),
+            )
+            ProviderAccessResult.Success(projectMmsRow(raw))
+        } ?: ProviderAccessResult.Unavailable("read exact MMS")
     }
 
     private fun projectMmsRow(raw: RawMmsProviderRow): MmsProviderMessage? {

@@ -155,8 +155,8 @@ ADR 0011; the other entries remain conditional.
 | `POST_NOTIFICATIONS` | API 33+ messaging notifications | Request after role with privacy choice; foreground app remains usable when denied |
 | `READ_PHONE_NUMBERS` | Own-number display only | Not approved for core transport; add only with a user-visible need |
 | `VIBRATE` | Notification behavior | Normal permission; honor user/channel settings |
-| `RECEIVE_BOOT_COMPLETED` | Phase 5 scheduled-SMS recovery — active under ADR 0011 | Re-arm only Aurora-owned durable operations; past-due reboot state pauses for review; no message content in alarms or logs |
-| `SCHEDULE_EXACT_ALARM` | Phase 5 scheduled sending — active under ADR 0011 | User-facing special-access route; check capability before every exact arm; retain and label the honest inexact fallback. ADR 0012's short Undo timer reuses this already-declared capability only when available and remains safe with its private inexact recovery alarm. |
+| `RECEIVE_BOOT_COMPLETED` | Phase 5 durable alarm recovery — active under ADR 0011 | Re-arm only Aurora-owned schedules, send delays, and pending deletion operations; past-due reboot state pauses for review; no message content in alarms or logs. ADR 0013 deletion recovery never blindly replays an ambiguous provider mutation. |
+| `SCHEDULE_EXACT_ALARM` | Phase 5 user-timed operations — active under ADR 0011 | User-facing special-access route; check capability before every exact arm; retain and label the honest inexact scheduled-send fallback. ADR 0012 short-send Undo and ADR 0013 permanent-delete Undo reuse this already-declared capability only when available and remain safe with private ID-only inexact recovery alarms. |
 | `RECORD_AUDIO` | Phase 6 voice memo | Request only after tapping Record; no background recording |
 | `USE_BIOMETRIC` | Optional app lock | App lock is not database encryption |
 | Foreground-service permission/type | A measured long-running user-visible operation only | Add exact subtype and notification design before use |

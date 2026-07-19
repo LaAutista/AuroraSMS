@@ -429,6 +429,33 @@ Synthetic/emulator acceptance and safe physical UI smoke do not prove real
 carrier recall, OEM process-kill timing, reboot during a live submission,
 billing, roaming, or radio behavior. AuroraSMS remains incomplete and not gold.
 
+### Phase 5F guarded permanent deletion
+
+The `0.5.5-phase5` (`versionCode` 9) 2026-07-19 source adds permanent provider
+deletion for one exact SMS/MMS row or an entire verified Thread.
+
+- A message bubble requires an explicit confirmation. Whole-conversation
+  deletion requires two confirmations, including a final irreversible warning.
+- Both paths use one fixed five-second pre-commit Undo window. After provider
+  success, the UI leaves no recovery claim and exposes no recycle bin.
+- Room schema 10 stores at most 128 content-free operations. A message target is
+  bound to its provider kind, row ID, and synchronization fingerprint; a Thread
+  target is bound to its verified participant digest, provider count and latest
+  row IDs, plus the exact Aurora draft ID and revision present at confirmation.
+- The private alarm carries only an operation ID. Due handling revalidates role,
+  conflicts, identity, target continuity, clock continuity, and bounded lateness
+  before provider mutation. The composer is locked while its Thread is pending.
+- Recovery never blindly repeats a possibly committed delete. It inspects the
+  exact target: confirmed absence finalizes, an unchanged present target cancels
+  safely, and changed or unreadable state remains in explicit review.
+- Whole-Thread success removes only the exact old draft revision captured at
+  confirmation; a newer edit is preserved.
+
+Automated acceptance uses synthetic provider state. Safe physical installation
+and metadata-only migration/launch checks do not delete live messages or close
+real provider, process-kill, OEM, or carrier gates. AuroraSMS remains incomplete
+and not gold.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls
@@ -770,9 +797,9 @@ granular updates. Release builds use R8 and a measured Baseline Profile.
 6. Phase 5: first deliver the bounded Phase 5A existing-Thread one-part SMS
    composer, then the Phase 5B acknowledged-unknown cleanup, Phase 5C durable
    conversation-SIM choice, Phase 5D durable scheduled one-part SMS with an
-   honest exact/inexact alarm boundary, and Phase 5E durable short-delay Undo;
-   later slices retain pending deletion,
-   group-MMS hardening, and permanent-delete behavior.
+   honest exact/inexact alarm boundary, Phase 5E durable short-delay Undo, and
+   Phase 5F guarded permanent message/Thread deletion; later slices retain
+   group-MMS hardening.
 7. Phase 6: notifications/reminders, reactions, voice memo, selected-text copy,
    signatures, local spam, backup/restore, and Android Auto.
 8. Phase 7: provenance, migrations, reproducible release, F-Droid metadata,

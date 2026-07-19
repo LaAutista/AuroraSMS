@@ -363,3 +363,51 @@ val STATE_MIGRATION_8_9: Migration = object : Migration(8, 9) {
         db.execSQL(SendDelayEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
     }
 }
+
+val STATE_MIGRATION_9_10: Migration = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `permanent_deletion_operations` (
+                `deletion_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `target_kind_code` TEXT NOT NULL,
+                `provider_thread_id` INTEGER NOT NULL,
+                `provider_kind` INTEGER,
+                `provider_message_id` INTEGER,
+                `sync_fingerprint` TEXT,
+                `sms_count` INTEGER,
+                `latest_sms_id` INTEGER,
+                `mms_count` INTEGER,
+                `latest_mms_id` INTEGER,
+                `draft_id` INTEGER,
+                `draft_revision_ms` INTEGER,
+                `due_timestamp_ms` INTEGER NOT NULL,
+                `phase_code` TEXT NOT NULL,
+                `review_reason_code` TEXT,
+                `armed_wall_timestamp_ms` INTEGER NOT NULL,
+                `armed_elapsed_realtime_ms` INTEGER NOT NULL,
+                `created_timestamp_ms` INTEGER NOT NULL,
+                `updated_timestamp_ms` INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                "`index_permanent_deletion_operations_provider_thread_id` " +
+                "ON `permanent_deletion_operations` (`provider_thread_id`)",
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                "`index_permanent_deletion_operations_provider_kind_provider_message_id` " +
+                "ON `permanent_deletion_operations` (`provider_kind`, `provider_message_id`)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS " +
+                "`index_permanent_deletion_operations_due_timestamp_ms_deletion_id` " +
+                "ON `permanent_deletion_operations` (`due_timestamp_ms`, `deletion_id`)",
+        )
+        db.execSQL(PermanentDeletionEnforcement.CREATE_INSERT_LIMIT_TRIGGER)
+        db.execSQL(PermanentDeletionEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(PermanentDeletionEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+    }
+}

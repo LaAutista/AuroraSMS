@@ -16,6 +16,7 @@ import org.aurorasms.core.index.storage.toIndexedProviderKind
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.MessageSyncFingerprint
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
@@ -174,4 +175,5 @@ private fun StoredTimelineMessage.toTimelineMessage(): TimelineMessage = Timelin
     read = isRead,
     seen = isSeen,
     locked = isLocked,
+    syncFingerprint = MessageSyncFingerprint.fromStorageToken(syncFingerprint),
 )

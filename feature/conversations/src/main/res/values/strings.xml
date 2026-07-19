@@ -2,6 +2,24 @@
 <resources>
     <string name="search">Search</string>
     <string name="more">More</string>
+    <string name="delete_message">Delete message</string>
+    <string name="delete_conversation">Delete conversation</string>
+    <string name="delete_message_title">Permanently delete this message?</string>
+    <string name="delete_message_explanation">This deletes the message from this device. It cannot be recovered after the Undo window.</string>
+    <string name="delete_conversation_title">Delete this conversation?</string>
+    <string name="delete_conversation_explanation">This will permanently delete every SMS and MMS in this conversation from this device.</string>
+    <string name="delete_conversation_last_chance_title">Last chance</string>
+    <string name="delete_conversation_last_chance_explanation">Every message and the current unsent draft will be deleted. Locked messages are included. This cannot be recovered after the Undo window.</string>
+    <string name="delete_permanently">Delete permanently</string>
+    <string name="delete_conversation_permanently">Permanently delete conversation</string>
+    <string name="deleting_message_pending">Deleting message in a few seconds</string>
+    <string name="deleting_conversation_pending">Deleting conversation in a few seconds</string>
+    <string name="deleting_permanently">Deleting permanently…</string>
+    <string name="deletion_paused_safe">Deletion paused. Nothing was deleted by Aurora.</string>
+    <string name="deletion_needs_review">Deletion status needs review. Aurora cannot promise the item still exists.</string>
+    <string name="undo">Undo</string>
+    <string name="keep_item">Keep</string>
+    <string name="check_status">Check status</string>
     <string name="appearance">Appearance</string>
     <string name="inbox_appearance">Inbox appearance</string>
     <string name="conversation_defaults">Conversation defaults</string>
@@ -57,6 +75,7 @@
     <string name="conversation_sim_unavailable">The SIM associated with this conversation is unavailable.</string>
     <string name="multipart_send_unavailable">This text needs %1$d SMS parts. Phase 5A sends one part at a time.</string>
     <string name="finishing_send_recovery">Finishing safe send recovery…</string>
+    <string name="deletion_in_progress">Finish or undo the active deletion before editing this draft.</string>
     <string name="messaging_send_unavailable">SMS sending is unavailable. Check the SMS role and permissions.</string>
     <string name="draft_saved_one_sms">Draft saved locally · 1 SMS</string>
     <string name="schedule_message">Schedule message</string>

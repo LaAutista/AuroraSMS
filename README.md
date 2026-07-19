@@ -9,6 +9,29 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+The 2026-07-19 Phase 5F source identifies as `0.5.5-phase5` (`versionCode` 9)
+and adds ADR 0013's guarded permanent deletion for one exact SMS/MMS row or an
+entire provider Thread. Message deletion has one explicit confirmation;
+whole-conversation deletion has a stronger two-step confirmation. Both use a
+fixed five-second Undo window backed by bounded, content-free Room schema 10
+state and a private ID-only recovery alarm. Provider fingerprints or Thread
+count/latest-row metadata, exact draft revision, role, conflicts, clock
+continuity, and lateness are revalidated before mutation. Crash recovery only
+inspects an ambiguous commit and never blindly repeats a delete. Provider
+success removes the operation and any exact old Thread draft without claiming
+later recovery; no recycle-bin surface or state exists.
+
+Phase 5F local acceptance is green. All 546 host tests passed inside the full
+886-task debug/R8-release/benchmark, lint, privacy, dependency, APK-content,
+and license aggregate. The complete API 36 matrix passed 308 tests with 10
+intentional environment-gated skips, and API 26 passed 311 with 13; both
+executed 298 tests with zero failures/errors. These tests use synthetic
+provider state. They did not read or delete live messages. Physical install and
+metadata-only migration/launch acceptance remains pending because the Pixel was
+not enumerated by ADB at Phase 5F handoff. Physical deletion/process-death and
+broader carrier/OEM gates remain open, so AuroraSMS remains incomplete and not
+gold.
+
 The 2026-07-19 Phase 5E source identifies as `0.5.4-phase5` (`versionCode` 8)
 and adds ADR 0012's durable short send delay and truthful pre-submission Undo
 to the existing verified one-person, one-part SMS composer. Immediate sending

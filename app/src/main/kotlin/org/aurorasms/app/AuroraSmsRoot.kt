@@ -69,6 +69,10 @@ import org.aurorasms.app.message.ScheduledSmsObservation
 import org.aurorasms.app.message.SendDelayAttempt
 import org.aurorasms.app.message.SendDelayCommand
 import org.aurorasms.app.message.SendDelayObservation
+import org.aurorasms.app.message.PermanentDeletionCommand
+import org.aurorasms.app.message.PermanentDeletionObservation
+import org.aurorasms.app.message.PermanentDeletionRecoveryReason
+import org.aurorasms.app.message.PermanentDeletionTargetKind
 import org.aurorasms.core.index.SearchAnchor
 import org.aurorasms.core.index.SearchHit
 import org.aurorasms.core.model.ConversationId
@@ -106,6 +110,8 @@ import org.aurorasms.feature.conversations.ThreadScreen
 import org.aurorasms.feature.conversations.ThreadStateHolder
 import org.aurorasms.feature.conversations.ThreadUiState
 import org.aurorasms.feature.conversations.ConversationSubscriptionUiState
+import org.aurorasms.feature.conversations.PermanentDeletionTargetUiKind
+import org.aurorasms.feature.conversations.PermanentDeletionUiState
 
 @Composable
 internal fun AuroraSmsRoot(
@@ -647,6 +653,31 @@ private fun ThreadRoute(
     )
     val sendDelaySeconds by services.sendDelayPreferenceStore.delaySeconds
         .collectAsStateWithLifecycle()
+    val deletionController = services.permanentDeletionController
+    val deletionObservationFlow = remember(deletionController, route.providerThreadId) {
+        deletionController.observe(route.providerThreadId)
+    }
+    val deletionObservation by deletionObservationFlow.collectAsStateWithLifecycle(
+        initialValue = PermanentDeletionObservation.Loading,
+    )
+    val deletion = deletionObservation.toDeletionUiState()
+    val deletionLocksComposer = deletionObservation !is PermanentDeletionObservation.None &&
+        deletionObservation !is PermanentDeletionObservation.Completed
+    var observedDeletionCompletionEpoch by remember(route.providerThreadId) {
+        mutableStateOf(0L)
+    }
+    LaunchedEffect(deletionObservation) {
+        val completed = deletionObservation as? PermanentDeletionObservation.Completed
+            ?: return@LaunchedEffect
+        if (completed.epoch <= observedDeletionCompletionEpoch) return@LaunchedEffect
+        observedDeletionCompletionEpoch = completed.epoch
+        deletionController.acknowledgeCompletion(route.providerThreadId, completed.epoch)
+        if (completed.targetKind == PermanentDeletionTargetKind.THREAD) {
+            onBack()
+        } else {
+            holder.loadLatest()
+        }
+    }
     var savedDraftRestoration by rememberSaveable(
         route.providerThreadId.value,
         stateSaver = SAVED_DRAFT_RESTORATION_SAVER,
@@ -728,6 +759,7 @@ private fun ThreadRoute(
         scheduleAttemptInFlight = scheduleAttemptInFlight,
         sendDelayObservation = sendDelayObservation,
         sendDelayAttemptInFlight = sendDelayAttemptInFlight,
+        permanentDeletionActive = deletionLocksComposer,
     )
     val globalThreadScope = remember { AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD) }
     val globalThreadOverrideObservation by remember(appearanceController, globalThreadScope) {
@@ -1055,6 +1087,36 @@ private fun ThreadRoute(
                             DraftUnfreezeReason.SUBMISSION_UNKNOWN_ACKNOWLEDGED,
                         )
                     }
+                }
+            },
+            deletion = deletion,
+            onRequestDeleteMessage = { message ->
+                val fingerprint = message.syncFingerprint
+                if (fingerprint != null) {
+                    scope.launch {
+                        deletionController.request(
+                            PermanentDeletionCommand.Message(
+                                providerMessageId = message.providerMessageId,
+                                providerThreadId = route.providerThreadId,
+                                syncFingerprint = fingerprint,
+                            ),
+                        )
+                    }
+                }
+            },
+            onRequestDeleteThread = {
+                scope.launch {
+                    deletionController.request(
+                        PermanentDeletionCommand.Thread(route.providerThreadId),
+                    )
+                }
+            },
+            onUndoDeletion = {
+                scope.launch { deletionController.undo(route.providerThreadId) }
+            },
+            onRetryDeletionStatus = {
+                scope.launch {
+                    deletionController.recover(PermanentDeletionRecoveryReason.APP_STARTUP)
                 }
             },
             onSelectSubscription = { subscriptionId ->
@@ -1425,6 +1487,7 @@ private fun DraftWriteStatus.toComposerUiState(
     scheduleAttemptInFlight: Boolean = false,
     sendDelayObservation: SendDelayObservation = SendDelayObservation.None,
     sendDelayAttemptInFlight: Boolean = false,
+    permanentDeletionActive: Boolean = false,
 ): ComposerUiState {
     val body = when (this) {
         DraftWriteStatus.Loading -> restoredBody
@@ -1441,6 +1504,7 @@ private fun DraftWriteStatus.toComposerUiState(
             ComposerUnavailableReason.RECOVERY_PENDING
         sendDelayObservation is SendDelayObservation.Loading ->
             ComposerUnavailableReason.RECOVERY_PENDING
+        permanentDeletionActive -> ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE
         failed || saving ->
             ComposerUnavailableReason.DRAFT_NOT_DURABLE
         body.isBlank() -> ComposerUnavailableReason.EMPTY_MESSAGE
@@ -1506,6 +1570,31 @@ private fun ScheduledSmsObservation.toComposerScheduleState(): ComposerScheduleS
     is ScheduledSmsObservation.ReviewRequired ->
         ComposerScheduleState.ReviewRequired(dueTimestampMillis)
 }
+
+private fun PermanentDeletionObservation.toDeletionUiState(): PermanentDeletionUiState = when (this) {
+    PermanentDeletionObservation.Loading -> PermanentDeletionUiState.Loading
+    PermanentDeletionObservation.None,
+    is PermanentDeletionObservation.Completed,
+    -> PermanentDeletionUiState.None
+    is PermanentDeletionObservation.Pending -> PermanentDeletionUiState.Pending(
+        targetKind = targetKind.toDeletionUiKind(),
+        providerMessageId = providerMessageId,
+        dueTimestampMillis = dueTimestampMillis,
+    )
+    is PermanentDeletionObservation.Committing -> PermanentDeletionUiState.Committing(
+        targetKind = targetKind.toDeletionUiKind(),
+    )
+    is PermanentDeletionObservation.ReviewRequired -> PermanentDeletionUiState.ReviewRequired(
+        targetKind = targetKind.toDeletionUiKind(),
+        commitMayHaveStarted = commitMayHaveStarted,
+    )
+}
+
+private fun PermanentDeletionTargetKind.toDeletionUiKind(): PermanentDeletionTargetUiKind =
+    when (this) {
+        PermanentDeletionTargetKind.MESSAGE -> PermanentDeletionTargetUiKind.MESSAGE
+        PermanentDeletionTargetKind.THREAD -> PermanentDeletionTargetUiKind.THREAD
+    }
 
 private fun showScheduledSmsDateTimePicker(
     context: Context,

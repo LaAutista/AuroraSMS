@@ -4,9 +4,11 @@ package org.aurorasms.feature.conversations
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -61,6 +63,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.semantics.text
@@ -123,12 +127,86 @@ fun ThreadScreen(
     onRequestExactAlarmAccess: () -> Unit = {},
     onSelectSubscription: (AuroraSubscriptionId) -> Unit = {},
     onAcknowledgeSubmissionUnknown: () -> Unit = {},
+    deletion: PermanentDeletionUiState = PermanentDeletionUiState.None,
+    onRequestDeleteMessage: (TimelineMessage) -> Unit = {},
+    onRequestDeleteThread: () -> Unit = {},
+    onUndoDeletion: () -> Unit = {},
+    onRetryDeletionStatus: () -> Unit = {},
     timelineBackground: @Composable BoxScope.() -> Unit = {},
 ) {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val visualTokens = LocalAuroraVisualTokens.current
     var composerFocused by remember { mutableStateOf(false) }
+    var messagePendingConfirmation by remember { mutableStateOf<TimelineMessage?>(null) }
+    var threadConfirmationStep by remember { mutableStateOf(0) }
+    val deletionActive = deletion !is PermanentDeletionUiState.None
+    LaunchedEffect(deletion) {
+        if (deletionActive) {
+            messagePendingConfirmation = null
+            threadConfirmationStep = 0
+        }
+    }
+    messagePendingConfirmation?.let { message ->
+        AlertDialog(
+            onDismissRequest = { messagePendingConfirmation = null },
+            title = { Text(stringResource(R.string.delete_message_title)) },
+            text = { Text(stringResource(R.string.delete_message_explanation)) },
+            confirmButton = {
+                TextButton(
+                    modifier = Modifier.testTag(CONFIRM_DELETE_MESSAGE_TEST_TAG),
+                    onClick = {
+                        messagePendingConfirmation = null
+                        onRequestDeleteMessage(message)
+                    },
+                ) { Text(stringResource(R.string.delete_permanently)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { messagePendingConfirmation = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+    if (threadConfirmationStep == 1) {
+        AlertDialog(
+            onDismissRequest = { threadConfirmationStep = 0 },
+            title = { Text(stringResource(R.string.delete_conversation_title)) },
+            text = { Text(stringResource(R.string.delete_conversation_explanation)) },
+            confirmButton = {
+                TextButton(
+                    modifier = Modifier.testTag(CONTINUE_DELETE_THREAD_TEST_TAG),
+                    onClick = { threadConfirmationStep = 2 },
+                ) { Text(stringResource(R.string.delete_permanently)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { threadConfirmationStep = 0 }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+    if (threadConfirmationStep == 2) {
+        AlertDialog(
+            onDismissRequest = { threadConfirmationStep = 0 },
+            title = { Text(stringResource(R.string.delete_conversation_last_chance_title)) },
+            text = { Text(stringResource(R.string.delete_conversation_last_chance_explanation)) },
+            confirmButton = {
+                TextButton(
+                    modifier = Modifier.testTag(CONFIRM_DELETE_THREAD_TEST_TAG),
+                    onClick = {
+                        threadConfirmationStep = 0
+                        onRequestDeleteThread()
+                    },
+                ) { Text(stringResource(R.string.delete_conversation_permanently)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { threadConfirmationStep = 0 }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
     BackHandler {
         if (composerFocused) {
             focusManager.clearFocus()
@@ -168,8 +246,17 @@ fun ThreadScreen(
                 onSelectSubscription = onSelectSubscription,
                 sendDelaySeconds = sendDelaySeconds,
                 onSetSendDelaySeconds = onSetSendDelaySeconds,
+                deleteConversationAvailable = state is ThreadUiState.Ready &&
+                    state.coverage.verifiedComplete && state.window.items.isNotEmpty() &&
+                    !deletionActive,
+                onRequestDeleteConversation = { threadConfirmationStep = 1 },
             )
             HorizontalDivider(color = visualTokens.violet.copy(alpha = 0.4f))
+            PermanentDeletionBanner(
+                state = deletion,
+                onUndo = onUndoDeletion,
+                onRetryStatus = onRetryDeletionStatus,
+            )
             Box(modifier = Modifier.weight(1f)) {
                 when (state) {
                     ThreadUiState.Loading -> LoadingPane()
@@ -187,6 +274,8 @@ fun ThreadScreen(
                             onViewportChanged = onViewportChanged,
                             onAnchorRestored = onAnchorRestored,
                             onToggleMessageExpansion = onToggleMessageExpansion,
+                            deletionActive = deletionActive,
+                            onRequestDeleteMessage = { messagePendingConfirmation = it },
                         )
                     }
                 }
@@ -219,6 +308,8 @@ private fun ThreadHeader(
     onSelectSubscription: (AuroraSubscriptionId) -> Unit,
     sendDelaySeconds: Int,
     onSetSendDelaySeconds: (Int) -> Unit,
+    deleteConversationAvailable: Boolean,
+    onRequestDeleteConversation: () -> Unit,
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
     val ready = state as? ThreadUiState.Ready
@@ -273,6 +364,8 @@ private fun ThreadHeader(
             onOpenConversationAppearance = onOpenConversationAppearance,
             sendDelaySeconds = sendDelaySeconds,
             onSetSendDelaySeconds = onSetSendDelaySeconds,
+            deleteConversationAvailable = deleteConversationAvailable,
+            onRequestDeleteConversation = onRequestDeleteConversation,
         )
     }
 }
@@ -358,6 +451,8 @@ private fun ThreadMoreMenu(
     onOpenConversationAppearance: () -> Unit,
     sendDelaySeconds: Int,
     onSetSendDelaySeconds: (Int) -> Unit,
+    deleteConversationAvailable: Boolean,
+    onRequestDeleteConversation: () -> Unit,
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
     var expanded by remember { mutableStateOf(false) }
@@ -453,6 +548,95 @@ private fun ThreadMoreMenu(
                     showSendDelay = true
                 },
             )
+            DropdownMenuItem(
+                modifier = Modifier.testTag(THREAD_DELETE_ACTION_TEST_TAG),
+                enabled = deleteConversationAvailable,
+                text = {
+                    Text(
+                        stringResource(R.string.delete_conversation),
+                        color = if (deleteConversationAvailable) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            visualTokens.lilacSecondary
+                        },
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onRequestDeleteConversation()
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PermanentDeletionBanner(
+    state: PermanentDeletionUiState,
+    onUndo: () -> Unit,
+    onRetryStatus: () -> Unit,
+) {
+    if (state is PermanentDeletionUiState.None || state is PermanentDeletionUiState.Loading) return
+    val visualTokens = LocalAuroraVisualTokens.current
+    val text = when (state) {
+        is PermanentDeletionUiState.Pending -> stringResource(
+            if (state.targetKind == PermanentDeletionTargetUiKind.MESSAGE) {
+                R.string.deleting_message_pending
+            } else {
+                R.string.deleting_conversation_pending
+            },
+        )
+        is PermanentDeletionUiState.Committing -> stringResource(R.string.deleting_permanently)
+        is PermanentDeletionUiState.ReviewRequired -> stringResource(
+            if (state.commitMayHaveStarted) {
+                R.string.deletion_needs_review
+            } else {
+                R.string.deletion_paused_safe
+            },
+        )
+        PermanentDeletionUiState.Loading,
+        PermanentDeletionUiState.None,
+        -> return
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(PERMANENT_DELETION_BANNER_TEST_TAG),
+        color = visualTokens.elevatedSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.72f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = text,
+                modifier = Modifier.weight(1f),
+                color = visualTokens.onIncoming,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            when (state) {
+                is PermanentDeletionUiState.Pending -> TextButton(
+                    modifier = Modifier.testTag(UNDO_DELETION_TEST_TAG),
+                    onClick = onUndo,
+                ) { Text(stringResource(R.string.undo)) }
+                is PermanentDeletionUiState.ReviewRequired -> TextButton(
+                    modifier = Modifier.testTag(REVIEW_DELETION_TEST_TAG),
+                    onClick = if (state.commitMayHaveStarted) onRetryStatus else onUndo,
+                ) {
+                    Text(
+                        stringResource(
+                            if (state.commitMayHaveStarted) R.string.check_status
+                            else R.string.keep_item,
+                        ),
+                    )
+                }
+                is PermanentDeletionUiState.Committing,
+                PermanentDeletionUiState.Loading,
+                PermanentDeletionUiState.None,
+                -> Unit
+            }
         }
     }
 }
@@ -483,6 +667,8 @@ private fun ThreadReady(
     onViewportChanged: (List<TimelineMessage>) -> Unit,
     onAnchorRestored: () -> Unit,
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
+    deletionActive: Boolean,
+    onRequestDeleteMessage: (TimelineMessage) -> Unit,
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
     val items = state.window.items
@@ -713,6 +899,8 @@ private fun ThreadReady(
                         previewVisible = message.providerMessageId in visibleMessageIds,
                         attachmentRepository = attachmentRepository,
                         previewLoader = previewLoader,
+                        deleteAvailable = message.syncFingerprint != null && !deletionActive,
+                        onRequestDelete = { onRequestDeleteMessage(message) },
                     )
                 }
                 item(key = "thread-bottom-space", contentType = "spacing") { Spacer(Modifier.height(8.dp)) }
@@ -721,6 +909,7 @@ private fun ThreadReady(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
     message: TimelineMessage,
@@ -734,6 +923,8 @@ private fun MessageBubble(
     previewVisible: Boolean,
     attachmentRepository: MmsAttachmentRepository,
     previewLoader: BoundedPreviewLoader,
+    deleteAvailable: Boolean,
+    onRequestDelete: () -> Unit,
 ) {
     val tokens = LocalAuroraMaterialTokens.current
     val visualTokens = LocalAuroraVisualTokens.current
@@ -741,6 +932,7 @@ private fun MessageBubble(
     val directionDescription = stringResource(
         if (incoming) R.string.incoming_message else R.string.outgoing_message,
     )
+    val deleteMessageDescription = stringResource(R.string.delete_message)
     val senderChanged = incoming && message.senderAddress != null &&
         message.senderAddress != previousMessage?.senderAddress
     val displayedSubject = if (expandedContent == null) message.subject else expandedContent.subject
@@ -810,7 +1002,30 @@ private fun MessageBubble(
                 shape = bubbleShape,
             )
             .clip(bubbleShape)
-            .semantics { stateDescription = directionDescription }
+            .then(
+                if (deleteAvailable) {
+                    Modifier.combinedClickable(
+                        onClick = {},
+                        onLongClick = onRequestDelete,
+                    )
+                } else {
+                    Modifier
+                },
+            )
+            .semantics {
+                stateDescription = directionDescription
+                if (deleteAvailable) {
+                    customActions = listOf(
+                        CustomAccessibilityAction(
+                            label = deleteMessageDescription,
+                            action = {
+                                onRequestDelete()
+                                true
+                            },
+                        ),
+                    )
+                }
+            }
             .testTag(MESSAGE_BUBBLE_TEST_TAG)
         val bubbleContentColor = if (incoming) {
             visualTokens.onIncoming
@@ -1169,6 +1384,8 @@ private fun Composer(
             )
         state.unavailableReason == ComposerUnavailableReason.RECOVERY_PENDING ->
             stringResource(R.string.finishing_send_recovery)
+        state.unavailableReason == ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE ->
+            stringResource(R.string.deletion_in_progress)
         state.unavailableReason == ComposerUnavailableReason.MESSAGING_UNAVAILABLE ->
             stringResource(R.string.messaging_send_unavailable)
         state.unavailableReason == ComposerUnavailableReason.EMPTY_MESSAGE ->
@@ -1231,7 +1448,8 @@ private fun Composer(
                     state.sendState != ComposerSendState.DELAY_PENDING &&
                     state.sendState != ComposerSendState.DELAY_REVIEW &&
                     state.sendState != ComposerSendState.SUBMISSION_UNKNOWN &&
-                    state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING,
+                    state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING &&
+                    state.unavailableReason != ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE,
                 modifier = Modifier
                     .weight(1f)
                     .onFocusChanged { onFocusChanged(it.isFocused) }
@@ -1365,6 +1583,13 @@ const val COMPOSER_TEST_TAG: String = "aurora-composer"
 const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"
 const val COMPOSER_SCHEDULE_TEST_TAG: String = "aurora-composer-schedule"
 const val THREAD_SEND_DELAY_ACTION_TEST_TAG: String = "aurora-thread-send-delay"
+const val THREAD_DELETE_ACTION_TEST_TAG: String = "aurora-thread-delete"
+const val CONFIRM_DELETE_MESSAGE_TEST_TAG: String = "aurora-confirm-delete-message"
+const val CONTINUE_DELETE_THREAD_TEST_TAG: String = "aurora-continue-delete-thread"
+const val CONFIRM_DELETE_THREAD_TEST_TAG: String = "aurora-confirm-delete-thread"
+const val PERMANENT_DELETION_BANNER_TEST_TAG: String = "aurora-deletion-banner"
+const val UNDO_DELETION_TEST_TAG: String = "aurora-undo-deletion"
+const val REVIEW_DELETION_TEST_TAG: String = "aurora-review-deletion"
 
 private val SEND_DELAY_SECOND_OPTIONS = listOf(0, 1, 3, 5, 10)
 const val THREAD_MORE_ACTION_TEST_TAG: String = "aurora-thread-more-action"

@@ -6,7 +6,7 @@ and aggregate local/emulator acceptance passed on 2026-07-18. Physical-device,
 SIM, OEM, carrier-network, billing, roaming, sent, and delivery evidence remains
 open.
 This document does not declare AuroraSMS complete or gold.
-Phase 5B through Phase 5E addenda below are now implemented; the latest source
+Phase 5B through Phase 5F addenda below are now implemented; the latest source
 is `0.5.4-phase5` (`versionCode` 8), Room schema 9.
 
 ## Outcome
@@ -718,6 +718,36 @@ Host, schema/migration, repository, manifest, Compose UI, privacy, release, and
 API 26/API 36 evidence belongs in `docs/TEST_MATRIX.md`. Synthetic timers,
 emulators, and no-send physical UI checks do not close real carrier, billing,
 radio, OEM-kill, or reboot-during-live-send gates.
+
+## Phase 5F addendum — guarded permanent message and Thread deletion
+
+The 2026-07-19 `0.5.5-phase5` (`versionCode` 9) slice adds Room schema 10 and
+ADR 0013. A visible provider-backed SMS/MMS row can be selected with long press
+or an accessibility custom action, then permanently deleted after explicit
+confirmation. The Thread overflow offers whole-conversation deletion only when
+the local index is verified complete and uses a separate last-chance
+confirmation.
+
+Both paths create one content-free operation with a fixed five-second Undo
+window. Exact message fingerprint or bounded Thread count/latest-row metadata
+detects provider changes. Whole-Thread state also snapshots the exact Aurora
+draft ID/revision. Composer, send-delay, scheduled-send, and active-send
+conflicts stop the deletion; the composer remains locked while an operation is
+active.
+
+The due path rechecks role, local conflicts, draft revision, clock continuity,
+lateness, and provider identity before durably entering `COMMITTING`. Recovery
+never retries provider deletion: it inspects whether the exact target is
+absent, unchanged, changed, or unavailable. Only confirmed absence finalizes
+the operation and clears the exact old draft revision. A newer draft is
+preserved. After provider success, the UI offers no restoration claim. No
+recycle-bin UI, schema, preference, or worker exists.
+
+Host, schema/migration, repository, provider, coordinator, manifest, Compose
+UI, privacy, release, and API 26/API 36 evidence belongs in
+`docs/TEST_MATRIX.md`. Automated and safe physical acceptance must not read or
+delete live messages and does not close physical process-death or OEM/provider
+lifecycle gates.
 
 ## Evidence that remains open
 

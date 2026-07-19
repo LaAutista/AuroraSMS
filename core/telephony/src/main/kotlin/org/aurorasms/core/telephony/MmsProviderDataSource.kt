@@ -98,5 +98,11 @@ interface MmsProviderDataSource {
 
     suspend fun readPage(request: ProviderPageRequest): ProviderAccessResult<ProviderPage<MmsProviderMessage>>
 
+    /** Reads one exact provider identity for guarded local mutations. */
+    suspend fun readExact(
+        id: ProviderMessageId,
+    ): ProviderAccessResult<MmsProviderMessage?> =
+        ProviderAccessResult.Unsupported("read exact MMS")
+
     suspend fun insertIncoming(message: DecodedIncomingMmsRecord): ProviderAccessResult<ProviderStoredMessage>
 }

@@ -3,8 +3,8 @@
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
 bounded ADR 0008 Phase 5A source implementation in commit `17fc421`, followed
-by accepted Phase 5B–5E durability controls through ADR 0012 and Room schema 9.
-Local/API 26/API 36 acceptance passed through Phase 5E; safe install/migration
+by accepted Phase 5B–5F durability controls through ADR 0013 and Room schema 10.
+Local/API 26/API 36 acceptance passed through Phase 5F; safe install/migration
 and locked-device cold launch passed on a Pixel 8. Real-carrier, radio, billing,
 and invasive physical lifecycle evidence remains open.
 
@@ -683,6 +683,25 @@ for review without transport retry. Dispatch reconciliation accepts only an
 exact matching durable composer operation or terminal draft absence; mismatch
 retains the draft for review. Emulator and no-send device evidence cannot close
 real carrier, radio, billing, or OEM-kill threats.
+
+Phase 5F implements ADR 0013's guarded permanent-deletion boundary. Schema 10
+stores no address or message content: it binds a message to provider kind, row
+ID, and synchronization fingerprint, or a Thread to its verified participant
+digest, count, latest SMS/MMS IDs, and exact captured draft revision. Physical
+triggers enforce bounded identifiers, legal phase transitions, and a maximum
+of 128 operations. A private alarm exposes only the local operation ID.
+
+One-message deletion requires explicit confirmation; whole-Thread deletion
+requires two confirmations. Both provide one fixed five-second pre-commit Undo
+window. Before mutation Aurora rechecks role, provider conflicts, target
+identity, clock continuity, and lateness. Recovery never blindly replays an
+interrupted provider call: confirmed target absence finalizes, an unchanged
+present target cancels safely, and changed or unreadable state remains visible
+for review. Provider success removes any exact old Thread draft and never
+claims recoverability; newer drafts are protected by revision comparison. No
+recycle-bin UI, table, preference, migration, service, or worker exists.
+Emulator evidence does not close physical provider race, process-death, or OEM
+lifecycle threats, and no live Pixel message is used for acceptance.
 
 ## Open security decisions
 
