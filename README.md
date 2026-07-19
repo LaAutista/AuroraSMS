@@ -30,16 +30,17 @@ call. Inherited `SUBMITTING` is conservatively changed to
 keyed by conversation plus operation, so later success can cancel only its own
 alert.
 
-The 2026-07-18 Phase 5A worktree identifies as `0.5.0-phase5` (`versionCode` 4)
-and adds the first intentional Thread composer send behind a deliberately narrow
-gate: an existing provider-backed Thread, one completed verified participant,
-its associated active SMS-capable subscription, and exactly one
+The 2026-07-19 Phase 5B worktree identifies as `0.5.1-phase5` (`versionCode` 5)
+and retains Phase 5A's first intentional Thread composer send behind a
+deliberately narrow gate: an existing provider-backed Thread, one completed
+verified participant, its associated active SMS-capable subscription, and exactly one
 Android-calculated text SMS unit. New/external compose, groups, MMS, multipart
 text, delivery reports, SIM fallback, schedules, delay, Undo Send, and automatic
 retry remain disabled.
 
-Its Room schema-5 operation is bounded and content-free; the exact Room draft
-remains the message-text authority. App-private saved state is only an exact-base
+Its Room schema-5 active operation and schema-6 acknowledged-callback receipt are
+bounded and content-free; the exact Room draft remains the message-text authority.
+App-private saved state is only an exact-base
 restoration hint, hidden until Room validation and discarded when stale. An
 atomic writer freeze drains every accepted edit and captures the one durable
 snapshot used for send. Caller-owned `PREPARED` and `SUBMITTING` checkpoints are
@@ -59,10 +60,12 @@ exact provider `Success` dispositions `APPLIED`, `ROW_ABSENT`, and
 `OWNERSHIP_CONFLICT` are terminal; absence and conflict perform no foreign
 mutation, while provider access failure defers. Explicitly acknowledging
 submission uncertainty preserves the draft and warns that another send may
-duplicate it. A late callback is still swallowed, but cleanup of its old provider
-row may remain; that is an explicit Phase 5B residual. Phase 5A automated work
-sends no real carrier SMS, closes no physical/SIM/OEM/carrier gates, and does not
-make AuroraSMS complete or gold.
+duplicate it. Schema 6 atomically transfers only the old callback identity and
+exact provider binding into a separate receipt. A late exact success/failure is
+checkpointed before its old provider row is reconciled, survives process death,
+never clears the preserved draft, and never resends. Phase 5 automated work sends
+no real carrier SMS, closes no physical/SIM/OEM/carrier gates, and does not make
+AuroraSMS complete or gold.
 
 Phase 5A final-source local acceptance is green on the API 26 and API 36 AOSP
 emulators. The complete offline host/release/privacy/license aggregate was
@@ -91,6 +94,13 @@ APK did install and copy to the API 36 emulator with a matching device-side
 SHA-256, then cold-launched successfully to the expected role-approval screen
 without changing the role or SMS permissions. Exact commands, module totals,
 and all artifact hashes are recorded in `docs/TEST_MATRIX.md`.
+
+Phase 5B acknowledged-unknown cleanup is locally green as of 2026-07-19. The
+exact source passed the 886-task host/release/privacy/license aggregate with 515
+host tests, plus the complete API 36 connected matrix with 291 tests, 10
+intentional skips, and zero failures/errors. These remain synthetic/emulator
+results; they do not replace physical SIM, carrier, OEM, or live lifecycle
+acceptance.
 
 Phase 1 established the independently implemented default-SMS foundation:
 

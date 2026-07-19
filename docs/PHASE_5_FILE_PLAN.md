@@ -310,11 +310,10 @@ already have accepted the text
 and that sending again could create a duplicate. “Wait” keeps the operation.
 “Keep as draft” explicitly acknowledges and removes only the unknown operation;
 it does not resend or delete the draft. A later send requires a separate user tap.
-Because that acknowledgement intentionally discards Aurora's durable callback
-owner, a later explicit composer-origin callback is swallowed rather than routed
-to another owner, but the old provider row may remain unchanged. That cleanup
-limitation is an explicit Phase 5B residual; the duplicate-risk warning and
-separate later tap are mandatory in Phase 5A.
+The frozen Phase 5A implementation intentionally discarded Aurora's durable
+callback owner and left exact late-provider cleanup as a Phase 5B residual. ADR
+0009 closes that residual with a separate content-free receipt while preserving
+the duplicate-risk warning and separate later tap.
 
 ## File-level implementation map
 
@@ -375,6 +374,20 @@ separate later tap are mandatory in Phase 5A.
   transitions, callbacks, draft retention/clearance, reopen, and failure cases.
 - `StateMigration4To5Test`, `StateDatabaseReopenTest`, and schema tests verify the
   migration and existing-data preservation.
+
+#### Phase 5B acknowledged-unknown addendum
+
+- `AcknowledgedComposerSmsEntity.kt` and
+  `AcknowledgedComposerSmsEnforcement.kt` define the bounded content-free
+  late-callback receipt and its physical invariants.
+- The operation repository atomically transfers `SUBMISSION_UNKNOWN` ownership
+  into that receipt, checkpoints exact late `SENT`/`FAILED` proof, and removes the
+  receipt only after a terminal exact provider disposition.
+- `AuroraStateDatabase` schema 6, `STATE_MIGRATION_5_6`, `6.json`, and
+  `6-triggers.sql` record the non-destructive addition.
+- `StateMigration5To6Test`, repository instrumentation, reopen coverage, and
+  coordinator tests prove draft preservation, process-safe reconciliation, and
+  zero resend. ADR 0009 owns the decision.
 
 ### `core:telephony`
 
@@ -632,9 +645,11 @@ explicitly open even after fake/emulator acceptance:
 - device reboot or process death during a real network send; and
 - all more-than-one-unit carrier behavior.
 
-Phase 5A also leaves provider-row cleanup after manual unknown acknowledgement as
-an explicit Phase 5B residual: a late explicit composer callback is consumed, but
-there is no longer a durable operation with authority to reconcile that old row.
+The frozen Phase 5A source left provider-row cleanup after manual unknown
+acknowledgement as a Phase 5B residual. ADR 0009 closes that local residual in
+schema 6: acknowledgement atomically transfers exact callback/provider ownership
+to a content-free receipt, and recovery reconciles durable late proof without
+resending or clearing the preserved draft.
 
 No emulator modem injection, fake callback, Android method return, or provider
 `COMPLETE` row may close those items. They require a separate user-approved

@@ -23,6 +23,13 @@ enum class ComposerSmsOperationPhase {
     KNOWN_UNSENT,
 }
 
+/** Durable proof retained after a user releases a submission-unknown composer operation. */
+enum class AcknowledgedComposerSmsCallbackProof {
+    AWAITING_CALLBACK,
+    SENT,
+    FAILED,
+}
+
 /** Optimistic-concurrency token for one composer operation. */
 @JvmInline
 value class ComposerSmsOperationRevision(val updatedTimestampMillis: Long) {
@@ -81,6 +88,49 @@ data class ComposerSmsOperation(
 
     override fun toString(): String =
         "ComposerSmsOperation(phase=$phase, hasProviderBinding=${providerBinding != null}, REDACTED)"
+}
+
+/**
+ * Content-free ownership for an exact callback that may arrive after the user keeps the draft.
+ *
+ * This receipt is separate from the active operation so it cannot lock the composer or clear the
+ * preserved draft. It exists only long enough to reconcile the exact provider row.
+ */
+data class AcknowledgedComposerSmsReceipt(
+    val operationId: MessageId,
+    val providerBinding: ComposerSmsProviderBinding,
+    val callbackProof: AcknowledgedComposerSmsCallbackProof,
+    val acknowledgedTimestampMillis: Long,
+    val updatedTimestampMillis: Long,
+) {
+    init {
+        require(operationId.isComposerSmsOperationId()) {
+            "Acknowledged composer SMS operation ID is outside its pending-operation namespace"
+        }
+        require(acknowledgedTimestampMillis >= 0L) {
+            "Acknowledged composer SMS timestamp cannot be negative"
+        }
+        require(updatedTimestampMillis >= acknowledgedTimestampMillis) {
+            "Acknowledged composer SMS update time cannot precede acknowledgement"
+        }
+        when (callbackProof) {
+            AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK ->
+                require(updatedTimestampMillis == acknowledgedTimestampMillis) {
+                    "Awaiting composer SMS receipt cannot have a later update"
+                }
+            AcknowledgedComposerSmsCallbackProof.SENT,
+            AcknowledgedComposerSmsCallbackProof.FAILED,
+            -> require(updatedTimestampMillis > acknowledgedTimestampMillis) {
+                "Checkpointed composer SMS receipt requires a later update"
+            }
+        }
+    }
+
+    val revision: ComposerSmsOperationRevision
+        get() = ComposerSmsOperationRevision(updatedTimestampMillis)
+
+    override fun toString(): String =
+        "AcknowledgedComposerSmsReceipt(callbackProof=$callbackProof, REDACTED)"
 }
 
 /** Exact acknowledged draft revision requested for transactional reservation. */
@@ -174,6 +224,10 @@ interface ComposerSmsOperationRepository {
     /** Returns every active operation; the hard table cap keeps this snapshot bounded. */
     suspend fun recoverySnapshot(): ComposerSmsOperationResult<List<ComposerSmsOperation>>
 
+    /** Returns durable late-callback receipts, bounded by the same fail-closed storage policy. */
+    suspend fun acknowledgedRecoverySnapshot():
+        ComposerSmsOperationResult<List<AcknowledgedComposerSmsReceipt>>
+
     suspend fun markPrepared(
         operationId: MessageId,
         expectedRevision: ComposerSmsOperationRevision,
@@ -235,10 +289,42 @@ interface ComposerSmsOperationRepository {
         providerBinding: ComposerSmsProviderBinding,
     ): ComposerSmsOperationResult<ComposerSmsSentCompletion>
 
-    /** Removes only a user-acknowledged KNOWN_UNSENT or SUBMISSION_UNKNOWN terminal record. */
+    /**
+     * Removes a user-acknowledged terminal record. SUBMISSION_UNKNOWN atomically becomes a
+     * content-free late-callback receipt; KNOWN_UNSENT needs no receipt.
+     */
     suspend fun acknowledgeAndRemove(
         operationId: MessageId,
         expectedRevision: ComposerSmsOperationRevision,
+        acknowledgedTimestampMillis: Long,
+    ): ComposerSmsOperationResult<Unit>
+
+    suspend fun readAcknowledged(
+        operationId: MessageId,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt>
+
+    /** Checkpoints an exact late SENT callback before provider reconciliation. */
+    suspend fun markAcknowledgedSent(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        updatedTimestampMillis: Long,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt>
+
+    /** Checkpoints an exact late failed SENT callback before provider reconciliation. */
+    suspend fun markAcknowledgedFailed(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        updatedTimestampMillis: Long,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt>
+
+    /** Removes only the exact receipt whose checkpointed proof has reached the provider terminal. */
+    suspend fun completeAcknowledged(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        callbackProof: AcknowledgedComposerSmsCallbackProof,
     ): ComposerSmsOperationResult<Unit>
 }
 
@@ -259,4 +345,5 @@ internal fun ComposerSmsOperationPhase.acceptsBinding(binding: ComposerSmsProvid
     }
 
 const val MAXIMUM_COMPOSER_SMS_OPERATIONS: Int = 128
+const val MAXIMUM_ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS: Int = 128
 const val MAXIMUM_COMPOSER_SMS_UNIT_COUNT: Int = 1

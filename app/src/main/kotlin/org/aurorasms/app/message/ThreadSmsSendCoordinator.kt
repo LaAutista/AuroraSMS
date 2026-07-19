@@ -25,6 +25,8 @@ import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.model.asConversationId
+import org.aurorasms.core.state.AcknowledgedComposerSmsCallbackProof
+import org.aurorasms.core.state.AcknowledgedComposerSmsReceipt
 import org.aurorasms.core.state.ComposerSmsOperation
 import org.aurorasms.core.state.ComposerSmsOperationPhase
 import org.aurorasms.core.state.ComposerSmsOperationRepository
@@ -250,7 +252,13 @@ internal class ThreadSmsSendCoordinator(
             if (operation.phase != ComposerSmsOperationPhase.SUBMISSION_UNKNOWN) {
                 return@withLock false
             }
-            when (operations.acknowledgeAndRemove(operation.operationId, operation.revision)) {
+            when (
+                operations.acknowledgeAndRemove(
+                    operation.operationId,
+                    operation.revision,
+                    nextTimestamp(operation) ?: return@withLock false,
+                )
+            ) {
                 is ComposerSmsOperationResult.Success,
                 ComposerSmsOperationResult.NotFound,
                 -> {
@@ -283,6 +291,15 @@ internal class ThreadSmsSendCoordinator(
                 return@withLock ThreadSmsRecoveryResult.STORAGE_BLOCKED
             }
         }
+        val acknowledgedSnapshot = when (val result = operations.acknowledgedRecoverySnapshot()) {
+            is ComposerSmsOperationResult.Success -> result.value
+            else -> {
+                if (isEligible(recoveryGeneration)) {
+                    recoveryGate.value = RecoveryGate.STORAGE_BLOCKED
+                }
+                return@withLock ThreadSmsRecoveryResult.STORAGE_BLOCKED
+            }
+        }
         var deferred = false
         snapshot.forEach { operation ->
             if (!isEligible(recoveryGeneration)) {
@@ -305,6 +322,13 @@ internal class ThreadSmsSendCoordinator(
                     } ?: true
             }
             if (!settled) deferred = true
+        }
+        acknowledgedSnapshot.forEach { receipt ->
+            if (!isEligible(recoveryGeneration)) {
+                deferred = true
+                return@forEach
+            }
+            if (!settleAcknowledgedCallback(receipt)) deferred = true
         }
         if (!isEligible(recoveryGeneration)) {
             return@withLock ThreadSmsRecoveryResult.DEFERRED
@@ -334,7 +358,8 @@ internal class ThreadSmsSendCoordinator(
             }
             val operation = when (val read = operations.read(result.operationId)) {
                 is ComposerSmsOperationResult.Success -> read.value
-                ComposerSmsOperationResult.NotFound -> return@withLock false
+                ComposerSmsOperationResult.NotFound ->
+                    return@withLock handleAcknowledgedTransportResult(result)
                 else -> {
                     if (!requestExactCallbackRetry(result)) requestClassificationRecovery()
                     return@withLock false
@@ -415,8 +440,61 @@ internal class ThreadSmsSendCoordinator(
             settleProviderStatus(it, SmsProviderStatus.FAILED)
         } ?: true
         if (!providerSettled) return false
-        return operations.acknowledgeAndRemove(existing.operationId, existing.revision) is
+        return operations.acknowledgeAndRemove(
+            existing.operationId,
+            existing.revision,
+            nextTimestamp(existing) ?: return false,
+        ) is
             ComposerSmsOperationResult.Success
+    }
+
+    private suspend fun handleAcknowledgedTransportResult(result: TransportResult): Boolean {
+        val receipt = when (val read = operations.readAcknowledged(result.operationId)) {
+            is ComposerSmsOperationResult.Success -> read.value
+            ComposerSmsOperationResult.NotFound -> return false
+            else -> {
+                if (!requestExactCallbackRetry(result)) requestClassificationRecovery()
+                return false
+            }
+        }
+        val binding = result.exactSingleUnitBindingOrNull() ?: return true
+        if (receipt.providerBinding != binding) return true
+        val expectedProof = when (result) {
+            is TransportResult.Sent -> AcknowledgedComposerSmsCallbackProof.SENT
+            is TransportResult.Failed -> {
+                if (result.stage != TransportResult.FailureStage.SENT_CALLBACK) return true
+                AcknowledgedComposerSmsCallbackProof.FAILED
+            }
+            else -> return true
+        }
+        if (receipt.callbackProof != AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK) {
+            if (receipt.callbackProof == expectedProof && !settleAcknowledgedCallback(receipt)) {
+                requestClassificationRecovery()
+            }
+            return true
+        }
+        val checkpoint = when (expectedProof) {
+            AcknowledgedComposerSmsCallbackProof.SENT -> operations.markAcknowledgedSent(
+                operationId = receipt.operationId,
+                expectedRevision = receipt.revision,
+                providerBinding = binding,
+                updatedTimestampMillis = nextTimestamp(receipt) ?: return true,
+            )
+            AcknowledgedComposerSmsCallbackProof.FAILED -> operations.markAcknowledgedFailed(
+                operationId = receipt.operationId,
+                expectedRevision = receipt.revision,
+                providerBinding = binding,
+                updatedTimestampMillis = nextTimestamp(receipt) ?: return true,
+            )
+            AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK -> return true
+        }
+        when (checkpoint) {
+            is ComposerSmsOperationResult.Success -> {
+                if (!settleAcknowledgedCallback(checkpoint.value)) requestClassificationRecovery()
+            }
+            else -> requestExactCallbackRetry(result)
+        }
+        return true
     }
 
     private suspend fun currentOperation(providerThreadId: ProviderThreadId): ComposerSmsOperation? =
@@ -673,6 +751,30 @@ internal class ThreadSmsSendCoordinator(
         else -> false
     }
 
+    private suspend fun settleAcknowledgedCallback(
+        receipt: AcknowledgedComposerSmsReceipt,
+    ): Boolean {
+        val providerStatus = when (receipt.callbackProof) {
+            AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK -> return true
+            AcknowledgedComposerSmsCallbackProof.SENT -> SmsProviderStatus.COMPLETE
+            AcknowledgedComposerSmsCallbackProof.FAILED -> SmsProviderStatus.FAILED
+        }
+        if (!settleProviderStatus(receipt.providerBinding, providerStatus)) return false
+        return when (
+            operations.completeAcknowledged(
+                operationId = receipt.operationId,
+                expectedRevision = receipt.revision,
+                providerBinding = receipt.providerBinding,
+                callbackProof = receipt.callbackProof,
+            )
+        ) {
+            is ComposerSmsOperationResult.Success,
+            ComposerSmsOperationResult.NotFound,
+            -> true
+            else -> false
+        }
+    }
+
     private fun scheduleCallbackTimeout(operation: ComposerSmsOperation) {
         applicationScope.launch {
             delay(SENT_CALLBACK_TIMEOUT_MILLIS)
@@ -836,6 +938,8 @@ internal class ThreadSmsSendCoordinator(
                         operations.acknowledgeAndRemove(
                             operationId = current.operationId,
                             expectedRevision = current.revision,
+                            acknowledgedTimestampMillis =
+                                nextTimestamp(current) ?: return false,
                         )
                     ) {
                         is ComposerSmsOperationResult.Success,
@@ -911,6 +1015,11 @@ internal class ThreadSmsSendCoordinator(
     private fun nextTimestamp(operation: ComposerSmsOperation): Long? {
         if (operation.updatedTimestampMillis == Long.MAX_VALUE) return null
         return maxOf(safeNow(), operation.updatedTimestampMillis + 1L)
+    }
+
+    private fun nextTimestamp(receipt: AcknowledgedComposerSmsReceipt): Long? {
+        if (receipt.updatedTimestampMillis == Long.MAX_VALUE) return null
+        return maxOf(safeNow(), receipt.updatedTimestampMillis + 1L)
     }
 
     private fun safeNow(): Long = nowMillis().coerceAtLeast(0L)

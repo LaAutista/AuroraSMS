@@ -16,6 +16,7 @@ import androidx.room.RoomDatabase
         AppearanceConversationWallpaperEntity::class,
         AppearanceOverrideSequenceEntity::class,
         ComposerSmsOperationEntity::class,
+        AcknowledgedComposerSmsEntity::class,
     ],
     version = AuroraStateDatabase.VERSION,
     exportSchema = true,
@@ -30,6 +31,6 @@ abstract class AuroraStateDatabase : RoomDatabase() {
     internal abstract fun composerSmsOperationDao(): ComposerSmsOperationDao
 
     companion object {
-        const val VERSION: Int = 5
+        const val VERSION: Int = 6
     }
 }

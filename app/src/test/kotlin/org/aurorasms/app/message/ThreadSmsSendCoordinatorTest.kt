@@ -38,6 +38,8 @@ import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.TransportResult
+import org.aurorasms.core.state.AcknowledgedComposerSmsCallbackProof
+import org.aurorasms.core.state.AcknowledgedComposerSmsReceipt
 import org.aurorasms.core.state.ComposerSmsDraftClearance
 import org.aurorasms.core.state.ComposerSmsOperation
 import org.aurorasms.core.state.ComposerSmsOperationPhase
@@ -426,6 +428,97 @@ class ThreadSmsSendCoordinatorTest {
             1L,
             fixture.coordinator.observe(THREAD_ID).first().unknownAcknowledgementEpoch,
         )
+        assertTrue(fixture.operations.draftPreserved)
+    }
+
+    @Test
+    fun lateExactSuccessAfterUnknownAcknowledgementReconcilesOnlyProviderAndKeepsDraft() = runTest {
+        val fixture = fixture(
+            initialOperation = operationIn(ComposerSmsOperationPhase.SUBMISSION_UNKNOWN),
+        )
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+        val callback = fixture.exactSentCallback()
+
+        assertTrue(fixture.coordinator.acknowledgeSubmissionUnknown(THREAD_ID))
+        assertNull(fixture.operations.operation)
+        assertEquals(
+            AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK,
+            fixture.operations.acknowledgedReceipt?.callbackProof,
+        )
+
+        assertTrue(
+            fixture.coordinator.handleTransportResult(
+                callback.copy(
+                    providerMessageId = ProviderMessageId(ProviderKind.SMS, PROVIDER_ID.value + 1L),
+                ),
+            ),
+        )
+        assertTrue(fixture.provider.statusCalls.isEmpty())
+        assertEquals(
+            AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK,
+            fixture.operations.acknowledgedReceipt?.callbackProof,
+        )
+
+        assertTrue(fixture.coordinator.handleTransportResult(callback))
+
+        assertNull(fixture.operations.acknowledgedReceipt)
+        assertEquals(SmsProviderStatus.COMPLETE, fixture.provider.statusCalls.single().status)
+        assertTrue(fixture.operations.draftPreserved)
+    }
+
+    @Test
+    fun checkpointedLateSuccessRetriesProviderReconciliationDuringRecovery() = runTest {
+        val fixture = fixture(
+            initialOperation = operationIn(ComposerSmsOperationPhase.SUBMISSION_UNKNOWN),
+        )
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+        val callback = fixture.exactSentCallback()
+        assertTrue(fixture.coordinator.acknowledgeSubmissionUnknown(THREAD_ID))
+        fixture.provider.statusResponder = { _, _, _ ->
+            ProviderAccessResult.Unavailable("synthetic provider outage")
+        }
+
+        assertTrue(fixture.coordinator.handleTransportResult(callback))
+        assertEquals(
+            AcknowledgedComposerSmsCallbackProof.SENT,
+            fixture.operations.acknowledgedReceipt?.callbackProof,
+        )
+        assertTrue(fixture.operations.draftPreserved)
+
+        fixture.provider.statusResponder = { _, _, _ ->
+            ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.APPLIED)
+        }
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+        assertNull(fixture.operations.acknowledgedReceipt)
+        assertEquals(listOf(SmsProviderStatus.COMPLETE, SmsProviderStatus.COMPLETE),
+            fixture.provider.statusCalls.map { it.status })
+        assertTrue(fixture.operations.draftPreserved)
+    }
+
+    @Test
+    fun lateExactFailureAfterUnknownAcknowledgementMarksProviderFailedAndKeepsDraft() = runTest {
+        val fixture = fixture(
+            initialOperation = operationIn(ComposerSmsOperationPhase.SUBMISSION_UNKNOWN),
+        )
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+        val operation = checkNotNull(fixture.operations.operation)
+        val callback = TransportResult.Failed(
+            operationId = operation.operationId,
+            transport = MessageTransportKind.SMS,
+            reason = TransportResult.FailureReason.PLATFORM_REJECTED,
+            retryable = true,
+            providerMessageId = PROVIDER_ID,
+            providerConversationId = CONVERSATION_ID,
+            stage = TransportResult.FailureStage.SENT_CALLBACK,
+            operationOrigin = TransportResult.OperationOrigin.COMPOSER,
+        )
+        assertTrue(fixture.coordinator.acknowledgeSubmissionUnknown(THREAD_ID))
+
+        assertTrue(fixture.coordinator.handleTransportResult(callback))
+
+        assertNull(fixture.operations.acknowledgedReceipt)
+        assertEquals(SmsProviderStatus.FAILED, fixture.provider.statusCalls.single().status)
         assertTrue(fixture.operations.draftPreserved)
     }
 
@@ -1034,6 +1127,8 @@ private class RecordingComposerRepository(
 
     var operation: ComposerSmsOperation? = initialOperation
         private set
+    var acknowledgedReceipt: AcknowledgedComposerSmsReceipt? = null
+        private set
     var reserveCount: Int = 0
         private set
     var completeCount: Int = 0
@@ -1127,6 +1222,17 @@ private class RecordingComposerRepository(
         beforeRecoverySnapshot()
         return ComposerSmsOperationResult.Success(listOfNotNull(operation))
     }
+
+    override suspend fun acknowledgedRecoverySnapshot():
+        ComposerSmsOperationResult<List<AcknowledgedComposerSmsReceipt>> =
+        ComposerSmsOperationResult.Success(listOfNotNull(acknowledgedReceipt))
+
+    override suspend fun readAcknowledged(
+        operationId: MessageId,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt> =
+        acknowledgedReceipt?.takeIf { it.operationId == operationId }
+            ?.let { ComposerSmsOperationResult.Success(it) }
+            ?: ComposerSmsOperationResult.NotFound
 
     override suspend fun markPrepared(
         operationId: MessageId,
@@ -1281,6 +1387,7 @@ private class RecordingComposerRepository(
     override suspend fun acknowledgeAndRemove(
         operationId: MessageId,
         expectedRevision: ComposerSmsOperationRevision,
+        acknowledgedTimestampMillis: Long,
     ): ComposerSmsOperationResult<Unit> {
         val current = current(operationId, expectedRevision) ?: return ComposerSmsOperationResult.StaleWrite
         if (current.phase !in setOf(
@@ -1291,11 +1398,98 @@ private class RecordingComposerRepository(
             return ComposerSmsOperationResult.PhaseMismatch
         }
         acknowledgeCount += 1
+        if (current.phase == ComposerSmsOperationPhase.SUBMISSION_UNKNOWN) {
+            acknowledgedReceipt = AcknowledgedComposerSmsReceipt(
+                operationId = current.operationId,
+                providerBinding = checkNotNull(current.providerBinding),
+                callbackProof = AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK,
+                acknowledgedTimestampMillis = acknowledgedTimestampMillis,
+                updatedTimestampMillis = acknowledgedTimestampMillis,
+            )
+        }
         publish(null)
         acknowledgeResultAfterCommit?.let { result ->
             readFailuresRemaining += readFailuresAfterAcknowledgeCommit
             return result
         }
+        return ComposerSmsOperationResult.Success(Unit)
+    }
+
+    override suspend fun markAcknowledgedSent(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        updatedTimestampMillis: Long,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt> =
+        markAcknowledgedCallback(
+            operationId,
+            expectedRevision,
+            providerBinding,
+            AcknowledgedComposerSmsCallbackProof.SENT,
+            updatedTimestampMillis,
+        )
+
+    override suspend fun markAcknowledgedFailed(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        updatedTimestampMillis: Long,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt> =
+        markAcknowledgedCallback(
+            operationId,
+            expectedRevision,
+            providerBinding,
+            AcknowledgedComposerSmsCallbackProof.FAILED,
+            updatedTimestampMillis,
+        )
+
+    private fun markAcknowledgedCallback(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        callbackProof: AcknowledgedComposerSmsCallbackProof,
+        updatedTimestampMillis: Long,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt> {
+        val current = acknowledgedReceipt?.takeIf {
+            it.operationId == operationId && it.revision == expectedRevision
+        } ?: return ComposerSmsOperationResult.StaleWrite
+        if (current.providerBinding != providerBinding) {
+            return ComposerSmsOperationResult.ProviderMismatch
+        }
+        if (current.callbackProof != AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK) {
+            return if (current.callbackProof == callbackProof) {
+                ComposerSmsOperationResult.Success(current)
+            } else {
+                ComposerSmsOperationResult.PhaseMismatch
+            }
+        }
+        return ComposerSmsOperationResult.Success(
+            current.copy(
+                callbackProof = callbackProof,
+                updatedTimestampMillis = updatedTimestampMillis,
+            ).also { acknowledgedReceipt = it },
+        )
+    }
+
+    override suspend fun completeAcknowledged(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        callbackProof: AcknowledgedComposerSmsCallbackProof,
+    ): ComposerSmsOperationResult<Unit> {
+        val current = acknowledgedReceipt?.takeIf {
+            it.operationId == operationId && it.revision == expectedRevision
+        } ?: return ComposerSmsOperationResult.NotFound
+        if (current.providerBinding != providerBinding) {
+            return ComposerSmsOperationResult.ProviderMismatch
+        }
+        if (
+            callbackProof == AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK ||
+            current.callbackProof != callbackProof
+        ) {
+            return ComposerSmsOperationResult.PhaseMismatch
+        }
+        acknowledgedReceipt = null
         return ComposerSmsOperationResult.Success(Unit)
     }
 

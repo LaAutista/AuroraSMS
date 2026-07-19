@@ -2763,6 +2763,10 @@ tracked in the repository.
   exact draft restoration/freeze, cancellation envelope, bounded non-sending
   recovery, exact callback retry, provider ownership, and terminal settlement
   suites pass.
+- [x] Schema-6 acknowledged-unknown receipts atomically release the active
+  operation, preserve the draft, checkpoint exact late success/failure, and retry
+  only exact provider reconciliation across Room reopen. Focused host tests and
+  nine API 36 Room/migration/reopen tests passed on 2026-07-19.
 - [x] Complete API 26 and API 36 connected matrices pass with identical 278
   executed-test coverage and only documented assumption skips.
 - [x] Production composer preflight is exercised only under unavailable role or
@@ -2782,9 +2786,33 @@ tracked in the repository.
 
 No real carrier SMS was sent. SIM, physical-device, OEM, carrier, billing,
 roaming, sent/delivery, reboot, and live-send process-death gates remain open.
-The Phase 5B manual-unknown residual also remains: acknowledgement removes the
-durable operation, so a later exact callback is swallowed but its old provider
-row may remain unreconciled. AuroraSMS is incomplete and not gold.
+The Phase 5B manual-unknown late-provider residual is locally closed by the
+schema-6 receipt protocol in ADR 0009; that synthetic/emulator proof does not
+close any physical or carrier row. AuroraSMS is incomplete and not gold.
+
+### Phase 5B acknowledged-unknown local acceptance — 2026-07-19
+
+This source identifies as `0.5.1-phase5` (`versionCode` 5); the schema-6
+migration and callback-receipt change therefore do not reuse the frozen Phase 5A
+package version.
+
+The exact final Phase 5B source passed the complete offline host/release/privacy/
+license aggregate in 1m35s across 886 tasks (199 executed, 687 up-to-date). All
+515 host JUnit results passed: app 239, design system 11, index
+69, model 19, notifications 21, state 40, telephony 79, testing 24, and
+conversations 13. Debug, R8 release, and benchmark assembly; debug/release/
+benchmark lint; clean-room/private-art scans; dependency locks; permission and
+APK-content ledgers; and license gates all passed. CycloneDX 1.6 separately
+passed 15 up-to-date tasks in 7s.
+
+The complete final-version API 36 connected matrix passed in 1m29s across 456
+tasks. Its
+authoritative XML reports 291 tests, 10 intentional assumption skips, 281
+executed tests, and zero failures/errors: app 131/9 skips, benchmark 3/1, index
+31/0, notifications 29/0, state 52/0, telephony 35/0, and conversations 10/0.
+After the final receipt-domain invariant was tightened, all 52 state tests and
+the focused host coordinator/state suites passed again. No test invoked a real
+carrier destination.
 
 ## Remaining Phase 5 lifecycle/action matrix
 

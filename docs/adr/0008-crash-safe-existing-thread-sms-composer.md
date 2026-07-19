@@ -208,11 +208,11 @@ a duplicate. “Wait” leaves the operation locked. “Keep as draft” acknowl
 removes only the `SUBMISSION_UNKNOWN` record; it does not resend or delete the
 draft. Any later send is a separate explicit user action after that warning.
 
-Manual acknowledgement deliberately gives up the durable owner for the old
-callback. A later explicit composer-origin callback is still consumed and cannot
-fall through to another outgoing owner, but its old provider row may remain
-unchanged because no operation remains with reconciliation authority. This is an
-explicit Phase 5B cleanup residual, not a hidden Phase 5A guarantee.
+Phase 5A manual acknowledgement deliberately gave up the durable owner for the
+old callback, leaving its exact provider row as an explicit Phase 5B cleanup
+residual. ADR 0009 supersedes that limitation with a separate content-free
+acknowledgement receipt; the active-operation behavior described here remains the
+Phase 5A baseline.
 
 ### 6. New operations have explicit origin and disjoint allocation regions
 
@@ -315,14 +315,16 @@ macrobenchmark test APK retains only its expected debuggable/tooling-network
 surface. The release APK is unsigned and is not a distribution artifact. Exact
 artifact sizes and hashes are retained in `docs/TEST_MATRIX.md`.
 
-Only API 26 and API 36 emulators were attached. The exact debug APK installed
+Only API 26 and API 36 emulators were attached for this frozen Phase 5A evidence.
+The exact debug APK installed
 and copied to the API 36 emulator with a matching device-side SHA-256, then
 cold-launched to the expected role-approval screen without role or SMS-permission
 mutation. This local evidence is frozen in implementation commit `17fc421` and
 does not claim a pushed CI run, physical-device handoff, physical device/SIM, OEM,
 carrier submission, billing, roaming, sent/delivery behavior, reboot, or process
-death during a real network send. The Phase 5B acknowledged-unknown late-provider
-cleanup residual remains open. AuroraSMS is not complete or gold.
+death during a real network send. ADR 0009 later closes the Phase 5B
+acknowledged-unknown late-provider cleanup residual locally; the physical and
+carrier gates remain open. AuroraSMS is not complete or gold.
 
 ## Consequences
 
@@ -337,8 +339,8 @@ cleanup residual remains open. AuroraSMS is not complete or gold.
   retry. That is the intended duplicate-prevention behavior.
 - A successful sent callback is checkpointed before provider reconciliation, so
   transient provider/storage failure cannot erase the callback proof.
-- Manual unknown acknowledgement can leave the old provider row unreconciled;
-  its mandatory duplicate warning and explicit Phase 5B residual are intentional.
+- The frozen Phase 5A implementation could leave the old provider row
+  unreconciled after manual acknowledgement; ADR 0009 supersedes that residual.
 - Fake and emulator tests can prove local ordering, persistence, role fencing,
   exact ownership, and zero-send preflight. They cannot prove a physical SIM,
   carrier submission, billing, roaming, OEM behavior, or delivery.

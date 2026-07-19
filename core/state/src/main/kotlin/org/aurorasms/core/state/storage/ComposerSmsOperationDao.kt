@@ -13,8 +13,17 @@ internal interface ComposerSmsOperationDao {
     @Query("SELECT COUNT(*) FROM composer_sms_operations")
     suspend fun count(): Int
 
+    @Query("SELECT COUNT(*) FROM acknowledged_composer_sms_receipts")
+    suspend fun acknowledgedCount(): Int
+
     @Query("SELECT * FROM composer_sms_operations WHERE local_operation_id = :localOperationId LIMIT 1")
     suspend fun findByLocalId(localOperationId: Long): ComposerSmsOperationEntity?
+
+    @Query(
+        "SELECT * FROM acknowledged_composer_sms_receipts " +
+            "WHERE local_operation_id = :localOperationId LIMIT 1",
+    )
+    suspend fun findAcknowledgedByLocalId(localOperationId: Long): AcknowledgedComposerSmsEntity?
 
     @Query("SELECT * FROM composer_sms_operations WHERE provider_thread_id = :providerThreadId LIMIT 1")
     suspend fun findByProviderThreadId(providerThreadId: Long): ComposerSmsOperationEntity?
@@ -31,8 +40,17 @@ internal interface ComposerSmsOperationDao {
     )
     suspend fun recoverySnapshot(limit: Int): List<ComposerSmsOperationEntity>
 
+    @Query(
+        "SELECT * FROM acknowledged_composer_sms_receipts " +
+            "ORDER BY acknowledged_timestamp_ms ASC, local_operation_id ASC LIMIT :limit",
+    )
+    suspend fun acknowledgedRecoverySnapshot(limit: Int): List<AcknowledgedComposerSmsEntity>
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(entity: ComposerSmsOperationEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAcknowledged(entity: AcknowledgedComposerSmsEntity)
 
     @Query(
         """
@@ -150,5 +168,49 @@ internal interface ComposerSmsOperationDao {
         localOperationId: Long,
         expectedUpdatedTimestampMillis: Long,
         expectedPhase: String,
+    ): Int
+
+    @Query(
+        """
+        UPDATE acknowledged_composer_sms_receipts
+        SET callback_proof_code = :targetCallbackProof,
+            updated_timestamp_ms = :updatedTimestampMillis
+        WHERE local_operation_id = :localOperationId
+          AND callback_proof_code = :awaitingCallbackProof
+          AND updated_timestamp_ms = :expectedUpdatedTimestampMillis
+          AND provider_message_id = :providerMessageId
+          AND provider_conversation_id = :providerConversationId
+          AND unit_count = :unitCount
+        """,
+    )
+    suspend fun markAcknowledgedCallbackIfCurrent(
+        localOperationId: Long,
+        expectedUpdatedTimestampMillis: Long,
+        awaitingCallbackProof: String,
+        targetCallbackProof: String,
+        providerMessageId: Long,
+        providerConversationId: Long,
+        unitCount: Int,
+        updatedTimestampMillis: Long,
+    ): Int
+
+    @Query(
+        """
+        DELETE FROM acknowledged_composer_sms_receipts
+        WHERE local_operation_id = :localOperationId
+          AND callback_proof_code = :expectedCallbackProof
+          AND updated_timestamp_ms = :expectedUpdatedTimestampMillis
+          AND provider_message_id = :providerMessageId
+          AND provider_conversation_id = :providerConversationId
+          AND unit_count = :unitCount
+        """,
+    )
+    suspend fun deleteAcknowledgedIfCurrent(
+        localOperationId: Long,
+        expectedUpdatedTimestampMillis: Long,
+        expectedCallbackProof: String,
+        providerMessageId: Long,
+        providerConversationId: Long,
+        unitCount: Int,
     ): Int
 }

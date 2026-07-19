@@ -222,3 +222,39 @@ val STATE_MIGRATION_4_5: Migration = object : Migration(4, 5) {
         db.execSQL(ComposerSmsOperationEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
     }
 }
+
+val STATE_MIGRATION_5_6: Migration = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `acknowledged_composer_sms_receipts` (
+                `local_operation_id` INTEGER NOT NULL,
+                `provider_message_id` INTEGER NOT NULL,
+                `provider_conversation_id` INTEGER NOT NULL,
+                `unit_count` INTEGER NOT NULL,
+                `callback_proof_code` TEXT NOT NULL,
+                `acknowledged_timestamp_ms` INTEGER NOT NULL,
+                `updated_timestamp_ms` INTEGER NOT NULL,
+                PRIMARY KEY(`local_operation_id`)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS
+            `index_acknowledged_composer_sms_receipts_provider_message_id`
+            ON `acknowledged_composer_sms_receipts` (`provider_message_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS
+            `index_acknowledged_composer_sms_receipts_updated_timestamp_ms_local_operation_id`
+            ON `acknowledged_composer_sms_receipts` (`updated_timestamp_ms`, `local_operation_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_INSERT_LIMIT_TRIGGER)
+        db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+    }
+}

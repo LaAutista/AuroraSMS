@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.retryWhen
 import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ProviderThreadId
+import org.aurorasms.core.state.AcknowledgedComposerSmsCallbackProof
+import org.aurorasms.core.state.AcknowledgedComposerSmsReceipt
 import org.aurorasms.core.state.ComposerSmsDraftClearance
 import org.aurorasms.core.state.ComposerSmsOperation
 import org.aurorasms.core.state.ComposerSmsOperationPhase
@@ -29,6 +31,7 @@ import org.aurorasms.core.state.ComposerSmsSentCompletion
 import org.aurorasms.core.state.ComposerSmsStorageOperation
 import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.core.state.MAXIMUM_COMPOSER_SMS_OPERATIONS
+import org.aurorasms.core.state.MAXIMUM_ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS
 import org.aurorasms.core.state.isComposerSmsOperationId
 
 class RoomComposerSmsOperationRepository(
@@ -107,6 +110,17 @@ class RoomComposerSmsOperationRepository(
         entity.toDomainResult()
     }
 
+    override suspend fun readAcknowledged(
+        operationId: MessageId,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt> =
+        store(ComposerSmsStorageOperation.READ) {
+            val localId = operationId.localComposerIdOrNull()
+                ?: return@store ComposerSmsOperationResult.NotFound
+            val entity = dao.findAcknowledgedByLocalId(localId)
+                ?: return@store ComposerSmsOperationResult.NotFound
+            entity.toAcknowledgedDomainResult()
+        }
+
     override fun observeByThread(
         providerThreadId: ProviderThreadId,
     ): Flow<ComposerSmsOperationResult<ComposerSmsOperation?>> =
@@ -142,6 +156,23 @@ class RoomComposerSmsOperationRepository(
                 operations += operation
             }
             ComposerSmsOperationResult.Success(operations)
+        }
+
+    override suspend fun acknowledgedRecoverySnapshot():
+        ComposerSmsOperationResult<List<AcknowledgedComposerSmsReceipt>> =
+        store(ComposerSmsStorageOperation.RECOVER) {
+            val entities = dao.acknowledgedRecoverySnapshot(
+                MAXIMUM_ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS + 1,
+            )
+            if (entities.size > MAXIMUM_ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS) {
+                return@store ComposerSmsOperationResult.CorruptData
+            }
+            val receipts = ArrayList<AcknowledgedComposerSmsReceipt>(entities.size)
+            entities.forEach { entity ->
+                receipts += entity.toAcknowledgedDomainOrNull()
+                    ?: return@store ComposerSmsOperationResult.CorruptData
+            }
+            ComposerSmsOperationResult.Success(receipts)
         }
 
     override suspend fun markPrepared(
@@ -360,9 +391,13 @@ class RoomComposerSmsOperationRepository(
     override suspend fun acknowledgeAndRemove(
         operationId: MessageId,
         expectedRevision: ComposerSmsOperationRevision,
+        acknowledgedTimestampMillis: Long,
     ): ComposerSmsOperationResult<Unit> = store(ComposerSmsStorageOperation.ACKNOWLEDGE) {
         val localId = operationId.localComposerIdOrNull()
             ?: return@store ComposerSmsOperationResult.NotFound
+        if (acknowledgedTimestampMillis <= expectedRevision.updatedTimestampMillis) {
+            return@store ComposerSmsOperationResult.InvalidTimestamp
+        }
         database.withTransaction<ComposerSmsOperationResult<Unit>> {
             val current = dao.findByLocalId(localId)?.toDomainOrNull()
                 ?: return@withTransaction missingOrCorrupt(localId)
@@ -375,15 +410,158 @@ class RoomComposerSmsOperationRepository(
             ) {
                 return@withTransaction ComposerSmsOperationResult.PhaseMismatch
             }
-            when (
-                dao.deleteTerminalIfCurrent(
+            if (current.phase == ComposerSmsOperationPhase.SUBMISSION_UNKNOWN) {
+                val binding = current.providerBinding
+                    ?: return@withTransaction ComposerSmsOperationResult.CorruptData
+                if (dao.findAcknowledgedByLocalId(localId) != null) {
+                    return@withTransaction ComposerSmsOperationResult.CorruptData
+                }
+                val count = dao.acknowledgedCount()
+                if (count < 0 || count > MAXIMUM_ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS) {
+                    return@withTransaction ComposerSmsOperationResult.CorruptData
+                }
+                if (count == MAXIMUM_ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS) {
+                    return@withTransaction ComposerSmsOperationResult.LimitExceeded
+                }
+                dao.insertAcknowledged(
+                    AcknowledgedComposerSmsEntity(
+                        localOperationId = localId,
+                        providerMessageId = binding.providerMessageId.value,
+                        providerConversationId = binding.providerConversationId.value,
+                        unitCount = binding.unitCount,
+                        callbackProofCode =
+                            AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK.storageCode,
+                        acknowledgedTimestampMillis = acknowledgedTimestampMillis,
+                        updatedTimestampMillis = acknowledgedTimestampMillis,
+                    ),
+                )
+            }
+            val deleted = dao.deleteTerminalIfCurrent(
+                localOperationId = localId,
+                expectedUpdatedTimestampMillis = expectedRevision.updatedTimestampMillis,
+                expectedPhase = current.phase.storageCode,
+            )
+            if (deleted != 1) {
+                throw AbortTransaction(
+                    if (deleted == 0) {
+                        classifyCasFailure(localId, expectedRevision, current.phase, current.providerBinding)
+                    } else {
+                        ComposerSmsOperationResult.CorruptData
+                    },
+                )
+            }
+            ComposerSmsOperationResult.Success(Unit)
+        }
+    }
+
+    override suspend fun markAcknowledgedSent(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        updatedTimestampMillis: Long,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt> =
+        markAcknowledgedCallback(
+            operationId = operationId,
+            expectedRevision = expectedRevision,
+            providerBinding = providerBinding,
+            targetProof = AcknowledgedComposerSmsCallbackProof.SENT,
+            updatedTimestampMillis = updatedTimestampMillis,
+        )
+
+    override suspend fun markAcknowledgedFailed(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        updatedTimestampMillis: Long,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt> =
+        markAcknowledgedCallback(
+            operationId = operationId,
+            expectedRevision = expectedRevision,
+            providerBinding = providerBinding,
+            targetProof = AcknowledgedComposerSmsCallbackProof.FAILED,
+            updatedTimestampMillis = updatedTimestampMillis,
+        )
+
+    private suspend fun markAcknowledgedCallback(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        targetProof: AcknowledgedComposerSmsCallbackProof,
+        updatedTimestampMillis: Long,
+    ): ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt> =
+        store(ComposerSmsStorageOperation.TRANSITION) {
+            val localId = operationId.localComposerIdOrNull()
+                ?: return@store ComposerSmsOperationResult.NotFound
+            if (updatedTimestampMillis <= expectedRevision.updatedTimestampMillis) {
+                return@store ComposerSmsOperationResult.InvalidTimestamp
+            }
+            database.withTransaction<ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt>> {
+                val current = dao.findAcknowledgedByLocalId(localId)?.toAcknowledgedDomainOrNull()
+                    ?: return@withTransaction missingOrCorruptAcknowledged(localId)
+                when {
+                    current.revision != expectedRevision ->
+                        return@withTransaction ComposerSmsOperationResult.StaleWrite
+                    current.providerBinding != providerBinding ->
+                        return@withTransaction ComposerSmsOperationResult.ProviderMismatch
+                    current.callbackProof == targetProof ->
+                        return@withTransaction ComposerSmsOperationResult.Success(current)
+                    current.callbackProof != AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK ->
+                        return@withTransaction ComposerSmsOperationResult.PhaseMismatch
+                }
+                val changed = dao.markAcknowledgedCallbackIfCurrent(
                     localOperationId = localId,
                     expectedUpdatedTimestampMillis = expectedRevision.updatedTimestampMillis,
-                    expectedPhase = current.phase.storageCode,
+                    awaitingCallbackProof =
+                        AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK.storageCode,
+                    targetCallbackProof = targetProof.storageCode,
+                    providerMessageId = providerBinding.providerMessageId.value,
+                    providerConversationId = providerBinding.providerConversationId.value,
+                    unitCount = providerBinding.unitCount,
+                    updatedTimestampMillis = updatedTimestampMillis,
+                )
+                when (changed) {
+                    1 -> dao.findAcknowledgedByLocalId(localId)?.toAcknowledgedDomainResult()
+                        ?: ComposerSmsOperationResult.CorruptData
+                    0 -> ComposerSmsOperationResult.StaleWrite
+                    else -> ComposerSmsOperationResult.CorruptData
+                }
+            }
+        }
+
+    override suspend fun completeAcknowledged(
+        operationId: MessageId,
+        expectedRevision: ComposerSmsOperationRevision,
+        providerBinding: ComposerSmsProviderBinding,
+        callbackProof: AcknowledgedComposerSmsCallbackProof,
+    ): ComposerSmsOperationResult<Unit> = store(ComposerSmsStorageOperation.ACKNOWLEDGE) {
+        val localId = operationId.localComposerIdOrNull()
+            ?: return@store ComposerSmsOperationResult.NotFound
+        if (callbackProof == AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK) {
+            return@store ComposerSmsOperationResult.PhaseMismatch
+        }
+        database.withTransaction<ComposerSmsOperationResult<Unit>> {
+            val current = dao.findAcknowledgedByLocalId(localId)?.toAcknowledgedDomainOrNull()
+                ?: return@withTransaction missingOrCorruptAcknowledged(localId)
+            when {
+                current.revision != expectedRevision ->
+                    return@withTransaction ComposerSmsOperationResult.StaleWrite
+                current.providerBinding != providerBinding ->
+                    return@withTransaction ComposerSmsOperationResult.ProviderMismatch
+                current.callbackProof != callbackProof ->
+                    return@withTransaction ComposerSmsOperationResult.PhaseMismatch
+            }
+            when (
+                dao.deleteAcknowledgedIfCurrent(
+                    localOperationId = localId,
+                    expectedUpdatedTimestampMillis = expectedRevision.updatedTimestampMillis,
+                    expectedCallbackProof = callbackProof.storageCode,
+                    providerMessageId = providerBinding.providerMessageId.value,
+                    providerConversationId = providerBinding.providerConversationId.value,
+                    unitCount = providerBinding.unitCount,
                 )
             ) {
                 1 -> ComposerSmsOperationResult.Success(Unit)
-                0 -> classifyCasFailure(localId, expectedRevision, current.phase, current.providerBinding)
+                0 -> ComposerSmsOperationResult.StaleWrite
                 else -> ComposerSmsOperationResult.CorruptData
             }
         }
@@ -522,6 +700,15 @@ class RoomComposerSmsOperationRepository(
             ComposerSmsOperationResult.CorruptData
         }
 
+    private suspend fun <T> missingOrCorruptAcknowledged(
+        localId: Long,
+    ): ComposerSmsOperationResult<T> =
+        if (dao.findAcknowledgedByLocalId(localId) == null) {
+            ComposerSmsOperationResult.NotFound
+        } else {
+            ComposerSmsOperationResult.CorruptData
+        }
+
     private fun ComposerSmsOperation.casMismatch(
         expectedRevision: ComposerSmsOperationRevision,
         expectedBinding: ComposerSmsProviderBinding,
@@ -561,6 +748,20 @@ class RoomComposerSmsOperationRepository(
 
     private fun ComposerSmsOperationEntity.toDomainResult(): ComposerSmsOperationResult<ComposerSmsOperation> =
         toDomainOrNull()?.let { ComposerSmsOperationResult.Success(it) }
+            ?: ComposerSmsOperationResult.CorruptData
+
+    private fun AcknowledgedComposerSmsEntity.toAcknowledgedDomainOrNull():
+        AcknowledgedComposerSmsReceipt? = try {
+        toDomain()
+    } catch (_: IllegalArgumentException) {
+        null
+    } catch (_: IllegalStateException) {
+        null
+    }
+
+    private fun AcknowledgedComposerSmsEntity.toAcknowledgedDomainResult():
+        ComposerSmsOperationResult<AcknowledgedComposerSmsReceipt> =
+        toAcknowledgedDomainOrNull()?.let { ComposerSmsOperationResult.Success(it) }
             ?: ComposerSmsOperationResult.CorruptData
 
     private fun MessageId.localComposerIdOrNull(): Long? =

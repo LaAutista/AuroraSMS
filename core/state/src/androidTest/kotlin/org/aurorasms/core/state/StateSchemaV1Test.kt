@@ -52,11 +52,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionFive_hasBoundedDraftAppearanceAndContentFreeComposerTables() {
+    fun schemaVersionSix_hasBoundedDraftAppearanceAndContentFreeComposerTables() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(5, AuroraStateDatabase.VERSION)
+            assertEquals(6, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -240,13 +240,31 @@ class StateSchemaCurrentTest {
                     "index_composer_sms_operations_provider_message_id",
                 ),
             )
+            assertEquals(
+                setOf(
+                    "local_operation_id",
+                    "provider_message_id",
+                    "provider_conversation_id",
+                    "unit_count",
+                    "callback_proof_code",
+                    "acknowledged_timestamp_ms",
+                    "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("acknowledged_composer_sms_receipts"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "acknowledged_composer_sms_receipts",
+                    "index_acknowledged_composer_sms_receipts_provider_message_id",
+                ),
+            )
         } finally {
             database.close()
         }
     }
 
     @Test
-    fun exportedVersionFiveStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedVersionSixStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(

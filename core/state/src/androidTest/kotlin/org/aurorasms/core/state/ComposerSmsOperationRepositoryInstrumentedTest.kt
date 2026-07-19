@@ -200,7 +200,11 @@ class ComposerSmsOperationRepositoryInstrumentedTest {
             assertEquals(failedDraft, drafts.read(failedDraft.id).draftSuccessValue())
             assertEquals(
                 ComposerSmsOperationResult.Success(Unit),
-                operations.acknowledgeAndRemove(knownUnsent.operationId, knownUnsent.revision),
+                operations.acknowledgeAndRemove(
+                    knownUnsent.operationId,
+                    knownUnsent.revision,
+                    206L,
+                ),
             )
             assertEquals(failedDraft, drafts.read(failedDraft.id).draftSuccessValue())
 
@@ -247,6 +251,92 @@ class ComposerSmsOperationRepositoryInstrumentedTest {
             )
             assertEquals(newerDraft, drafts.read(newerDraft.id).draftSuccessValue())
             assertEquals(ComposerSmsOperationResult.NotFound, operations.read(succeeded.operationId))
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun unknownAcknowledgementAtomicallyRetainsContentFreeLateCallbackAuthority() = runBlocking {
+        val database = openStateDatabase()
+        val drafts = RoomDraftRepository(database)
+        val operations = RoomComposerSmsOperationRepository(database)
+        try {
+            val threadId = ProviderThreadId(61L)
+            val draft = drafts.createDraft(threadId, "synthetic retained draft", 100L)
+            val reserved = operations.reserve(
+                reservationRequest(threadId, draft, 200L),
+            ).successValue().operation
+            val binding = providerBinding(701L)
+            val prepared = operations.markPrepared(
+                reserved.operationId,
+                reserved.revision,
+                binding,
+                201L,
+            ).successValue()
+            val submitting = operations.markSubmitting(
+                prepared.operationId,
+                prepared.revision,
+                binding,
+                202L,
+            ).successValue()
+            val unknown = operations.markSubmissionUnknown(
+                submitting.operationId,
+                submitting.revision,
+                binding,
+                203L,
+            ).successValue()
+
+            assertEquals(
+                ComposerSmsOperationResult.Success(Unit),
+                operations.acknowledgeAndRemove(unknown.operationId, unknown.revision, 204L),
+            )
+            assertEquals(ComposerSmsOperationResult.NotFound, operations.read(unknown.operationId))
+            assertEquals(emptyList<ComposerSmsOperation>(), operations.recoverySnapshot().successValue())
+            val awaiting = operations.readAcknowledged(unknown.operationId).successValue()
+            assertEquals(AcknowledgedComposerSmsCallbackProof.AWAITING_CALLBACK, awaiting.callbackProof)
+            assertEquals(binding, awaiting.providerBinding)
+            assertEquals(draft, drafts.read(draft.id).draftSuccessValue())
+
+            assertEquals(
+                ComposerSmsOperationResult.ProviderMismatch,
+                operations.markAcknowledgedSent(
+                    awaiting.operationId,
+                    awaiting.revision,
+                    providerBinding(999L),
+                    205L,
+                ),
+            )
+            val sent = operations.markAcknowledgedSent(
+                awaiting.operationId,
+                awaiting.revision,
+                binding,
+                205L,
+            ).successValue()
+            assertEquals(AcknowledgedComposerSmsCallbackProof.SENT, sent.callbackProof)
+            assertEquals(listOf(sent), operations.acknowledgedRecoverySnapshot().successValue())
+
+            assertEquals(
+                ComposerSmsOperationResult.Success(Unit),
+                operations.completeAcknowledged(
+                    sent.operationId,
+                    sent.revision,
+                    binding,
+                    AcknowledgedComposerSmsCallbackProof.SENT,
+                ),
+            )
+            assertEquals(
+                ComposerSmsOperationResult.NotFound,
+                operations.readAcknowledged(sent.operationId),
+            )
+            assertEquals(draft, drafts.read(draft.id).draftSuccessValue())
+            val receiptColumns = database.openHelper.writableDatabase
+                .query("PRAGMA table_info(acknowledged_composer_sms_receipts)")
+                .use { cursor ->
+                    val name = cursor.getColumnIndexOrThrow("name")
+                    buildSet { while (cursor.moveToNext()) add(cursor.getString(name)) }
+                }
+            assertFalse(receiptColumns.any { it in setOf("body", "subject", "recipient", "digest") })
         } finally {
             database.close()
         }
