@@ -159,6 +159,11 @@ import org.aurorasms.core.state.AppearanceWallpaperMediaKind
 import org.aurorasms.core.state.AppearanceWallpaperMutation
 import org.aurorasms.core.state.AppearanceWallpaperRepository
 import org.aurorasms.core.state.AppearanceWallpaperRevision
+import org.aurorasms.core.state.ConversationSubscriptionPreference
+import org.aurorasms.core.state.ConversationSubscriptionPreferenceRepository
+import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
+import org.aurorasms.core.state.ConversationSubscriptionRevision
+import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.state.Draft
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftIdentity
@@ -1658,6 +1663,9 @@ private class SyntheticRootServices(
     override val contactCache: ContactCache = SyntheticContactCache
     override val mmsAttachmentRepository: MmsAttachmentRepository = RejectingAttachments
     override val previewLoader: BoundedPreviewLoader = RejectingPreviewLoader
+    override val conversationSubscriptionPreferenceRepository:
+        ConversationSubscriptionPreferenceRepository =
+        InMemoryConversationSubscriptionPreferenceRepository()
 
     override fun countSmsSegments(body: String): Int? = segmentCounter(body)
 
@@ -1687,6 +1695,46 @@ private class SyntheticRootServices(
         writers.toList().forEach(SerializedDraftWriter::close)
         writers.clear()
     }
+}
+
+private class InMemoryConversationSubscriptionPreferenceRepository :
+    ConversationSubscriptionPreferenceRepository {
+    private val lock = Any()
+    private val stored = LinkedHashMap<Any, ConversationSubscriptionPreference>()
+
+    override suspend fun read(
+        scope: ConversationSubscriptionScope,
+    ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+        synchronized(lock) {
+            stored[scope.participantSetKey]
+                ?.let { ConversationSubscriptionRepositoryResult.Success(it) }
+                ?: ConversationSubscriptionRepositoryResult.NotFound
+        }
+
+    override suspend fun set(
+        scope: ConversationSubscriptionScope,
+        subscriptionId: AuroraSubscriptionId,
+        expectedRevision: ConversationSubscriptionRevision?,
+        updatedTimestampMillis: Long,
+    ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+        synchronized(lock) {
+            val existing = stored[scope.participantSetKey]
+            if (
+                (existing == null && expectedRevision != null) ||
+                (existing != null && existing.revision != expectedRevision) ||
+                updatedTimestampMillis <= (existing?.updatedTimestampMillis ?: -1L)
+            ) {
+                return@synchronized ConversationSubscriptionRepositoryResult.StaleWrite
+            }
+            val preference = ConversationSubscriptionPreference(
+                scope = scope,
+                subscriptionId = subscriptionId,
+                revision = ConversationSubscriptionRevision((existing?.revision?.value ?: 0L) + 1L),
+                updatedTimestampMillis = updatedTimestampMillis,
+            )
+            stored[scope.participantSetKey] = preference
+            ConversationSubscriptionRepositoryResult.Success(preference)
+        }
 }
 
 private object SyntheticIdleThreadSmsSendController : ThreadSmsSendController {

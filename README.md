@@ -9,6 +9,15 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+The 2026-07-19 Phase 5C source identifies as `0.5.2-phase5` (`versionCode` 6)
+and adds an explicit, durable SIM choice for a verified one-person
+conversation. Room schema 7 stores only a purpose-separated participant-set
+hash, provider-Thread hint, subscription ID, revision, and timestamps. The
+composer and coordinator re-read that authority before reservation; if the
+remembered SIM is unavailable, Send stays disabled until the user explicitly
+chooses an active replacement. AuroraSMS never silently switches this path to a
+different SIM.
+
 Implementation commit `7c9d848` hardens AuroraSMS's durable incoming-message,
 notification-generation, and inline-reply recovery boundaries. Its dedicated
 API 26 AOSP `inline-reply-permission-denied` journey passed twice independently
@@ -101,6 +110,17 @@ host tests, plus the complete API 36 connected matrix with 291 tests, 10
 intentional skips, and zero failures/errors. These remain synthetic/emulator
 results; they do not replace physical SIM, carrier, OEM, or live lifecycle
 acceptance.
+
+Phase 5C durable conversation-SIM selection is locally green as of 2026-07-19.
+The exact source passed the 886-task host/release/privacy/license aggregate with
+all 521 host tests, separate release-bundle and CycloneDX gates, and the full
+456-task connected matrix on both API 26 and API 36. Authoritative XML reports
+297 API 26 tests (13 intentional skips) and 294 API 36 tests (10 intentional
+skips), with zero failures or errors. The debug APK is 14,740,845 bytes with
+SHA-256 `e0d614e4a472d7416d299ba384824c756cc94486ee30ba9fc050e8f04180ece1`.
+These are synthetic/emulator results: real dual-SIM removal/disablement,
+carrier submission, scheduled sends, groups, MMS, and the wider physical/OEM
+matrix remain open, so AuroraSMS is not complete or gold.
 
 Phase 1 established the independently implemented default-SMS foundation:
 

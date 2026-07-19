@@ -51,6 +51,8 @@ sealed interface ThreadUiState {
         val verifiedConversationIdentity: VerifiedConversationIdentity? = null,
         val verifiedConversationIdentityResolved: Boolean = false,
         val activeSubscription: ActiveSubscription?,
+        val activeSubscriptions: List<ActiveSubscription> =
+            activeSubscription?.let(::listOf).orEmpty(),
         val contacts: Map<ParticipantAddress, ResolvedContact>,
         val loadingOlder: Boolean,
         val loadingNewer: Boolean,
@@ -64,6 +66,14 @@ sealed interface ThreadUiState {
         init {
             require(verifiedConversationIdentity == null || verifiedConversationIdentityResolved) {
                 "A verified conversation identity requires a completed identity lookup"
+            }
+            require(activeSubscriptions.distinctBy { it.id }.size == activeSubscriptions.size) {
+                "Active subscriptions must be unique"
+            }
+            require(activeSubscription == null || activeSubscriptions.any {
+                it.id == activeSubscription.id
+            }) {
+                "The associated subscription must be active"
             }
             require(expandedContent == null || expandedContent.providerMessageId == expandedMessageId)
             require(
@@ -142,6 +152,33 @@ data class ComposerUiState(
         "ComposerUiState(bodyLength=${body.length}, saving=$saving, failed=$failed, " +
             "sendState=$sendState, unavailableReason=$unavailableReason, " +
             "segmentCount=$segmentCount, REDACTED)"
+}
+
+data class ConversationSubscriptionUiState(
+    val options: List<ActiveSubscription> = emptyList(),
+    val selected: ActiveSubscription? = null,
+    val loading: Boolean = false,
+    val saving: Boolean = false,
+    val rememberedSelectionUnavailable: Boolean = false,
+    val storageFailed: Boolean = false,
+) {
+    init {
+        require(options.distinctBy { it.id }.size == options.size) {
+            "Conversation subscription options must be unique"
+        }
+        require(selected == null || options.any { it.id == selected.id }) {
+            "The selected subscription must be an available option"
+        }
+        require(!rememberedSelectionUnavailable || selected == null) {
+            "An unavailable remembered subscription cannot also be selected"
+        }
+    }
+
+    override fun toString(): String =
+        "ConversationSubscriptionUiState(optionCount=${options.size}, " +
+            "hasSelection=${selected != null}, loading=$loading, saving=$saving, " +
+            "rememberedSelectionUnavailable=$rememberedSelectionUnavailable, " +
+            "storageFailed=$storageFailed, REDACTED)"
 }
 
 enum class ComposerSendState {

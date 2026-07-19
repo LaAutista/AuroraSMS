@@ -12,6 +12,7 @@ import org.aurorasms.core.index.MessageIndex
 import org.aurorasms.core.index.conversation.ConversationRepository
 import org.aurorasms.core.index.timeline.ThreadTimelineRepository
 import org.aurorasms.core.state.DraftIdentity
+import org.aurorasms.core.state.ConversationSubscriptionPreferenceRepository
 import org.aurorasms.core.telephony.ContactCache
 import org.aurorasms.core.telephony.MmsAttachmentRepository
 import org.aurorasms.core.telephony.SubscriptionRepository
@@ -24,6 +25,8 @@ internal interface AuroraSmsRootServices {
     val messageIndex: MessageIndex
     val contactCache: ContactCache
     val subscriptionRepository: SubscriptionRepository
+    val conversationSubscriptionPreferenceRepository:
+        ConversationSubscriptionPreferenceRepository
     val mmsAttachmentRepository: MmsAttachmentRepository
     val previewLoader: BoundedPreviewLoader
     val wallpaperController: WallpaperController?
@@ -55,6 +58,9 @@ internal class AppContainerAuroraSmsRootServices(
         get() = container.contactCache
     override val subscriptionRepository: SubscriptionRepository
         get() = container.subscriptionRepository
+    override val conversationSubscriptionPreferenceRepository:
+        ConversationSubscriptionPreferenceRepository
+        get() = container.conversationSubscriptionPreferenceRepository
     override val mmsAttachmentRepository: MmsAttachmentRepository
         get() = container.mmsAttachmentRepository
     override val previewLoader: BoundedPreviewLoader

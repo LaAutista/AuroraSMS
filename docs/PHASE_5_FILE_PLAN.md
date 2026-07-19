@@ -631,6 +631,35 @@ This local evidence is frozen in implementation commit `17fc421` and covers two
 attached emulators. It does not claim a pushed CI run, physical-device handoff,
 signed release, physical-device acceptance, or carrier acceptance.
 
+## Phase 5C addendum — durable conversation SIM choice
+
+The 2026-07-19 `0.5.2-phase5` (`versionCode` 6) slice adds Room schema 7 and ADR
+0010. A verified one-person conversation may persist one active SMS-capable
+subscription against a purpose-separated participant-set digest. The row is
+content-free, revisioned, and protected by physical SQLite triggers. The
+provider Thread ID is only a hint; verified participant identity remains the
+scope authority.
+
+The Thread header presents the active choices and commits a selection before
+using it. Once remembered, that exact choice is authoritative. If it disappears
+from the active SMS-capable set, the UI names the unavailable state, keeps Send
+disabled, and requires an explicit replacement. Immediately before reservation,
+the coordinator re-creates the verified scope and re-reads the repository; a
+missing/stale/mismatched preference or storage failure refuses before provider
+staging and platform transport.
+
+Local acceptance is green: 521 host tests and the complete 886-task aggregate;
+separate 269-task release-bundle and 15-task CycloneDX gates; and the complete
+456-task connected matrix on API 26 and API 36. The API 26 XML reports 297
+tests/13 intentional skips and API 36 reports 294/10, both with 284 executed
+tests and zero failures/errors. Exact artifact hashes and module totals are in
+`docs/TEST_MATRIX.md`.
+
+This addendum closes only durable scoping and synthetic/emulator no-silent-
+fallback behavior for the current one-part composer. Physical SIM/eSIM removal,
+carrier routing, scheduled sends, groups, MMS, billing/roaming, OEM behavior,
+and other Phase 5 lifecycle/action rows remain open.
+
 ## Evidence that remains open
 
 No carrier-send evidence has been collected for Phase 5A. The following remain

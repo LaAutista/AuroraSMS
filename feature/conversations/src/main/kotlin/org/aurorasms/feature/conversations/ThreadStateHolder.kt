@@ -33,6 +33,7 @@ import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.ActiveSubscription
 import org.aurorasms.core.telephony.ContactCache
 import org.aurorasms.core.telephony.SubscriptionRepository
+import org.aurorasms.core.telephony.SubscriptionSnapshot
 
 class ThreadStateHolder(
     private val providerThreadId: ProviderThreadId,
@@ -57,6 +58,7 @@ class ThreadStateHolder(
     private var verifiedConversationIdentity: VerifiedConversationIdentity? = null
     private var verifiedConversationIdentityResolved = false
     private var activeSubscription: ActiveSubscription? = null
+    private var activeSubscriptions: List<ActiveSubscription> = emptyList()
     private val observerJobs: List<Job>
 
     init {
@@ -107,6 +109,7 @@ class ThreadStateHolder(
                         verifiedConversationIdentity = verifiedConversationIdentity,
                         verifiedConversationIdentityResolved = verifiedConversationIdentityResolved,
                         activeSubscription = activeSubscription,
+                        activeSubscriptions = activeSubscriptions,
                         contacts = emptyMap(),
                         loadingOlder = false,
                         loadingNewer = false,
@@ -295,6 +298,7 @@ class ThreadStateHolder(
                             verifiedConversationIdentity = verifiedConversationIdentity,
                             verifiedConversationIdentityResolved = verifiedConversationIdentityResolved,
                             activeSubscription = activeSubscription,
+                            activeSubscriptions = activeSubscriptions,
                             contacts = emptyMap(),
                             loadingOlder = false,
                             loadingNewer = false,
@@ -406,17 +410,32 @@ class ThreadStateHolder(
                 null,
                 -> null
             }
-            val subscription = try {
-                summary?.latestSubscriptionId?.let { subscriptionRepository.findActive(it) }
+            val subscriptions = try {
+                when (val snapshot = subscriptionRepository.activeSubscriptions()) {
+                    is SubscriptionSnapshot.Available -> snapshot.subscriptions
+                        .asSequence()
+                        .filter(ActiveSubscription::smsCapable)
+                        .distinctBy(ActiveSubscription::id)
+                        .sortedWith(compareBy(ActiveSubscription::slotIndex).thenBy { it.id.value })
+                        .toList()
+                    SubscriptionSnapshot.FeatureUnavailable,
+                    SubscriptionSnapshot.PermissionDenied,
+                    SubscriptionSnapshot.PlatformUnavailable,
+                    -> emptyList()
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: RuntimeException) {
-                null
+                emptyList()
+            }
+            val subscription = summary?.latestSubscriptionId?.let { associatedId ->
+                subscriptions.singleOrNull { it.id == associatedId }
             }
             conversationSummary = summary
             verifiedConversationIdentity = identity
             verifiedConversationIdentityResolved = true
             activeSubscription = subscription
+            activeSubscriptions = subscriptions
             lastContactRequest = emptyList()
             val current = _state.value as? ThreadUiState.Ready
             if (current != null) {
@@ -426,6 +445,7 @@ class ThreadStateHolder(
                         verifiedConversationIdentity = identity,
                         verifiedConversationIdentityResolved = true,
                         activeSubscription = subscription,
+                        activeSubscriptions = subscriptions,
                     ),
                 )
                 resolveVisibleContacts(force = true)

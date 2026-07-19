@@ -146,6 +146,12 @@ import org.aurorasms.core.state.AppearanceWallpaperMediaId
 import org.aurorasms.core.state.AppearanceWallpaperMutation
 import org.aurorasms.core.state.AppearanceWallpaperRepository
 import org.aurorasms.core.state.AppearanceWallpaperRevision
+import org.aurorasms.core.state.ConversationSubscriptionPreference
+import org.aurorasms.core.state.ConversationSubscriptionPreferenceRepository
+import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
+import org.aurorasms.core.state.ConversationSubscriptionRevision
+import org.aurorasms.core.state.ConversationSubscriptionScope
+import org.aurorasms.core.state.ConversationSubscriptionStorageOperation
 import org.aurorasms.core.state.Draft
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftIdentity
@@ -157,6 +163,7 @@ import org.aurorasms.core.state.NewDraft
 import org.aurorasms.core.state.NewAppearanceProfile
 import org.aurorasms.core.state.storage.RoomAppearanceProfileRepository
 import org.aurorasms.core.state.storage.RoomComposerSmsOperationRepository
+import org.aurorasms.core.state.storage.RoomConversationSubscriptionPreferenceRepository
 import org.aurorasms.core.state.storage.RoomDraftRepository
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
@@ -258,6 +265,9 @@ class AppContainer(
         DeferredAppearanceProfileRepository(stateRuntimeState)
     private val appearanceWallpaperRepository: AppearanceWallpaperRepository =
         DeferredAppearanceWallpaperRepository(stateRuntimeState)
+    val conversationSubscriptionPreferenceRepository:
+        ConversationSubscriptionPreferenceRepository =
+        DeferredConversationSubscriptionPreferenceRepository(stateRuntimeState)
     val appearanceController = AppearanceController(
         repository = appearanceProfileRepository,
         scope = applicationScope,
@@ -365,6 +375,8 @@ class AppContainer(
                 draftRepository = EmptyBenchmarkDraftRepository,
                 appearanceProfileRepository = EmptyBenchmarkAppearanceProfileRepository,
                 appearanceWallpaperRepository = EmptyBenchmarkAppearanceWallpaperRepository,
+                conversationSubscriptionPreferenceRepository =
+                    EmptyBenchmarkConversationSubscriptionPreferenceRepository,
             )
             _stateStorageStatus.value = StateStorageStatus.Ready
         } else {
@@ -383,12 +395,16 @@ class AppContainer(
                                 operations = composerRepository,
                                 transport = messageTransport,
                                 smsProvider = smsProviderDataSource,
+                                subscriptionPreferences =
+                                    RoomConversationSubscriptionPreferenceRepository(result.database),
                             ),
                         )
                         stateRuntimeState.value = StateRuntimeState.Ready(
                             draftRepository = RoomDraftRepository(result.database),
                             appearanceProfileRepository = appearanceRepository,
                             appearanceWallpaperRepository = appearanceRepository,
+                            conversationSubscriptionPreferenceRepository =
+                                RoomConversationSubscriptionPreferenceRepository(result.database),
                         )
                         wallpaperController.reconcileManagedFiles()
                         _stateStorageStatus.value = StateStorageStatus.Ready
@@ -1054,6 +1070,24 @@ private object EmptyBenchmarkAppearanceWallpaperRepository : AppearanceWallpaper
         AppearanceRepositoryResult.StorageFailure(AppearanceStorageOperation.WALLPAPER_MEDIA_REFERENCES)
 }
 
+private object EmptyBenchmarkConversationSubscriptionPreferenceRepository :
+    ConversationSubscriptionPreferenceRepository {
+    override suspend fun read(
+        scope: ConversationSubscriptionScope,
+    ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+        ConversationSubscriptionRepositoryResult.NotFound
+
+    override suspend fun set(
+        scope: ConversationSubscriptionScope,
+        subscriptionId: org.aurorasms.core.model.AuroraSubscriptionId,
+        expectedRevision: ConversationSubscriptionRevision?,
+        updatedTimestampMillis: Long,
+    ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+        ConversationSubscriptionRepositoryResult.StorageFailure(
+            ConversationSubscriptionStorageOperation.SET,
+        )
+}
+
 sealed interface IndexStorageStatus {
     data object Opening : IndexStorageStatus
     data class Ready(val recovered: Boolean) : IndexStorageStatus
@@ -1140,6 +1174,8 @@ private sealed interface StateRuntimeState {
         val draftRepository: DraftRepository,
         val appearanceProfileRepository: AppearanceProfileRepository,
         val appearanceWallpaperRepository: AppearanceWallpaperRepository,
+        val conversationSubscriptionPreferenceRepository:
+            ConversationSubscriptionPreferenceRepository,
     ) : StateRuntimeState
     data class Failed(val reason: StateDatabaseOpenFailureReason) : StateRuntimeState
 }
@@ -1165,6 +1201,34 @@ private class DeferredDraftRepository(
         runtimeState.awaitReadyDraftRepository().delete(id)
 
     override fun toString(): String = "DeferredDraftRepository(content=REDACTED)"
+}
+
+private class DeferredConversationSubscriptionPreferenceRepository(
+    private val runtimeState: StateFlow<StateRuntimeState>,
+) : ConversationSubscriptionPreferenceRepository {
+    override suspend fun read(
+        scope: ConversationSubscriptionScope,
+    ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+        runtimeState.awaitReadyConversationSubscriptionPreferenceRepository()
+            ?.read(scope)
+            ?: ConversationSubscriptionRepositoryResult.StorageFailure(
+                ConversationSubscriptionStorageOperation.READ,
+            )
+
+    override suspend fun set(
+        scope: ConversationSubscriptionScope,
+        subscriptionId: org.aurorasms.core.model.AuroraSubscriptionId,
+        expectedRevision: ConversationSubscriptionRevision?,
+        updatedTimestampMillis: Long,
+    ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+        runtimeState.awaitReadyConversationSubscriptionPreferenceRepository()
+            ?.set(scope, subscriptionId, expectedRevision, updatedTimestampMillis)
+            ?: ConversationSubscriptionRepositoryResult.StorageFailure(
+                ConversationSubscriptionStorageOperation.SET,
+            )
+
+    override fun toString(): String =
+        "DeferredConversationSubscriptionPreferenceRepository(content=REDACTED)"
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -1396,6 +1460,15 @@ private suspend fun StateFlow<StateRuntimeState>.awaitReadyAppearanceWallpaperRe
         else -> current
     }
     return (state as? StateRuntimeState.Ready)?.appearanceWallpaperRepository
+}
+
+private suspend fun StateFlow<StateRuntimeState>.awaitReadyConversationSubscriptionPreferenceRepository():
+    ConversationSubscriptionPreferenceRepository? {
+    val state = when (val current = value) {
+        StateRuntimeState.Opening -> first { it !is StateRuntimeState.Opening }
+        else -> current
+    }
+    return (state as? StateRuntimeState.Ready)?.conversationSubscriptionPreferenceRepository
 }
 
 private fun AppearanceScope.isUnsupportedWallpaperScreen(): Boolean =

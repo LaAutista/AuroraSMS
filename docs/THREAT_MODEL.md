@@ -637,8 +637,20 @@ Only API 26 and API 36 emulators were attached for Phase 5A acceptance. No Phase
 carrier-network, billing, roaming, OEM, sent/delivery callback, and reboot or
 process-death behavior during a real send remain open and require a separately
 approved destination-aware protocol. The acknowledged-unknown provider-row
-cleanup residual also remains open for Phase 5B. AuroraSMS is not complete or
-gold.
+cleanup residual was open in the frozen Phase 5A source and is locally closed by
+the Phase 5B schema-6 receipt protocol; that does not close any physical or
+carrier gate. AuroraSMS is not complete or gold.
+
+Phase 5C treats a remembered subscription as security-relevant routing
+authority. The preference key uses its own purpose-separated verified-
+participant hash domain and persists no address, message content, or SIM label.
+SQLite triggers reject malformed keys and non-monotonic updates, optimistic
+revisions prevent stale UI writes, and the coordinator re-reads the exact scope
+before reservation. A missing, unavailable, stale, or unreadable preference
+fails before provider staging or transport; the app never silently substitutes
+another active SIM. Emulator evidence covers these local controls, while real
+SIM/eSIM removal, carrier routing, billing, roaming, and OEM lifecycle threats
+remain open.
 
 ## Open security decisions
 

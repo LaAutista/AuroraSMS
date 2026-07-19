@@ -27,12 +27,14 @@ import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.core.index.IndexRunState
 import org.aurorasms.core.index.timeline.TimelineMessage
 import org.aurorasms.core.model.MessageBox
+import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.MmsAttachmentContentReader
+import org.aurorasms.core.telephony.ActiveSubscription
 import org.aurorasms.core.telephony.MmsAttachmentId
 import org.aurorasms.core.telephony.MmsAttachmentListResult
 import org.aurorasms.core.telephony.MmsAttachmentReadResult
@@ -216,6 +218,66 @@ class ConversationUiStateTest {
         compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
         compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
         compose.onNodeWithText("Finishing safe send recovery…").assertIsDisplayed()
+    }
+
+    @Test
+    fun rememberedUnavailableSimRequiresExplicitReplacementSelection() {
+        val first = ActiveSubscription(
+            id = AuroraSubscriptionId(4),
+            slotIndex = 0,
+            displayLabel = "Work",
+            smsCapable = true,
+        )
+        val second = ActiveSubscription(
+            id = AuroraSubscriptionId(7),
+            slotIndex = 1,
+            displayLabel = "Personal",
+            smsCapable = true,
+        )
+        var selected: AuroraSubscriptionId? = null
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = readyThreadState(),
+                    composer = ComposerUiState(
+                        body = "Synthetic preserved draft",
+                        saving = false,
+                        failed = false,
+                        sendState = ComposerSendState.UNAVAILABLE,
+                        unavailableReason = ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE,
+                        segmentCount = 1,
+                    ),
+                    subscriptionSelection = ConversationSubscriptionUiState(
+                        options = listOf(first, second),
+                        rememberedSelectionUnavailable = true,
+                    ),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                    onSelectSubscription = { selected = it },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Remembered SIM unavailable · choose another").assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithTag(THREAD_SIM_SELECTOR_TEST_TAG).performClick()
+        compose.onNodeWithText("SIM 2 · Personal").performClick()
+        compose.runOnIdle { check(selected == second.id) }
     }
 
     @Test

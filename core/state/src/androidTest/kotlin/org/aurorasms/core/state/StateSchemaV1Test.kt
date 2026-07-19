@@ -14,6 +14,7 @@ import org.aurorasms.core.state.storage.AuroraStateDatabase
 import org.aurorasms.core.state.storage.AppearanceSelectionEnforcement
 import org.aurorasms.core.state.storage.AppearanceOverrideSequenceEnforcement
 import org.aurorasms.core.state.storage.ComposerSmsOperationEnforcement
+import org.aurorasms.core.state.storage.ConversationSubscriptionPreferenceEnforcement
 import org.aurorasms.core.state.storage.DraftIdentityEnforcement
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
@@ -52,11 +53,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionSix_hasBoundedDraftAppearanceAndContentFreeComposerTables() {
+    fun schemaVersionSeven_hasBoundedContentFreeStateTables() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(6, AuroraStateDatabase.VERSION)
+            assertEquals(7, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -258,13 +259,29 @@ class StateSchemaCurrentTest {
                     "index_acknowledged_composer_sms_receipts_provider_message_id",
                 ),
             )
+            assertEquals(
+                setOf(
+                    "participant_set_key",
+                    "provider_thread_id",
+                    "subscription_id",
+                    "revision",
+                    "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("conversation_subscription_preferences"),
+            )
+            assertTrue(
+                sqlite.indexNames("conversation_subscription_preferences")
+                    .contains(
+                        "index_conversation_subscription_preferences_provider_thread_id",
+                    ),
+            )
         } finally {
             database.close()
         }
     }
 
     @Test
-    fun exportedVersionSixStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedVersionSevenStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(
@@ -314,6 +331,12 @@ class StateSchemaCurrentTest {
                         "AND name = 'appearance_conversation_wallpapers'",
                 ).use { it.moveToFirst() },
             )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'conversation_subscription_preferences'",
+                ).use { it.moveToFirst() },
+            )
         }
 
         val database = Room.databaseBuilder(
@@ -325,6 +348,7 @@ class StateSchemaCurrentTest {
             .addCallback(AppearanceSelectionEnforcement.callback)
             .addCallback(AppearanceOverrideSequenceEnforcement.callback)
             .addCallback(ComposerSmsOperationEnforcement.callback)
+            .addCallback(ConversationSubscriptionPreferenceEnforcement.callback)
             .build()
         try {
             assertEquals(AuroraStateDatabase.VERSION, database.openHelper.writableDatabase.version)
@@ -365,6 +389,14 @@ class StateSchemaCurrentTest {
         assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME)
         assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
         assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(
+            sqlite,
+            ConversationSubscriptionPreferenceEnforcement.INSERT_INTEGRITY_TRIGGER_NAME,
+        )
+        assertTriggerExists(
+            sqlite,
+            ConversationSubscriptionPreferenceEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME,
+        )
 
         assertThrows(SQLiteConstraintException::class.java) {
             sqlite.execSQL(
@@ -391,6 +423,14 @@ class StateSchemaCurrentTest {
         sqlite.execSQL("DROP TRIGGER ${ComposerSmsOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL(
+            "DROP TRIGGER " +
+                ConversationSubscriptionPreferenceEnforcement.INSERT_INTEGRITY_TRIGGER_NAME,
+        )
+        sqlite.execSQL(
+            "DROP TRIGGER " +
+                ConversationSubscriptionPreferenceEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME,
+        )
         database.close()
 
         database = openStateDatabase()
@@ -406,6 +446,14 @@ class StateSchemaCurrentTest {
             assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME)
             assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
             assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(
+                sqlite,
+                ConversationSubscriptionPreferenceEnforcement.INSERT_INTEGRITY_TRIGGER_NAME,
+            )
+            assertTriggerExists(
+                sqlite,
+                ConversationSubscriptionPreferenceEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME,
+            )
             assertThrows(SQLiteConstraintException::class.java) {
                 sqlite.execSQL(
                     "INSERT INTO appearance_selection(" +

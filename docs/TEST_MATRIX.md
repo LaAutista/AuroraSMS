@@ -2814,15 +2814,69 @@ After the final receipt-domain invariant was tightened, all 52 state tests and
 the focused host coordinator/state suites passed again. No test invoked a real
 carrier destination.
 
+### Phase 5C durable conversation-SIM local acceptance — 2026-07-19
+
+This source identifies as `0.5.2-phase5` (`versionCode` 6) and Room schema 7.
+The new conversation-subscription table is content-free and keyed by a
+purpose-separated verified participant-set digest; its insert/update triggers
+enforce key shape, positive subscription/revision/timestamps, and monotonic
+revision/time transitions. The repository uses optimistic revisions and the
+Thread/send paths re-read the preference before operation reservation.
+
+The initial complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m50s across 886 tasks (372 executed, 174 from cache, 340
+up-to-date). After the current-schema instrumentation assertion was corrected,
+the exact final source passed the same 886-task aggregate again in 39s (57
+executed, 22 from cache, 807 up-to-date). All 521 host JUnit results passed: app 241, design system 11, index
+69, model 19, notifications 21, state 44, telephony 79, testing 24, and
+conversations 13. Debug, R8 release, and benchmark assembly; debug/release/
+benchmark lint; clean-room/private-art scans; dependency locks; permission and
+APK-content ledgers; and license gates all passed. `bundleRelease` separately
+passed 269 tasks in 21s. CycloneDX 1.6 passed all 15 tasks in 35s and reports
+441 components and 442 dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m27s
+across 456 tasks. Its module totals are 294 tests, 10 intentional assumption
+skips, 284 executed, and zero failures/errors: app 131/9 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 54/0, telephony 35/0, and conversations
+11/0. The first aggregate attempt exposed an old current-schema assertion that
+still expected version 6; it is diagnostic only. After the test was updated to
+validate the schema-7 table and reinstallable triggers, its focused 5/5 run and
+the later complete matrix above passed.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 1m55s
+across 456 tasks. Authoritative XML reports 297 tests, 13 intentional
+assumption skips, 284 executed, and zero failures/errors: app 134/12 skips,
+benchmark 3/1, index 31/0, notifications 29/0, state 54/0, telephony 35/0, and
+conversations 11/0.
+
+The debug APK is 14,740,845 bytes with SHA-256
+`e0d614e4a472d7416d299ba384824c756cc94486ee30ba9fc050e8f04180ece1`.
+The unsigned release APK is 2,730,477 bytes with SHA-256
+`2496afe507692c803e725906b5b2cea456ffb0479b9b84383f6380527013bfeb`;
+the release AAB is 5,575,056 bytes with SHA-256
+`30cb96a0fb38b1d85d6665bec99f93583bd6e9559cba30004cb574af28044104`.
+
+All subscription-choice acceptance used synthetic emulator subscriptions and
+no real carrier SMS. Physical dual-SIM/eSIM selection, actual removal or
+disablement, carrier routing, billing, roaming, groups, MMS, schedules, and OEM
+lifecycle behavior remain open. This closes only the local durable-choice and
+one-part composer no-silent-fallback contracts; AuroraSMS remains incomplete
+and not gold.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [ ] Scheduled send survives process death, reboot, and time/timezone change.
 - [ ] Exact-alarm denial/revocation is honest and has documented fallback.
 - [ ] Send-delay Undo survives process death without duplicate sends.
 - [ ] Pending deletion has deterministic process-death behavior.
-- [ ] Remembered subscription is durable and scoped per conversation.
+- [x] Remembered subscription is durable and scoped per conversation for the
+  verified one-person Thread composer path.
 - [ ] A removed/disabled remembered SIM prompts a safe fallback; scheduled and
   group sends never silently switch subscriptions.
+  The existing one-part composer now disables Send and requires an explicit
+  replacement in synthetic API 26/API 36 tests; physical removal plus scheduled
+  and group paths remain open.
 - [ ] Whole-thread deletion uses stronger confirmation.
 - [ ] After provider deletion commits, UI never claims recoverability.
 - [ ] No recycle-bin UI/schema/preference/worker exists.

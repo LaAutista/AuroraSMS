@@ -52,6 +52,12 @@ import org.aurorasms.core.state.ComposerSmsReservationRequest
 import org.aurorasms.core.state.ComposerSmsSentCompletion
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.ConversationSubscriptionParticipantSetKey
+import org.aurorasms.core.state.ConversationSubscriptionPreference
+import org.aurorasms.core.state.ConversationSubscriptionPreferenceRepository
+import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
+import org.aurorasms.core.state.ConversationSubscriptionRevision
+import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.telephony.ActiveSubscription
 import org.aurorasms.core.telephony.IncomingSmsRecord
 import org.aurorasms.core.telephony.OutgoingSmsRecord
@@ -100,6 +106,34 @@ class ThreadSmsSendCoordinatorTest {
         assertEquals(0, fixture.operations.reserveCount)
         assertTrue(fixture.transport.smsRequests.isEmpty())
         assertTrue(fixture.operations.draftPreserved)
+    }
+
+    @Test
+    fun durablePreferenceAuthorizesExplicitActiveSubscriptionInsteadOfLatestThreadSim() = runTest {
+        val fixture = fixture(
+            conversationSubscriptionId = AuroraSubscriptionId(9),
+            subscriptionPreference = preferenceResult(SUBSCRIPTION_ID),
+        )
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+        assertEquals(ThreadSmsSendAttempt.STARTED, fixture.coordinator.send(COMMAND))
+
+        assertEquals(1, fixture.operations.reserveCount)
+        assertEquals(SUBSCRIPTION_ID, fixture.operations.operation?.subscriptionId)
+        assertEquals(SUBSCRIPTION_ID, fixture.transport.smsRequests.single().subscriptionId)
+    }
+
+    @Test
+    fun missingRememberedSubscriptionRefusesWithoutReservationOrFallback() = runTest {
+        val fixture = fixture(
+            subscriptionPreference = preferenceResult(AuroraSubscriptionId(9)),
+        )
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+        assertEquals(ThreadSmsSendAttempt.REFUSED, fixture.coordinator.send(COMMAND))
+
+        assertEquals(0, fixture.operations.reserveCount)
+        assertTrue(fixture.transport.smsRequests.isEmpty())
     }
 
     @Test
@@ -950,6 +984,9 @@ class ThreadSmsSendCoordinatorTest {
         initialOperation: ComposerSmsOperation? = null,
         conversationSubscriptionId: AuroraSubscriptionId? = SUBSCRIPTION_ID,
         segmentCounter: SmsSegmentCounter = SmsSegmentCounter { 1 },
+        subscriptionPreference:
+            ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+            ConversationSubscriptionRepositoryResult.NotFound,
     ): Fixture {
         val operations = RecordingComposerRepository(initialOperation = initialOperation)
         val provider = RecordingSmsProvider()
@@ -975,6 +1012,9 @@ class ThreadSmsSendCoordinatorTest {
             operations = operations,
             transport = transport,
             smsProvider = provider,
+            subscriptionPreferences = FixedConversationSubscriptionPreferenceRepository(
+                subscriptionPreference,
+            ),
             segmentCounter = segmentCounter,
             nowMillis = { operations.nextClockValue() },
         )
@@ -1028,6 +1068,24 @@ class ThreadSmsSendCoordinatorTest {
             draftRevision = DRAFT_REVISION,
         )
 
+        fun preferenceResult(
+            subscriptionId: AuroraSubscriptionId,
+        ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+            ConversationSubscriptionRepositoryResult.Success(
+                ConversationSubscriptionPreference(
+                    scope = ConversationSubscriptionScope(
+                        participantSetKey =
+                            ConversationSubscriptionParticipantSetKey.fromParticipants(
+                                IDENTITY.participants,
+                            ),
+                        providerThreadId = THREAD_ID,
+                    ),
+                    subscriptionId = subscriptionId,
+                    revision = ConversationSubscriptionRevision(1L),
+                    updatedTimestampMillis = 1L,
+                ),
+            )
+
         fun SmsSendRequest.preBoundaryFailure(): TransportResult.Failed = TransportResult.Failed(
             operationId = operationId,
             transport = MessageTransportKind.SMS,
@@ -1066,6 +1124,23 @@ class ThreadSmsSendCoordinatorTest {
                 updatedTimestampMillis = 31L,
             )
     }
+}
+
+private class FixedConversationSubscriptionPreferenceRepository(
+    private val result:
+        ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference>,
+) : ConversationSubscriptionPreferenceRepository {
+    override suspend fun read(
+        scope: ConversationSubscriptionScope,
+    ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> = result
+
+    override suspend fun set(
+        scope: ConversationSubscriptionScope,
+        subscriptionId: AuroraSubscriptionId,
+        expectedRevision: ConversationSubscriptionRevision?,
+        updatedTimestampMillis: Long,
+    ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+        ConversationSubscriptionRepositoryResult.CorruptData
 }
 
 private class ExactConversationRepository(

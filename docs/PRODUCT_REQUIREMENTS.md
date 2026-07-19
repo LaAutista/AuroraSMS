@@ -338,6 +338,36 @@ unavailable production preconditions. It does not send a real carrier SMS and
 does not close physical-device, SIM, OEM, carrier, billing, roaming, sent, or
 delivery gates. AuroraSMS remains incomplete and not gold.
 
+### Phase 5C durable conversation subscription choice
+
+The `0.5.2-phase5` (`versionCode` 6) 2026-07-19 source replaces implicit
+latest-message SIM reuse with an explicit, durable choice for the currently
+supported verified one-person Thread path.
+
+- Room schema 7 stores one content-free preference per purpose-separated
+  verified participant-set hash: the provider-Thread hint, subscription ID,
+  optimistic revision, and timestamps. It stores no address, recipient, body,
+  subject, or display label and does not reuse the appearance or draft hash
+  domain.
+- The Thread header exposes the active SMS-capable subscriptions. Choosing one
+  persists it before it becomes authoritative; stale writes re-read rather
+  than overwrite a newer choice.
+- Until a preference exists, the exact Thread-associated subscription remains
+  the conservative default. Once a preference exists, it is authoritative.
+  If it is absent from the current active SMS-capable set, the UI identifies
+  the remembered choice as unavailable, disables Send, and requires an
+  explicit replacement. It never silently falls back.
+- Immediately before operation reservation, the coordinator reconstructs the
+  verified purpose-separated conversation scope and re-reads the durable
+  preference. Storage failure, identity mismatch, stale authority, an
+  unavailable subscription, or a command/preference mismatch refuses before
+  provider staging or transport.
+
+The local API 26/API 36 matrices prove persistence, migration, UI gating, and
+pre-reservation fail-closed behavior with synthetic subscriptions. They do not
+prove physical dual-SIM/eSIM lifecycle, removal, carrier routing, billing,
+roaming, groups, MMS, or schedules. Those release rows remain open.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls
@@ -579,9 +609,12 @@ list updates must not restart it.
 - back, identity/title, relevant SIM subtitle, call via a safe system intent,
   and overflow;
 - independently paged history with anchored composer;
-- for Phase 5A, enable Send only for an exact acknowledged frozen draft in an
-  existing verified one-person Thread, on its associated active SMS-capable
-  subscription, when the body is exactly one SMS unit;
+- for Phase 5C, enable Send only for an exact acknowledged frozen draft in an
+  existing verified one-person Thread, on its active SMS-capable durable
+  conversation choice (or its conservative associated-SIM default before the
+  first choice), when the body is exactly one SMS unit;
+- show an unavailable remembered SIM explicitly and require the user to choose
+  an active replacement before Send can become available;
 - expose truthful ready, sending, known-unsent, submission-unknown, and exact
   unavailability states; lock editing during active/unknown work and require the
   duplicate-risk acknowledgement before reopening an unknown draft;
@@ -674,9 +707,9 @@ granular updates. Release builds use R8 and a measured Baseline Profile.
 5. Phase 4: AuroraMaterial, canonical artwork, Theme Studio, independent
    static/GIF assignments, and accessibility.
 6. Phase 5: first deliver the bounded Phase 5A existing-Thread one-part SMS
-   composer; later slices retain schedules, send delay, dual-SIM persistence,
-   group-MMS hardening, permanent-delete behavior, and the acknowledged-unknown
-   provider cleanup residual.
+   composer, then the Phase 5B acknowledged-unknown cleanup and Phase 5C durable
+   conversation-SIM choice; later slices retain schedules, send delay,
+   group-MMS hardening, and permanent-delete behavior.
 7. Phase 6: notifications/reminders, reactions, voice memo, selected-text copy,
    signatures, local spam, backup/restore, and Android Auto.
 8. Phase 7: provenance, migrations, reproducible release, F-Droid metadata,

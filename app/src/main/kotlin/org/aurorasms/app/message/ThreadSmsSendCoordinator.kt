@@ -33,6 +33,11 @@ import org.aurorasms.core.state.ComposerSmsOperationRepository
 import org.aurorasms.core.state.ComposerSmsOperationResult
 import org.aurorasms.core.state.ComposerSmsProviderBinding
 import org.aurorasms.core.state.ComposerSmsReservationRequest
+import org.aurorasms.core.state.ConversationSubscriptionParticipantSetKey
+import org.aurorasms.core.state.ConversationSubscriptionPreference
+import org.aurorasms.core.state.ConversationSubscriptionPreferenceRepository
+import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
+import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
@@ -54,6 +59,8 @@ internal class ThreadSmsSendCoordinator(
     private val operations: ComposerSmsOperationRepository,
     private val transport: MessageTransport,
     private val smsProvider: SmsProviderDataSource,
+    private val subscriptionPreferences: ConversationSubscriptionPreferenceRepository =
+        NoConversationSubscriptionPreferenceRepository,
     private val segmentCounter: SmsSegmentCounter = AndroidSmsSegmentCounter,
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) : ThreadSmsSendController {
@@ -427,8 +434,27 @@ internal class ThreadSmsSendCoordinator(
             ?: return null
         val verifiedIdentity = found.verifiedIdentity ?: return null
         if (verifiedIdentity != command.identity) return null
-        if (found.summary.latestSubscriptionId != command.subscriptionId) return null
         val recipient = verifiedIdentity.participants.singleOrNull() ?: return null
+        val subscriptionScope = runCatching {
+            ConversationSubscriptionScope(
+                participantSetKey = ConversationSubscriptionParticipantSetKey.fromParticipants(
+                    verifiedIdentity.participants,
+                ),
+                providerThreadId = verifiedIdentity.providerThreadId,
+            )
+        }.getOrNull() ?: return null
+        val authoritativeSubscriptionId = when (
+            val preference = subscriptionPreferences.read(subscriptionScope)
+        ) {
+            is ConversationSubscriptionRepositoryResult.Success -> preference.value.subscriptionId
+            ConversationSubscriptionRepositoryResult.NotFound -> found.summary.latestSubscriptionId
+            ConversationSubscriptionRepositoryResult.StaleWrite,
+            ConversationSubscriptionRepositoryResult.CorruptData,
+            ConversationSubscriptionRepositoryResult.InvalidTimestamp,
+            is ConversationSubscriptionRepositoryResult.StorageFailure,
+            -> null
+        }
+        if (authoritativeSubscriptionId != command.subscriptionId) return null
         val subscription = subscriptions.findActive(command.subscriptionId) ?: return null
         return recipient.takeIf { subscription.smsCapable && roleState.isRoleHeld() }
     }
@@ -1086,6 +1112,22 @@ internal class ThreadSmsSendCoordinator(
         const val TERMINAL_VERIFICATION_MAXIMUM_ATTEMPTS: Int = 4
         const val MAXIMUM_TERMINAL_SIGNAL_OPERATION_IDS: Int = 256
     }
+}
+
+private object NoConversationSubscriptionPreferenceRepository :
+    ConversationSubscriptionPreferenceRepository {
+    override suspend fun read(
+        scope: ConversationSubscriptionScope,
+    ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+        ConversationSubscriptionRepositoryResult.NotFound
+
+    override suspend fun set(
+        scope: ConversationSubscriptionScope,
+        subscriptionId: org.aurorasms.core.model.AuroraSubscriptionId,
+        expectedRevision: org.aurorasms.core.state.ConversationSubscriptionRevision?,
+        updatedTimestampMillis: Long,
+    ): ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
+        ConversationSubscriptionRepositoryResult.CorruptData
 }
 
 private enum class ExactCallbackProof {

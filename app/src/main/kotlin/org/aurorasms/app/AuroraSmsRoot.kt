@@ -54,6 +54,7 @@ import org.aurorasms.app.message.ThreadSmsSendPhase
 import org.aurorasms.core.index.SearchAnchor
 import org.aurorasms.core.index.SearchHit
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
@@ -68,6 +69,10 @@ import org.aurorasms.core.state.DraftRevision
 import org.aurorasms.core.state.AppearanceParticipantSetKey
 import org.aurorasms.core.state.AppearanceScope
 import org.aurorasms.core.state.AppearanceScreenScope
+import org.aurorasms.core.state.ConversationSubscriptionParticipantSetKey
+import org.aurorasms.core.state.ConversationSubscriptionPreference
+import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
+import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.feature.conversations.ComposerUiState
 import org.aurorasms.feature.conversations.ComposerSendState
 import org.aurorasms.feature.conversations.ComposerUnavailableReason
@@ -80,6 +85,7 @@ import org.aurorasms.feature.conversations.SearchUiState
 import org.aurorasms.feature.conversations.ThreadScreen
 import org.aurorasms.feature.conversations.ThreadStateHolder
 import org.aurorasms.feature.conversations.ThreadUiState
+import org.aurorasms.feature.conversations.ConversationSubscriptionUiState
 
 @Composable
 internal fun AuroraSmsRoot(
@@ -558,6 +564,37 @@ private fun ThreadRoute(
     }
     DisposableEffect(holder) { onDispose(holder::close) }
     val threadState by holder.state.collectAsStateWithLifecycle()
+    val conversationSubscriptionScope = remember(route.providerThreadId, threadState) {
+        trustedConversationSubscriptionScope(route.providerThreadId, threadState)
+    }
+    var subscriptionPreferenceState by remember(conversationSubscriptionScope) {
+        mutableStateOf<AppConversationSubscriptionPreferenceState>(
+            if (conversationSubscriptionScope == null) {
+                AppConversationSubscriptionPreferenceState.Unavailable
+            } else {
+                AppConversationSubscriptionPreferenceState.Loading
+            },
+        )
+    }
+    var subscriptionSelectionInFlight by remember(conversationSubscriptionScope) {
+        mutableStateOf(false)
+    }
+    LaunchedEffect(services, conversationSubscriptionScope) {
+        val preferenceScope = conversationSubscriptionScope
+        if (preferenceScope == null) {
+            subscriptionPreferenceState = AppConversationSubscriptionPreferenceState.Unavailable
+            return@LaunchedEffect
+        }
+        subscriptionPreferenceState = AppConversationSubscriptionPreferenceState.Loading
+        subscriptionPreferenceState = services.conversationSubscriptionPreferenceRepository
+            .read(preferenceScope)
+            .toAppPreferenceState()
+    }
+    val subscriptionSelection = resolveConversationSubscriptionUiState(
+        ready = threadState as? ThreadUiState.Ready,
+        preferenceState = subscriptionPreferenceState,
+        saving = subscriptionSelectionInFlight,
+    )
     LaunchedEffect(threadState) {
         if (threadState is ThreadUiState.Ready) {
             withFrameNanos { }
@@ -648,6 +685,7 @@ private fun ThreadRoute(
         sendObservation = sendObservation,
         sendAttemptInFlight = sendAttemptInFlight,
         segmentCount = segmentCount,
+        selectedSubscriptionAvailable = subscriptionSelection.selected?.smsCapable == true,
     )
     val globalThreadScope = remember { AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD) }
     val globalThreadOverrideObservation by remember(appearanceController, globalThreadScope) {
@@ -750,6 +788,7 @@ private fun ThreadRoute(
         ThreadScreen(
             state = threadState,
             composer = composer,
+            subscriptionSelection = subscriptionSelection,
             attachmentRepository = services.mmsAttachmentRepository,
             previewLoader = services.previewLoader,
             onBack = onBack,
@@ -802,7 +841,7 @@ private fun ThreadRoute(
                             if (frozen.content.body.isNullOrBlank()) return@launch
                             val ready = threadState as? ThreadUiState.Ready ?: return@launch
                             val identity = ready.verifiedConversationIdentity ?: return@launch
-                            val subscription = ready.activeSubscription
+                            val subscription = subscriptionSelection.selected
                                 ?.takeIf { it.smsCapable }
                                 ?: return@launch
                             if (
@@ -842,6 +881,49 @@ private fun ThreadRoute(
                         writer.unfreezeAfterSendSettled(
                             DraftUnfreezeReason.SUBMISSION_UNKNOWN_ACKNOWLEDGED,
                         )
+                    }
+                }
+            },
+            onSelectSubscription = { subscriptionId ->
+                val preferenceScope = conversationSubscriptionScope
+                val option = subscriptionSelection.options.singleOrNull {
+                    it.id == subscriptionId && it.smsCapable
+                }
+                if (
+                    preferenceScope != null &&
+                    option != null &&
+                    !subscriptionSelectionInFlight &&
+                    (subscriptionPreferenceState as?
+                        AppConversationSubscriptionPreferenceState.Stored)
+                        ?.preference?.subscriptionId != subscriptionId
+                ) {
+                    subscriptionSelectionInFlight = true
+                    scope.launch {
+                        val current = subscriptionPreferenceState
+                            as? AppConversationSubscriptionPreferenceState.Stored
+                        val now = System.currentTimeMillis().coerceAtLeast(
+                            (current?.preference?.updatedTimestampMillis ?: -1L) + 1L,
+                        )
+                        val result = services.conversationSubscriptionPreferenceRepository.set(
+                            scope = preferenceScope,
+                            subscriptionId = subscriptionId,
+                            expectedRevision = current?.preference?.revision,
+                            updatedTimestampMillis = now,
+                        )
+                        subscriptionPreferenceState = when (result) {
+                            is ConversationSubscriptionRepositoryResult.Success ->
+                                AppConversationSubscriptionPreferenceState.Stored(result.value)
+                            ConversationSubscriptionRepositoryResult.StaleWrite ->
+                                services.conversationSubscriptionPreferenceRepository
+                                    .read(preferenceScope)
+                                    .toAppPreferenceState()
+                            ConversationSubscriptionRepositoryResult.NotFound,
+                            ConversationSubscriptionRepositoryResult.CorruptData,
+                            ConversationSubscriptionRepositoryResult.InvalidTimestamp,
+                            is ConversationSubscriptionRepositoryResult.StorageFailure,
+                            -> AppConversationSubscriptionPreferenceState.Failed
+                        }
+                        subscriptionSelectionInFlight = false
                     }
                 }
             },
@@ -976,6 +1058,84 @@ internal fun trustedConversationAppearanceScope(
     }.getOrNull()
 }
 
+internal fun trustedConversationSubscriptionScope(
+    providerThreadId: ProviderThreadId,
+    state: ThreadUiState,
+): ConversationSubscriptionScope? {
+    val ready = state as? ThreadUiState.Ready ?: return null
+    if (!ready.verifiedConversationIdentityResolved) return null
+    val identity = ready.verifiedConversationIdentity ?: return null
+    if (
+        !ready.coverage.verifiedComplete ||
+        identity.providerThreadId != providerThreadId ||
+        identity.generationId != ready.coverage.generationId
+    ) {
+        return null
+    }
+    return runCatching {
+        ConversationSubscriptionScope(
+            participantSetKey = ConversationSubscriptionParticipantSetKey.fromParticipants(
+                identity.participants,
+            ),
+            providerThreadId = identity.providerThreadId,
+        )
+    }.getOrNull()
+}
+
+private sealed interface AppConversationSubscriptionPreferenceState {
+    data object Loading : AppConversationSubscriptionPreferenceState
+    data object NoPreference : AppConversationSubscriptionPreferenceState
+    data class Stored(
+        val preference: ConversationSubscriptionPreference,
+    ) : AppConversationSubscriptionPreferenceState
+    data object Failed : AppConversationSubscriptionPreferenceState
+    data object Unavailable : AppConversationSubscriptionPreferenceState
+}
+
+private fun ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference>
+    .toAppPreferenceState(): AppConversationSubscriptionPreferenceState = when (this) {
+    is ConversationSubscriptionRepositoryResult.Success ->
+        AppConversationSubscriptionPreferenceState.Stored(value)
+    ConversationSubscriptionRepositoryResult.NotFound ->
+        AppConversationSubscriptionPreferenceState.NoPreference
+    ConversationSubscriptionRepositoryResult.StaleWrite,
+    ConversationSubscriptionRepositoryResult.CorruptData,
+    ConversationSubscriptionRepositoryResult.InvalidTimestamp,
+    is ConversationSubscriptionRepositoryResult.StorageFailure,
+    -> AppConversationSubscriptionPreferenceState.Failed
+}
+
+private fun resolveConversationSubscriptionUiState(
+    ready: ThreadUiState.Ready?,
+    preferenceState: AppConversationSubscriptionPreferenceState,
+    saving: Boolean,
+): ConversationSubscriptionUiState {
+    val options = ready?.activeSubscriptions.orEmpty()
+        .filter { it.smsCapable }
+        .distinctBy { it.id }
+    val stored = preferenceState as? AppConversationSubscriptionPreferenceState.Stored
+    val selected = when (preferenceState) {
+        AppConversationSubscriptionPreferenceState.NoPreference -> ready?.activeSubscription
+            ?.takeIf { associated -> options.any { it.id == associated.id } }
+        is AppConversationSubscriptionPreferenceState.Stored -> options.singleOrNull {
+            it.id == preferenceState.preference.subscriptionId
+        }
+        AppConversationSubscriptionPreferenceState.Failed,
+        AppConversationSubscriptionPreferenceState.Loading,
+        AppConversationSubscriptionPreferenceState.Unavailable,
+        -> null
+    }
+    return ConversationSubscriptionUiState(
+        options = options,
+        selected = selected,
+        loading = preferenceState == AppConversationSubscriptionPreferenceState.Loading ||
+            preferenceState == AppConversationSubscriptionPreferenceState.Unavailable,
+        saving = saving,
+        rememberedSelectionUnavailable = stored != null && selected == null,
+        storageFailed = preferenceState == AppConversationSubscriptionPreferenceState.Failed,
+    )
+}
+
 private fun AppAppearanceState.activeProfileName(canonicalName: String): String = activeProfileId
     ?.let { activeId -> profiles.firstOrNull { it.id == activeId } }
     ?.name
@@ -1087,6 +1247,7 @@ private fun DraftWriteStatus.toComposerUiState(
     sendObservation: ThreadSmsSendObservation,
     sendAttemptInFlight: Boolean,
     segmentCount: Int?,
+    selectedSubscriptionAvailable: Boolean,
 ): ComposerUiState {
     val body = when (this) {
         DraftWriteStatus.Loading -> restoredBody
@@ -1110,7 +1271,7 @@ private fun DraftWriteStatus.toComposerUiState(
             ComposerUnavailableReason.CONVERSATION_UNVERIFIED
         verifiedIdentity.participants.size != 1 ->
             ComposerUnavailableReason.GROUP_REQUIRES_MMS
-        ready.activeSubscription?.smsCapable != true ->
+        !selectedSubscriptionAvailable ->
             ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE
         segmentCount == null -> ComposerUnavailableReason.MESSAGING_UNAVAILABLE
         segmentCount != 1 -> ComposerUnavailableReason.MULTIPART_UNAVAILABLE

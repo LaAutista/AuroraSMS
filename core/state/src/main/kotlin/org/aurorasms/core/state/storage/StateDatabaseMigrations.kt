@@ -258,3 +258,29 @@ val STATE_MIGRATION_5_6: Migration = object : Migration(5, 6) {
         db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
     }
 }
+
+val STATE_MIGRATION_6_7: Migration = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `conversation_subscription_preferences` (
+                `participant_set_key` TEXT NOT NULL,
+                `provider_thread_id` INTEGER NOT NULL,
+                `subscription_id` INTEGER NOT NULL,
+                `revision` INTEGER NOT NULL,
+                `updated_timestamp_ms` INTEGER NOT NULL,
+                PRIMARY KEY(`participant_set_key`)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS
+            `index_conversation_subscription_preferences_provider_thread_id`
+            ON `conversation_subscription_preferences` (`provider_thread_id`)
+            """.trimIndent(),
+        )
+        db.execSQL(ConversationSubscriptionPreferenceEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(ConversationSubscriptionPreferenceEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+    }
+}

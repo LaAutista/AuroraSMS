@@ -53,12 +53,14 @@ object StateDatabaseFactory {
                 STATE_MIGRATION_3_4,
                 STATE_MIGRATION_4_5,
                 STATE_MIGRATION_5_6,
+                STATE_MIGRATION_6_7,
             )
             .addCallback(DraftIdentityEnforcement.callback)
             .addCallback(AppearanceSelectionEnforcement.callback)
             .addCallback(AppearanceOverrideSequenceEnforcement.callback)
             .addCallback(ComposerSmsOperationEnforcement.callback)
             .addCallback(AcknowledgedComposerSmsEnforcement.callback)
+            .addCallback(ConversationSubscriptionPreferenceEnforcement.callback)
             .build()
         return try {
             database.openHelper.writableDatabase

@@ -79,6 +79,7 @@ import org.aurorasms.core.designsystem.LocalAuroraMaterialTokens
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
@@ -95,6 +96,7 @@ import java.util.Locale
 fun ThreadScreen(
     state: ThreadUiState,
     composer: ComposerUiState,
+    subscriptionSelection: ConversationSubscriptionUiState = ConversationSubscriptionUiState(),
     attachmentRepository: MmsAttachmentRepository,
     previewLoader: BoundedPreviewLoader,
     onBack: () -> Unit,
@@ -113,6 +115,7 @@ fun ThreadScreen(
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
     onDraftChanged: (String) -> Unit,
     onSend: () -> Unit = {},
+    onSelectSubscription: (AuroraSubscriptionId) -> Unit = {},
     onAcknowledgeSubmissionUnknown: () -> Unit = {},
     timelineBackground: @Composable BoxScope.() -> Unit = {},
 ) {
@@ -141,6 +144,7 @@ fun ThreadScreen(
         Column(modifier = Modifier.imePadding()) {
             ThreadHeader(
                 state = state,
+                subscriptionSelection = subscriptionSelection,
                 onBack = {
                     focusManager.clearFocus()
                     keyboard?.hide()
@@ -155,6 +159,7 @@ fun ThreadScreen(
                 },
                 isDialable = isDialable,
                 onDial = onDial,
+                onSelectSubscription = onSelectSubscription,
             )
             HorizontalDivider(color = visualTokens.violet.copy(alpha = 0.4f))
             Box(modifier = Modifier.weight(1f)) {
@@ -192,12 +197,14 @@ fun ThreadScreen(
 @Composable
 private fun ThreadHeader(
     state: ThreadUiState,
+    subscriptionSelection: ConversationSubscriptionUiState,
     onBack: () -> Unit,
     onOpenSearch: () -> Unit,
     conversationAppearanceAvailable: Boolean,
     onOpenConversationAppearance: () -> Unit,
     isDialable: (ParticipantAddress) -> Boolean,
     onDial: (ParticipantAddress) -> Unit,
+    onSelectSubscription: (AuroraSubscriptionId) -> Unit,
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
     val ready = state as? ThreadUiState.Ready
@@ -228,23 +235,10 @@ private fun ThreadHeader(
                 fontWeight = FontWeight.SemiBold,
                 color = visualTokens.onIncoming,
             )
-            ready?.activeSubscription?.let { subscription ->
-                Text(
-                    text = if (subscription.displayLabel.isBlank()) {
-                        stringResource(R.string.sim_number, subscription.slotIndex + 1)
-                    } else {
-                        stringResource(
-                            R.string.sim_number_with_label,
-                            subscription.slotIndex + 1,
-                            subscription.displayLabel,
-                        )
-                    },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = visualTokens.lilacSecondary,
-                )
-            }
+            SubscriptionSelector(
+                state = subscriptionSelection,
+                onSelectSubscription = onSelectSubscription,
+            )
         }
         if (dialAddress != null) {
             AuroraIconAction(
@@ -265,6 +259,81 @@ private fun ThreadHeader(
         }
     }
 }
+
+@Composable
+private fun SubscriptionSelector(
+    state: ConversationSubscriptionUiState,
+    onSelectSubscription: (AuroraSubscriptionId) -> Unit,
+) {
+    val visualTokens = LocalAuroraVisualTokens.current
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = state.selected?.let { subscription ->
+        subscriptionLabel(subscription)
+    }
+    val label = when {
+        state.loading -> stringResource(R.string.loading_sim_selection)
+        state.saving -> stringResource(R.string.saving_sim_selection)
+        state.storageFailed -> stringResource(R.string.sim_selection_unavailable)
+        state.rememberedSelectionUnavailable -> stringResource(R.string.remembered_sim_unavailable)
+        selectedLabel != null -> selectedLabel
+        state.options.isNotEmpty() -> stringResource(R.string.choose_sim)
+        else -> stringResource(R.string.no_sms_sim_available)
+    }
+    Box {
+        TextButton(
+            modifier = Modifier.testTag(THREAD_SIM_SELECTOR_TEST_TAG),
+            enabled = !state.loading && !state.saving && !state.storageFailed &&
+                state.options.isNotEmpty(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+            onClick = { expanded = true },
+        ) {
+            Text(
+                text = label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (state.rememberedSelectionUnavailable || state.storageFailed) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    visualTokens.lilacSecondary
+                },
+            )
+        }
+        DropdownMenu(
+            modifier = Modifier.semantics { testTagsAsResourceId = true },
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            containerColor = visualTokens.menuSurface,
+        ) {
+            state.options.forEach { subscription ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = subscriptionLabel(subscription),
+                            color = visualTokens.onIncoming,
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelectSubscription(subscription.id)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun subscriptionLabel(subscription: org.aurorasms.core.telephony.ActiveSubscription): String =
+    if (subscription.displayLabel.isBlank()) {
+        stringResource(R.string.sim_number, subscription.slotIndex + 1)
+    } else {
+        stringResource(
+            R.string.sim_number_with_label,
+            subscription.slotIndex + 1,
+            subscription.displayLabel,
+        )
+    }
 
 @Composable
 private fun ThreadMoreMenu(
@@ -1082,3 +1151,4 @@ const val COMPOSER_TEST_TAG: String = "aurora-composer"
 const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"
 const val THREAD_MORE_ACTION_TEST_TAG: String = "aurora-thread-more-action"
 const val THREAD_APPEARANCE_ACTION_TEST_TAG: String = "aurora-thread-appearance-action"
+const val THREAD_SIM_SELECTOR_TEST_TAG: String = "aurora-thread-sim-selector"
