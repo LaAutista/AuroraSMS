@@ -155,6 +155,18 @@ class ScheduledSmsCoordinatorTest {
         assertEquals(ScheduledSmsPhase.DISPATCHING, fixture.repository.schedule?.phase)
     }
 
+    @Test
+    fun groupIdentityCannotCreateScheduleOrReachSmsSender() = runTest {
+        val fixture = fixture()
+        val group = IDENTITY.copy(participants = listOf(ADDRESS, ParticipantAddress("+15550000001")))
+
+        assertEquals(ScheduledSmsAttempt.REFUSED, fixture.coordinator.schedule(command().copy(identity = group)))
+
+        assertEquals(null, fixture.repository.schedule)
+        assertTrue(fixture.alarms.armedDueTimes.isEmpty())
+        assertEquals(0, fixture.sender.sendCount)
+    }
+
     private fun fixture(
         armResult: ScheduledAlarmArmResult = ScheduledAlarmArmResult.EXACT,
     ): Fixture {

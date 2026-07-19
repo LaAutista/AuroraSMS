@@ -456,6 +456,25 @@ and metadata-only migration/launch checks do not delete live messages or close
 real provider, process-kill, OEM, or carrier gates. AuroraSMS remains incomplete
 and not gold.
 
+### Phase 5G shared no-group-SMS boundary
+
+The `0.5.6-phase5` (`versionCode` 10) 2026-07-19 source implements ADR 0014
+without a database migration.
+
+- `SmsSendRequest` can represent exactly one canonical recipient. A group
+  cannot cross any shared SMS transport boundary even if a caller regresses.
+- Thread, scheduled-send, and delayed-send paths independently require one exact
+  verified participant before durable reservation or sender handoff.
+- Android respond-via routes two or more recipients into one `MmsSendRequest`
+  and invokes MMS exactly once. MMS rejection or failure is returned unchanged;
+  no per-recipient loop or SMS fallback exists.
+- The current group Thread composer remains visibly unavailable rather than
+  pretending group SMS is safe.
+
+This proves no fan-out across current paths. It does not claim the full group-
+MMS composer, codec, provider-addressing, group-reply, or carrier matrix, which
+remains open.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls
@@ -798,8 +817,8 @@ granular updates. Release builds use R8 and a measured Baseline Profile.
    composer, then the Phase 5B acknowledged-unknown cleanup, Phase 5C durable
    conversation-SIM choice, Phase 5D durable scheduled one-part SMS with an
    honest exact/inexact alarm boundary, Phase 5E durable short-delay Undo, and
-   Phase 5F guarded permanent message/Thread deletion; later slices retain
-   group-MMS hardening.
+   Phase 5F guarded permanent message/Thread deletion, and Phase 5G's shared
+   no-group-SMS boundary; the full group-MMS feature remains a later slice.
 7. Phase 6: notifications/reminders, reactions, voice memo, selected-text copy,
    signatures, local spam, backup/restore, and Android Auto.
 8. Phase 7: provenance, migrations, reproducible release, F-Droid metadata,

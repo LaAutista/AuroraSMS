@@ -24,6 +24,9 @@ data class SmsSendRequest(
         require(operationId.kind == ProviderKind.PENDING_OPERATION) {
             "Transport operations need a pending-operation ID"
         }
+        require(recipients.singleSmsRecipientOrNull() != null) {
+            "SMS requests accept exactly one canonical recipient; groups require one MMS operation"
+        }
         require(body.length <= MAX_OUTGOING_TEXT_CHARACTERS) { "SMS text is too large" }
     }
 

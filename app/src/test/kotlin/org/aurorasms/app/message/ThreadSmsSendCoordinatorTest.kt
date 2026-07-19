@@ -109,6 +109,29 @@ class ThreadSmsSendCoordinatorTest {
     }
 
     @Test
+    fun exactGroupConversationNeverReservesOrSubmitsSms() = runTest {
+        listOf(2, 3).forEach { participantCount ->
+            val groupIdentity = IDENTITY.copy(
+                participants = (1..participantCount).map { index ->
+                    ParticipantAddress("+12025550${index.toString().padStart(3, '0')}")
+                },
+            )
+            val fixture = fixture(verifiedIdentity = groupIdentity)
+            assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+            assertEquals(
+                ThreadSmsSendAttempt.REFUSED,
+                fixture.coordinator.send(COMMAND.copy(identity = groupIdentity)),
+            )
+
+            assertEquals(0, fixture.operations.reserveCount)
+            assertTrue(fixture.transport.smsRequests.isEmpty())
+            assertTrue(fixture.transport.mmsRequests.isEmpty())
+            assertTrue(fixture.operations.draftPreserved)
+        }
+    }
+
+    @Test
     fun durablePreferenceAuthorizesExplicitActiveSubscriptionInsteadOfLatestThreadSim() = runTest {
         val fixture = fixture(
             conversationSubscriptionId = AuroraSubscriptionId(9),
@@ -983,6 +1006,7 @@ class ThreadSmsSendCoordinatorTest {
     private fun TestScope.fixture(
         initialOperation: ComposerSmsOperation? = null,
         conversationSubscriptionId: AuroraSubscriptionId? = SUBSCRIPTION_ID,
+        verifiedIdentity: VerifiedConversationIdentity = IDENTITY,
         segmentCounter: SmsSegmentCounter = SmsSegmentCounter { 1 },
         subscriptionPreference:
             ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
@@ -991,7 +1015,7 @@ class ThreadSmsSendCoordinatorTest {
         val operations = RecordingComposerRepository(initialOperation = initialOperation)
         val provider = RecordingSmsProvider()
         val transport = FakeMessageTransport()
-        val conversations = ExactConversationRepository(conversationSubscriptionId)
+        val conversations = ExactConversationRepository(conversationSubscriptionId, verifiedIdentity)
         val role = FakeRoleState(held = true)
         val coordinator = ThreadSmsSendCoordinator(
             applicationScope = backgroundScope,
@@ -1145,6 +1169,7 @@ private class FixedConversationSubscriptionPreferenceRepository(
 
 private class ExactConversationRepository(
     private val associatedSubscriptionId: AuroraSubscriptionId?,
+    private val verifiedIdentity: VerifiedConversationIdentity,
 ) : ConversationRepository {
     override val invalidations: Flow<ConversationInvalidation> = emptyFlow()
     var loadCount: Int = 0
@@ -1167,15 +1192,15 @@ private class ExactConversationRepository(
                 latestBox = MessageBox.INBOX,
                 latestStatus = MessageStatus.COMPLETE,
                 latestSubscriptionId = associatedSubscriptionId,
-                latestSenderAddress = ThreadSmsSendCoordinatorTest.RECIPIENT,
+                latestSenderAddress = verifiedIdentity.participants.first(),
                 latestSnippet = null,
                 latestAttachmentCount = 0,
                 latestAttachmentTypeSummary = "",
                 latestRead = true,
                 indexedMessageCount = 1L,
                 indexedUnreadCount = 0L,
-                participants = listOf(ThreadSmsSendCoordinatorTest.RECIPIENT),
-                indexedParticipantCount = 1,
+                participants = verifiedIdentity.participants,
+                indexedParticipantCount = verifiedIdentity.participants.size,
                 participantsTruncated = false,
             ),
             coverage = IndexCoverage(
@@ -1186,7 +1211,7 @@ private class ExactConversationRepository(
                 mmsExhausted = true,
                 pendingChanges = false,
             ),
-            verifiedIdentity = ThreadSmsSendCoordinatorTest.IDENTITY,
+            verifiedIdentity = verifiedIdentity,
         )
     }
 }

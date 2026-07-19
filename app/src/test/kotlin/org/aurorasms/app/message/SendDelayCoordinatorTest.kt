@@ -178,6 +178,18 @@ class SendDelayCoordinatorTest {
         assertEquals(0, fixture.sender.sendCount)
     }
 
+    @Test
+    fun groupIdentityCannotCreateDelayOrReachSmsSender() = runTest {
+        val fixture = fixture(backgroundScope)
+        val group = IDENTITY.copy(participants = listOf(ADDRESS, ParticipantAddress("+15550000001")))
+
+        assertEquals(SendDelayAttempt.REFUSED, fixture.coordinator.enqueue(command().copy(identity = group)))
+
+        assertEquals(null, fixture.repository.operation)
+        assertEquals(emptyList<Long>(), fixture.alarms.armedDueTimes)
+        assertEquals(0, fixture.sender.sendCount)
+    }
+
     private fun fixture(
         scope: CoroutineScope,
         armResult: Boolean = true,

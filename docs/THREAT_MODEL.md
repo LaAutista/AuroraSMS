@@ -3,8 +3,8 @@
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
 bounded ADR 0008 Phase 5A source implementation in commit `17fc421`, followed
-by accepted Phase 5B–5F durability controls through ADR 0013 and Room schema 10.
-Local/API 26/API 36 acceptance passed through Phase 5F; safe install/migration
+by accepted Phase 5B–5G controls through ADR 0014 and Room schema 10.
+Local/API 26/API 36 acceptance passed through Phase 5G. Safe install/migration
 and locked-device cold launch passed on a Pixel 8. Real-carrier, radio, billing,
 and invasive physical lifecycle evidence remains open.
 
@@ -702,6 +702,16 @@ claims recoverability; newer drafts are protected by revision comparison. No
 recycle-bin UI, table, preference, migration, service, or worker exists.
 Emulator evidence does not close physical provider race, process-death, or OEM
 lifecycle threats, and no live Pixel message is used for acceptance.
+
+Phase 5G implements ADR 0014's shared no-group-SMS boundary. A group cannot be
+represented as `SmsSendRequest`; every shared SMS transport caller therefore
+inherits a one-canonical-recipient invariant. The externally reachable
+respond-via surface routes a group to exactly one MMS request and returns MMS
+failure without a loop or SMS fallback. Thread, delayed, and scheduled paths
+also retain independent one-person verification before durable ownership. This
+prevents silent recipient fan-out, privacy leakage, and unexpected per-message
+billing in current surfaces. Full group-MMS encoding, addressing, reply,
+carrier, and physical-device behavior remains open.
 
 ## Open security decisions
 

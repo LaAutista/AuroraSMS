@@ -3020,6 +3020,49 @@ endpoint was unreachable, so physical install/migration/launch acceptance
 remains pending. No automated or manual Phase 5F test read or deleted a live
 message, changed the default SMS app, or submitted a carrier message.
 
+### Phase 5G shared no-group-SMS acceptance — 2026-07-19
+
+This source identifies as `0.5.6-phase5` (`versionCode` 10), Room schema 10,
+and ADR 0014. `SmsSendRequest` structurally requires exactly one canonical
+recipient. Thread, delayed, and scheduled paths each recheck a verified one-
+person identity. Respond-via maps two or three recipients to one MMS request;
+an MMS failure returns without any SMS call. The group Thread UI keeps draft
+editing available, labels MMS unavailable, and disables Send.
+
+The complete offline host/release/privacy/license aggregate passed. All 552
+host JUnit results passed with zero failures, errors, or skips: app 262, design
+system 11, index 69, model 19, notifications 21, state 51, telephony 82,
+testing 24, and conversations 13. Debug, R8 release, and benchmark assembly;
+debug/release/benchmark lint; clean-room/private-art scans; dependency locks;
+permission and APK-content ledgers; and license gates passed. `bundleRelease`
+separately passed 269 tasks in 25s. CycloneDX 1.6 separately passed 15
+up-to-date tasks in 8s and reports 441 components and 442 dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m35s
+across 456 tasks. It passed 309 tests with 10 intentional assumption skips, 299
+executed, and zero failures/errors: app 132/9 skips, benchmark 3/1, index 31/0,
+notifications 29/0, state 61/0, telephony 35/0, and conversations 18/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m01s
+across 456 tasks. Authoritative XML reports 312 tests, 13 intentional assumption
+skips, 299 executed, and zero failures/errors: app 135/12 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations
+18/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,749,634 | `3bc8322e3ea920df07c52f9cd19082794d7be3bfc73f822f711237245d997a19` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,846,357 | `06cf5c7a208a888c333468bb0b59aa07efb7dae65c052516feb48a08ed403a95` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,690,813 | `6bbe43e335ca30fb6312f0ef3ab9d9c640fac66764b8c5eecd418730d9037eb1` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,797,124 | `1fb2e9f0b64ea335a86ac35b51aa57f1d756f52c675d2415bde8afb9c22f22b8` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The Pixel 8 was still absent from `adb devices` at Phase 5G handoff, so its
+safe install/copy/metadata-only launch remains pending. Emulator and host tests
+used only synthetic recipients and unavailable/fake transport boundaries; no
+carrier SMS/MMS was submitted. The broader group-MMS codec, provider addressing,
+reply identity, failure UI, carrier, and physical release rows remain open.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
@@ -3044,7 +3087,10 @@ message, changed the default SMS app, or submitted a carrier message.
 - [x] Whole-thread deletion uses stronger two-step confirmation.
 - [x] After provider deletion commits, UI never claims recoverability.
 - [x] No recycle-bin UI/schema/preference/worker exists.
-- [ ] Every group path still proves no individual fan-out.
+- [x] Every currently reachable group path proves no individual fan-out.
+  `SmsSendRequest` cannot represent a group; Thread/delay/schedule refuse group
+  identities; respond-via performs one MMS call and never falls back to SMS.
+  Full group-MMS feature and carrier acceptance remain open below.
 
 ## Phase 6 feature/privacy matrix
 

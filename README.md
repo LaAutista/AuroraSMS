@@ -9,6 +9,24 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+The 2026-07-19 Phase 5G source identifies as `0.5.6-phase5` (`versionCode` 10)
+and implements ADR 0014's shared no-group-SMS boundary. Every `SmsSendRequest`
+is structurally limited to one canonical recipient. Existing Thread, delayed,
+and scheduled paths recheck a one-person verified identity, while Android
+respond-via routes a group into exactly one MMS request. MMS failure is never
+retried or fanned out as individual SMS messages. The current group composer
+remains visibly disabled until full group MMS is implemented. This closes the
+current-path fan-out invariant, not the broader MMS codec/provider/carrier
+matrix; AuroraSMS remains incomplete and not gold.
+
+Phase 5G local acceptance is green. All 552 host tests passed inside the full
+debug/R8-release/benchmark, lint, privacy, dependency, APK-content, and license
+aggregate. The complete API 36 matrix passed 309 tests with 10 intentional
+environment-gated skips, and API 26 passed 312 with 13; both executed 299 tests
+with zero failures/errors. No test used a real destination or carrier transport.
+The Pixel was not enumerated by ADB at handoff, so its safe install remains
+pending.
+
 The 2026-07-19 Phase 5F source identifies as `0.5.5-phase5` (`versionCode` 9)
 and adds ADR 0013's guarded permanent deletion for one exact SMS/MMS row or an
 entire provider Thread. Message deletion has one explicit confirmation;

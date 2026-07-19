@@ -6,8 +6,8 @@ and aggregate local/emulator acceptance passed on 2026-07-18. Physical-device,
 SIM, OEM, carrier-network, billing, roaming, sent, and delivery evidence remains
 open.
 This document does not declare AuroraSMS complete or gold.
-Phase 5B through Phase 5F addenda below are now implemented; the latest source
-is `0.5.4-phase5` (`versionCode` 8), Room schema 9.
+Phase 5B through Phase 5G addenda below are now implemented; the latest source
+is `0.5.6-phase5` (`versionCode` 10), Room schema 10.
 
 ## Outcome
 
@@ -748,6 +748,26 @@ UI, privacy, release, and API 26/API 36 evidence belongs in
 `docs/TEST_MATRIX.md`. Automated and safe physical acceptance must not read or
 delete live messages and does not close physical process-death or OEM/provider
 lifecycle gates.
+
+## Phase 5G addendum — shared no-group-SMS boundary
+
+The 2026-07-19 `0.5.6-phase5` (`versionCode` 10) slice implements ADR 0014
+without changing Room schema 10. `SmsSendRequest` accepts exactly one canonical
+recipient, so no caller can represent a group as SMS. The exported respond-via
+surface makes one typed route decision: two or more unique recipients create
+one `MmsSendRequest`, invoke MMS once, and return any failure without SMS
+fallback.
+
+Existing Thread, delayed, and scheduled composer paths retain independent
+verified-one-person checks before any durable SMS reservation. Group Thread UI
+keeps the draft editable, states that MMS is required and unavailable, and
+disables Send. Host tests cover two- and three-recipient routing, MMS failure,
+the unrepresentable group-SMS request, and all three app coordinators; emulator
+UI acceptance proves the disabled group composer without a carrier call.
+
+This closes only the current-surface no-fan-out invariant. It does not implement
+the full group-MMS composer, codec, provider addressing, group notification
+reply, or carrier acceptance in the broader Phase 6/release matrix.
 
 ## Evidence that remains open
 

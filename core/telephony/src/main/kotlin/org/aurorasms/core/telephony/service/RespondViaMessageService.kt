@@ -15,13 +15,9 @@ import kotlinx.coroutines.launch
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
-import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderKind
-import org.aurorasms.core.telephony.MmsSendRequest
-import org.aurorasms.core.telephony.OutgoingMmsPayload
 import org.aurorasms.core.telephony.RecipientSet
 import org.aurorasms.core.telephony.SmsSendRequest
-import org.aurorasms.core.telephony.SmsSubmissionOwnership
 import org.aurorasms.core.telephony.TelephonyEntryPoint
 
 class RespondViaMessageService : Service() {
@@ -37,29 +33,13 @@ class RespondViaMessageService : Service() {
         serviceScope.launch {
             try {
                 val operationId = MessageId(ProviderKind.PENDING_OPERATION, nextOperationId())
-                val result = when (request.recipients.requiredTransport()) {
-                    MessageTransportKind.SMS -> entryPoint.messageTransport.sendSms(
-                        SmsSendRequest(
-                            operationId = operationId,
-                            recipients = request.recipients,
-                            body = request.body,
-                            subscriptionId = request.subscriptionId,
-                        ),
-                        ownership = SmsSubmissionOwnership.TransportOwned,
-                    )
-                    MessageTransportKind.MMS -> entryPoint.messageTransport.sendMms(
-                        MmsSendRequest(
-                            operationId = operationId,
-                            recipients = request.recipients,
-                            payload = OutgoingMmsPayload.RequiresEncoding(
-                                text = request.body,
-                                subject = null,
-                                attachmentCount = 0,
-                            ),
-                            subscriptionId = request.subscriptionId,
-                        ),
-                    )
-                }
+                val submission = respondViaMessageSubmission(
+                    operationId = operationId,
+                    recipients = request.recipients,
+                    body = request.body,
+                    subscriptionId = request.subscriptionId,
+                )
+                val result = entryPoint.messageTransport.submitRespondViaMessage(submission)
                 entryPoint.onTransportResult(result)
             } finally {
                 stopSelfResult(startId)

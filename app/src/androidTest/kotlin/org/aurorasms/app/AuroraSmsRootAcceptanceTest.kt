@@ -355,6 +355,32 @@ class AuroraSmsRootAcceptanceTest {
     }
 
     @Test
+    fun groupThreadKeepsComposerVisibleButCannotEnterAnySmsSendPath() {
+        val groupParticipants = SYNTHETIC_VERIFIED_PARTICIPANTS.take(3)
+        val groupIdentity = SYNTHETIC_SEND_VERIFIED_IDENTITY.copy(participants = groupParticipants)
+        val sendController = RecordingUnknownThreadSmsSendController()
+        val fixture = SyntheticFixture(
+            threadSummary = syntheticThreadSummary(
+                participants = groupParticipants,
+                latestSubscriptionId = SYNTHETIC_SEND_SUBSCRIPTION.id,
+            ),
+            verifiedIdentity = groupIdentity,
+            subscriptionRepository = FixedSubscriptionRepository(SYNTHETIC_SEND_SUBSCRIPTION),
+            threadSmsSendController = sendController,
+        )
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+            openSyntheticThread()
+            compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                .performTextReplacement("Synthetic group text")
+            waitForDisplayedText("Group sending requires MMS and is not available yet.")
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            assertEquals(0, sendController.sendCount)
+        }
+    }
+
+    @Test
     fun externalActionSendToComposeRemainsReviewOnlyWithSendDisabled() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val intent = Intent(context, ComposeMessageActivity::class.java).apply {
