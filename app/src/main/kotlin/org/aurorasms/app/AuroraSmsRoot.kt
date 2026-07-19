@@ -2,11 +2,22 @@
 
 package org.aurorasms.app
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
+import android.provider.Settings
+import android.text.format.DateFormat
+import android.widget.Toast
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -23,6 +34,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.net.toUri
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -51,6 +63,9 @@ import org.aurorasms.app.message.ThreadSmsSendAttempt
 import org.aurorasms.app.message.ThreadSmsSendCommand
 import org.aurorasms.app.message.ThreadSmsSendObservation
 import org.aurorasms.app.message.ThreadSmsSendPhase
+import org.aurorasms.app.message.ScheduledSmsAttempt
+import org.aurorasms.app.message.ScheduledSmsCommand
+import org.aurorasms.app.message.ScheduledSmsObservation
 import org.aurorasms.core.index.SearchAnchor
 import org.aurorasms.core.index.SearchHit
 import org.aurorasms.core.model.ConversationId
@@ -73,6 +88,8 @@ import org.aurorasms.core.state.ConversationSubscriptionParticipantSetKey
 import org.aurorasms.core.state.ConversationSubscriptionPreference
 import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
 import org.aurorasms.core.state.ConversationSubscriptionScope
+import org.aurorasms.core.state.ScheduledSmsPrecision
+import org.aurorasms.feature.conversations.ComposerScheduleState
 import org.aurorasms.feature.conversations.ComposerUiState
 import org.aurorasms.feature.conversations.ComposerSendState
 import org.aurorasms.feature.conversations.ComposerUnavailableReason
@@ -611,6 +628,13 @@ private fun ThreadRoute(
     val sendObservation by sendObservationFlow.collectAsStateWithLifecycle(
         initialValue = ThreadSmsSendObservation(ThreadSmsSendPhase.RECOVERY_PENDING),
     )
+    val scheduleController = services.scheduledSmsController
+    val scheduleObservationFlow = remember(scheduleController, route.providerThreadId) {
+        scheduleController.observe(route.providerThreadId)
+    }
+    val scheduleObservation by scheduleObservationFlow.collectAsStateWithLifecycle(
+        initialValue = ScheduledSmsObservation.Loading,
+    )
     var savedDraftRestoration by rememberSaveable(
         route.providerThreadId.value,
         stateSaver = SAVED_DRAFT_RESTORATION_SAVER,
@@ -671,6 +695,7 @@ private fun ThreadRoute(
         }
     }
     var sendAttemptInFlight by remember(route.providerThreadId) { mutableStateOf(false) }
+    var scheduleAttemptInFlight by remember(route.providerThreadId) { mutableStateOf(false) }
     val visibleBody = when (val status = draftStatus) {
         // Saved-state text is untrusted until the writer compares its exact
         // base token with Room. Avoid even a transient post-send resurrection.
@@ -686,6 +711,8 @@ private fun ThreadRoute(
         sendAttemptInFlight = sendAttemptInFlight,
         segmentCount = segmentCount,
         selectedSubscriptionAvailable = subscriptionSelection.selected?.smsCapable == true,
+        scheduleObservation = scheduleObservation,
+        scheduleAttemptInFlight = scheduleAttemptInFlight,
     )
     val globalThreadScope = remember { AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD) }
     val globalThreadOverrideObservation by remember(appearanceController, globalThreadScope) {
@@ -873,6 +900,97 @@ private fun ThreadRoute(
                             sendAttemptInFlight = false
                         }
                     }
+                }
+            },
+            onSchedule = {
+                if (!scheduleAttemptInFlight && scheduleObservation == ScheduledSmsObservation.None) {
+                    showScheduledSmsDateTimePicker(context) { dueTimestampMillis ->
+                        scheduleAttemptInFlight = true
+                        scope.launch {
+                            var accepted = false
+                            try {
+                                val frozen = writer.freezeForSend() ?: return@launch
+                                savedDraftRestoration = SavedDraftRestoration(
+                                    frozen.toExactRestorationToken(),
+                                )
+                                if (frozen.content.body.isNullOrBlank()) return@launch
+                                val ready = threadState as? ThreadUiState.Ready ?: return@launch
+                                val identity = ready.verifiedConversationIdentity ?: return@launch
+                                val subscription = subscriptionSelection.selected
+                                    ?.takeIf { it.smsCapable } ?: return@launch
+                                if (
+                                    identity.providerThreadId != route.providerThreadId ||
+                                    identity.participants.size != 1 ||
+                                    services.countSmsSegments(frozen.content.body.orEmpty()) != 1
+                                ) {
+                                    return@launch
+                                }
+                                accepted = withContext(NonCancellable) {
+                                    scheduleController.schedule(
+                                        ScheduledSmsCommand(
+                                            identity = identity,
+                                            subscriptionId = subscription.id,
+                                            draftId = frozen.draftId,
+                                            draftRevision = frozen.revision,
+                                            dueTimestampMillis = dueTimestampMillis,
+                                        ),
+                                    )
+                                } == ScheduledSmsAttempt.ACCEPTED
+                            } finally {
+                                if (!accepted) {
+                                    writer.unfreezeAfterSendSettled(
+                                        DraftUnfreezeReason.SCHEDULE_REFUSED,
+                                    )
+                                }
+                                scheduleAttemptInFlight = false
+                            }
+                        }
+                    }
+                }
+            },
+            onCancelSchedule = {
+                if (!scheduleAttemptInFlight) {
+                    scheduleAttemptInFlight = true
+                    scope.launch {
+                        try {
+                            if (scheduleController.cancel(route.providerThreadId)) {
+                                writer.unfreezeAfterSendSettled(
+                                    DraftUnfreezeReason.SCHEDULE_CANCELLED,
+                                )
+                            }
+                        } finally {
+                            scheduleAttemptInFlight = false
+                        }
+                    }
+                }
+            },
+            onRequestExactAlarmAccess = {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                    Toast.makeText(
+                        context,
+                        R.string.exact_alarm_settings_unavailable,
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    return@ThreadScreen
+                }
+                val intent = Intent(
+                    Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                    "package:${context.packageName}".toUri(),
+                )
+                try {
+                    context.startActivity(intent)
+                } catch (_: ActivityNotFoundException) {
+                    Toast.makeText(
+                        context,
+                        R.string.exact_alarm_settings_unavailable,
+                        Toast.LENGTH_LONG,
+                    ).show()
+                } catch (_: SecurityException) {
+                    Toast.makeText(
+                        context,
+                        R.string.exact_alarm_settings_unavailable,
+                        Toast.LENGTH_LONG,
+                    ).show()
                 }
             },
             onAcknowledgeSubmissionUnknown = {
@@ -1248,6 +1366,8 @@ private fun DraftWriteStatus.toComposerUiState(
     sendAttemptInFlight: Boolean,
     segmentCount: Int?,
     selectedSubscriptionAvailable: Boolean,
+    scheduleObservation: ScheduledSmsObservation = ScheduledSmsObservation.None,
+    scheduleAttemptInFlight: Boolean = false,
 ): ComposerUiState {
     val body = when (this) {
         DraftWriteStatus.Loading -> restoredBody
@@ -1278,6 +1398,8 @@ private fun DraftWriteStatus.toComposerUiState(
         else -> null
     }
     val sendState = when {
+        scheduleAttemptInFlight || scheduleObservation !is ScheduledSmsObservation.None ->
+            ComposerSendState.UNAVAILABLE
         sendAttemptInFlight || sendObservation.phase == ThreadSmsSendPhase.SENDING ->
             ComposerSendState.SENDING
         sendObservation.phase == ThreadSmsSendPhase.SUBMISSION_UNKNOWN ->
@@ -1296,7 +1418,66 @@ private fun DraftWriteStatus.toComposerUiState(
         sendState = sendState,
         unavailableReason = unavailableReason.takeIf { sendState == ComposerSendState.UNAVAILABLE },
         segmentCount = segmentCount,
+        scheduleState = scheduleObservation.toComposerScheduleState(),
     )
+}
+
+private fun ScheduledSmsObservation.toComposerScheduleState(): ComposerScheduleState = when (this) {
+    ScheduledSmsObservation.Loading -> ComposerScheduleState.Loading
+    ScheduledSmsObservation.None -> ComposerScheduleState.None
+    is ScheduledSmsObservation.Pending -> ComposerScheduleState.Pending(
+        dueTimestampMillis = dueTimestampMillis,
+        exact = precision == ScheduledSmsPrecision.EXACT,
+    )
+    is ScheduledSmsObservation.Dispatching ->
+        ComposerScheduleState.Dispatching(dueTimestampMillis)
+    is ScheduledSmsObservation.ReviewRequired ->
+        ComposerScheduleState.ReviewRequired(dueTimestampMillis)
+}
+
+private fun showScheduledSmsDateTimePicker(
+    context: Context,
+    onSelected: (Long) -> Unit,
+) {
+    val zone = ZoneId.systemDefault()
+    val initial = Instant.ofEpochMilli(
+        System.currentTimeMillis() + DEFAULT_SCHEDULE_LEAD_MILLIS,
+    ).atZone(zone)
+    DatePickerDialog(
+        context,
+        { _, year, month, day ->
+            TimePickerDialog(
+                context,
+                { _, hour, minute ->
+                    val local = LocalDateTime.of(
+                        LocalDate.of(year, month + 1, day),
+                        LocalTime.of(hour, minute),
+                    )
+                    val offsets = zone.rules.getValidOffsets(local)
+                    val due = offsets.singleOrNull()?.let { offset ->
+                        local.toInstant(offset).toEpochMilli()
+                    }
+                    if (
+                        due == null ||
+                        due < System.currentTimeMillis() + MINIMUM_PICKER_LEAD_MILLIS
+                    ) {
+                        Toast.makeText(context, R.string.schedule_time_invalid, Toast.LENGTH_LONG).show()
+                    } else {
+                        onSelected(due)
+                    }
+                },
+                initial.hour,
+                initial.minute,
+                DateFormat.is24HourFormat(context),
+            ).show()
+        },
+        initial.year,
+        initial.monthValue - 1,
+        initial.dayOfMonth,
+    ).apply {
+        datePicker.minDate = System.currentTimeMillis()
+        datePicker.maxDate = System.currentTimeMillis() + MAXIMUM_PICKER_LEAD_MILLIS
+    }.show()
 }
 
 internal fun shouldUnfreezeComposerAsRefused(
@@ -1468,3 +1649,6 @@ private const val ROUTE_APPEARANCE: String = "appearance"
 private const val ROUTE_SEARCH: String = "search"
 private const val ROUTE_THREAD: String = "thread"
 private const val INVALID_SAVED_ID: Long = -1L
+private const val DEFAULT_SCHEDULE_LEAD_MILLIS: Long = 15L * 60L * 1_000L
+private const val MINIMUM_PICKER_LEAD_MILLIS: Long = 2L * 60L * 1_000L
+private const val MAXIMUM_PICKER_LEAD_MILLIS: Long = 365L * 24L * 60L * 60L * 1_000L

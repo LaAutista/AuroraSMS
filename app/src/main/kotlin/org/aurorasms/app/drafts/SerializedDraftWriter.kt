@@ -78,6 +78,8 @@ data class FrozenDraftSnapshot(
 
 enum class DraftUnfreezeReason {
     SEND_REFUSED,
+    SCHEDULE_REFUSED,
+    SCHEDULE_CANCELLED,
     KNOWN_UNSENT,
     SUBMISSION_UNKNOWN_ACKNOWLEDGED,
 }
@@ -223,9 +225,11 @@ class SerializedDraftWriter(
     /** Reopens editing only after the caller has durably classified the send. */
     fun unfreezeAfterSendSettled(reason: DraftUnfreezeReason): Boolean = synchronized(lock) {
         // The required reason makes unsafe generic "unfreeze" calls impossible
-        // at call sites. All three values preserve the exact draft revision.
+        // at call sites. Every value preserves the exact draft revision.
         when (reason) {
             DraftUnfreezeReason.SEND_REFUSED,
+            DraftUnfreezeReason.SCHEDULE_REFUSED,
+            DraftUnfreezeReason.SCHEDULE_CANCELLED,
             DraftUnfreezeReason.KNOWN_UNSENT,
             DraftUnfreezeReason.SUBMISSION_UNKNOWN_ACKNOWLEDGED -> Unit
         }

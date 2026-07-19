@@ -115,6 +115,9 @@ fun ThreadScreen(
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
     onDraftChanged: (String) -> Unit,
     onSend: () -> Unit = {},
+    onSchedule: () -> Unit = {},
+    onCancelSchedule: () -> Unit = {},
+    onRequestExactAlarmAccess: () -> Unit = {},
     onSelectSubscription: (AuroraSubscriptionId) -> Unit = {},
     onAcknowledgeSubmissionUnknown: () -> Unit = {},
     timelineBackground: @Composable BoxScope.() -> Unit = {},
@@ -188,6 +191,9 @@ fun ThreadScreen(
                 onBodyChanged = onDraftChanged,
                 onFocusChanged = { composerFocused = it },
                 onSend = onSend,
+                onSchedule = onSchedule,
+                onCancelSchedule = onCancelSchedule,
+                onRequestExactAlarmAccess = onRequestExactAlarmAccess,
                 onAcknowledgeSubmissionUnknown = onAcknowledgeSubmissionUnknown,
             )
         }
@@ -948,13 +954,25 @@ private fun Composer(
     onBodyChanged: (String) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
     onSend: () -> Unit,
+    onSchedule: () -> Unit,
+    onCancelSchedule: () -> Unit,
+    onRequestExactAlarmAccess: () -> Unit,
     onAcknowledgeSubmissionUnknown: () -> Unit,
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
     var showUnknownConfirmation by remember { mutableStateOf(false) }
+    var showScheduleDetails by remember { mutableStateOf(false) }
     LaunchedEffect(state.sendState) {
         if (state.sendState != ComposerSendState.SUBMISSION_UNKNOWN) {
             showUnknownConfirmation = false
+        }
+    }
+    LaunchedEffect(state.scheduleState) {
+        if (
+            state.scheduleState is ComposerScheduleState.None ||
+            state.scheduleState is ComposerScheduleState.Loading
+        ) {
+            showScheduleDetails = false
         }
     }
     if (showUnknownConfirmation) {
@@ -977,7 +995,75 @@ private fun Composer(
             },
         )
     }
+    val pendingSchedule = state.scheduleState as? ComposerScheduleState.Pending
+    if (showScheduleDetails && state.scheduleState !is ComposerScheduleState.None) {
+        AlertDialog(
+            onDismissRequest = { showScheduleDetails = false },
+            title = { Text(stringResource(R.string.scheduled_message_title)) },
+            text = {
+                Column {
+                    Text(
+                        when (val schedule = state.scheduleState) {
+                            is ComposerScheduleState.Pending -> {
+                                val time = formatScheduledTime(schedule.dueTimestampMillis)
+                                if (schedule.exact) {
+                                    stringResource(R.string.message_scheduled_exact, time)
+                                } else {
+                                    stringResource(R.string.message_scheduled_inexact, time)
+                                }
+                            }
+                            is ComposerScheduleState.Dispatching ->
+                                stringResource(R.string.scheduled_message_dispatching)
+                            is ComposerScheduleState.ReviewRequired ->
+                                stringResource(R.string.scheduled_message_review_required)
+                            ComposerScheduleState.Loading,
+                            ComposerScheduleState.None,
+                            -> ""
+                        },
+                    )
+                    if (pendingSchedule?.exact == false) {
+                        TextButton(
+                            onClick = {
+                                showScheduleDetails = false
+                                onRequestExactAlarmAccess()
+                            },
+                        ) { Text(stringResource(R.string.allow_exact_timing)) }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showScheduleDetails = false }) {
+                    Text(stringResource(R.string.keep_schedule))
+                }
+            },
+            dismissButton = {
+                if (state.scheduleState !is ComposerScheduleState.Dispatching) {
+                    TextButton(
+                        onClick = {
+                            showScheduleDetails = false
+                            onCancelSchedule()
+                        },
+                    ) { Text(stringResource(R.string.cancel_schedule)) }
+                }
+            },
+        )
+    }
     val supportingText = when {
+        state.scheduleState is ComposerScheduleState.Loading ->
+            stringResource(R.string.checking_scheduled_message)
+        state.scheduleState is ComposerScheduleState.Pending -> {
+            val schedule = state.scheduleState
+            val time = formatScheduledTime(schedule.dueTimestampMillis)
+            if (schedule.exact) {
+                stringResource(R.string.message_scheduled_exact, time)
+            } else {
+                stringResource(R.string.message_scheduled_inexact, time)
+            }
+        }
+        state.scheduleState is ComposerScheduleState.Dispatching ->
+            stringResource(R.string.scheduled_message_dispatching)
+        state.scheduleState is ComposerScheduleState.ReviewRequired ->
+            stringResource(R.string.scheduled_message_review_required)
         state.failed -> stringResource(R.string.draft_failed)
         state.saving -> stringResource(R.string.saving_draft)
         state.sendState == ComposerSendState.SENDING ->
@@ -1023,9 +1109,13 @@ private fun Composer(
         ComposerSendState.SUBMISSION_UNKNOWN -> AuroraGlyph.REVIEW
         else -> AuroraGlyph.SEND
     }
-    val actionEnabled = state.sendState == ComposerSendState.READY ||
+    val scheduleActive = state.scheduleState is ComposerScheduleState.Pending ||
+        state.scheduleState is ComposerScheduleState.Dispatching ||
+        state.scheduleState is ComposerScheduleState.ReviewRequired
+    val scheduleLoading = state.scheduleState is ComposerScheduleState.Loading
+    val actionEnabled = !scheduleActive && (state.sendState == ComposerSendState.READY ||
         state.sendState == ComposerSendState.KNOWN_UNSENT ||
-        state.sendState == ComposerSendState.SUBMISSION_UNKNOWN
+        state.sendState == ComposerSendState.SUBMISSION_UNKNOWN)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1045,6 +1135,8 @@ private fun Composer(
                     if (value.length <= MAXIMUM_COMPOSER_CHARACTERS) onBodyChanged(value)
                 },
                 enabled = !state.failed &&
+                    !scheduleActive &&
+                    !scheduleLoading &&
                     state.sendState != ComposerSendState.SENDING &&
                     state.sendState != ComposerSendState.SUBMISSION_UNKNOWN &&
                     state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING,
@@ -1071,6 +1163,24 @@ private fun Composer(
                     unfocusedLabelColor = visualTokens.lilacSecondary,
                     disabledLabelColor = visualTokens.lilacSecondary.copy(alpha = 0.6f),
                 ),
+            )
+            val scheduleLabel = stringResource(
+                if (scheduleActive) R.string.cancel_scheduled_message else R.string.schedule_message,
+            )
+            AuroraIconAction(
+                glyph = AuroraGlyph.SCHEDULE,
+                contentDescription = scheduleLabel,
+                onClick = if (scheduleActive) {
+                    { showScheduleDetails = true }
+                } else {
+                    onSchedule
+                },
+                enabled = scheduleActive ||
+                    (!scheduleLoading && state.sendState == ComposerSendState.READY),
+                modifier = Modifier
+                    .testTag(COMPOSER_SCHEDULE_TEST_TAG)
+                    .semantics { text = AnnotatedString(scheduleLabel) },
+                tint = if (scheduleActive) MaterialTheme.colorScheme.error else visualTokens.violet,
             )
             AuroraIconAction(
                 glyph = actionGlyph,
@@ -1140,6 +1250,12 @@ private fun formatThreadDate(timestampMillis: Long): String =
         .withLocale(Locale.getDefault())
         .format(localThreadDate(timestampMillis))
 
+private fun formatScheduledTime(timestampMillis: Long): String =
+    DateTimeFormatter
+        .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+        .withLocale(Locale.getDefault())
+        .format(Instant.ofEpochMilli(timestampMillis).atZone(ZoneId.systemDefault()))
+
 private const val MAXIMUM_HEADER_NAMES: Int = 3
 private const val THREAD_VIEWPORT_PREFETCH_ROWS: Int = 10
 private const val MAXIMUM_VIEWPORT_THREAD_ROWS: Int = 100
@@ -1149,6 +1265,7 @@ const val THREAD_LIST_TEST_TAG: String = "aurora-thread-list"
 const val MESSAGE_BUBBLE_TEST_TAG: String = "aurora-message-bubble"
 const val COMPOSER_TEST_TAG: String = "aurora-composer"
 const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"
+const val COMPOSER_SCHEDULE_TEST_TAG: String = "aurora-composer-schedule"
 const val THREAD_MORE_ACTION_TEST_TAG: String = "aurora-thread-more-action"
 const val THREAD_APPEARANCE_ACTION_TEST_TAG: String = "aurora-thread-appearance-action"
 const val THREAD_SIM_SELECTOR_TEST_TAG: String = "aurora-thread-sim-selector"

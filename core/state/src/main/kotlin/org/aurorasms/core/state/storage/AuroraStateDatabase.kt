@@ -18,6 +18,7 @@ import androidx.room.RoomDatabase
         ComposerSmsOperationEntity::class,
         AcknowledgedComposerSmsEntity::class,
         ConversationSubscriptionPreferenceEntity::class,
+        ScheduledSmsEntity::class,
     ],
     version = AuroraStateDatabase.VERSION,
     exportSchema = true,
@@ -34,7 +35,9 @@ abstract class AuroraStateDatabase : RoomDatabase() {
     internal abstract fun conversationSubscriptionPreferenceDao():
         ConversationSubscriptionPreferenceDao
 
+    internal abstract fun scheduledSmsDao(): ScheduledSmsDao
+
     companion object {
-        const val VERSION: Int = 7
+        const val VERSION: Int = 8
     }
 }

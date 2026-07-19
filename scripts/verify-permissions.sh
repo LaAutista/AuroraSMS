@@ -83,6 +83,8 @@ allowed_permissions = {
     "android.permission.RECEIVE_MMS",
     "android.permission.RECEIVE_SMS",
     "android.permission.RECEIVE_WAP_PUSH",
+    "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.SCHEDULE_EXACT_ALARM",
     "android.permission.SEND_SMS",
     "android.permission.VIBRATE",
     f"{APP_ID}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",

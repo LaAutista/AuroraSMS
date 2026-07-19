@@ -4,7 +4,8 @@ Status: Phase 1 source, merged manifests, and APKs locally verified against
 official Android documentation on 2026-07-12; ADR 0007 records a managed-
 wallpaper decision with no new permission on 2026-07-14; commit `7c9d848`
 adds the ledgered debug snapshot boundary and durable-message hardening on
-2026-07-18
+2026-07-18; ADR 0011 activates the conditional boot and exact-alarm entries for
+bounded scheduled SMS with a visible inexact fallback on 2026-07-19
 
 This ledger is the allowlist enforced against the Phase 1 source manifest,
 merged debug/release manifests, and packaged APKs. A permission not listed
@@ -145,7 +146,8 @@ AuroraSMS's actual default-SMS core purpose.
 ## Approved conditional permissions
 
 Conditional permissions are absent until the named feature is implemented and
-tested.
+tested. `RECEIVE_BOOT_COMPLETED` and `SCHEDULE_EXACT_ALARM` are now active under
+ADR 0011; the other entries remain conditional.
 
 | Permission | Phase/feature | Rule |
 |---|---|---|
@@ -153,8 +155,8 @@ tested.
 | `POST_NOTIFICATIONS` | API 33+ messaging notifications | Request after role with privacy choice; foreground app remains usable when denied |
 | `READ_PHONE_NUMBERS` | Own-number display only | Not approved for core transport; add only with a user-visible need |
 | `VIBRATE` | Notification behavior | Normal permission; honor user/channel settings |
-| `RECEIVE_BOOT_COMPLETED` | Phase 5 schedule/reminder recovery | Reschedule only Aurora-owned durable operations; no message content in logs |
-| `SCHEDULE_EXACT_ALARM` | Phase 5 scheduled sending, if policy and precision require it | Separate ADR and user-facing special-access handling; retain honest inexact fallback |
+| `RECEIVE_BOOT_COMPLETED` | Phase 5 scheduled-SMS recovery — active under ADR 0011 | Re-arm only Aurora-owned durable operations; past-due reboot state pauses for review; no message content in alarms or logs |
+| `SCHEDULE_EXACT_ALARM` | Phase 5 scheduled sending — active under ADR 0011 | User-facing special-access route; check capability before every exact arm; retain and label the honest inexact fallback |
 | `RECORD_AUDIO` | Phase 6 voice memo | Request only after tapping Record; no background recording |
 | `USE_BIOMETRIC` | Optional app lock | App lock is not database encryption |
 | Foreground-service permission/type | A measured long-running user-visible operation only | Add exact subtype and notification design before use |

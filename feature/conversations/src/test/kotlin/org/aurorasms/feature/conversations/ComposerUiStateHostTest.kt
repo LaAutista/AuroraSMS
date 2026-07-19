@@ -26,6 +26,7 @@ class ComposerUiStateHostTest {
         assertTrue(rendered.contains("sendState=UNAVAILABLE"))
         assertTrue(rendered.contains("unavailableReason=MULTIPART_UNAVAILABLE"))
         assertTrue(rendered.contains("segmentCount=3"))
+        assertTrue(rendered.contains("scheduleState=None"))
         assertTrue(rendered.contains("REDACTED"))
     }
 }

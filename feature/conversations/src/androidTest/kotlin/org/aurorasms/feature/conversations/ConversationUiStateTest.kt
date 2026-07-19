@@ -122,6 +122,69 @@ class ConversationUiStateTest {
     }
 
     @Test
+    fun scheduleActionAndConfirmedCancellationKeepSendLocked() {
+        val composerState = mutableStateOf(
+            ComposerUiState(
+                body = "Synthetic scheduled draft",
+                saving = false,
+                failed = false,
+                sendState = ComposerSendState.READY,
+                segmentCount = 1,
+            ),
+        )
+        var scheduleCount = 0
+        var cancelCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = composerState.value,
+                onSchedule = {
+                    scheduleCount += 1
+                    composerState.value = composerState.value.copy(
+                        sendState = ComposerSendState.UNAVAILABLE,
+                        scheduleState = ComposerScheduleState.Pending(
+                            dueTimestampMillis = 4_000_000_000_000L,
+                            exact = false,
+                        ),
+                    )
+                },
+                onCancelSchedule = { cancelCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).assertIsEnabled().performClick()
+        compose.runOnIdle { check(scheduleCount == 1) }
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithText("may send late", substring = true).assertIsDisplayed()
+
+        compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).performClick()
+        compose.onNodeWithText("Cancel schedule").performClick()
+        compose.runOnIdle { check(cancelCount == 1) }
+    }
+
+    @Test
+    fun dispatchingScheduleDoesNotOfferCancellationAfterHandoff() {
+        var cancelCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic dispatching draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.UNAVAILABLE,
+                    segmentCount = 1,
+                    scheduleState = ComposerScheduleState.Dispatching(4_000_000_000_000L),
+                ),
+                onCancelSchedule = { cancelCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).performClick()
+        compose.onNodeWithText("Scheduled message").assertIsDisplayed()
+        compose.onNodeWithText("Cancel schedule").assertDoesNotExist()
+        compose.runOnIdle { check(cancelCount == 0) }
+    }
+
+    @Test
     fun knownUnsentOffersAnEnabledRetryThatUsesTheSendCallback() {
         var sendCount = 0
         compose.setContent {
@@ -479,6 +542,8 @@ private fun SyntheticThreadScreen(
     composer: ComposerUiState,
     onSend: () -> Unit = {},
     onAcknowledgeSubmissionUnknown: () -> Unit = {},
+    onSchedule: () -> Unit = {},
+    onCancelSchedule: () -> Unit = {},
 ) {
     MaterialTheme {
         ThreadScreen(
@@ -502,6 +567,8 @@ private fun SyntheticThreadScreen(
             onToggleMessageExpansion = {},
             onDraftChanged = {},
             onSend = onSend,
+            onSchedule = onSchedule,
+            onCancelSchedule = onCancelSchedule,
             onAcknowledgeSubmissionUnknown = onAcknowledgeSubmissionUnknown,
         )
     }

@@ -19,6 +19,8 @@
     <string name="recipient">Recipient</string>
     <string name="message_body">Message</string>
     <string name="send_requires_completed_transport">Send unavailable in this foundation build</string>
+    <string name="schedule_time_invalid">Choose an unambiguous local time at least two minutes from now.</string>
+    <string name="exact_alarm_settings_unavailable">Android’s exact-alarm settings are unavailable. The message will keep its honest inexact schedule.</string>
     <string name="appearance_title">Appearance</string>
     <string name="appearance_default_profile">Aurora default</string>
     <string name="appearance_back">Back</string>

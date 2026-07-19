@@ -2864,19 +2864,80 @@ lifecycle behavior remain open. This closes only the local durable-choice and
 one-part composer no-silent-fallback contracts; AuroraSMS remains incomplete
 and not gold.
 
+### Phase 5D durable scheduled-SMS local acceptance — 2026-07-19
+
+This source identifies as `0.5.3-phase5` (`versionCode` 7) and Room schema 8.
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m28s across 886 tasks (126 executed, 2 from cache, 758
+up-to-date). All 529 host JUnit results passed with zero failures, errors, or
+skips: app 247, design system 11, index 69, model 19, notifications 21, state
+46, telephony 79, testing 24, and conversations 13. Debug, R8 release, and
+benchmark assembly; debug/release/benchmark lint; clean-room/private-art scans;
+dependency locks; permission and APK-content ledgers; and license gates passed.
+`bundleRelease` separately passed 269 tasks in 5s. CycloneDX 1.6 passed 15
+up-to-date tasks in 7s and reports 441 components and 442 dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m28s
+across 456 tasks. Its authoritative XML reports 298 tests, 10 intentional
+assumption skips, 288 executed, and zero failures/errors: app 131/9 skips,
+benchmark 3/1, index 31/0, notifications 29/0, state 56/0, telephony 35/0, and
+conversations 13/0. An initial diagnostic invocation exposed a stale current-
+schema test that expected version 7; after it was updated to verify schema 8's
+content-free table, unique indexes, and reinstallable physical triggers, the
+focused test passed 5/5 and the complete matrix above passed.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 1m56s
+across 456 tasks. Authoritative XML reports 301 tests, 13 intentional assumption
+skips, 288 executed, and zero failures/errors: app 134/12 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 56/0, telephony 35/0, and conversations
+13/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,838,926 | `53f6f96a896763c4a17c3c56c9038c582a30f001645f93be01a1135c667a0c28` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,769,225 | `d76525882ec1ac332dbad4a40082c805278cd8ca893aef9f28740f00decb7bd5` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,662,825 | `8c27c29972772aac0ef7ce13e9e9ca935bdf1b6197124fc70ba85c3d4df35b67` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,650,271 | `354527d3b1ca49daa41400f442e33743e3d8869bce21048a42d79c07e7930008` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The packaged app variants contain the declared default-SMS permissions plus
+`RECEIVE_BOOT_COMPLETED` and `SCHEDULE_EXACT_ALARM`; no app variant requests
+`INTERNET` or `ACCESS_NETWORK_STATE`. Exact-alarm access remains optional and an
+inexact fallback is visibly labeled. All schedule dispatch acceptance used
+fakes, synthetic data, or unavailable production preconditions. No physical
+reboot, Doze, live exact-access revocation, real SIM removal, carrier SMS,
+billing, or OEM alarm timing was exercised. AuroraSMS remains incomplete and
+not gold.
+
+The exact debug APK above installed successfully on the API 36 emulator and was
+copied to `/sdcard/Download/AuroraSMS-debug.apk`. The copied file was 14,838,926
+bytes and its device-side SHA-256 exactly matched
+`53f6f96a896763c4a17c3c56c9038c582a30f001645f93be01a1135c667a0c28`.
+An explicit cold launch returned status `ok`, launch state `COLD`, and total
+time 413 ms; `MainActivity` was top-resumed. The sole app-PID error-level line
+was Android's platform `ashmem` deprecation notice, with no crash or AuroraSMS
+functional error.
+The emulator intentionally retained `com.android.messaging` as SMS role holder,
+and AuroraSMS's SMS/notification runtime permissions remained denied, so the
+smoke exercised the expected role-approval route without sending a message.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
-- [ ] Scheduled send survives process death, reboot, and time/timezone change.
-- [ ] Exact-alarm denial/revocation is honest and has documented fallback.
+- [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
+  process-start recovery, and fail-closed reboot/time/timezone handling. Physical
+  reboot/Doze/carrier timing remains open.
+- [x] Exact-alarm denial/revocation has ADR 0011's labeled inexact fallback,
+  distinct safety alarm, and explicit special-access route. Physical revocation
+  acceptance remains open.
 - [ ] Send-delay Undo survives process death without duplicate sends.
 - [ ] Pending deletion has deterministic process-death behavior.
 - [x] Remembered subscription is durable and scoped per conversation for the
   verified one-person Thread composer path.
-- [ ] A removed/disabled remembered SIM prompts a safe fallback; scheduled and
+- [x] A removed/disabled remembered SIM prompts a safe fallback; scheduled and
   group sends never silently switch subscriptions.
   The existing one-part composer now disables Send and requires an explicit
-  replacement in synthetic API 26/API 36 tests; physical removal plus scheduled
-  and group paths remain open.
+  replacement in synthetic API 26/API 36 tests; scheduled dispatch also pauses
+  for review without fallback. Physical removal plus group paths remain open.
 - [ ] Whole-thread deletion uses stronger confirmation.
 - [ ] After provider deletion commits, UI never claims recoverability.
 - [ ] No recycle-bin UI/schema/preference/worker exists.

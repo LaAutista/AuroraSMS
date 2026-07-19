@@ -9,7 +9,19 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
-The 2026-07-19 Phase 5C source identifies as `0.5.2-phase5` (`versionCode` 6)
+The 2026-07-19 Phase 5D source identifies as `0.5.3-phase5` (`versionCode` 7)
+and adds bounded scheduled sending for the existing verified one-person,
+one-part SMS composer. Room schema 8 owns one content-free schedule per exact
+draft/Thread, alarm intents carry only its local ID, and the due path revalidates
+the draft, participants, default role, selected active SIM, segment count, and
+clock before entering the existing durable send coordinator. Exact-alarm access
+is optional: the UI labels an inexact schedule “may send late,” offers Android's
+special-access screen, and retains a distinct inexact safety alarm. Reboot/time
+changes, duplicate alarms, removed SIMs, and interrupted handoff fail closed to
+visible review state. Physical reboot/Doze/SIM/carrier/OEM acceptance is still
+open, so AuroraSMS remains incomplete and not gold.
+
+The Phase 5C source identifies as `0.5.2-phase5` (`versionCode` 6)
 and adds an explicit, durable SIM choice for a verified one-person
 conversation. Room schema 7 stores only a purpose-separated participant-set
 hash, provider-Thread hint, subscription ID, revision, and timestamps. The

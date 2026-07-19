@@ -137,6 +137,7 @@ data class ComposerUiState(
     val sendState: ComposerSendState = ComposerSendState.UNAVAILABLE,
     val unavailableReason: ComposerUnavailableReason? = null,
     val segmentCount: Int? = null,
+    val scheduleState: ComposerScheduleState = ComposerScheduleState.None,
 ) {
     init {
         require(segmentCount == null || segmentCount > 0) { "SMS segment count must be positive" }
@@ -151,7 +152,24 @@ data class ComposerUiState(
     override fun toString(): String =
         "ComposerUiState(bodyLength=${body.length}, saving=$saving, failed=$failed, " +
             "sendState=$sendState, unavailableReason=$unavailableReason, " +
-            "segmentCount=$segmentCount, REDACTED)"
+            "segmentCount=$segmentCount, scheduleState=$scheduleState, REDACTED)"
+}
+
+sealed interface ComposerScheduleState {
+    data object Loading : ComposerScheduleState
+    data object None : ComposerScheduleState
+    data class Pending(val dueTimestampMillis: Long, val exact: Boolean) : ComposerScheduleState {
+        init { require(dueTimestampMillis >= 0L) }
+        override fun toString(): String = "ComposerScheduleState.Pending(exact=$exact, REDACTED)"
+    }
+    data class Dispatching(val dueTimestampMillis: Long) : ComposerScheduleState {
+        init { require(dueTimestampMillis >= 0L) }
+        override fun toString(): String = "ComposerScheduleState.Dispatching(REDACTED)"
+    }
+    data class ReviewRequired(val dueTimestampMillis: Long) : ComposerScheduleState {
+        init { require(dueTimestampMillis >= 0L) }
+        override fun toString(): String = "ComposerScheduleState.ReviewRequired(REDACTED)"
+    }
 }
 
 data class ConversationSubscriptionUiState(

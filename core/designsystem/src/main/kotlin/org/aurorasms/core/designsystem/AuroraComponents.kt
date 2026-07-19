@@ -35,6 +35,7 @@ enum class AuroraGlyph {
     SEND,
     RETRY,
     REVIEW,
+    SCHEDULE,
 }
 
 /**
@@ -134,7 +135,9 @@ fun AuroraBackdrop(modifier: Modifier = Modifier) {
 
 private fun AuroraGlyph.defaultTint(tokens: AuroraVisualTokens): Color = when (this) {
     AuroraGlyph.BACK, AuroraGlyph.MORE, AuroraGlyph.CALL, AuroraGlyph.SEND -> tokens.cyan
-    AuroraGlyph.SEARCH, AuroraGlyph.ADD, AuroraGlyph.RETRY, AuroraGlyph.REVIEW -> tokens.violet
+    AuroraGlyph.SEARCH, AuroraGlyph.ADD, AuroraGlyph.RETRY, AuroraGlyph.REVIEW,
+    AuroraGlyph.SCHEDULE,
+    -> tokens.violet
 }
 
 private fun DrawScope.drawAuroraGlyph(glyph: AuroraGlyph, color: Color) {
@@ -244,6 +247,28 @@ private fun DrawScope.drawAuroraGlyph(glyph: AuroraGlyph, color: Color) {
             )
             drawLine(color, Offset(width * 0.50f, height * 0.31f), Offset(width * 0.50f, height * 0.58f), strokeWidth, StrokeCap.Round)
             drawCircle(color, strokeWidth * 0.66f, Offset(width * 0.50f, height * 0.72f))
+        }
+        AuroraGlyph.SCHEDULE -> {
+            drawCircle(
+                color = color,
+                radius = size.minDimension * 0.34f,
+                center = Offset(width * 0.50f, height * 0.52f),
+                style = stroke,
+            )
+            drawLine(
+                color,
+                Offset(width * 0.50f, height * 0.52f),
+                Offset(width * 0.50f, height * 0.31f),
+                strokeWidth,
+                StrokeCap.Round,
+            )
+            drawLine(
+                color,
+                Offset(width * 0.50f, height * 0.52f),
+                Offset(width * 0.68f, height * 0.62f),
+                strokeWidth,
+                StrokeCap.Round,
+            )
         }
     }
 }

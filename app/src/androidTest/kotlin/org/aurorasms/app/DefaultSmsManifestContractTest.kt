@@ -49,6 +49,8 @@ class DefaultSmsManifestContractTest {
             Manifest.permission.RECEIVE_MMS,
             Manifest.permission.RECEIVE_WAP_PUSH,
             Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.RECEIVE_BOOT_COMPLETED,
+            Manifest.permission.SCHEDULE_EXACT_ALARM,
         )
 
         assertTrue(requested.containsAll(required))
@@ -152,6 +154,8 @@ class DefaultSmsManifestContractTest {
             ".receiver.MmsSendResultReceiver",
             ".receiver.MmsDownloadResultReceiver",
             ".InlineReplyReceiver",
+            ".receiver.ScheduledSmsAlarmReceiver",
+            ".receiver.ScheduledSmsRecoveryReceiver",
         )
         privateReceiverSuffixes.forEach { suffix ->
             val receiver = requireNotNull(

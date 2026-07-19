@@ -44,6 +44,17 @@
     <string name="finishing_send_recovery">Finishing safe send recovery…</string>
     <string name="messaging_send_unavailable">SMS sending is unavailable. Check the SMS role and permissions.</string>
     <string name="draft_saved_one_sms">Draft saved locally · 1 SMS</string>
+    <string name="schedule_message">Schedule message</string>
+    <string name="cancel_scheduled_message">Cancel scheduled message</string>
+    <string name="message_scheduled_exact">Scheduled for %1$s · exact alarm</string>
+    <string name="message_scheduled_inexact">Scheduled for %1$s · may send late</string>
+    <string name="scheduled_message_dispatching">Scheduled message is being submitted safely…</string>
+    <string name="scheduled_message_review_required">Scheduled send paused. Cancel it, review the draft, and schedule again.</string>
+    <string name="scheduled_message_title">Scheduled message</string>
+    <string name="checking_scheduled_message">Checking scheduled-send state…</string>
+    <string name="allow_exact_timing">Allow exact timing</string>
+    <string name="keep_schedule">Keep schedule</string>
+    <string name="cancel_schedule">Cancel schedule</string>
     <string name="message_truncated">Long message preview truncated</string>
     <string name="show_full_message">Show full message</string>
     <string name="show_less">Show less</string>

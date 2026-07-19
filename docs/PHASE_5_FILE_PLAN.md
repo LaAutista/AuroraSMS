@@ -657,8 +657,32 @@ tests and zero failures/errors. Exact artifact hashes and module totals are in
 
 This addendum closes only durable scoping and synthetic/emulator no-silent-
 fallback behavior for the current one-part composer. Physical SIM/eSIM removal,
-carrier routing, scheduled sends, groups, MMS, billing/roaming, OEM behavior,
+carrier routing, physical scheduled-send timing, groups, MMS, billing/roaming, OEM behavior,
 and other Phase 5 lifecycle/action rows remain open.
+
+## Phase 5D addendum — durable scheduled one-part SMS
+
+The 2026-07-19 `0.5.3-phase5` (`versionCode` 7) slice adds Room schema 8 and ADR
+0011. One bounded, content-free schedule owns the exact verified Thread, draft
+ID/revision, selected SIM, due instant, clock anchors, precision, and lifecycle;
+its purpose-separated participant token cannot be correlated by copying the SIM-
+preference or appearance keys. Alarm intents carry only the schedule ID.
+
+The Thread composer exposes a clock action and native local date/time pickers.
+Scheduling freezes the exact durable draft. The locked composer identifies an
+exact alarm or honestly says it may send late, confirms cancellation, and offers
+Android's exact-alarm special-access screen without making access mandatory.
+At due time the coordinator checks clock continuity, verified participants,
+default role, authoritative active SIM, exact draft revision, and one-unit
+eligibility before reusing the Phase 5A sender. Duplicate alarms and process-
+local restarts cannot produce a second dispatch; uncertain, missed, clock-
+changed, removed-SIM, or pre-reservation interrupted state pauses visibly for
+review and never retries automatically.
+
+Host, migration, repository, manifest, UI, privacy, release, and connected
+evidence must be recorded in `docs/TEST_MATRIX.md`. No fake alarm, emulator,
+method result, or database assertion closes physical reboot, Doze, exact-access
+revocation, SIM removal, OEM alarm timing, carrier submission, or billing gates.
 
 ## Evidence that remains open
 

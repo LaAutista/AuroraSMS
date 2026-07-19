@@ -366,7 +366,41 @@ supported verified one-person Thread path.
 The local API 26/API 36 matrices prove persistence, migration, UI gating, and
 pre-reservation fail-closed behavior with synthetic subscriptions. They do not
 prove physical dual-SIM/eSIM lifecycle, removal, carrier routing, billing,
-roaming, groups, MMS, or schedules. Those release rows remain open.
+roaming, groups, MMS, or physical scheduled-send timing. Those release rows remain open.
+
+### Phase 5D durable scheduled one-part SMS
+
+The `0.5.3-phase5` (`versionCode` 7) 2026-07-19 source schedules only the exact
+durable draft supported by the Phase 5A/5C verified one-person, one-unit Thread
+path.
+
+- Room schema 8 stores at most 128 content-free schedule rows. Each row binds a
+  local operation ID to the exact Thread, draft ID/revision, chosen SIM, due
+  instant, phase/precision, clock anchors, and a schedule-specific participant
+  hash. It stores no address, body, subject, name, or SIM label.
+- The composer freezes that exact revision, displays its local due time and
+  exact/inexact precision, and confirms cancellation. Inexact timing is labeled
+  “may send late” and offers Android's special-access screen without requiring
+  access or repeatedly prompting.
+- Alarm `PendingIntent`s are explicit, immutable, and contain only the local
+  schedule ID. Exact access arms an exact alarm plus a distinct five-minute
+  inexact safety alarm; denial or `SecurityException` retains only the honest
+  inexact alarm.
+- Due handling never trusts the alarm alone. It rechecks clock continuity,
+  verified participants, default role, authoritative active SIM, exact draft
+  revision, and one-unit eligibility before entering the existing durable send
+  coordinator. The durable `PENDING` → `DISPATCHING` transition makes duplicate
+  alarms idempotent.
+- Once a schedule is `DISPATCHING`, neither UI nor coordinator accepts
+  cancellation because carrier or transport ownership may already have transferred.
+- Reboot/time change, excessive lateness, removed SIM, lost role, arming
+  failure, or interruption before durable composer reservation pauses the
+  schedule for visible review. Recovery never automatically retries an
+  uncertain submission or silently changes SIM/transport.
+
+Synthetic host/emulator evidence cannot close physical reboot, Doze,
+exact-access revocation, OEM alarm timing, dual-SIM removal, live carrier, or
+billing/roaming gates. AuroraSMS remains incomplete and not gold.
 
 ## AuroraMaterial requirements
 
@@ -707,8 +741,9 @@ granular updates. Release builds use R8 and a measured Baseline Profile.
 5. Phase 4: AuroraMaterial, canonical artwork, Theme Studio, independent
    static/GIF assignments, and accessibility.
 6. Phase 5: first deliver the bounded Phase 5A existing-Thread one-part SMS
-   composer, then the Phase 5B acknowledged-unknown cleanup and Phase 5C durable
-   conversation-SIM choice; later slices retain schedules, send delay,
+   composer, then the Phase 5B acknowledged-unknown cleanup, Phase 5C durable
+   conversation-SIM choice, and Phase 5D durable scheduled one-part SMS with an
+   honest exact/inexact alarm boundary; later slices retain send delay,
    group-MMS hardening, and permanent-delete behavior.
 7. Phase 6: notifications/reminders, reactions, voice memo, selected-text copy,
    signatures, local spam, backup/restore, and Android Auto.

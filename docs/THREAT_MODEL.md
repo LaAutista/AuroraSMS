@@ -652,6 +652,19 @@ another active SIM. Emulator evidence covers these local controls, while real
 SIM/eSIM removal, carrier routing, billing, roaming, and OEM lifecycle threats
 remain open.
 
+Phase 5D implements ADR 0011's bounded scheduled-SMS state machine. Schema 8
+stores only an operation ID, exact draft/thread/subscription bindings, a purpose-
+separated participant hash, due/phase/precision codes, and clock anchors. Alarm
+intents carry only that ID. Due handling checks wall-versus-elapsed drift and
+revalidates the verified one-person identity, exact durable draft revision,
+default role, remembered active SMS-capable subscription, and one-unit limit
+before entering the existing durable send coordinator. Duplicate alarms are
+idempotent; boot/time changes, removed SIMs, lost role, arming failure, and an
+interrupted pre-reservation dispatch become visible review state and never
+silently retry or switch SIM. Exact-access denial/revocation retains a labeled
+inexact path plus a distinct safety alarm; physical OEM/Doze/carrier evidence
+remains open.
+
 ## Open security decisions
 
 These do not block Phase 1 foundation unless explicitly named, but block their
@@ -659,7 +672,7 @@ feature's release:
 
 - backup archive encryption, authentication, key derivation/recovery, limits,
   retention, and corruption policy;
-- exact-alarm eligibility and fallback for scheduled sends;
+- physical OEM/Doze exact-alarm timing and revocation acceptance;
 - app-lock and secure-recents defaults/copy;
 - MMS PDU implementation/dependency audit;
 - final local spam rule set and auto-hide default;

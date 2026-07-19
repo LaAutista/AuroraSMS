@@ -284,3 +284,43 @@ val STATE_MIGRATION_6_7: Migration = object : Migration(6, 7) {
         db.execSQL(ConversationSubscriptionPreferenceEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
     }
 }
+
+val STATE_MIGRATION_7_8: Migration = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `scheduled_sms_operations` (
+                `schedule_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `participant_set_key` TEXT NOT NULL,
+                `provider_thread_id` INTEGER NOT NULL,
+                `draft_id` INTEGER NOT NULL,
+                `draft_revision_ms` INTEGER NOT NULL,
+                `subscription_id` INTEGER NOT NULL,
+                `due_timestamp_ms` INTEGER NOT NULL,
+                `phase_code` TEXT NOT NULL,
+                `precision_code` TEXT NOT NULL,
+                `review_reason_code` TEXT,
+                `armed_wall_timestamp_ms` INTEGER NOT NULL,
+                `armed_elapsed_realtime_ms` INTEGER NOT NULL,
+                `created_timestamp_ms` INTEGER NOT NULL,
+                `updated_timestamp_ms` INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_scheduled_sms_operations_provider_thread_id` " +
+                "ON `scheduled_sms_operations` (`provider_thread_id`)",
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_scheduled_sms_operations_draft_id` " +
+                "ON `scheduled_sms_operations` (`draft_id`)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_scheduled_sms_operations_due_timestamp_ms_schedule_id` " +
+                "ON `scheduled_sms_operations` (`due_timestamp_ms`, `schedule_id`)",
+        )
+        db.execSQL(ScheduledSmsEnforcement.CREATE_INSERT_LIMIT_TRIGGER)
+        db.execSQL(ScheduledSmsEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(ScheduledSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+    }
+}
