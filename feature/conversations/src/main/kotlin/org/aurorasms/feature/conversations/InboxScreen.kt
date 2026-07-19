@@ -2,10 +2,12 @@
 
 package org.aurorasms.feature.conversations
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,18 +17,19 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,8 +50,12 @@ import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.flow.distinctUntilChanged
 import org.aurorasms.core.index.conversation.ConversationSummary
+import org.aurorasms.core.designsystem.AuroraBackdrop
+import org.aurorasms.core.designsystem.AuroraGlyph
+import org.aurorasms.core.designsystem.AuroraIconAction
 import org.aurorasms.core.designsystem.LocalAuroraMaterialProfile
 import org.aurorasms.core.designsystem.LocalAuroraMaterialTokens
+import org.aurorasms.core.designsystem.LocalAuroraVisualTokens
 import org.aurorasms.core.designsystem.toShape
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderThreadId
@@ -73,55 +80,93 @@ fun InboxScreen(
     onViewportChanged: (List<ConversationSummary>) -> Unit,
     onAnchorRestored: () -> Unit,
 ) {
-    Surface(
+    val visuals = LocalAuroraVisualTokens.current
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .safeDrawingPadding()
             .semantics { testTagsAsResourceId = true }
             .testTag(INBOX_SCREEN_TEST_TAG),
     ) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.inbox_title),
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.headlineSmall,
+        AuroraBackdrop(modifier = Modifier.fillMaxSize())
+        CompositionLocalProvider(LocalContentColor provides visuals.onIncoming) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                InboxSearchBar(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    onOpenSearch = onOpenSearch,
+                    menu = {
+                        InboxMoreMenu(
+                            diagnosticsAvailable = diagnosticsAvailable,
+                            contactsPermissionGranted = contactsPermissionGranted,
+                            onOpenAppearance = onOpenAppearance,
+                            onOpenInboxAppearance = onOpenInboxAppearance,
+                            onOpenConversationDefaults = onOpenConversationDefaults,
+                            onOpenDiagnostics = onOpenDiagnostics,
+                            onRequestContactsPermission = onRequestContactsPermission,
+                        )
+                    },
                 )
-                TextButton(
-                    modifier = Modifier.testTag(INBOX_SEARCH_ACTION_TEST_TAG),
-                    onClick = onOpenSearch,
-                ) {
-                    Text(stringResource(R.string.search))
+                when (state) {
+                    InboxUiState.Loading -> LoadingPane()
+                    is InboxUiState.Failed -> FailurePane(onRetry)
+                    is InboxUiState.Ready -> InboxReady(
+                        state = state,
+                        onOpenConversation = onOpenConversation,
+                        onLoadOlder = onLoadOlder,
+                        onAtNewestChanged = onAtNewestChanged,
+                        onAcceptPending = onAcceptPending,
+                        onViewportChanged = onViewportChanged,
+                        onAnchorRestored = onAnchorRestored,
+                    )
                 }
-                InboxMoreMenu(
-                    diagnosticsAvailable = diagnosticsAvailable,
-                    contactsPermissionGranted = contactsPermissionGranted,
-                    onOpenAppearance = onOpenAppearance,
-                    onOpenInboxAppearance = onOpenInboxAppearance,
-                    onOpenConversationDefaults = onOpenConversationDefaults,
-                    onOpenDiagnostics = onOpenDiagnostics,
-                    onRequestContactsPermission = onRequestContactsPermission,
-                )
             }
-            HorizontalDivider()
-            when (state) {
-                InboxUiState.Loading -> LoadingPane()
-                is InboxUiState.Failed -> FailurePane(onRetry)
-                is InboxUiState.Ready -> InboxReady(
-                    state = state,
-                    onOpenConversation = onOpenConversation,
-                    onLoadOlder = onLoadOlder,
-                    onAtNewestChanged = onAtNewestChanged,
-                    onAcceptPending = onAcceptPending,
-                    onViewportChanged = onViewportChanged,
-                    onAnchorRestored = onAnchorRestored,
-                )
-            }
+        }
+    }
+}
+
+@Composable
+private fun InboxSearchBar(
+    onOpenSearch: () -> Unit,
+    menu: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val visuals = LocalAuroraVisualTokens.current
+    val searchLabel = stringResource(R.string.search)
+    Surface(
+        modifier = modifier
+            .heightIn(min = INBOX_SEARCH_BAR_HEIGHT)
+            .testTag(INBOX_SEARCH_ACTION_TEST_TAG)
+            .clickable(onClick = onOpenSearch),
+        shape = CircleShape,
+        color = visuals.elevatedSurface.copy(alpha = SEARCH_SURFACE_ALPHA),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(
+            width = SEARCH_OUTLINE_WIDTH,
+            color = visuals.violet.copy(alpha = SEARCH_OUTLINE_ALPHA),
+        ),
+        tonalElevation = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 6.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AuroraIconAction(
+                glyph = AuroraGlyph.SEARCH,
+                contentDescription = searchLabel,
+                onClick = onOpenSearch,
+                tint = visuals.violet,
+            )
+            Text(
+                text = searchLabel,
+                modifier = Modifier.weight(1f),
+                color = visuals.lilacSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            menu()
         }
     }
 }
@@ -137,13 +182,16 @@ private fun InboxMoreMenu(
     onRequestContactsPermission: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val visuals = LocalAuroraVisualTokens.current
+    val moreLabel = stringResource(R.string.more)
     Box {
-        TextButton(
-            modifier = Modifier.testTag(INBOX_MORE_ACTION_TEST_TAG),
+        AuroraIconAction(
+            glyph = AuroraGlyph.MORE,
+            contentDescription = moreLabel,
             onClick = { expanded = true },
-        ) {
-            Text(stringResource(R.string.more))
-        }
+            modifier = Modifier.testTag(INBOX_MORE_ACTION_TEST_TAG),
+            tint = visuals.cyan,
+        )
         DropdownMenu(
             modifier = Modifier.semantics { testTagsAsResourceId = true },
             expanded = expanded,
@@ -205,7 +253,6 @@ private fun InboxReady(
     onViewportChanged: (List<ConversationSummary>) -> Unit,
     onAnchorRestored: () -> Unit,
 ) {
-    val tokens = LocalAuroraMaterialTokens.current
     val listState = rememberLazyListState()
     val items = state.window.items
     LaunchedEffect(listState, items) {
@@ -266,6 +313,7 @@ private fun InboxReady(
                     .fillMaxSize()
                     .testTag(INBOX_LIST_TEST_TAG),
                 state = listState,
+                contentPadding = PaddingValues(bottom = 16.dp),
             ) {
                 items(
                     count = items.size,
@@ -275,11 +323,6 @@ private fun InboxReady(
                         summary = items[index],
                         contacts = state.contacts,
                         onClick = { onOpenConversation(items[index].providerThreadId) },
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(
-                            start = 16.dp + tokens.avatarSize + tokens.contentSpacing,
-                        ),
                     )
                 }
                 if (state.loadingOlder) {
@@ -307,6 +350,7 @@ private fun ConversationRow(
 ) {
     val profile = LocalAuroraMaterialProfile.current
     val tokens = LocalAuroraMaterialTokens.current
+    val visuals = LocalAuroraVisualTokens.current
     val title = summary.participants
         .map { address -> contacts[address]?.displayNameOrAddress ?: address.value }
         .take(3)
@@ -321,29 +365,45 @@ private fun ConversationRow(
             .heightIn(min = tokens.rowMinimumHeight)
             .testTag(INBOX_ROW_TEST_TAG)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = tokens.rowVerticalPadding),
+            .padding(
+                horizontal = 16.dp,
+                vertical = tokens.rowVerticalPadding.coerceAtLeast(MINIMUM_INBOX_ROW_VERTICAL_PADDING),
+            ),
         horizontalArrangement = Arrangement.spacedBy(tokens.contentSpacing),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Surface(
             modifier = Modifier.size(tokens.avatarSize),
             shape = profile.avatarMask.toShape(),
-            color = MaterialTheme.colorScheme.secondaryContainer,
+            color = visuals.deepNight.copy(alpha = AVATAR_SURFACE_ALPHA),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(AVATAR_RING_WIDTH, visuals.avatarRing),
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text(title.take(1).uppercase(), fontWeight = FontWeight.Bold)
+                Text(
+                    text = title.take(1).uppercase(),
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                )
             }
         }
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.Center,
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = title,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    color = visuals.onIncoming,
                     fontWeight = if (summary.indexedUnreadCount > 0L) FontWeight.Bold else FontWeight.Medium,
+                    style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
                     text = formatTimestamp(summary.latestTimestampMillis),
+                    color = visuals.lilacSecondary.copy(alpha = INBOX_METADATA_ALPHA),
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
@@ -363,6 +423,7 @@ private fun ConversationRow(
                 },
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                color = visuals.lilacSecondary.copy(alpha = INBOX_SNIPPET_ALPHA),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (summary.indexedUnreadCount > 0L) FontWeight.SemiBold else FontWeight.Normal,
             )
@@ -406,3 +467,12 @@ const val CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG: String =
 const val INBOX_LIST_TEST_TAG: String = "aurora-inbox-list"
 const val INBOX_ROW_TEST_TAG: String = "aurora-inbox-row"
 private const val VIEWPORT_PREFETCH_ROWS: Int = 10
+private val INBOX_SEARCH_BAR_HEIGHT = 56.dp
+private val SEARCH_OUTLINE_WIDTH = 1.5.dp
+private val AVATAR_RING_WIDTH = 2.dp
+private val MINIMUM_INBOX_ROW_VERTICAL_PADDING = 8.dp
+private const val SEARCH_SURFACE_ALPHA: Float = 0.92f
+private const val SEARCH_OUTLINE_ALPHA: Float = 0.92f
+private const val AVATAR_SURFACE_ALPHA: Float = 0.90f
+private const val INBOX_METADATA_ALPHA: Float = 0.82f
+private const val INBOX_SNIPPET_ALPHA: Float = 0.88f

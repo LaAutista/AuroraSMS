@@ -471,6 +471,7 @@ class AuroraSmsRootAcceptanceTest {
             compose.onNodeWithTag(SEARCH_FIELD_TEST_TAG).assertTextContains(SYNTHETIC_QUERY)
             compose.onNodeWithTag(THEME_STUDIO_SCREEN_TEST_TAG).assertDoesNotExist()
             val anchorLoadsBeforeReentry = fixture.index.anchorLoadCount.get()
+            waitForTag(SEARCH_HIT_TEST_TAG)
             compose.onNodeWithTag(SEARCH_HIT_TEST_TAG).performClick()
             onView(isRoot()).perform(closeSoftKeyboard())
             waitForTag(THREAD_SCREEN_TEST_TAG)

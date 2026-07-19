@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <resources>
-    <string name="inbox_title">AuroraSMS</string>
     <string name="search">Search</string>
     <string name="more">More</string>
     <string name="appearance">Appearance</string>
@@ -53,7 +52,6 @@
     <string name="image_attachment">Image attachment</string>
     <string name="attachment_loading">Loading image preview…</string>
     <string name="attachment_unavailable">Image preview unavailable</string>
-    <string name="search_messages">Search messages</string>
     <string name="search_hint">Words or “exact phrase”</string>
     <string name="search_empty">Enter a local search. Nothing leaves this device.</string>
     <string name="search_no_results">No matching indexed messages.</string>

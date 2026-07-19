@@ -3,9 +3,10 @@
 package org.aurorasms.feature.conversations
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -23,18 +24,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,8 +51,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -57,10 +63,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
+import org.aurorasms.core.designsystem.AuroraGlyph
+import org.aurorasms.core.designsystem.AuroraIconAction
+import org.aurorasms.core.designsystem.LocalAuroraVisualTokens
 import org.aurorasms.core.index.conversation.ConversationSummary
 import org.aurorasms.core.index.timeline.TimelineMessage
 import org.aurorasms.core.index.timeline.TimelineMessageContent
@@ -74,6 +85,11 @@ import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.telephony.MmsAttachmentListResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
 import org.aurorasms.core.telephony.ResolvedContact
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Locale
 
 @Composable
 fun ThreadScreen(
@@ -102,6 +118,7 @@ fun ThreadScreen(
 ) {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val visualTokens = LocalAuroraVisualTokens.current
     var composerFocused by remember { mutableStateOf(false) }
     BackHandler {
         if (composerFocused) {
@@ -118,6 +135,8 @@ fun ThreadScreen(
             .safeDrawingPadding()
             .semantics { testTagsAsResourceId = true }
             .testTag(THREAD_SCREEN_TEST_TAG),
+        color = visualTokens.nearBlack,
+        contentColor = visualTokens.onIncoming,
     ) {
         Column(modifier = Modifier.imePadding()) {
             ThreadHeader(
@@ -137,7 +156,7 @@ fun ThreadScreen(
                 isDialable = isDialable,
                 onDial = onDial,
             )
-            HorizontalDivider()
+            HorizontalDivider(color = visualTokens.violet.copy(alpha = 0.4f))
             Box(modifier = Modifier.weight(1f)) {
                 when (state) {
                     ThreadUiState.Loading -> LoadingPane()
@@ -180,6 +199,7 @@ private fun ThreadHeader(
     isDialable: (ParticipantAddress) -> Boolean,
     onDial: (ParticipantAddress) -> Unit,
 ) {
+    val visualTokens = LocalAuroraVisualTokens.current
     val ready = state as? ThreadUiState.Ready
     val summary = ready?.conversation
     val title = threadTitle(ready)
@@ -189,10 +209,16 @@ private fun ThreadHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(visualTokens.nearBlack.copy(alpha = 0.98f))
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+        AuroraIconAction(
+            glyph = AuroraGlyph.BACK,
+            contentDescription = stringResource(R.string.back),
+            onClick = onBack,
+            tint = visualTokens.lilacSecondary,
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
@@ -200,6 +226,7 @@ private fun ThreadHeader(
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
+                color = visualTokens.onIncoming,
             )
             ready?.activeSubscription?.let { subscription ->
                 Text(
@@ -215,13 +242,24 @@ private fun ThreadHeader(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.labelSmall,
+                    color = visualTokens.lilacSecondary,
                 )
             }
         }
         if (dialAddress != null) {
-            TextButton(onClick = { onDial(dialAddress) }) { Text(stringResource(R.string.call)) }
+            AuroraIconAction(
+                glyph = AuroraGlyph.CALL,
+                contentDescription = stringResource(R.string.call),
+                onClick = { onDial(dialAddress) },
+                tint = visualTokens.cyan,
+            )
         }
-        TextButton(onClick = onOpenSearch) { Text(stringResource(R.string.search)) }
+        AuroraIconAction(
+            glyph = AuroraGlyph.SEARCH,
+            contentDescription = stringResource(R.string.search),
+            onClick = onOpenSearch,
+            tint = visualTokens.lilacSecondary,
+        )
         if (conversationAppearanceAvailable) {
             ThreadMoreMenu(onOpenConversationAppearance = onOpenConversationAppearance)
         }
@@ -232,22 +270,30 @@ private fun ThreadHeader(
 private fun ThreadMoreMenu(
     onOpenConversationAppearance: () -> Unit,
 ) {
+    val visualTokens = LocalAuroraVisualTokens.current
     var expanded by remember { mutableStateOf(false) }
     Box {
-        TextButton(
+        AuroraIconAction(
+            glyph = AuroraGlyph.MORE,
+            contentDescription = stringResource(R.string.more),
             modifier = Modifier.testTag(THREAD_MORE_ACTION_TEST_TAG),
             onClick = { expanded = true },
-        ) {
-            Text(stringResource(R.string.more))
-        }
+            tint = visualTokens.lilacSecondary,
+        )
         DropdownMenu(
             modifier = Modifier.semantics { testTagsAsResourceId = true },
             expanded = expanded,
             onDismissRequest = { expanded = false },
+            containerColor = visualTokens.menuSurface,
         ) {
             DropdownMenuItem(
                 modifier = Modifier.testTag(THREAD_APPEARANCE_ACTION_TEST_TAG),
-                text = { Text(stringResource(R.string.conversation_appearance)) },
+                text = {
+                    Text(
+                        stringResource(R.string.conversation_appearance),
+                        color = visualTokens.onIncoming,
+                    )
+                },
                 onClick = {
                     expanded = false
                     onOpenConversationAppearance()
@@ -284,6 +330,7 @@ private fun ThreadReady(
     onAnchorRestored: () -> Unit,
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
 ) {
+    val visualTokens = LocalAuroraVisualTokens.current
     val items = state.window.items
     val leadingItemCount = if (state.loadingOlder) 1 else 0
     val listState = rememberLazyListState()
@@ -419,13 +466,13 @@ private fun ThreadReady(
         if (!state.coverage.verifiedComplete) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 1.dp,
+                color = visualTokens.nearBlack.copy(alpha = 0.94f),
+                border = BorderStroke(1.dp, visualTokens.violet.copy(alpha = 0.32f)),
             ) {
                 Text(
                     text = stringResource(R.string.index_incomplete),
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    color = MaterialTheme.colorScheme.secondary,
+                    color = visualTokens.lilacSecondary,
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -448,13 +495,14 @@ private fun ThreadReady(
         if (items.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Surface(
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 1.dp,
+                    shape = RoundedCornerShape(22.dp),
+                    color = visualTokens.nearBlack.copy(alpha = 0.94f),
+                    border = BorderStroke(1.dp, visualTokens.violet.copy(alpha = 0.55f)),
                 ) {
                     Text(
                         text = stringResource(R.string.no_messages),
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        color = visualTokens.onIncoming,
                     )
                 }
             }
@@ -475,9 +523,9 @@ private fun ThreadReady(
                             contentAlignment = Alignment.Center,
                         ) {
                             Surface(
-                                shape = MaterialTheme.shapes.small,
-                                color = MaterialTheme.colorScheme.surface,
-                                tonalElevation = 1.dp,
+                                shape = RoundedCornerShape(24.dp),
+                                color = visualTokens.nearBlack.copy(alpha = 0.92f),
+                                border = BorderStroke(1.dp, visualTokens.violet.copy(alpha = 0.48f)),
                             ) {
                                 Box(
                                     modifier = Modifier.size(48.dp),
@@ -534,6 +582,7 @@ private fun MessageBubble(
     previewLoader: BoundedPreviewLoader,
 ) {
     val tokens = LocalAuroraMaterialTokens.current
+    val visualTokens = LocalAuroraVisualTokens.current
     val incoming = message.direction == MessageDirection.INCOMING
     val directionDescription = stringResource(
         if (incoming) R.string.incoming_message else R.string.outgoing_message,
@@ -543,18 +592,27 @@ private fun MessageBubble(
     val displayedSubject = if (expandedContent == null) message.subject else expandedContent.subject
     val displayedBody = if (expandedContent == null) message.bodyPreview else expandedContent.body
     val displayedBodyTruncated = expandedContent?.sourceTruncated ?: message.bodyTruncated
+    val bubbleShape = RoundedCornerShape(tokens.bubbleCornerRadius)
+    val showDateChip = previousMessage == null ||
+        localThreadDate(previousMessage.timestampMillis) != localThreadDate(message.timestampMillis)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 2.dp),
         horizontalAlignment = if (incoming) Alignment.Start else Alignment.End,
     ) {
+        if (showDateChip) {
+            ThreadDateChip(
+                timestampMillis = message.timestampMillis,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
+        }
         if (senderChanged) {
             Surface(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 1.dp,
+                shape = RoundedCornerShape(18.dp),
+                color = visualTokens.nearBlack.copy(alpha = 0.94f),
+                border = BorderStroke(1.dp, visualTokens.violet.copy(alpha = 0.5f)),
             ) {
                 Text(
                     text = contact?.displayNameOrAddress ?: checkNotNull(message.senderAddress).value,
@@ -562,96 +620,171 @@ private fun MessageBubble(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.labelMedium,
+                    color = visualTokens.lilacSecondary,
                 )
             }
         }
-        Surface(
-            modifier = Modifier
-                .widthIn(max = 360.dp)
-                .semantics { stateDescription = directionDescription }
-                .testTag(MESSAGE_BUBBLE_TEST_TAG),
-            shape = RoundedCornerShape(tokens.bubbleCornerRadius),
-            color = when {
-                highlighted -> MaterialTheme.colorScheme.tertiaryContainer
-                incoming -> MaterialTheme.colorScheme.surfaceVariant
-                else -> MaterialTheme.colorScheme.primaryContainer
-            },
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
-                displayedSubject?.takeIf(String::isNotBlank)?.let { subject ->
-                    Text(subject, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(3.dp))
-                }
-                displayedBody?.takeIf(String::isNotEmpty)?.let { Text(it) }
-                if (displayedBodyTruncated) {
-                    Text(
-                        stringResource(R.string.message_truncated),
-                        color = MaterialTheme.colorScheme.secondary,
-                        style = MaterialTheme.typography.labelSmall,
+        val bubbleModifier = Modifier
+            .widthIn(max = 360.dp)
+            .then(
+                if (incoming) {
+                    Modifier.background(
+                        color = if (highlighted) visualTokens.elevatedSurface else visualTokens.incomingFill,
+                        shape = bubbleShape,
                     )
-                }
-                if (message.bodyTruncated) {
-                    when {
-                        expanding -> Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(18.dp))
-                            Text(stringResource(R.string.loading_full_message))
+                } else {
+                    Modifier.background(
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                visualTokens.outgoingGradientStart,
+                                visualTokens.outgoingGradientEnd,
+                            ),
+                        ),
+                        shape = bubbleShape,
+                    )
+                },
+            )
+            .border(
+                width = if (highlighted) 2.dp else 1.dp,
+                color = if (highlighted) {
+                    visualTokens.cyan
+                } else if (incoming) {
+                    visualTokens.incomingOutline
+                } else {
+                    visualTokens.violet.copy(alpha = 0.82f)
+                },
+                shape = bubbleShape,
+            )
+            .clip(bubbleShape)
+            .semantics { stateDescription = directionDescription }
+            .testTag(MESSAGE_BUBBLE_TEST_TAG)
+        val bubbleContentColor = if (incoming) {
+            visualTokens.onIncoming
+        } else {
+            visualTokens.onOutgoing
+        }
+        val bubbleMetadataColor = if (incoming) {
+            visualTokens.lilacSecondary
+        } else {
+            visualTokens.onOutgoing
+        }
+        Box(
+            modifier = Modifier
+                .then(bubbleModifier),
+        ) {
+            CompositionLocalProvider(
+                LocalContentColor provides bubbleContentColor,
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+                    displayedSubject?.takeIf(String::isNotBlank)?.let { subject ->
+                        Text(subject, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(3.dp))
+                    }
+                    displayedBody?.takeIf(String::isNotEmpty)?.let { Text(it) }
+                    if (displayedBodyTruncated) {
+                        Text(
+                            stringResource(R.string.message_truncated),
+                            color = bubbleMetadataColor,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    if (message.bodyTruncated) {
+                        when {
+                            expanding -> Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = bubbleContentColor,
+                                )
+                                Text(stringResource(R.string.loading_full_message))
+                            }
+                            else -> TextButton(onClick = onToggleExpansion) {
+                                Text(
+                                    stringResource(
+                                        if (expandedContent == null) {
+                                            R.string.show_full_message
+                                        } else {
+                                            R.string.show_less
+                                        },
+                                    ),
+                                    color = bubbleContentColor,
+                                )
+                            }
                         }
-                        else -> TextButton(onClick = onToggleExpansion) {
+                        if (expansionFailed) {
                             Text(
-                                stringResource(
-                                    if (expandedContent == null) {
-                                        R.string.show_full_message
-                                    } else {
-                                        R.string.show_less
-                                    },
-                                ),
+                                stringResource(R.string.full_message_unavailable),
+                                color = if (incoming) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    bubbleContentColor
+                                },
+                                style = MaterialTheme.typography.labelSmall,
                             )
                         }
                     }
-                    if (expansionFailed) {
+                    if (
+                        previewVisible &&
+                        message.attachmentCount > 0 &&
+                        message.providerMessageId.kind == ProviderKind.MMS
+                    ) {
+                        Spacer(Modifier.height(8.dp))
+                        AttachmentPreview(
+                            messageId = message.providerMessageId,
+                            repository = attachmentRepository,
+                            previewLoader = previewLoader,
+                        )
+                    } else if (message.attachmentCount > 0) {
                         Text(
-                            stringResource(R.string.full_message_unavailable),
-                            color = MaterialTheme.colorScheme.error,
+                            pluralStringResource(
+                                R.plurals.attachment_summary,
+                                message.attachmentCount,
+                                message.attachmentCount,
+                                message.attachmentTypeSummary,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.align(Alignment.End),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (!incoming) MessageDeliveryStatus(message)
+                        Text(
+                            formatTimestamp(message.timestampMillis),
+                            color = bubbleMetadataColor,
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
                 }
-                if (
-                    previewVisible &&
-                    message.attachmentCount > 0 &&
-                    message.providerMessageId.kind == ProviderKind.MMS
-                ) {
-                    Spacer(Modifier.height(8.dp))
-                    AttachmentPreview(
-                        messageId = message.providerMessageId,
-                        repository = attachmentRepository,
-                        previewLoader = previewLoader,
-                    )
-                } else if (message.attachmentCount > 0) {
-                    Text(
-                        pluralStringResource(
-                            R.plurals.attachment_summary,
-                            message.attachmentCount,
-                            message.attachmentCount,
-                            message.attachmentTypeSummary,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.align(Alignment.End),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (!incoming) MessageDeliveryStatus(message)
-                    Text(formatTimestamp(message.timestampMillis), style = MaterialTheme.typography.labelSmall)
-                }
             }
         }
+    }
+}
+
+@Composable
+private fun ThreadDateChip(
+    timestampMillis: Long,
+    modifier: Modifier = Modifier,
+) {
+    val visualTokens = LocalAuroraVisualTokens.current
+    Surface(
+        modifier = modifier.padding(vertical = 10.dp),
+        shape = RoundedCornerShape(50),
+        color = visualTokens.nearBlack.copy(alpha = 0.92f),
+        border = BorderStroke(1.dp, visualTokens.violet.copy(alpha = 0.72f)),
+    ) {
+        Text(
+            text = formatThreadDate(timestampMillis),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp),
+            color = visualTokens.lilacSecondary,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 
@@ -671,11 +804,6 @@ private fun MessageDeliveryStatus(message: TimelineMessage) {
     }
     Text(
         text = text,
-        color = if (message.status == MessageStatus.FAILED || message.box == MessageBox.FAILED) {
-            MaterialTheme.colorScheme.error
-        } else {
-            Color.Unspecified
-        },
         style = MaterialTheme.typography.labelSmall,
     )
 }
@@ -753,6 +881,7 @@ private fun Composer(
     onSend: () -> Unit,
     onAcknowledgeSubmissionUnknown: () -> Unit,
 ) {
+    val visualTokens = LocalAuroraVisualTokens.current
     var showUnknownConfirmation by remember { mutableStateOf(false) }
     LaunchedEffect(state.sendState) {
         if (state.sendState != ComposerSendState.SUBMISSION_UNKNOWN) {
@@ -779,93 +908,132 @@ private fun Composer(
             },
         )
     }
-    HorizontalDivider()
-    Row(
+    val supportingText = when {
+        state.failed -> stringResource(R.string.draft_failed)
+        state.saving -> stringResource(R.string.saving_draft)
+        state.sendState == ComposerSendState.SENDING ->
+            stringResource(R.string.submitting_message)
+        state.sendState == ComposerSendState.KNOWN_UNSENT ->
+            stringResource(R.string.message_not_sent_draft_preserved)
+        state.sendState == ComposerSendState.SUBMISSION_UNKNOWN ->
+            stringResource(R.string.send_status_unknown_supporting)
+        state.unavailableReason == ComposerUnavailableReason.CONVERSATION_UNVERIFIED ->
+            stringResource(R.string.verifying_conversation_for_send)
+        state.unavailableReason == ComposerUnavailableReason.GROUP_REQUIRES_MMS ->
+            stringResource(R.string.group_send_requires_mms)
+        state.unavailableReason == ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE ->
+            stringResource(R.string.conversation_sim_unavailable)
+        state.unavailableReason == ComposerUnavailableReason.MULTIPART_UNAVAILABLE ->
+            stringResource(
+                R.string.multipart_send_unavailable,
+                state.segmentCount ?: 2,
+            )
+        state.unavailableReason == ComposerUnavailableReason.RECOVERY_PENDING ->
+            stringResource(R.string.finishing_send_recovery)
+        state.unavailableReason == ComposerUnavailableReason.MESSAGING_UNAVAILABLE ->
+            stringResource(R.string.messaging_send_unavailable)
+        state.unavailableReason == ComposerUnavailableReason.EMPTY_MESSAGE ->
+            stringResource(R.string.type_message_to_send)
+        state.unavailableReason == ComposerUnavailableReason.DRAFT_NOT_DURABLE ->
+            stringResource(R.string.saving_draft)
+        state.sendState == ComposerSendState.READY ->
+            stringResource(R.string.draft_saved_one_sms)
+        else -> stringResource(R.string.draft_saved)
+    }
+    val actionLabel = stringResource(
+        when (state.sendState) {
+            ComposerSendState.READY -> R.string.send
+            ComposerSendState.SENDING -> R.string.sending
+            ComposerSendState.KNOWN_UNSENT -> R.string.retry_send
+            ComposerSendState.SUBMISSION_UNKNOWN -> R.string.review_send
+            ComposerSendState.UNAVAILABLE -> R.string.send_unavailable
+        },
+    )
+    val actionGlyph = when (state.sendState) {
+        ComposerSendState.KNOWN_UNSENT -> AuroraGlyph.RETRY
+        ComposerSendState.SUBMISSION_UNKNOWN -> AuroraGlyph.REVIEW
+        else -> AuroraGlyph.SEND
+    }
+    val actionEnabled = state.sendState == ComposerSendState.READY ||
+        state.sendState == ComposerSendState.KNOWN_UNSENT ||
+        state.sendState == ComposerSendState.SUBMISSION_UNKNOWN
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(visualTokens.deepNight.copy(alpha = 0.98f)),
     ) {
-        OutlinedTextField(
-            value = state.body,
-            onValueChange = { value ->
-                if (value.length <= MAXIMUM_COMPOSER_CHARACTERS) onBodyChanged(value)
-            },
-            enabled = !state.failed &&
-                state.sendState != ComposerSendState.SENDING &&
-                state.sendState != ComposerSendState.SUBMISSION_UNKNOWN &&
-                state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING,
+        HorizontalDivider(color = visualTokens.violet.copy(alpha = 0.5f))
+        Row(
             modifier = Modifier
-                .weight(1f)
-                .onFocusChanged { onFocusChanged(it.isFocused) }
-                .testTag(COMPOSER_TEST_TAG),
-            minLines = 1,
-            maxLines = 5,
-            label = { Text(stringResource(R.string.message_draft)) },
-            supportingText = {
-                Text(
-                    when {
-                        state.failed -> stringResource(R.string.draft_failed)
-                        state.saving -> stringResource(R.string.saving_draft)
-                        state.sendState == ComposerSendState.SENDING ->
-                            stringResource(R.string.submitting_message)
-                        state.sendState == ComposerSendState.KNOWN_UNSENT ->
-                            stringResource(R.string.message_not_sent_draft_preserved)
-                        state.sendState == ComposerSendState.SUBMISSION_UNKNOWN ->
-                            stringResource(R.string.send_status_unknown_supporting)
-                        state.unavailableReason == ComposerUnavailableReason.CONVERSATION_UNVERIFIED ->
-                            stringResource(R.string.verifying_conversation_for_send)
-                        state.unavailableReason == ComposerUnavailableReason.GROUP_REQUIRES_MMS ->
-                            stringResource(R.string.group_send_requires_mms)
-                        state.unavailableReason == ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE ->
-                            stringResource(R.string.conversation_sim_unavailable)
-                        state.unavailableReason == ComposerUnavailableReason.MULTIPART_UNAVAILABLE ->
-                            stringResource(
-                                R.string.multipart_send_unavailable,
-                                state.segmentCount ?: 2,
-                            )
-                        state.unavailableReason == ComposerUnavailableReason.RECOVERY_PENDING ->
-                            stringResource(R.string.finishing_send_recovery)
-                        state.unavailableReason == ComposerUnavailableReason.MESSAGING_UNAVAILABLE ->
-                            stringResource(R.string.messaging_send_unavailable)
-                        state.unavailableReason == ComposerUnavailableReason.EMPTY_MESSAGE ->
-                            stringResource(R.string.type_message_to_send)
-                        state.unavailableReason == ComposerUnavailableReason.DRAFT_NOT_DURABLE ->
-                            stringResource(R.string.saving_draft)
-                        state.sendState == ComposerSendState.READY ->
-                            stringResource(R.string.draft_saved_one_sms)
-                        else -> stringResource(R.string.draft_saved)
-                    },
-                )
-            },
-        )
-        val actionEnabled = state.sendState == ComposerSendState.READY ||
-            state.sendState == ComposerSendState.KNOWN_UNSENT ||
-            state.sendState == ComposerSendState.SUBMISSION_UNKNOWN
-        Button(
-            onClick = {
-                if (state.sendState == ComposerSendState.SUBMISSION_UNKNOWN) {
-                    showUnknownConfirmation = true
-                } else {
-                    onSend()
-                }
-            },
-            enabled = actionEnabled,
-            modifier = Modifier.testTag(COMPOSER_SEND_TEST_TAG),
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                stringResource(
-                    when (state.sendState) {
-                        ComposerSendState.READY -> R.string.send
-                        ComposerSendState.SENDING -> R.string.sending
-                        ComposerSendState.KNOWN_UNSENT -> R.string.retry_send
-                        ComposerSendState.SUBMISSION_UNKNOWN -> R.string.review_send
-                        ComposerSendState.UNAVAILABLE -> R.string.send_unavailable
-                    },
+            OutlinedTextField(
+                value = state.body,
+                onValueChange = { value ->
+                    if (value.length <= MAXIMUM_COMPOSER_CHARACTERS) onBodyChanged(value)
+                },
+                enabled = !state.failed &&
+                    state.sendState != ComposerSendState.SENDING &&
+                    state.sendState != ComposerSendState.SUBMISSION_UNKNOWN &&
+                    state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING,
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { onFocusChanged(it.isFocused) }
+                    .testTag(COMPOSER_TEST_TAG),
+                minLines = 1,
+                maxLines = 5,
+                label = { Text(stringResource(R.string.message_draft)) },
+                shape = RoundedCornerShape(28.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = visualTokens.onIncoming,
+                    unfocusedTextColor = visualTokens.onIncoming,
+                    disabledTextColor = visualTokens.lilacSecondary,
+                    focusedContainerColor = visualTokens.nearBlack.copy(alpha = 0.96f),
+                    unfocusedContainerColor = visualTokens.nearBlack.copy(alpha = 0.9f),
+                    disabledContainerColor = visualTokens.nearBlack.copy(alpha = 0.78f),
+                    cursorColor = visualTokens.cyan,
+                    focusedBorderColor = visualTokens.cyan,
+                    unfocusedBorderColor = visualTokens.violet.copy(alpha = 0.68f),
+                    disabledBorderColor = visualTokens.violet.copy(alpha = 0.3f),
+                    focusedLabelColor = visualTokens.cyan,
+                    unfocusedLabelColor = visualTokens.lilacSecondary,
+                    disabledLabelColor = visualTokens.lilacSecondary.copy(alpha = 0.6f),
                 ),
             )
+            AuroraIconAction(
+                glyph = actionGlyph,
+                contentDescription = actionLabel,
+                onClick = {
+                    if (state.sendState == ComposerSendState.SUBMISSION_UNKNOWN) {
+                        showUnknownConfirmation = true
+                    } else {
+                        onSend()
+                    }
+                },
+                enabled = actionEnabled,
+                modifier = Modifier
+                    .testTag(COMPOSER_SEND_TEST_TAG)
+                    .semantics { text = AnnotatedString(actionLabel) },
+                tint = if (actionEnabled) visualTokens.cyan else visualTokens.lilacSecondary,
+            )
         }
+        Text(
+            text = supportingText,
+            modifier = Modifier.padding(start = 16.dp, end = 64.dp, bottom = 8.dp),
+            color = if (
+                state.failed ||
+                state.sendState == ComposerSendState.KNOWN_UNSENT ||
+                state.sendState == ComposerSendState.SUBMISSION_UNKNOWN
+            ) {
+                MaterialTheme.colorScheme.error
+            } else {
+                visualTokens.lilacSecondary
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
@@ -893,6 +1061,15 @@ private data class VisibleThreadItem(
 )
 
 private fun ProviderMessageId.stableUiKey(): String = "${kind.name}:$value"
+
+private fun localThreadDate(timestampMillis: Long) =
+    Instant.ofEpochMilli(timestampMillis).atZone(ZoneId.systemDefault()).toLocalDate()
+
+private fun formatThreadDate(timestampMillis: Long): String =
+    DateTimeFormatter
+        .ofLocalizedDate(FormatStyle.MEDIUM)
+        .withLocale(Locale.getDefault())
+        .format(localThreadDate(timestampMillis))
 
 private const val MAXIMUM_HEADER_NAMES: Int = 3
 private const val THREAD_VIEWPORT_PREFETCH_ROWS: Int = 10

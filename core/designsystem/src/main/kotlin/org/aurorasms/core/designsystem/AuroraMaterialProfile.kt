@@ -71,7 +71,7 @@ enum class AuroraBubbleGeometry {
 }
 
 const val CURRENT_AURORA_PROFILE_SCHEMA: Int = 1
-const val CANONICAL_AURORA_HUE_DEGREES: Int = 174
+const val CANONICAL_AURORA_HUE_DEGREES: Int = 273
 const val MINIMUM_HUE_DEGREES: Int = 0
 const val MAXIMUM_HUE_DEGREES: Int = 359
 const val MINIMUM_ACCESSIBLE_WALLPAPER_DIM: Float = 0.35f
