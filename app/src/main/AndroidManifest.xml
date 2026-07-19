@@ -63,6 +63,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".receiver.SendDelayAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".receiver.ScheduledSmsRecoveryReceiver"
             android:directBootAware="false"
             android:exported="false">

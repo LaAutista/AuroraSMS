@@ -2,9 +2,11 @@
 
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
-bounded ADR 0008 Phase 5A source implementation in commit `17fc421`.
-Phase 5A local/API 26/API 36 emulator aggregate acceptance passed; all
-physical-device and real-carrier evidence remains open.
+bounded ADR 0008 Phase 5A source implementation in commit `17fc421`, followed
+by accepted Phase 5B–5E durability controls through ADR 0012 and Room schema 9.
+Local/API 26/API 36 acceptance passed through Phase 5E; safe install/migration
+and locked-device cold launch passed on a Pixel 8. Real-carrier, radio, billing,
+and invasive physical lifecycle evidence remains open.
 
 ## Security and privacy objectives
 
@@ -664,6 +666,23 @@ interrupted pre-reservation dispatch become visible review state and never
 silently retry or switch SIM. Exact-access denial/revocation retains a labeled
 inexact path plus a distinct safety alarm; physical OEM/Doze/carrier evidence
 remains open.
+
+Phase 5E implements ADR 0012's truthful pre-submission Undo boundary. Schema 9
+stores only a bounded operation ID, exact draft/thread/subscription bindings, a
+purpose-separated participant digest, due/phase/review codes, clock anchors,
+and timestamps; it stores no message or recipient content. The normal timer is
+process-local and its private alarm contains only the local ID. A pending-to-
+dispatch compare-and-set prevents duplicate alarms or a racing Undo from
+submitting twice. Undo never crosses durable dispatch ownership.
+
+Every due or restart path rechecks clock continuity and bounded lateness,
+verified one-person identity, role, authoritative remembered active SIM, exact
+draft revision, and one-unit eligibility. Reboot/time discontinuity, excessive
+lateness, lost role/SIM, arming failure, or interrupted handoff pauses visibly
+for review without transport retry. Dispatch reconciliation accepts only an
+exact matching durable composer operation or terminal draft absence; mismatch
+retains the draft for review. Emulator and no-send device evidence cannot close
+real carrier, radio, billing, or OEM-kill threats.
 
 ## Open security decisions
 

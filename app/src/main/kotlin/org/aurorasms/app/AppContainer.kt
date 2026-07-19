@@ -74,6 +74,13 @@ import org.aurorasms.app.message.ScheduledSmsCoordinator
 import org.aurorasms.app.message.ScheduledSmsRecoveryReason
 import org.aurorasms.app.message.UnavailableScheduledSmsController
 import org.aurorasms.app.message.UnavailableThreadSmsSendController
+import org.aurorasms.app.message.AndroidSendDelayAlarmDriver
+import org.aurorasms.app.message.DeferredSendDelayController
+import org.aurorasms.app.message.SendDelayController
+import org.aurorasms.app.message.SendDelayCoordinator
+import org.aurorasms.app.message.SendDelayRecoveryReason
+import org.aurorasms.app.message.SharedPreferencesSendDelayPreferenceStore
+import org.aurorasms.app.message.UnavailableSendDelayController
 import org.aurorasms.app.message.requiresFollowUp
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
@@ -172,10 +179,12 @@ import org.aurorasms.core.state.storage.RoomComposerSmsOperationRepository
 import org.aurorasms.core.state.storage.RoomConversationSubscriptionPreferenceRepository
 import org.aurorasms.core.state.storage.RoomDraftRepository
 import org.aurorasms.core.state.storage.RoomScheduledSmsRepository
+import org.aurorasms.core.state.storage.RoomSendDelayRepository
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
 import org.aurorasms.core.state.storage.StateDatabaseOpenResult
 import org.aurorasms.core.state.ScheduledSmsId
+import org.aurorasms.core.state.SendDelayId
 import org.aurorasms.feature.conversations.BoundedPreviewLoader
 
 class AppContainer(
@@ -319,6 +328,9 @@ class AppContainer(
     internal val threadSmsSendController: ThreadSmsSendController = deferredThreadSmsSendController
     private val deferredScheduledSmsController = DeferredScheduledSmsController()
     internal val scheduledSmsController: ScheduledSmsController = deferredScheduledSmsController
+    private val deferredSendDelayController = DeferredSendDelayController()
+    internal val sendDelayController: SendDelayController = deferredSendDelayController
+    internal val sendDelayPreferenceStore = SharedPreferencesSendDelayPreferenceStore(application)
     val messageNotifier: MessageNotifier = AndroidMessageNotifier(
         context = application,
         intentFactory = AppNotificationIntentFactory(application),
@@ -383,6 +395,7 @@ class AppContainer(
         if (syntheticIndexOnly) {
             deferredThreadSmsSendController.install(UnavailableThreadSmsSendController)
             deferredScheduledSmsController.install(UnavailableScheduledSmsController)
+            deferredSendDelayController.install(UnavailableSendDelayController)
             stateRuntimeState.value = StateRuntimeState.Ready(
                 draftRepository = EmptyBenchmarkDraftRepository,
                 appearanceProfileRepository = EmptyBenchmarkAppearanceProfileRepository,
@@ -422,6 +435,19 @@ class AppContainer(
                             sender = threadSmsSendController,
                         )
                         deferredScheduledSmsController.install(scheduledController)
+                        deferredSendDelayController.install(
+                            SendDelayCoordinator(
+                                applicationScope = applicationScope,
+                                roleState = defaultSmsRoleState,
+                                conversations = conversationRepository,
+                                subscriptions = subscriptionRepository,
+                                subscriptionPreferences =
+                                    RoomConversationSubscriptionPreferenceRepository(result.database),
+                                repository = RoomSendDelayRepository(result.database),
+                                alarms = AndroidSendDelayAlarmDriver(application),
+                                sender = threadSmsSendController,
+                            ),
+                        )
                         stateRuntimeState.value = StateRuntimeState.Ready(
                             draftRepository = RoomDraftRepository(result.database),
                             appearanceProfileRepository = appearanceRepository,
@@ -435,6 +461,7 @@ class AppContainer(
                     is StateDatabaseOpenResult.Failed -> {
                         deferredThreadSmsSendController.install(UnavailableThreadSmsSendController)
                         deferredScheduledSmsController.install(UnavailableScheduledSmsController)
+                        deferredSendDelayController.install(UnavailableSendDelayController)
                         stateRuntimeState.value = StateRuntimeState.Failed(result.reason)
                         _stateStorageStatus.value = StateStorageStatus.Failed(result.reason)
                     }
@@ -450,6 +477,7 @@ class AppContainer(
             if (composerOwned) {
                 enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
                 scheduledSmsController.reconcileDispatches()
+                sendDelayController.reconcileDispatches()
             }
             // Re-run durable recovery even when the immediate provider write
             // failed or the operation lookup was temporarily unavailable.
@@ -579,8 +607,13 @@ class AppContainer(
         scheduledSmsController.handleAlarm(id)
     }
 
+    suspend fun onSendDelayAlarm(id: SendDelayId) {
+        sendDelayController.handleAlarm(id)
+    }
+
     internal suspend fun onScheduledSmsRecovery(reason: ScheduledSmsRecoveryReason) {
         scheduledSmsController.recover(reason)
+        sendDelayController.recover(reason.toSendDelayRecoveryReason())
     }
 
     /** Retries observer registration and reconciliation after explicit role/permission UI success. */
@@ -620,6 +653,7 @@ class AppContainer(
         if (!roleHeld && !syntheticIndexOnly) {
             threadSmsSendController.fence()
             scheduledSmsController.fence()
+            sendDelayController.fence()
             cancelAndJoinPendingMessagingRecovery()
             incomingMessageOrchestrator.onRoleLost()
         }
@@ -696,9 +730,11 @@ class AppContainer(
         val composerRecovery = threadSmsSendController.recover()
         if (scheduledStartupRecoveryPending) {
             scheduledSmsController.recover(ScheduledSmsRecoveryReason.APP_STARTUP)
+            sendDelayController.recover(SendDelayRecoveryReason.APP_STARTUP)
             scheduledStartupRecoveryPending = false
         } else {
             scheduledSmsController.reconcileDispatches()
+            sendDelayController.reconcileDispatches()
         }
         inlineReplyTransportResultHandler.reconcilePendingOperations()
         var retryDelayMillis = INCOMING_NOTIFICATION_RECOVERY_INITIAL_RETRY_MILLIS
@@ -1459,6 +1495,17 @@ internal fun reconciliationCoversAmbiguousSignalLedger(reasons: Set<IndexSignal>
 
 private fun ReplyOperationRecoveryResult.unknownSubmissionMayStillCallback(): Boolean =
     this is ReplyOperationRecoveryResult.Recovered && submissionUnknownCount > 0
+
+private fun ScheduledSmsRecoveryReason.toSendDelayRecoveryReason(): SendDelayRecoveryReason =
+    when (this) {
+        ScheduledSmsRecoveryReason.APP_STARTUP -> SendDelayRecoveryReason.APP_STARTUP
+        ScheduledSmsRecoveryReason.BOOT_COMPLETED -> SendDelayRecoveryReason.BOOT_COMPLETED
+        ScheduledSmsRecoveryReason.WALL_CLOCK_CHANGED -> SendDelayRecoveryReason.TIME_CHANGED
+        ScheduledSmsRecoveryReason.TIMEZONE_CHANGED,
+        ScheduledSmsRecoveryReason.PACKAGE_REPLACED,
+        ScheduledSmsRecoveryReason.EXACT_ACCESS_CHANGED,
+        -> SendDelayRecoveryReason.PACKAGE_REPLACED
+    }
 
 private suspend fun StateFlow<IndexRuntimeState>.awaitReadyRuntime(): IndexRuntime {
     val state = when (val current = value) {

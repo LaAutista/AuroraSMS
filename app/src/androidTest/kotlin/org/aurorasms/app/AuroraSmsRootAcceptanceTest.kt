@@ -432,7 +432,7 @@ class AuroraSmsRootAcceptanceTest {
             waitForTag(THREAD_SCREEN_TEST_TAG)
             waitForTag(THREAD_LIST_TEST_TAG)
             compose.onNodeWithTag(SCOPED_APPEARANCE_DIALOG_TEST_TAG).assertDoesNotExist()
-            compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
+            compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertIsDisplayed()
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
             waitForDisplayedThreadRow("Synthetic anchor row 20")
             compose.waitUntil(TIMEOUT_MILLIS) {
@@ -513,7 +513,7 @@ class AuroraSmsRootAcceptanceTest {
 
             waitForDialogToClose()
             compose.onNodeWithTag(THREAD_SCREEN_TEST_TAG).assertIsDisplayed()
-            compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
+            compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertIsDisplayed()
             compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).assertDoesNotExist()
         }
     }
@@ -727,7 +727,7 @@ class AuroraSmsRootAcceptanceTest {
             assertEquals(timelineLoadsBeforeReset, fixture.timeline.latestLoadCount.get())
             compose.onNodeWithTag(THREAD_SCREEN_TEST_TAG).assertIsDisplayed()
             compose.onNodeWithTag(COMPOSER_TEST_TAG).assertTextContains(SYNTHETIC_DRAFT)
-            compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
+            compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertIsDisplayed()
             compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).assertDoesNotExist()
         }
     }

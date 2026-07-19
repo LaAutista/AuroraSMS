@@ -324,3 +324,42 @@ val STATE_MIGRATION_7_8: Migration = object : Migration(7, 8) {
         db.execSQL(ScheduledSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
     }
 }
+
+val STATE_MIGRATION_8_9: Migration = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `send_delay_operations` (
+                `send_delay_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `participant_set_key` TEXT NOT NULL,
+                `provider_thread_id` INTEGER NOT NULL,
+                `draft_id` INTEGER NOT NULL,
+                `draft_revision_ms` INTEGER NOT NULL,
+                `subscription_id` INTEGER NOT NULL,
+                `due_timestamp_ms` INTEGER NOT NULL,
+                `phase_code` TEXT NOT NULL,
+                `review_reason_code` TEXT,
+                `armed_wall_timestamp_ms` INTEGER NOT NULL,
+                `armed_elapsed_realtime_ms` INTEGER NOT NULL,
+                `created_timestamp_ms` INTEGER NOT NULL,
+                `updated_timestamp_ms` INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_send_delay_operations_provider_thread_id` " +
+                "ON `send_delay_operations` (`provider_thread_id`)",
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_send_delay_operations_draft_id` " +
+                "ON `send_delay_operations` (`draft_id`)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_send_delay_operations_due_timestamp_ms_send_delay_id` " +
+                "ON `send_delay_operations` (`due_timestamp_ms`, `send_delay_id`)",
+        )
+        db.execSQL(SendDelayEnforcement.CREATE_INSERT_LIMIT_TRIGGER)
+        db.execSQL(SendDelayEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(SendDelayEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+    }
+}

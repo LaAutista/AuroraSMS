@@ -156,6 +156,7 @@ class DefaultSmsManifestContractTest {
             ".InlineReplyReceiver",
             ".receiver.ScheduledSmsAlarmReceiver",
             ".receiver.ScheduledSmsRecoveryReceiver",
+            ".receiver.SendDelayAlarmReceiver",
         )
         privateReceiverSuffixes.forEach { suffix ->
             val receiver = requireNotNull(

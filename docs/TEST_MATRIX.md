@@ -2921,6 +2921,62 @@ The emulator intentionally retained `com.android.messaging` as SMS role holder,
 and AuroraSMS's SMS/notification runtime permissions remained denied, so the
 smoke exercised the expected role-approval route without sending a message.
 
+### Phase 5E durable short-delay Undo local and safe-device acceptance — 2026-07-19
+
+This source identifies as `0.5.4-phase5` (`versionCode` 8), Room schema 9, and
+ADR 0012. Immediate send remains the default; 1, 3, 5, and 10 second options
+create a content-free durable owner for the exact frozen draft. The complete
+offline host/release/privacy/license aggregate was `BUILD SUCCESSFUL` in 1m53s
+across 886 tasks (159 executed, 7 from cache, 720 up-to-date). All 538 host
+JUnit results passed with zero failures, errors, or skips: app 254, design
+system 11, index 69, model 19, notifications 21, state 48, telephony 79,
+testing 24, and conversations 13. Debug, R8 release, and benchmark assembly;
+debug/release/benchmark lint; clean-room/private-art scans; dependency locks;
+permission and APK-content ledgers; and license gates passed. `bundleRelease`
+separately passed 269 tasks in 8s. CycloneDX 1.6 separately passed 15 tasks in
+7s and reports 441 components and 442 dependencies.
+
+The first API 36 run found three stale acceptance assertions that expected the
+entire Thread overflow action to disappear when conversation-specific
+appearance became unavailable. Phase 5E intentionally keeps that action for
+the independent Send Delay preference while hiding only Appearance. After
+updating those assertions, the focused root acceptance class passed and the
+complete API 36 matrix passed 302 tests with 10 intentional assumption skips,
+292 executed, and zero failures/errors: app 131/9 skips, benchmark 3/1, index
+31/0, notifications 29/0, state 58/0, telephony 35/0, and conversations 15/0.
+The run was `BUILD SUCCESSFUL` in 1m33s across 456 tasks.
+
+The complete API 26 matrix was `BUILD SUCCESSFUL` in 1m59s across 456 tasks.
+Authoritative XML reports 305 tests, 13 intentional assumption skips, 292
+executed, and zero failures/errors: app 134/12 skips, benchmark 3/1, index 31/0,
+notifications 29/0, state 58/0, telephony 35/0, and conversations 15/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,642,934 | `e177575c93b66be4cbf26a74646bbe91197ecbe03d030ab01493f7401c3b10e1` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,788,813 | `2d9a54462fa9ed0886886190ffe251e2befb457f9f450e3f1843c2eb6c231e51` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,666,025 | `8e9a67ea4d0d279911e6ba649c759146a1a0c6487e44b01c3b58bf89cd6f07e0` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,704,533 | `2114f16c0d70b972383fd82844b05fc8a858c4b887238aed1f5ca6bb2ff59b31` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed with `-r` on the connected Pixel 8
+`192.168.68.50:42337`, preserving app data. The same 14,642,934-byte APK was
+copied to `/sdcard/Download/AuroraSMS-debug.apk`; device-side SHA-256 exactly
+matched `e177575c93b66be4cbf26a74646bbe91197ecbe03d030ab01493f7401c3b10e1`.
+The installed package reports version code 8/name `0.5.4-phase5`, min API 26,
+target API 36. A metadata-only private query verified schema version 9 and the
+`send_delay_operations` table. Cold launch returned status `ok`, state `COLD`,
+and total time 1,583 ms. The sole app-PID error-level line was Android's
+platform `ashmem` deprecation notice.
+
+The Pixel remained securely locked, so the keyguard was not bypassed and no
+screenshot or UI input was attempted. `org.fossify.messages.debug` remained the
+SMS role holder and Aurora's SMS/notification runtime permissions remained
+denied. No message content was read and no carrier SMS was sent. This safe
+install/schema/launch evidence does not close real process-kill timing, reboot,
+SIM removal, carrier, radio, billing, or OEM lifecycle gates. AuroraSMS remains
+incomplete and not gold.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
@@ -2929,7 +2985,9 @@ smoke exercised the expected role-approval route without sending a message.
 - [x] Exact-alarm denial/revocation has ADR 0011's labeled inexact fallback,
   distinct safety alarm, and explicit special-access route. Physical revocation
   acceptance remains open.
-- [ ] Send-delay Undo survives process death without duplicate sends.
+- [x] Send-delay Undo has content-free process-death recovery, duplicate-alarm
+  idempotence, clock/lateness fail-closed handling, and no Undo after dispatch
+  ownership. Real carrier and unlocked physical lifecycle timing remain open.
 - [ ] Pending deletion has deterministic process-death behavior.
 - [x] Remembered subscription is durable and scoped per conversation for the
   verified one-person Thread composer path.

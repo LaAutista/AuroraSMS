@@ -81,7 +81,7 @@ class ConversationUiStateTest {
         compose.onNodeWithTag(THREAD_LIST_TEST_TAG).assertIsDisplayed()
         compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsDisplayed()
         compose.onNodeWithText("Send unavailable").assertIsNotEnabled()
-        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertIsDisplayed()
         compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).assertDoesNotExist()
         compose.runOnIdle { check(repository.readAttempts == 0) }
     }
@@ -119,6 +119,56 @@ class ConversationUiStateTest {
         compose.onNodeWithText("Sending…").assertIsDisplayed()
         compose.onNodeWithText("Submitting safely…").assertIsDisplayed()
         compose.runOnIdle { check(sendCount == 1) }
+    }
+
+    @Test
+    fun pendingSendDelayOffersUndoAndLocksDraftUntilDecision() {
+        var undoCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic delayed draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.DELAY_PENDING,
+                    segmentCount = 1,
+                    sendDelayDueTimestampMillis = 4_000_000_000_000L,
+                ),
+                onUndoSend = { undoCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithText("Waiting briefly before send · Undo is available").assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsEnabled().performClick()
+        compose.runOnIdle { check(undoCount == 1) }
+    }
+
+    @Test
+    fun sendDelaySettingOffersOnlyApprovedChoicesAndReportsSelection() {
+        var selected: Int? = null
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic ready draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.READY,
+                    segmentCount = 1,
+                ),
+                sendDelaySeconds = 3,
+                onSetSendDelaySeconds = { selected = it },
+            )
+        }
+
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithText("Send delay · 3 seconds").performClick()
+        compose.onNodeWithText("Send immediately").assertIsDisplayed()
+        compose.onNodeWithText("Wait 1 second").assertIsDisplayed()
+        compose.onNodeWithText("Wait 3 seconds").assertIsDisplayed()
+        compose.onNodeWithText("Wait 5 seconds").assertIsDisplayed()
+        compose.onNodeWithText("Wait 10 seconds").assertIsDisplayed().performClick()
+        compose.runOnIdle { check(selected == 10) }
     }
 
     @Test
@@ -541,6 +591,9 @@ class ConversationUiStateTest {
 private fun SyntheticThreadScreen(
     composer: ComposerUiState,
     onSend: () -> Unit = {},
+    onUndoSend: () -> Unit = {},
+    sendDelaySeconds: Int = 0,
+    onSetSendDelaySeconds: (Int) -> Unit = {},
     onAcknowledgeSubmissionUnknown: () -> Unit = {},
     onSchedule: () -> Unit = {},
     onCancelSchedule: () -> Unit = {},
@@ -567,6 +620,9 @@ private fun SyntheticThreadScreen(
             onToggleMessageExpansion = {},
             onDraftChanged = {},
             onSend = onSend,
+            onUndoSend = onUndoSend,
+            sendDelaySeconds = sendDelaySeconds,
+            onSetSendDelaySeconds = onSetSendDelaySeconds,
             onSchedule = onSchedule,
             onCancelSchedule = onCancelSchedule,
             onAcknowledgeSubmissionUnknown = onAcknowledgeSubmissionUnknown,

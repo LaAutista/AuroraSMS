@@ -26,6 +26,21 @@
     <string name="sending">Sending…</string>
     <string name="retry_send">Retry send</string>
     <string name="review_send">Review</string>
+    <string name="undo_send">Undo send</string>
+    <string name="undo_send_available">Waiting briefly before send · Undo is available</string>
+    <string name="delayed_send_not_sent">Delayed send was paused safely. Keep the draft and review it before sending again.</string>
+    <string name="send_delay">Send delay</string>
+    <string name="send_delay_off">Send delay · Off</string>
+    <plurals name="send_delay_current">
+        <item quantity="one">Send delay · %1$d second</item>
+        <item quantity="other">Send delay · %1$d seconds</item>
+    </plurals>
+    <string name="send_immediately">Send immediately</string>
+    <plurals name="send_delay_seconds">
+        <item quantity="one">Wait %1$d second</item>
+        <item quantity="other">Wait %1$d seconds</item>
+    </plurals>
+    <string name="cancel">Cancel</string>
     <string name="saving_draft">Saving draft…</string>
     <string name="draft_saved">Draft saved locally</string>
     <string name="type_message_to_send">Type a message to send.</string>

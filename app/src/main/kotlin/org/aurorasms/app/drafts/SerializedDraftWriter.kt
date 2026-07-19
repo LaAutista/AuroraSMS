@@ -80,6 +80,7 @@ enum class DraftUnfreezeReason {
     SEND_REFUSED,
     SCHEDULE_REFUSED,
     SCHEDULE_CANCELLED,
+    SEND_DELAY_UNDONE,
     KNOWN_UNSENT,
     SUBMISSION_UNKNOWN_ACKNOWLEDGED,
 }
@@ -230,6 +231,7 @@ class SerializedDraftWriter(
             DraftUnfreezeReason.SEND_REFUSED,
             DraftUnfreezeReason.SCHEDULE_REFUSED,
             DraftUnfreezeReason.SCHEDULE_CANCELLED,
+            DraftUnfreezeReason.SEND_DELAY_UNDONE,
             DraftUnfreezeReason.KNOWN_UNSENT,
             DraftUnfreezeReason.SUBMISSION_UNKNOWN_ACKNOWLEDGED -> Unit
         }

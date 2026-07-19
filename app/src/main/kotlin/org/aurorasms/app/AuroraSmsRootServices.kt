@@ -10,6 +10,10 @@ import org.aurorasms.app.message.ThreadSmsSendController
 import org.aurorasms.app.message.UnavailableThreadSmsSendController
 import org.aurorasms.app.message.ScheduledSmsController
 import org.aurorasms.app.message.UnavailableScheduledSmsController
+import org.aurorasms.app.message.SendDelayController
+import org.aurorasms.app.message.SendDelayPreferenceStore
+import org.aurorasms.app.message.UnavailableSendDelayController
+import org.aurorasms.app.message.UnavailableSendDelayPreferenceStore
 import org.aurorasms.core.index.MessageIndex
 import org.aurorasms.core.index.conversation.ConversationRepository
 import org.aurorasms.core.index.timeline.ThreadTimelineRepository
@@ -37,6 +41,10 @@ internal interface AuroraSmsRootServices {
         get() = UnavailableThreadSmsSendController
     val scheduledSmsController: ScheduledSmsController
         get() = UnavailableScheduledSmsController
+    val sendDelayController: SendDelayController
+        get() = UnavailableSendDelayController
+    val sendDelayPreferenceStore: SendDelayPreferenceStore
+        get() = UnavailableSendDelayPreferenceStore
 
     fun countSmsSegments(body: String): Int? = null
 
@@ -75,6 +83,10 @@ internal class AppContainerAuroraSmsRootServices(
         get() = container.threadSmsSendController
     override val scheduledSmsController: ScheduledSmsController
         get() = container.scheduledSmsController
+    override val sendDelayController: SendDelayController
+        get() = container.sendDelayController
+    override val sendDelayPreferenceStore: SendDelayPreferenceStore
+        get() = container.sendDelayPreferenceStore
 
     override fun countSmsSegments(body: String): Int? = AndroidSmsSegmentCounter.count(body)
 

@@ -17,6 +17,7 @@ import org.aurorasms.core.state.storage.ComposerSmsOperationEnforcement
 import org.aurorasms.core.state.storage.ConversationSubscriptionPreferenceEnforcement
 import org.aurorasms.core.state.storage.DraftIdentityEnforcement
 import org.aurorasms.core.state.storage.ScheduledSmsEnforcement
+import org.aurorasms.core.state.storage.SendDelayEnforcement
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
 import org.aurorasms.core.state.storage.StateDatabaseOpenResult
@@ -54,11 +55,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionEight_hasBoundedContentFreeStateTables() {
+    fun schemaVersionNine_hasBoundedContentFreeStateTables() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(8, AuroraStateDatabase.VERSION)
+            assertEquals(9, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -311,13 +312,47 @@ class StateSchemaCurrentTest {
                 sqlite.indexNames("scheduled_sms_operations")
                     .contains("index_scheduled_sms_operations_due_timestamp_ms_schedule_id"),
             )
+            assertEquals(
+                setOf(
+                    "send_delay_id",
+                    "participant_set_key",
+                    "provider_thread_id",
+                    "draft_id",
+                    "draft_revision_ms",
+                    "subscription_id",
+                    "due_timestamp_ms",
+                    "phase_code",
+                    "review_reason_code",
+                    "armed_wall_timestamp_ms",
+                    "armed_elapsed_realtime_ms",
+                    "created_timestamp_ms",
+                    "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("send_delay_operations"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "send_delay_operations",
+                    "index_send_delay_operations_provider_thread_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "send_delay_operations",
+                    "index_send_delay_operations_draft_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexNames("send_delay_operations")
+                    .contains("index_send_delay_operations_due_timestamp_ms_send_delay_id"),
+            )
         } finally {
             database.close()
         }
     }
 
     @Test
-    fun exportedVersionEightStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedVersionNineStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(
@@ -379,6 +414,12 @@ class StateSchemaCurrentTest {
                         "AND name = 'scheduled_sms_operations'",
                 ).use { it.moveToFirst() },
             )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'send_delay_operations'",
+                ).use { it.moveToFirst() },
+            )
         }
 
         val database = Room.databaseBuilder(
@@ -392,6 +433,7 @@ class StateSchemaCurrentTest {
             .addCallback(ComposerSmsOperationEnforcement.callback)
             .addCallback(ConversationSubscriptionPreferenceEnforcement.callback)
             .addCallback(ScheduledSmsEnforcement.callback)
+            .addCallback(SendDelayEnforcement.callback)
             .build()
         try {
             assertEquals(AuroraStateDatabase.VERSION, database.openHelper.writableDatabase.version)
@@ -443,6 +485,9 @@ class StateSchemaCurrentTest {
         assertTriggerExists(sqlite, ScheduledSmsEnforcement.INSERT_LIMIT_TRIGGER)
         assertTriggerExists(sqlite, ScheduledSmsEnforcement.INSERT_INTEGRITY_TRIGGER)
         assertTriggerExists(sqlite, ScheduledSmsEnforcement.UPDATE_INTEGRITY_TRIGGER)
+        assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
 
         assertThrows(SQLiteConstraintException::class.java) {
             sqlite.execSQL(
@@ -480,6 +525,9 @@ class StateSchemaCurrentTest {
         sqlite.execSQL("DROP TRIGGER ${ScheduledSmsEnforcement.INSERT_LIMIT_TRIGGER}")
         sqlite.execSQL("DROP TRIGGER ${ScheduledSmsEnforcement.INSERT_INTEGRITY_TRIGGER}")
         sqlite.execSQL("DROP TRIGGER ${ScheduledSmsEnforcement.UPDATE_INTEGRITY_TRIGGER}")
+        sqlite.execSQL("DROP TRIGGER ${SendDelayEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
         database.close()
 
         database = openStateDatabase()
@@ -506,6 +554,9 @@ class StateSchemaCurrentTest {
             assertTriggerExists(sqlite, ScheduledSmsEnforcement.INSERT_LIMIT_TRIGGER)
             assertTriggerExists(sqlite, ScheduledSmsEnforcement.INSERT_INTEGRITY_TRIGGER)
             assertTriggerExists(sqlite, ScheduledSmsEnforcement.UPDATE_INTEGRITY_TRIGGER)
+            assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+            assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(sqlite, SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
             assertThrows(SQLiteConstraintException::class.java) {
                 sqlite.execSQL(
                     "INSERT INTO appearance_selection(" +

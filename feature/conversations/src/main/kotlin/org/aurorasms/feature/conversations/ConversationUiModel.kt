@@ -138,6 +138,7 @@ data class ComposerUiState(
     val unavailableReason: ComposerUnavailableReason? = null,
     val segmentCount: Int? = null,
     val scheduleState: ComposerScheduleState = ComposerScheduleState.None,
+    val sendDelayDueTimestampMillis: Long? = null,
 ) {
     init {
         require(segmentCount == null || segmentCount > 0) { "SMS segment count must be positive" }
@@ -147,12 +148,18 @@ data class ComposerUiState(
         require(sendState == ComposerSendState.UNAVAILABLE || unavailableReason == null) {
             "Only an unavailable composer can have an unavailable reason"
         }
+        require(
+            (sendState == ComposerSendState.DELAY_PENDING ||
+                sendState == ComposerSendState.DELAY_REVIEW) ==
+                (sendDelayDueTimestampMillis != null),
+        ) { "A delayed-send UI phase requires its due timestamp" }
     }
 
     override fun toString(): String =
         "ComposerUiState(bodyLength=${body.length}, saving=$saving, failed=$failed, " +
             "sendState=$sendState, unavailableReason=$unavailableReason, " +
-            "segmentCount=$segmentCount, scheduleState=$scheduleState, REDACTED)"
+            "segmentCount=$segmentCount, scheduleState=$scheduleState, " +
+            "hasSendDelay=${sendDelayDueTimestampMillis != null}, REDACTED)"
 }
 
 sealed interface ComposerScheduleState {
@@ -202,6 +209,8 @@ data class ConversationSubscriptionUiState(
 enum class ComposerSendState {
     UNAVAILABLE,
     READY,
+    DELAY_PENDING,
+    DELAY_REVIEW,
     SENDING,
     KNOWN_UNSENT,
     SUBMISSION_UNKNOWN,

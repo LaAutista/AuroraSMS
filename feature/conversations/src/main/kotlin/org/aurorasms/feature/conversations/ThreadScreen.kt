@@ -115,6 +115,9 @@ fun ThreadScreen(
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
     onDraftChanged: (String) -> Unit,
     onSend: () -> Unit = {},
+    onUndoSend: () -> Unit = {},
+    sendDelaySeconds: Int = 0,
+    onSetSendDelaySeconds: (Int) -> Unit = {},
     onSchedule: () -> Unit = {},
     onCancelSchedule: () -> Unit = {},
     onRequestExactAlarmAccess: () -> Unit = {},
@@ -163,6 +166,8 @@ fun ThreadScreen(
                 isDialable = isDialable,
                 onDial = onDial,
                 onSelectSubscription = onSelectSubscription,
+                sendDelaySeconds = sendDelaySeconds,
+                onSetSendDelaySeconds = onSetSendDelaySeconds,
             )
             HorizontalDivider(color = visualTokens.violet.copy(alpha = 0.4f))
             Box(modifier = Modifier.weight(1f)) {
@@ -191,6 +196,7 @@ fun ThreadScreen(
                 onBodyChanged = onDraftChanged,
                 onFocusChanged = { composerFocused = it },
                 onSend = onSend,
+                onUndoSend = onUndoSend,
                 onSchedule = onSchedule,
                 onCancelSchedule = onCancelSchedule,
                 onRequestExactAlarmAccess = onRequestExactAlarmAccess,
@@ -211,6 +217,8 @@ private fun ThreadHeader(
     isDialable: (ParticipantAddress) -> Boolean,
     onDial: (ParticipantAddress) -> Unit,
     onSelectSubscription: (AuroraSubscriptionId) -> Unit,
+    sendDelaySeconds: Int,
+    onSetSendDelaySeconds: (Int) -> Unit,
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
     val ready = state as? ThreadUiState.Ready
@@ -260,9 +268,12 @@ private fun ThreadHeader(
             onClick = onOpenSearch,
             tint = visualTokens.lilacSecondary,
         )
-        if (conversationAppearanceAvailable) {
-            ThreadMoreMenu(onOpenConversationAppearance = onOpenConversationAppearance)
-        }
+        ThreadMoreMenu(
+            conversationAppearanceAvailable = conversationAppearanceAvailable,
+            onOpenConversationAppearance = onOpenConversationAppearance,
+            sendDelaySeconds = sendDelaySeconds,
+            onSetSendDelaySeconds = onSetSendDelaySeconds,
+        )
     }
 }
 
@@ -343,10 +354,55 @@ private fun subscriptionLabel(subscription: org.aurorasms.core.telephony.ActiveS
 
 @Composable
 private fun ThreadMoreMenu(
+    conversationAppearanceAvailable: Boolean,
     onOpenConversationAppearance: () -> Unit,
+    sendDelaySeconds: Int,
+    onSetSendDelaySeconds: (Int) -> Unit,
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
     var expanded by remember { mutableStateOf(false) }
+    var showSendDelay by remember { mutableStateOf(false) }
+    if (showSendDelay) {
+        AlertDialog(
+            onDismissRequest = { showSendDelay = false },
+            title = { Text(stringResource(R.string.send_delay)) },
+            text = {
+                Column {
+                    SEND_DELAY_SECOND_OPTIONS.forEach { seconds ->
+                        TextButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                onSetSendDelaySeconds(seconds)
+                                showSendDelay = false
+                            },
+                        ) {
+                            Text(
+                                if (seconds == 0) {
+                                    stringResource(R.string.send_immediately)
+                                } else {
+                                    pluralStringResource(
+                                        R.plurals.send_delay_seconds,
+                                        seconds,
+                                        seconds,
+                                    )
+                                },
+                                color = if (seconds == sendDelaySeconds) {
+                                    visualTokens.cyan
+                                } else {
+                                    visualTokens.onIncoming
+                                },
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSendDelay = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
     Box {
         AuroraIconAction(
             glyph = AuroraGlyph.MORE,
@@ -361,17 +417,40 @@ private fun ThreadMoreMenu(
             onDismissRequest = { expanded = false },
             containerColor = visualTokens.menuSurface,
         ) {
+            if (conversationAppearanceAvailable) {
+                DropdownMenuItem(
+                    modifier = Modifier.testTag(THREAD_APPEARANCE_ACTION_TEST_TAG),
+                    text = {
+                        Text(
+                            stringResource(R.string.conversation_appearance),
+                            color = visualTokens.onIncoming,
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        onOpenConversationAppearance()
+                    },
+                )
+            }
             DropdownMenuItem(
-                modifier = Modifier.testTag(THREAD_APPEARANCE_ACTION_TEST_TAG),
+                modifier = Modifier.testTag(THREAD_SEND_DELAY_ACTION_TEST_TAG),
                 text = {
                     Text(
-                        stringResource(R.string.conversation_appearance),
+                        if (sendDelaySeconds == 0) {
+                            stringResource(R.string.send_delay_off)
+                        } else {
+                            pluralStringResource(
+                                R.plurals.send_delay_current,
+                                sendDelaySeconds,
+                                sendDelaySeconds,
+                            )
+                        },
                         color = visualTokens.onIncoming,
                     )
                 },
                 onClick = {
                     expanded = false
-                    onOpenConversationAppearance()
+                    showSendDelay = true
                 },
             )
         }
@@ -954,6 +1033,7 @@ private fun Composer(
     onBodyChanged: (String) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
     onSend: () -> Unit,
+    onUndoSend: () -> Unit,
     onSchedule: () -> Unit,
     onCancelSchedule: () -> Unit,
     onRequestExactAlarmAccess: () -> Unit,
@@ -1068,6 +1148,10 @@ private fun Composer(
         state.saving -> stringResource(R.string.saving_draft)
         state.sendState == ComposerSendState.SENDING ->
             stringResource(R.string.submitting_message)
+        state.sendState == ComposerSendState.DELAY_PENDING ->
+            stringResource(R.string.undo_send_available)
+        state.sendState == ComposerSendState.DELAY_REVIEW ->
+            stringResource(R.string.delayed_send_not_sent)
         state.sendState == ComposerSendState.KNOWN_UNSENT ->
             stringResource(R.string.message_not_sent_draft_preserved)
         state.sendState == ComposerSendState.SUBMISSION_UNKNOWN ->
@@ -1098,6 +1182,8 @@ private fun Composer(
     val actionLabel = stringResource(
         when (state.sendState) {
             ComposerSendState.READY -> R.string.send
+            ComposerSendState.DELAY_PENDING -> R.string.undo_send
+            ComposerSendState.DELAY_REVIEW -> R.string.keep_as_draft
             ComposerSendState.SENDING -> R.string.sending
             ComposerSendState.KNOWN_UNSENT -> R.string.retry_send
             ComposerSendState.SUBMISSION_UNKNOWN -> R.string.review_send
@@ -1107,6 +1193,8 @@ private fun Composer(
     val actionGlyph = when (state.sendState) {
         ComposerSendState.KNOWN_UNSENT -> AuroraGlyph.RETRY
         ComposerSendState.SUBMISSION_UNKNOWN -> AuroraGlyph.REVIEW
+        ComposerSendState.DELAY_PENDING -> AuroraGlyph.BACK
+        ComposerSendState.DELAY_REVIEW -> AuroraGlyph.REVIEW
         else -> AuroraGlyph.SEND
     }
     val scheduleActive = state.scheduleState is ComposerScheduleState.Pending ||
@@ -1115,6 +1203,8 @@ private fun Composer(
     val scheduleLoading = state.scheduleState is ComposerScheduleState.Loading
     val actionEnabled = !scheduleActive && (state.sendState == ComposerSendState.READY ||
         state.sendState == ComposerSendState.KNOWN_UNSENT ||
+        state.sendState == ComposerSendState.DELAY_PENDING ||
+        state.sendState == ComposerSendState.DELAY_REVIEW ||
         state.sendState == ComposerSendState.SUBMISSION_UNKNOWN)
     Column(
         modifier = Modifier
@@ -1138,6 +1228,8 @@ private fun Composer(
                     !scheduleActive &&
                     !scheduleLoading &&
                     state.sendState != ComposerSendState.SENDING &&
+                    state.sendState != ComposerSendState.DELAY_PENDING &&
+                    state.sendState != ComposerSendState.DELAY_REVIEW &&
                     state.sendState != ComposerSendState.SUBMISSION_UNKNOWN &&
                     state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING,
                 modifier = Modifier
@@ -1188,6 +1280,11 @@ private fun Composer(
                 onClick = {
                     if (state.sendState == ComposerSendState.SUBMISSION_UNKNOWN) {
                         showUnknownConfirmation = true
+                    } else if (
+                        state.sendState == ComposerSendState.DELAY_PENDING ||
+                        state.sendState == ComposerSendState.DELAY_REVIEW
+                    ) {
+                        onUndoSend()
                     } else {
                         onSend()
                     }
@@ -1205,6 +1302,7 @@ private fun Composer(
             color = if (
                 state.failed ||
                 state.sendState == ComposerSendState.KNOWN_UNSENT ||
+                state.sendState == ComposerSendState.DELAY_REVIEW ||
                 state.sendState == ComposerSendState.SUBMISSION_UNKNOWN
             ) {
                 MaterialTheme.colorScheme.error
@@ -1266,6 +1364,9 @@ const val MESSAGE_BUBBLE_TEST_TAG: String = "aurora-message-bubble"
 const val COMPOSER_TEST_TAG: String = "aurora-composer"
 const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"
 const val COMPOSER_SCHEDULE_TEST_TAG: String = "aurora-composer-schedule"
+const val THREAD_SEND_DELAY_ACTION_TEST_TAG: String = "aurora-thread-send-delay"
+
+private val SEND_DELAY_SECOND_OPTIONS = listOf(0, 1, 3, 5, 10)
 const val THREAD_MORE_ACTION_TEST_TAG: String = "aurora-thread-more-action"
 const val THREAD_APPEARANCE_ACTION_TEST_TAG: String = "aurora-thread-appearance-action"
 const val THREAD_SIM_SELECTOR_TEST_TAG: String = "aurora-thread-sim-selector"

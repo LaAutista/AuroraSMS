@@ -6,6 +6,8 @@ and aggregate local/emulator acceptance passed on 2026-07-18. Physical-device,
 SIM, OEM, carrier-network, billing, roaming, sent, and delivery evidence remains
 open.
 This document does not declare AuroraSMS complete or gold.
+Phase 5B through Phase 5E addenda below are now implemented; the latest source
+is `0.5.4-phase5` (`versionCode` 8), Room schema 9.
 
 ## Outcome
 
@@ -683,6 +685,39 @@ Host, migration, repository, manifest, UI, privacy, release, and connected
 evidence must be recorded in `docs/TEST_MATRIX.md`. No fake alarm, emulator,
 method result, or database assertion closes physical reboot, Doze, exact-access
 revocation, SIM removal, OEM alarm timing, carrier submission, or billing gates.
+
+## Phase 5E addendum — durable short send delay and Undo
+
+The 2026-07-19 `0.5.4-phase5` (`versionCode` 8) slice adds Room schema 9 and ADR
+0012. Immediate send remains the default. A user can explicitly choose 1, 3, 5,
+or 10 seconds from the Thread overflow menu. Sending then freezes the exact
+durable draft before creating one content-free delay operation.
+
+The operation owns the exact Thread, draft ID/revision, selected subscription,
+due instant, lifecycle, monotonic/wall-clock anchors, and a delay-specific
+participant digest. It stores no message body, subject, address, contact label,
+or SIM label. SQLite triggers enforce a 128-row bound, key shape, initial state,
+immutable bindings, monotonic revisions, and only the approved pending-to-
+dispatch/review lifecycle.
+
+A process-local coroutine is the normal short timer; a private explicit alarm
+carrying only the local operation ID is the process-death wake-up. The due path
+rechecks clock continuity, a 30-second restart lateness ceiling, verified one-
+person identity, default role, exact remembered active SIM, durable draft
+revision, and one-unit eligibility before atomically claiming dispatch and
+calling the existing crash-safe sender. Duplicate alarms cannot win that claim
+twice.
+
+Undo removes only `PENDING` or `REVIEW_REQUIRED`, cancels both wake-ups, and
+unfreezes the preserved draft. It is unavailable in `DISPATCHING`. Reboot,
+clock/time changes, excessive lateness, removed SIM, lost role, arming failure,
+or interrupted handoff becomes visible review state and never automatically
+retries or silently changes transport.
+
+Host, schema/migration, repository, manifest, Compose UI, privacy, release, and
+API 26/API 36 evidence belongs in `docs/TEST_MATRIX.md`. Synthetic timers,
+emulators, and no-send physical UI checks do not close real carrier, billing,
+radio, OEM-kill, or reboot-during-live-send gates.
 
 ## Evidence that remains open
 

@@ -66,6 +66,9 @@ import org.aurorasms.app.message.ThreadSmsSendPhase
 import org.aurorasms.app.message.ScheduledSmsAttempt
 import org.aurorasms.app.message.ScheduledSmsCommand
 import org.aurorasms.app.message.ScheduledSmsObservation
+import org.aurorasms.app.message.SendDelayAttempt
+import org.aurorasms.app.message.SendDelayCommand
+import org.aurorasms.app.message.SendDelayObservation
 import org.aurorasms.core.index.SearchAnchor
 import org.aurorasms.core.index.SearchHit
 import org.aurorasms.core.model.ConversationId
@@ -635,6 +638,15 @@ private fun ThreadRoute(
     val scheduleObservation by scheduleObservationFlow.collectAsStateWithLifecycle(
         initialValue = ScheduledSmsObservation.Loading,
     )
+    val sendDelayController = services.sendDelayController
+    val sendDelayObservationFlow = remember(sendDelayController, route.providerThreadId) {
+        sendDelayController.observe(route.providerThreadId)
+    }
+    val sendDelayObservation by sendDelayObservationFlow.collectAsStateWithLifecycle(
+        initialValue = SendDelayObservation.Loading,
+    )
+    val sendDelaySeconds by services.sendDelayPreferenceStore.delaySeconds
+        .collectAsStateWithLifecycle()
     var savedDraftRestoration by rememberSaveable(
         route.providerThreadId.value,
         stateSaver = SAVED_DRAFT_RESTORATION_SAVER,
@@ -696,6 +708,7 @@ private fun ThreadRoute(
     }
     var sendAttemptInFlight by remember(route.providerThreadId) { mutableStateOf(false) }
     var scheduleAttemptInFlight by remember(route.providerThreadId) { mutableStateOf(false) }
+    var sendDelayAttemptInFlight by remember(route.providerThreadId) { mutableStateOf(false) }
     val visibleBody = when (val status = draftStatus) {
         // Saved-state text is untrusted until the writer compares its exact
         // base token with Room. Avoid even a transient post-send resurrection.
@@ -713,6 +726,8 @@ private fun ThreadRoute(
         selectedSubscriptionAvailable = subscriptionSelection.selected?.smsCapable == true,
         scheduleObservation = scheduleObservation,
         scheduleAttemptInFlight = scheduleAttemptInFlight,
+        sendDelayObservation = sendDelayObservation,
+        sendDelayAttemptInFlight = sendDelayAttemptInFlight,
     )
     val globalThreadScope = remember { AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD) }
     val globalThreadOverrideObservation by remember(appearanceController, globalThreadScope) {
@@ -853,11 +868,13 @@ private fun ThreadRoute(
                 }
             },
             onSend = {
-                if (!sendAttemptInFlight) {
+                if (!sendAttemptInFlight && !sendDelayAttemptInFlight) {
                     sendAttemptInFlight = true
                     scope.launch {
                         var coordinatorEntered = false
                         var sendAttempt: ThreadSmsSendAttempt? = null
+                        var sendDelayEntered = false
+                        var sendDelayAttempt: SendDelayAttempt? = null
                         try {
                             val frozen = writer.freezeForSend() ?: return@launch
                             // Close the base-free SavedState ABA window before
@@ -882,25 +899,63 @@ private fun ThreadRoute(
                             // cancellation or unexpected exception is not proof
                             // that submission was refused. Keep the writer
                             // frozen until recovery classifies the operation.
-                            coordinatorEntered = true
-                            sendAttempt = withContext(NonCancellable) {
-                                sendController.send(
-                                    ThreadSmsSendCommand(
-                                        identity = identity,
-                                        subscriptionId = subscription.id,
-                                        draftId = frozen.draftId,
-                                        draftRevision = frozen.revision,
-                                    ),
-                                )
+                            if (sendDelaySeconds > 0) {
+                                sendDelayEntered = true
+                                sendDelayAttempt = withContext(NonCancellable) {
+                                    sendDelayController.enqueue(
+                                        SendDelayCommand(
+                                            identity = identity,
+                                            subscriptionId = subscription.id,
+                                            draftId = frozen.draftId,
+                                            draftRevision = frozen.revision,
+                                            delayMillis = sendDelaySeconds * 1_000L,
+                                        ),
+                                    )
+                                }
+                            } else {
+                                coordinatorEntered = true
+                                sendAttempt = withContext(NonCancellable) {
+                                    sendController.send(
+                                        ThreadSmsSendCommand(
+                                            identity = identity,
+                                            subscriptionId = subscription.id,
+                                            draftId = frozen.draftId,
+                                            draftRevision = frozen.revision,
+                                        ),
+                                    )
+                                }
                             }
                         } finally {
-                            if (shouldUnfreezeComposerAsRefused(coordinatorEntered, sendAttempt)) {
+                            if (
+                                shouldUnfreezeComposerAsRefused(coordinatorEntered, sendAttempt) &&
+                                (!sendDelayEntered || sendDelayAttempt == SendDelayAttempt.REFUSED)
+                            ) {
                                 writer.unfreezeAfterSendSettled(DraftUnfreezeReason.SEND_REFUSED)
                             }
                             sendAttemptInFlight = false
                         }
                     }
                 }
+            },
+            onUndoSend = {
+                if (!sendDelayAttemptInFlight) {
+                    sendDelayAttemptInFlight = true
+                    scope.launch {
+                        try {
+                            if (sendDelayController.undo(route.providerThreadId)) {
+                                writer.unfreezeAfterSendSettled(
+                                    DraftUnfreezeReason.SEND_DELAY_UNDONE,
+                                )
+                            }
+                        } finally {
+                            sendDelayAttemptInFlight = false
+                        }
+                    }
+                }
+            },
+            sendDelaySeconds = sendDelaySeconds,
+            onSetSendDelaySeconds = { seconds ->
+                services.sendDelayPreferenceStore.setDelaySeconds(seconds)
             },
             onSchedule = {
                 if (!scheduleAttemptInFlight && scheduleObservation == ScheduledSmsObservation.None) {
@@ -1368,6 +1423,8 @@ private fun DraftWriteStatus.toComposerUiState(
     selectedSubscriptionAvailable: Boolean,
     scheduleObservation: ScheduledSmsObservation = ScheduledSmsObservation.None,
     scheduleAttemptInFlight: Boolean = false,
+    sendDelayObservation: SendDelayObservation = SendDelayObservation.None,
+    sendDelayAttemptInFlight: Boolean = false,
 ): ComposerUiState {
     val body = when (this) {
         DraftWriteStatus.Loading -> restoredBody
@@ -1381,6 +1438,8 @@ private fun DraftWriteStatus.toComposerUiState(
     val verifiedIdentity = ready?.verifiedConversationIdentity
     val unavailableReason = when {
         sendObservation.phase == ThreadSmsSendPhase.RECOVERY_PENDING ->
+            ComposerUnavailableReason.RECOVERY_PENDING
+        sendDelayObservation is SendDelayObservation.Loading ->
             ComposerUnavailableReason.RECOVERY_PENDING
         failed || saving ->
             ComposerUnavailableReason.DRAFT_NOT_DURABLE
@@ -1400,7 +1459,13 @@ private fun DraftWriteStatus.toComposerUiState(
     val sendState = when {
         scheduleAttemptInFlight || scheduleObservation !is ScheduledSmsObservation.None ->
             ComposerSendState.UNAVAILABLE
-        sendAttemptInFlight || sendObservation.phase == ThreadSmsSendPhase.SENDING ->
+        sendDelayObservation is SendDelayObservation.Pending ->
+            ComposerSendState.DELAY_PENDING
+        sendDelayObservation is SendDelayObservation.ReviewRequired ->
+            ComposerSendState.DELAY_REVIEW
+        sendAttemptInFlight || sendDelayAttemptInFlight ||
+            sendDelayObservation is SendDelayObservation.Dispatching ||
+            sendObservation.phase == ThreadSmsSendPhase.SENDING ->
             ComposerSendState.SENDING
         sendObservation.phase == ThreadSmsSendPhase.SUBMISSION_UNKNOWN ->
             ComposerSendState.SUBMISSION_UNKNOWN
@@ -1419,6 +1484,13 @@ private fun DraftWriteStatus.toComposerUiState(
         unavailableReason = unavailableReason.takeIf { sendState == ComposerSendState.UNAVAILABLE },
         segmentCount = segmentCount,
         scheduleState = scheduleObservation.toComposerScheduleState(),
+        sendDelayDueTimestampMillis = when (sendState) {
+            ComposerSendState.DELAY_PENDING ->
+                (sendDelayObservation as SendDelayObservation.Pending).dueTimestampMillis
+            ComposerSendState.DELAY_REVIEW ->
+                (sendDelayObservation as SendDelayObservation.ReviewRequired).dueTimestampMillis
+            else -> null
+        },
     )
 }
 

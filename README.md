@@ -9,6 +9,30 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+The 2026-07-19 Phase 5E source identifies as `0.5.4-phase5` (`versionCode` 8)
+and adds ADR 0012's durable short send delay and truthful pre-submission Undo
+to the existing verified one-person, one-part SMS composer. Immediate sending
+remains the default; the user may choose 1, 3, 5, or 10 seconds. Room schema 9
+owns a bounded content-free delay operation, the exact durable draft remains
+the sole message-content authority, and a process-local timer plus private ID-
+only alarm survives process death. Dispatch revalidates clock continuity,
+lateness, identity, role, exact remembered SIM, draft revision, and segment
+count. Duplicate alarms are compare-and-set idempotent; reboot/clock changes,
+late recovery, lost role/SIM, arming failure, or interrupted handoff pauses for
+review without retry. Undo is accepted only before durable dispatch ownership.
+Physical lifecycle and carrier gates remain open, so AuroraSMS remains
+incomplete and not gold.
+
+Phase 5E local acceptance is green. All 538 host tests passed inside the full
+886-task debug/R8-release/benchmark, lint, privacy, dependency, APK-content,
+and license aggregate. The complete API 36 matrix passed 302 tests with 10
+intentional environment-gated skips, and API 26 passed 305 with 13; both
+executed 292 tests with zero failures/errors. The exact debug APK was installed
+on the connected Pixel 8 with data preserved and schema 9 verified. Fossify
+remained the default SMS app, Aurora's SMS/notification permissions remained
+denied, and cold launch produced no AuroraSMS error. The secure keyguard was not
+bypassed, no messages were read, and no carrier send was attempted.
+
 The 2026-07-19 Phase 5D source identifies as `0.5.3-phase5` (`versionCode` 7)
 and adds bounded scheduled sending for the existing verified one-person,
 one-part SMS composer. Room schema 8 owns one content-free schedule per exact

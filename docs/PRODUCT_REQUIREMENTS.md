@@ -402,6 +402,33 @@ Synthetic host/emulator evidence cannot close physical reboot, Doze,
 exact-access revocation, OEM alarm timing, dual-SIM removal, live carrier, or
 billing/roaming gates. AuroraSMS remains incomplete and not gold.
 
+### Phase 5E durable short send delay and Undo
+
+The `0.5.4-phase5` (`versionCode` 8) 2026-07-19 source adds only a truthful
+pre-submission grace period to the verified one-person, one-unit Thread path.
+
+- Immediate send remains the default; explicit choices are 1, 3, 5, or 10
+  seconds.
+- Room schema 9 stores at most 128 content-free delay owners bound to the exact
+  durable draft, verified Thread, selected subscription, due instant, phase,
+  and clock anchors. The draft remains the sole message-content authority.
+- A process-local timer handles the ordinary path and a private ID-only alarm
+  wakes process-death recovery. No exported surface, permission, network path,
+  service, worker, or automatic retry is added.
+- Undo is enabled only while the operation remains pending or safely paused for
+  review. Once durable dispatch ownership begins, Aurora never claims the send
+  can be recalled.
+- Due handling revalidates clock continuity/lateness, verified participants,
+  default role, remembered active SMS-capable SIM, exact draft revision, and
+  one-unit eligibility. Duplicate wake-ups are idempotent.
+- Reboot/clock discontinuity, excessive lateness, lost role/SIM, arming failure,
+  stale state, or interrupted handoff preserves the draft in visible review
+  state and never sends automatically.
+
+Synthetic/emulator acceptance and safe physical UI smoke do not prove real
+carrier recall, OEM process-kill timing, reboot during a live submission,
+billing, roaming, or radio behavior. AuroraSMS remains incomplete and not gold.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls
@@ -742,8 +769,9 @@ granular updates. Release builds use R8 and a measured Baseline Profile.
    static/GIF assignments, and accessibility.
 6. Phase 5: first deliver the bounded Phase 5A existing-Thread one-part SMS
    composer, then the Phase 5B acknowledged-unknown cleanup, Phase 5C durable
-   conversation-SIM choice, and Phase 5D durable scheduled one-part SMS with an
-   honest exact/inexact alarm boundary; later slices retain send delay,
+   conversation-SIM choice, Phase 5D durable scheduled one-part SMS with an
+   honest exact/inexact alarm boundary, and Phase 5E durable short-delay Undo;
+   later slices retain pending deletion,
    group-MMS hardening, and permanent-delete behavior.
 7. Phase 6: notifications/reminders, reactions, voice memo, selected-text copy,
    signatures, local spam, backup/restore, and Android Auto.
