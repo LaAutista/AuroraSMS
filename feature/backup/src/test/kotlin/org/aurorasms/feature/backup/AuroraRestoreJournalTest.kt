@@ -22,6 +22,7 @@ class AuroraRestoreJournalTest {
         val session = (journal.begin() as AuroraRestoreJournalBeginResult.Success).session
         assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS, AuroraBackupMessageBox.INBOX))
         assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 101))
+        assertTrue(journal.recordPrepared(session, 1, AuroraRestoreProviderKind.SMS, 101, DIGEST))
         assertTrue(journal.reserve(session, 2, AuroraRestoreProviderKind.MMS, AuroraBackupMessageBox.SENT))
 
         val recoveredJournal = newJournal(directory)
@@ -31,6 +32,7 @@ class AuroraRestoreJournalTest {
                 createdTimestampMillis = 1234L,
                 messageCount = 2L,
                 hasPreInsertReservation = true,
+                hasInsertedUnpreparedRow = false,
             ),
             recoveredJournal.recoverySnapshot(),
         )
@@ -38,7 +40,13 @@ class AuroraRestoreJournalTest {
         assertTrue(recoveredJournal.forEachOwnership(session, ownership::add))
         assertEquals(
             listOf(
-                AuroraRestoreOwnership(1, AuroraRestoreProviderKind.SMS, 101, AuroraBackupMessageBox.INBOX),
+                AuroraRestoreOwnership(
+                    1,
+                    AuroraRestoreProviderKind.SMS,
+                    101,
+                    AuroraBackupMessageBox.INBOX,
+                    DIGEST,
+                ),
                 AuroraRestoreOwnership(2, AuroraRestoreProviderKind.MMS, null, AuroraBackupMessageBox.SENT),
             ),
             ownership,
@@ -59,6 +67,7 @@ class AuroraRestoreJournalTest {
         assertFalse(journal.markComplete(session))
         assertFalse(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 9))
         assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.MMS, 9))
+        assertTrue(journal.recordPrepared(session, 1, AuroraRestoreProviderKind.MMS, 9, DIGEST))
         assertTrue(journal.markComplete(session))
 
         val recovered = newJournal(directory)
@@ -94,6 +103,23 @@ class AuroraRestoreJournalTest {
     }
 
     @Test
+    fun trailingCorruptionIsValidatedBeforeAnyOwnershipCallback() {
+        val directory = temporaryFolder.newFolder("trailing-corrupt")
+        val journal = newJournal(directory)
+        val session = (journal.begin() as AuroraRestoreJournalBeginResult.Success).session
+        assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS, AuroraBackupMessageBox.INBOX))
+        assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 101))
+        assertTrue(journal.recordPrepared(session, 1, AuroraRestoreProviderKind.SMS, 101, DIGEST))
+        File(directory, "aurora_restore_journal_v1.log").appendText("corrupt\n")
+
+        val ownership = mutableListOf<AuroraRestoreOwnership>()
+        val recovered = newJournal(directory)
+        assertEquals(AuroraRestoreJournalRecoveryResult.Corrupt, recovered.recoverySnapshot())
+        assertFalse(recovered.forEachOwnership(session, ownership::add))
+        assertTrue(ownership.isEmpty())
+    }
+
+    @Test
     fun placeholdersAreOpaqueBoundedAndDeterministic() {
         val session = AuroraRestoreSession(TEST_SESSION)
         val sms = AuroraRestorePlaceholder.smsAddress(session, 2_000_000)
@@ -113,5 +139,6 @@ class AuroraRestoreJournalTest {
 
     private companion object {
         const val TEST_SESSION = "00000000-0000-4000-8000-000000000001"
+        val DIGEST = "1".repeat(64)
     }
 }

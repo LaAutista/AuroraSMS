@@ -192,7 +192,7 @@ private class FakeRestoreProvider : AuroraRestoreProvider {
         providerRowId: Long,
         placeholderAddress: String,
         record: AuroraBackupSmsRecord,
-    ): AuroraRestoreProviderResult<Unit> = success(Unit)
+    ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest> = success(digest(providerRowId))
 
     override fun insertMmsPlaceholder(
         record: AuroraBackupMmsRecord,
@@ -222,7 +222,7 @@ private class FakeRestoreProvider : AuroraRestoreProvider {
         providerRowId: Long,
         placeholderTransactionId: String,
         record: AuroraBackupMmsRecord,
-    ): AuroraRestoreProviderResult<Unit> = success(Unit)
+    ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest> = success(digest(providerRowId))
 
     override fun commitHistoricalBox(
         ownership: AuroraRestoreOwnership,
@@ -255,6 +255,10 @@ private class FakeRestoreProvider : AuroraRestoreProvider {
 
     private companion object {
         const val TEST_MARKER = "aurora.restore"
+
+        fun digest(providerRowId: Long): AuroraRestorePreparedDigest = AuroraRestorePreparedDigest(
+            providerRowId.toString(16).padStart(64, '0'),
+        )
     }
 }
 

@@ -19,6 +19,14 @@ enum class AuroraRestoreRollbackOutcome {
     OWNERSHIP_CONFLICT,
 }
 
+data class AuroraRestorePreparedDigest(val value: String) {
+    init {
+        require(value.matches(Regex("[a-f0-9]{64}")))
+    }
+
+    override fun toString(): String = "AuroraRestorePreparedDigest(REDACTED)"
+}
+
 interface AuroraMmsDuplicateCheck {
     fun acceptPart(
         record: AuroraBackupDecodedMmsPart,
@@ -48,7 +56,7 @@ interface AuroraRestoreProvider {
         providerRowId: Long,
         placeholderAddress: String,
         record: AuroraBackupSmsRecord,
-    ): AuroraRestoreProviderResult<Unit>
+    ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest>
 
     /** Inserts one known-unsent FAILED MMS parent with only the opaque transaction identity. */
     fun insertMmsPlaceholder(
@@ -68,7 +76,7 @@ interface AuroraRestoreProvider {
         providerRowId: Long,
         placeholderTransactionId: String,
         record: AuroraBackupMmsRecord,
-    ): AuroraRestoreProviderResult<Unit>
+    ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest>
 
     /** The only operation allowed to expose a staged row in its safe historical box. */
     fun commitHistoricalBox(
@@ -160,7 +168,11 @@ class AuroraRestoreCoordinator(
 
         var commitFailure: AuroraRestoreFailure? = null
         val parsed = journal.forEachOwnership(session) { ownership ->
-            if (commitFailure != null || ownership.providerRowId == null) {
+            if (
+                commitFailure != null ||
+                ownership.providerRowId == null ||
+                ownership.preparedDigest == null
+            ) {
                 commitFailure = commitFailure ?: AuroraRestoreFailure.JOURNAL_FAILED
                 return@forEachOwnership
             }
@@ -300,11 +312,23 @@ class AuroraRestoreCoordinator(
         fun finishMms() {
             val staged = activeMms ?: return
             if (!staged.duplicate) {
-                provider.prepareMms(
+                val prepared = provider.prepareMms(
                     staged.providerRowId,
                     staged.placeholder,
                     staged.record,
-                ).failureOrNull()?.let { failure = it }
+                ).valueOrNull { failure = it }
+                if (
+                    prepared != null &&
+                    !journal.recordPrepared(
+                        session,
+                        staged.record.archiveMessageId,
+                        AuroraRestoreProviderKind.MMS,
+                        staged.providerRowId,
+                        prepared.value,
+                    )
+                ) {
+                    failure = AuroraRestoreFailure.JOURNAL_FAILED
+                }
             }
             activeMms = null
         }
@@ -341,7 +365,20 @@ class AuroraRestoreCoordinator(
                             failure = AuroraRestoreFailure.JOURNAL_FAILED
                             throw CoordinatorAbortException()
                         }
-                        provider.prepareSms(providerId, placeholder, record).abortOnFailure(::setFailure)
+                        val prepared = provider.prepareSms(providerId, placeholder, record)
+                            .valueOrAbort(::setFailure)
+                        if (
+                            !journal.recordPrepared(
+                                session,
+                                record.archiveMessageId,
+                                AuroraRestoreProviderKind.SMS,
+                                providerId,
+                                prepared.value,
+                            )
+                        ) {
+                            failure = AuroraRestoreFailure.JOURNAL_FAILED
+                            throw CoordinatorAbortException()
+                        }
                     }
 
                     override fun onMms(record: AuroraBackupMmsRecord) {
@@ -497,6 +534,16 @@ private fun AuroraRestoreProviderResult<Unit>.abortOnFailure(
     if (this is AuroraRestoreProviderResult.Success) return
     recordFailure(failureOrNull() ?: AuroraRestoreFailure.PROVIDER_FAILED)
     throw CoordinatorAbortException()
+}
+
+private fun <T> AuroraRestoreProviderResult<T>.valueOrNull(
+    recordFailure: (AuroraRestoreFailure) -> Unit,
+): T? = when (this) {
+    is AuroraRestoreProviderResult.Success -> value
+    else -> {
+        recordFailure(failureOrNull() ?: AuroraRestoreFailure.PROVIDER_FAILED)
+        null
+    }
 }
 
 private class CoordinatorAbortException : RuntimeException()
