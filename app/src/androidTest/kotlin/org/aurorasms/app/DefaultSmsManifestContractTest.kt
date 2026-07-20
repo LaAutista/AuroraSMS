@@ -11,6 +11,7 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Telephony
+import org.xmlpull.v1.XmlPullParser
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
@@ -148,6 +149,29 @@ class DefaultSmsManifestContractTest {
     }
 
     @Test
+    fun androidAutoDeclaresNotificationAndDefaultSmsCapabilities() {
+        val applicationInfo = packageManager.getApplicationInfo(
+            packageName,
+            PackageManager.GET_META_DATA,
+        )
+        val descriptorId = requireNotNull(applicationInfo.metaData)
+            .getInt("com.google.android.gms.car.application")
+        assertTrue(descriptorId != 0)
+
+        val declaredUses = linkedSetOf<String>()
+        context.resources.getXml(descriptorId).use { parser ->
+            while (parser.eventType != XmlPullParser.END_DOCUMENT) {
+                if (parser.eventType == XmlPullParser.START_TAG && parser.name == "uses") {
+                    parser.getAttributeValue(null, "name")?.let(declaredUses::add)
+                }
+                parser.next()
+            }
+        }
+
+        assertEquals(setOf("notification", "sms"), declaredUses)
+    }
+
+    @Test
     fun privateCallbacksAndMmsProviderAreNotExported() {
         val privateReceiverSuffixes = setOf(
             ".receiver.SmsSentReceiver",
@@ -167,6 +191,13 @@ class DefaultSmsManifestContractTest {
             )
             assertFalse("$suffix must not be exported", receiver.exported)
         }
+
+        val notificationActionService = requireNotNull(
+            packageInfo.services.orEmpty().singleOrNull {
+                it.name.endsWith(".MessagingNotificationActionService")
+            },
+        )
+        assertFalse(notificationActionService.exported)
 
         val provider = requireNotNull(
             packageInfo.providers.orEmpty().singleOrNull {

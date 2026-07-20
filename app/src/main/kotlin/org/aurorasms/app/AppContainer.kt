@@ -90,6 +90,7 @@ import org.aurorasms.app.message.PermanentDeletionRecoveryReason
 import org.aurorasms.app.message.UnavailablePermanentDeletionController
 import org.aurorasms.app.message.AndroidNotificationReminderAlarmDriver
 import org.aurorasms.app.message.NotificationReminderController
+import org.aurorasms.app.message.NotificationMarkReadCoordinator
 import org.aurorasms.app.message.NotificationReminderCoordinator
 import org.aurorasms.app.message.NotificationReminderId
 import org.aurorasms.app.message.NotificationReminderRecoveryReason
@@ -128,6 +129,7 @@ import org.aurorasms.core.index.timeline.TimelineContentResult
 import org.aurorasms.core.notifications.AndroidMessageNotifier
 import org.aurorasms.core.notifications.InlineReplyHandler
 import org.aurorasms.core.notifications.MessageNotifier
+import org.aurorasms.core.notifications.MarkConversationReadHandler
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.ContactCache
 import org.aurorasms.core.telephony.ContactCacheInvalidation
@@ -401,6 +403,16 @@ class AppContainer(
             preferences = notificationReminderPreferenceStore,
             store = SharedPreferencesNotificationReminderStore(application),
             alarms = AndroidNotificationReminderAlarmDriver(application),
+        )
+    val markConversationReadHandler: MarkConversationReadHandler =
+        NotificationMarkReadCoordinator(
+            roleState = defaultSmsRoleState,
+            smsProvider = smsProviderDataSource,
+            notifier = messageNotifier,
+            reminders = notificationReminderController,
+            onProviderChanged = {
+                enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
+            },
         )
     private val inlineReplyTransportResultHandler = InlineReplyTransportResultHandler(
         replyOperations = replyOperations,

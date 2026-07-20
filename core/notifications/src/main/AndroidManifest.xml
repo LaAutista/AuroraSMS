@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <application>
+        <service
+            android:name=".MessagingNotificationActionService"
+            android:exported="false" />
+
         <receiver
             android:name=".InlineReplyReceiver"
             android:enabled="true"

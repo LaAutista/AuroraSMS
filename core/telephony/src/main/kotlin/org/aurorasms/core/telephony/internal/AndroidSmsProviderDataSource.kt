@@ -30,6 +30,7 @@ import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.DefaultSmsRoleState
+import org.aurorasms.core.telephony.ConversationReadThroughOutcome
 import org.aurorasms.core.telephony.IncomingSmsRecord
 import org.aurorasms.core.telephony.IncomingDeliveryDisposition
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
@@ -356,6 +357,63 @@ class AndroidSmsProviderDataSource(
             } else {
                 ProviderAccessResult.Unavailable("complete incoming SMS delivery journal")
             }
+        }
+    }
+
+    override suspend fun markConversationReadThrough(
+        conversationId: ConversationId,
+        throughMessageId: ProviderMessageId,
+    ): ProviderAccessResult<ConversationReadThroughOutcome> = incomingInsertMutex.withLock {
+        withWriteAccess("mark SMS conversation read") {
+            if (throughMessageId.kind != ProviderKind.SMS) {
+                return@withWriteAccess ProviderAccessResult.InvalidInput("provider message kind")
+            }
+            val sourceUri = ContentUris.withAppendedId(
+                Telephony.Sms.CONTENT_URI,
+                throughMessageId.value,
+            )
+            val source = readIncomingReadSource(sourceUri, throughMessageId.value)
+                ?: return@withWriteAccess ProviderAccessResult.Success(
+                    ConversationReadThroughOutcome.SOURCE_ABSENT_OR_MISMATCH,
+                )
+            if (source.threadId != conversationId.value) {
+                return@withWriteAccess ProviderAccessResult.Success(
+                    ConversationReadThroughOutcome.SOURCE_ABSENT_OR_MISMATCH,
+                )
+            }
+            val values = ContentValues().apply {
+                put(Telephony.Sms.READ, 1)
+                put(Telephony.Sms.SEEN, 1)
+            }
+            val updated = resolver.update(
+                Telephony.Sms.CONTENT_URI,
+                values,
+                "${Telephony.Sms.THREAD_ID} = ? AND ${Telephony.Sms.TYPE} = ? AND " +
+                    "${BaseColumns._ID} <= ? AND " +
+                    "(${Telephony.Sms.READ} = 0 OR ${Telephony.Sms.SEEN} = 0)",
+                arrayOf(
+                    conversationId.value.toString(),
+                    Telephony.Sms.MESSAGE_TYPE_INBOX.toString(),
+                    throughMessageId.value.toString(),
+                ),
+            )
+            if (updated < 0) {
+                return@withWriteAccess ProviderAccessResult.Unavailable("mark SMS conversation read")
+            }
+            val verifiedSource = readIncomingReadSource(sourceUri, throughMessageId.value)
+                ?: return@withWriteAccess ProviderAccessResult.Unavailable(
+                    "verify marked SMS conversation",
+                )
+            if (
+                verifiedSource.threadId != conversationId.value ||
+                !verifiedSource.read ||
+                !verifiedSource.seen
+            ) {
+                return@withWriteAccess ProviderAccessResult.Unavailable(
+                    "verify marked SMS conversation",
+                )
+            }
+            ProviderAccessResult.Success(ConversationReadThroughOutcome.APPLIED_OR_ALREADY_READ)
         }
     }
 
@@ -701,6 +759,39 @@ class AndroidSmsProviderDataSource(
             0 -> ConditionalSmsStatusWriteResult.STALE
             1 -> ConditionalSmsStatusWriteResult.UPDATED
             else -> ConditionalSmsStatusWriteResult.UNAVAILABLE
+        }
+    }
+
+    private fun readIncomingReadSource(
+        uri: Uri,
+        expectedId: Long,
+    ): IncomingReadSource? = resolver.query(
+        uri,
+        arrayOf(
+            BaseColumns._ID,
+            Telephony.Sms.THREAD_ID,
+            Telephony.Sms.TYPE,
+            Telephony.Sms.READ,
+            Telephony.Sms.SEEN,
+        ),
+        null,
+        null,
+        null,
+    )?.use { cursor ->
+        if (
+            cursor.count != 1 ||
+            !cursor.moveToFirst() ||
+            cursor.getLong(cursor.getColumnIndexOrThrow(BaseColumns._ID)) != expectedId ||
+            cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.TYPE)) !=
+                Telephony.Sms.MESSAGE_TYPE_INBOX
+        ) {
+            null
+        } else {
+            IncomingReadSource(
+                threadId = cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID)),
+                read = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.READ)) != 0,
+                seen = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.SEEN)) != 0,
+            )
         }
     }
 
@@ -1189,6 +1280,12 @@ class AndroidSmsProviderDataSource(
             TRANSACTION_ID_PREFIX + providerRecoveryToken
     }
 }
+
+private data class IncomingReadSource(
+    val threadId: Long,
+    val read: Boolean,
+    val seen: Boolean,
+)
 
 internal fun canVerifyPendingIncomingProviderOwnership(
     providerContentDigest: IncomingSmsProviderContentDigest?,

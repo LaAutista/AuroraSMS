@@ -57,6 +57,33 @@ class NotificationReminderCoordinatorTest {
     }
 
     @Test
+    fun generationCancellationCannotRemoveNewerReminderOwner() = runTest {
+        val fixture = Fixture(delayMinutes = 15)
+        assertTrue(fixture.coordinator.schedule(STORED))
+        val newer = ProviderStoredMessage(
+            ProviderMessageId(ProviderKind.SMS, 12L),
+            CONVERSATION,
+        )
+        assertTrue(fixture.coordinator.schedule(newer))
+
+        fixture.coordinator.cancelGenerationOwner(CONVERSATION, STORED.providerId)
+
+        assertEquals(newer.providerId, fixture.store.owners.values.single().messageId)
+    }
+
+    @Test
+    fun generationCancellationRemovesOnlyExactReminderOwner() = runTest {
+        val fixture = Fixture(delayMinutes = 15)
+        assertTrue(fixture.coordinator.schedule(STORED))
+        val owner = fixture.store.owners.values.single()
+
+        fixture.coordinator.cancelGenerationOwner(CONVERSATION, STORED.providerId)
+
+        assertTrue(fixture.store.owners.isEmpty())
+        assertTrue(owner.id in fixture.alarms.cancelled)
+    }
+
+    @Test
     fun dueUnreadExactRowPostsGenericReminderAtMostOnce() = runTest {
         val fixture = Fixture(delayMinutes = 15)
         fixture.provider.row = smsRow(read = false)

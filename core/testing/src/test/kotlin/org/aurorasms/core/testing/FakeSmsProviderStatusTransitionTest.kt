@@ -9,6 +9,7 @@ import org.aurorasms.core.model.MessageStatus
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.telephony.OutgoingSmsRecord
+import org.aurorasms.core.telephony.ConversationReadThroughOutcome
 import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
 import org.aurorasms.core.telephony.OutgoingSmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
@@ -19,6 +20,49 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FakeSmsProviderStatusTransitionTest {
+    @Test
+    fun markReadThroughExactSourcePreservesNewerAndOtherConversationRows() = runTest {
+        val source = SyntheticMessages.smsProviderMessage()
+        val older = source.copy(id = ProviderMessageId(ProviderKind.SMS, source.id.value - 1L))
+        val newer = source.copy(id = ProviderMessageId(ProviderKind.SMS, source.id.value + 1L))
+        val other = source.copy(
+            id = ProviderMessageId(ProviderKind.SMS, source.id.value + 2L),
+            providerThreadId = org.aurorasms.core.model.ProviderThreadId(
+                source.providerThreadId.value + 1L,
+            ),
+        )
+        val fake = FakeSmsProviderDataSource(listOf(older, source, newer, other))
+
+        assertEquals(
+            ProviderAccessResult.Success(ConversationReadThroughOutcome.APPLIED_OR_ALREADY_READ),
+            fake.markConversationReadThrough(SyntheticMessages.conversationId, source.id),
+        )
+
+        val byId = fake.snapshot().associateBy { it.id }
+        assertTrue(requireNotNull(byId[older.id]).read)
+        assertTrue(requireNotNull(byId[source.id]).read)
+        assertEquals(false, requireNotNull(byId[newer.id]).read)
+        assertEquals(false, requireNotNull(byId[other.id]).read)
+    }
+
+    @Test
+    fun markReadThroughMismatchedSourceFailsClosedWithoutMutation() = runTest {
+        val source = SyntheticMessages.smsProviderMessage()
+        val fake = FakeSmsProviderDataSource(listOf(source))
+
+        assertEquals(
+            ProviderAccessResult.Success(
+                ConversationReadThroughOutcome.SOURCE_ABSENT_OR_MISMATCH,
+            ),
+            fake.markConversationReadThrough(
+                ConversationId(source.providerThreadId.value + 1L),
+                source.id,
+            ),
+        )
+        assertEquals(listOf(source), fake.snapshot())
+        assertTrue(fake.markedReadThrough.isEmpty())
+    }
+
     @Test
     fun transitionMatrixNeverRegressesAndSkipsNoOpRewrites() = runTest {
         SmsProviderStatus.entries.forEach { currentStatus ->

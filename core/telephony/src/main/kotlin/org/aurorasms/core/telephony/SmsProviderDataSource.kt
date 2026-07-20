@@ -280,6 +280,15 @@ enum class OutgoingSmsStatusUpdateOutcome {
     OWNERSHIP_CONFLICT,
 }
 
+/** Result of a generation-fenced incoming-SMS read transition. */
+enum class ConversationReadThroughOutcome {
+    /** Every matching incoming row through the source generation is read and seen. */
+    APPLIED_OR_ALREADY_READ,
+
+    /** The exact source row is absent, no longer incoming, or belongs to another thread. */
+    SOURCE_ABSENT_OR_MISMATCH,
+}
+
 interface SmsProviderDataSource {
     suspend fun count(): ProviderAccessResult<Long>
 
@@ -303,6 +312,16 @@ interface SmsProviderDataSource {
         providerId: ProviderMessageId,
         conversationId: ConversationId,
     ): ProviderAccessResult<Unit>
+
+    /**
+     * Marks only incoming SMS rows in [conversationId] no newer than [throughMessageId].
+     * Implementations must validate the exact source row before mutation.
+     */
+    suspend fun markConversationReadThrough(
+        conversationId: ConversationId,
+        throughMessageId: ProviderMessageId,
+    ): ProviderAccessResult<ConversationReadThroughOutcome> =
+        ProviderAccessResult.Unsupported("mark SMS conversation read")
 
     /**
      * Inserts an outgoing row in a canonical known-unsent failed state.

@@ -31,6 +31,18 @@ class NotificationContractTest {
         assertTrueCompat(receiver.enabled)
     }
 
+    @Suppress("DEPRECATION")
+    @Test
+    fun messagingActionService_isEnabledAndNotExported() {
+        val service = context.packageManager.getServiceInfo(
+            ComponentName(context, MessagingNotificationActionService::class.java),
+            0,
+        )
+
+        assertFalse(service.exported)
+        assertTrueCompat(service.enabled)
+    }
+
     @Test
     fun channels_areStableAndLocalized() {
         NotificationChannels.ensureCreated(context)

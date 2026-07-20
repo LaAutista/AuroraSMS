@@ -35,8 +35,11 @@ object PendingIntentPolicy {
 internal object NotificationProtocol {
     const val ACTION_INLINE_REPLY =
         "org.aurorasms.core.notifications.action.INLINE_REPLY"
+    const val ACTION_MARK_AS_READ =
+        "org.aurorasms.core.notifications.action.MARK_AS_READ"
     const val INLINE_REPLY_SCHEME = "aurorasms-internal"
     const val INLINE_REPLY_AUTHORITY = "inline-reply"
+    const val MARK_AS_READ_AUTHORITY = "mark-as-read"
     const val REMOTE_INPUT_REPLY =
         "org.aurorasms.core.notifications.remote_input.REPLY"
     const val CATEGORY_CONVERSATION_PREFIX =

@@ -11,6 +11,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
@@ -50,15 +51,17 @@ class AndroidMessageNotifier internal constructor(
     override fun notifyIncoming(
         message: IncomingMessageNotification,
         config: NotificationConfig,
-    ): NotificationPostResult {
+    ): NotificationPostResult = synchronized(notificationMutationLock) {
         NotificationChannels.ensureCreated(appContext)
         if (!notificationsEnabledForChannel(NotificationChannels.MESSAGES)) {
-            return NotificationPostResult.NotificationsDisabled
+            return@synchronized NotificationPostResult.NotificationsDisabled
         }
 
         val contentIntent = when (val result = contentPendingIntent(message.conversationId)) {
             is ContentIntentResult.Accepted -> result.pendingIntent
-            is ContentIntentResult.Rejected -> return NotificationPostResult.Rejected(result.reason)
+            is ContentIntentResult.Rejected -> {
+                return@synchronized NotificationPostResult.Rejected(result.reason)
+            }
         }
         val privacyText = privacyText()
         val exposeGroupMetadata =
@@ -80,12 +83,17 @@ class AndroidMessageNotifier internal constructor(
             .setKey(LOCAL_USER_PERSON_KEY)
             .build()
         val style = NotificationCompat.MessagingStyle(localUser)
-            .addMessage(
-                presentation.messagingText,
-                message.receivedAtEpochMillis,
-                sender,
-            )
-            .setGroupConversation(exposeGroupMetadata)
+        retainedConversationMessages(
+            message = message,
+            privacy = config.privacy,
+            exposeGroupMetadata = exposeGroupMetadata,
+            conversationTitle = presentation.conversationTitle,
+        ).forEach(style::addMessage)
+        style.addMessage(
+            presentation.messagingText,
+            message.receivedAtEpochMillis,
+            sender,
+        ).setGroupConversation(exposeGroupMetadata)
         presentation.conversationTitle?.let(style::setConversationTitle)
 
         val builder = NotificationCompat.Builder(appContext, NotificationChannels.MESSAGES)
@@ -108,15 +116,20 @@ class AndroidMessageNotifier internal constructor(
                         SOURCE_MESSAGE_ID_EXTRA,
                         sourceMessageIdMarker(message.messageId),
                     )
+                    putString(NOTIFICATION_PRIVACY_EXTRA, config.privacy.name)
+                    putBoolean(NOTIFICATION_GROUP_CONVERSATION_EXTRA, exposeGroupMetadata)
                 },
             )
 
         if (message.canReply) {
             builder.addAction(inlineReplyAction(message, config))
         }
+        if (message.messageId.kind == ProviderKind.SMS) {
+            builder.addInvisibleAction(markConversationReadAction(message))
+        }
 
         val notificationId = notificationIdForConversation(message.conversationId)
-        return post(
+        post(
             tag = conversationTag(message.conversationId),
             notificationId = notificationId,
             builder = builder,
@@ -126,6 +139,66 @@ class AndroidMessageNotifier internal constructor(
                 receivedAtEpochMillis = message.receivedAtEpochMillis,
             ),
         )
+    }
+
+    private fun retainedConversationMessages(
+        message: IncomingMessageNotification,
+        privacy: NotificationPrivacy,
+        exposeGroupMetadata: Boolean,
+        conversationTitle: String?,
+    ): List<NotificationCompat.MessagingStyle.Message> {
+        val tag = conversationTag(message.conversationId)
+        val id = notificationIdForConversation(message.conversationId)
+        val active = try {
+            notificationGateway.activeNotifications().singleOrNull { candidate ->
+                candidate.tag == tag && candidate.id == id
+            }
+        } catch (_: RuntimeException) {
+            null
+        } ?: return emptyList()
+        val extras = active.notification.extras
+        if (extras.getString(NOTIFICATION_PRIVACY_EXTRA) != privacy.name) return emptyList()
+        if (
+            extras.getBoolean(NOTIFICATION_GROUP_CONVERSATION_EXTRA, false) != exposeGroupMetadata
+        ) {
+            return emptyList()
+        }
+        val previousStyle = NotificationCompat.MessagingStyle
+            .extractMessagingStyleFromNotification(active.notification)
+            ?: return emptyList()
+        if (previousStyle.isGroupConversation != exposeGroupMetadata) return emptyList()
+        if (previousStyle.conversationTitle?.toString() != conversationTitle) return emptyList()
+
+        val sameGeneration = parseSourceMessageIdMarker(
+            extras.getString(SOURCE_MESSAGE_ID_EXTRA),
+        ) == message.messageId
+        val previous = if (sameGeneration) {
+            previousStyle.messages.dropLast(1)
+        } else {
+            previousStyle.messages
+        }
+        return previous
+            .takeLast(MAXIMUM_RETAINED_MESSAGES - 1)
+            .mapNotNull { retainedMessage ->
+                val timestamp = retainedMessage.timestamp.takeIf { it in 0..message.receivedAtEpochMillis }
+                    ?: return@mapNotNull null
+                val person = retainedMessage.person ?: return@mapNotNull null
+                val name = person.name?.toString()
+                    ?.toNotificationLine(MAXIMUM_PERSON_CHARACTERS)
+                    ?.takeIf(String::isNotEmpty)
+                    ?: return@mapNotNull null
+                val key = person.key
+                    ?.takeIf { it.isNotBlank() && it.length <= IncomingMessageNotification.MAXIMUM_PERSON_KEY_CHARACTERS }
+                    ?: return@mapNotNull null
+                val text = retainedMessage.text?.toString()
+                    ?.toNotificationBody(MAXIMUM_BODY_CHARACTERS)
+                    ?: return@mapNotNull null
+                NotificationCompat.MessagingStyle.Message(
+                    text,
+                    timestamp,
+                    Person.Builder().setName(name).setKey(key).build(),
+                )
+            }
     }
 
     override fun notifyInlineReplyFailure(key: InlineReplyFailureKey): NotificationPostResult {
@@ -620,11 +693,11 @@ class AndroidMessageNotifier internal constructor(
         message: IncomingMessageNotification,
         config: NotificationConfig,
     ): NotificationCompat.Action {
-        val replyIntent = Intent(appContext, InlineReplyReceiver::class.java)
+        val replyIntent = Intent(appContext, MessagingNotificationActionService::class.java)
             .setAction(NotificationProtocol.ACTION_INLINE_REPLY)
             .addCategory(conversationCategory(message.conversationId))
             .setData(inlineReplyData(message, config))
-        val pendingIntent = PendingIntent.getBroadcast(
+        val pendingIntent = PendingIntent.getService(
             appContext,
             stableRequestCode(message.conversationId.value.toString(), INLINE_REPLY_SALT),
             replyIntent,
@@ -643,7 +716,35 @@ class AndroidMessageNotifier internal constructor(
             .setAllowGeneratedReplies(true)
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
             .setShowsUserInterface(false)
-            .setAuthenticationRequired(true)
+            .setAuthenticationRequired(false)
+            .build()
+    }
+
+    private fun markConversationReadAction(
+        message: IncomingMessageNotification,
+    ): NotificationCompat.Action {
+        val request = MarkConversationReadRequest(
+            conversationId = message.conversationId,
+            throughMessageId = message.messageId,
+        )
+        val intent = Intent(appContext, MessagingNotificationActionService::class.java)
+            .setAction(NotificationProtocol.ACTION_MARK_AS_READ)
+            .addCategory(conversationCategory(message.conversationId))
+            .setData(markConversationReadData(request))
+        val pendingIntent = PendingIntent.getService(
+            appContext,
+            stableRequestCode(message.conversationId.value.toString(), MARK_AS_READ_SALT),
+            intent,
+            PendingIntentPolicy.immutableUpdateCurrent(),
+        )
+        return NotificationCompat.Action.Builder(
+            R.drawable.ic_notification,
+            appContext.getString(R.string.notification_mark_as_read_label),
+            pendingIntent,
+        )
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MARK_AS_READ)
+            .setShowsUserInterface(false)
+            .setAuthenticationRequired(false)
             .build()
     }
 
@@ -703,8 +804,10 @@ class AndroidMessageNotifier internal constructor(
         const val MAXIMUM_PERSON_CHARACTERS = 256
         const val MAXIMUM_CONVERSATION_TITLE_CHARACTERS = 256
         const val MAXIMUM_BODY_CHARACTERS = 4_096
+        const val MAXIMUM_RETAINED_MESSAGES = 25
         const val CONTENT_INTENT_SALT = 0x434F4E54
         const val INLINE_REPLY_SALT = 0x52504C59
+        const val MARK_AS_READ_SALT = 0x4D41524B
         const val LOCAL_USER_PERSON_KEY = "aurorasms-local-user"
         val notificationMutationLock = Any()
     }
@@ -732,6 +835,8 @@ private class AndroidNotificationMutationGateway(
     private val notificationManager: NotificationManagerCompat,
     private val platformNotificationManager: NotificationManager,
 ) : NotificationMutationGateway {
+    private val recentlyPosted = linkedMapOf<NotificationSlot, RecentNotification>()
+
     @SuppressLint("MissingPermission")
     override fun notify(
         tag: String,
@@ -739,27 +844,86 @@ private class AndroidNotificationMutationGateway(
         notification: Notification,
     ) {
         notificationManager.notify(tag, notificationId, notification)
+        synchronized(recentlyPosted) {
+            val now = SystemClock.elapsedRealtime()
+            discardExpiredLocked(now)
+            val slot = NotificationSlot(tag, notificationId)
+            recentlyPosted.remove(slot)
+            recentlyPosted[slot] = RecentNotification(
+                snapshot = ActiveNotificationSnapshot(tag, notificationId, notification),
+                postedAtElapsedMillis = now,
+            )
+            while (recentlyPosted.size > MAXIMUM_RECENT_POSTS) {
+                recentlyPosted.entries.iterator().run {
+                    next()
+                    remove()
+                }
+            }
+        }
     }
 
     override fun cancel(tag: String, notificationId: Int) {
         notificationManager.cancel(tag, notificationId)
+        synchronized(recentlyPosted) {
+            recentlyPosted.remove(NotificationSlot(tag, notificationId))
+        }
     }
 
-    override fun activeNotifications(): List<ActiveNotificationSnapshot> =
-        platformNotificationManager.activeNotifications.map { active ->
+    override fun activeNotifications(): List<ActiveNotificationSnapshot> {
+        val platform = platformNotificationManager.activeNotifications.map { active ->
             ActiveNotificationSnapshot(
                 tag = active.tag,
                 id = active.id,
                 notification = active.notification,
             )
         }
+        return synchronized(recentlyPosted) {
+            val now = SystemClock.elapsedRealtime()
+            discardExpiredLocked(now)
+            val platformSlots = platform.mapTo(mutableSetOf()) { active ->
+                NotificationSlot(active.tag, active.id)
+            }
+            platformSlots.forEach(recentlyPosted::remove)
+            platform + recentlyPosted
+                .filterKeys { it !in platformSlots }
+                .values
+                .map(RecentNotification::snapshot)
+        }
+    }
+
+    private fun discardExpiredLocked(now: Long) {
+        recentlyPosted.entries.removeAll { (_, recent) ->
+            now - recent.postedAtElapsedMillis > RECENT_POST_VISIBILITY_WINDOW_MILLIS
+        }
+    }
+
+    private companion object {
+        const val MAXIMUM_RECENT_POSTS = 64
+        const val RECENT_POST_VISIBILITY_WINDOW_MILLIS = 2_000L
+    }
 }
+
+private data class NotificationSlot(
+    val tag: String?,
+    val id: Int,
+)
+
+private data class RecentNotification(
+    val snapshot: ActiveNotificationSnapshot,
+    val postedAtElapsedMillis: Long,
+)
 
 internal const val SOURCE_MESSAGE_ID_EXTRA =
     "org.aurorasms.core.notifications.extra.SOURCE_MESSAGE_ID"
 
 internal const val REPLY_OPERATION_ID_EXTRA =
     "org.aurorasms.core.notifications.extra.REPLY_OPERATION_ID"
+
+internal const val NOTIFICATION_PRIVACY_EXTRA =
+    "org.aurorasms.core.notifications.extra.PRIVACY"
+
+internal const val NOTIFICATION_GROUP_CONVERSATION_EXTRA =
+    "org.aurorasms.core.notifications.extra.GROUP_CONVERSATION"
 
 internal fun sourceMessageIdMarker(messageId: MessageId): String =
     "${messageId.kind.name}:${messageId.value}"

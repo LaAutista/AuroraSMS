@@ -122,6 +122,18 @@ internal class NotificationReminderCoordinator(
         }
     }
 
+    override suspend fun cancelGenerationOwner(
+        conversationId: ConversationId,
+        messageId: org.aurorasms.core.model.ProviderMessageId,
+    ): Unit = mutex.withLock {
+        val owner = store.all()
+            ?.singleOrNull { candidate ->
+                candidate.conversationId == conversationId && candidate.messageId == messageId
+            }
+            ?: return@withLock
+        if (store.remove(owner.id)) alarms.cancel(owner.id)
+    }
+
     override suspend fun recover(reason: NotificationReminderRecoveryReason): Unit = mutex.withLock {
         if (
             reason == NotificationReminderRecoveryReason.BOOT_COMPLETED ||

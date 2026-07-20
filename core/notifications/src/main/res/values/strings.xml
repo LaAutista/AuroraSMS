@@ -12,6 +12,7 @@
     <string name="notification_reminder_title">Unread message</string>
     <string name="notification_reminder_body">Open AuroraSMS to view it.</string>
     <string name="notification_inline_reply_label">Reply</string>
+    <string name="notification_mark_as_read_label">Mark as read</string>
     <string name="notification_reply_failed_title">Check reply status</string>
     <string name="notification_reply_failed_body">Confirm in AuroraSMS before trying again.</string>
 </resources>

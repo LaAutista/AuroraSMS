@@ -15,6 +15,7 @@ import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.IncomingSmsRecord
+import org.aurorasms.core.telephony.ConversationReadThroughOutcome
 import org.aurorasms.core.telephony.IncomingDeliveryDisposition
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplayRequest
@@ -55,6 +56,7 @@ class FakeSmsProviderDataSource(
     val insertedOutgoing = mutableListOf<OutgoingSmsRecord>()
     val armedOutgoing = mutableListOf<ProviderMessageId>()
     val updatedStatuses = linkedMapOf<ProviderMessageId, SmsProviderStatus>()
+    val markedReadThrough = mutableListOf<Pair<ConversationId, ProviderMessageId>>()
 
     override suspend fun count(): ProviderAccessResult<Long> = synchronized(lock) {
         failure ?: ProviderAccessResult.Success(messages.size.toLong())
@@ -159,6 +161,43 @@ class FakeSmsProviderDataSource(
                 if (replays.size == request.limit) break
             }
             ProviderAccessResult.Success(replays)
+        }
+    }
+
+    override suspend fun markConversationReadThrough(
+        conversationId: ConversationId,
+        throughMessageId: ProviderMessageId,
+    ): ProviderAccessResult<ConversationReadThroughOutcome> = synchronized(lock) {
+        failure ?: run {
+            if (throughMessageId.kind != ProviderKind.SMS) {
+                return@synchronized ProviderAccessResult.InvalidInput("provider message kind")
+            }
+            val source = messages.singleOrNull { it.id == throughMessageId }
+            if (
+                source == null ||
+                source.providerThreadId.value != conversationId.value ||
+                source.direction != MessageDirection.INCOMING ||
+                source.box != MessageBox.INBOX
+            ) {
+                return@synchronized ProviderAccessResult.Success(
+                    ConversationReadThroughOutcome.SOURCE_ABSENT_OR_MISMATCH,
+                )
+            }
+            markedReadThrough += conversationId to throughMessageId
+            messages.replaceAll { message ->
+                if (
+                    message.providerThreadId.value == conversationId.value &&
+                    message.direction == MessageDirection.INCOMING &&
+                    message.box == MessageBox.INBOX &&
+                    message.id.kind == ProviderKind.SMS &&
+                    message.id.value <= throughMessageId.value
+                ) {
+                    message.copy(read = true, seen = true)
+                } else {
+                    message
+                }
+            }
+            ProviderAccessResult.Success(ConversationReadThroughOutcome.APPLIED_OR_ALREADY_READ)
         }
     }
 

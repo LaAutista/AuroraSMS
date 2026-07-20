@@ -8,6 +8,7 @@ import org.aurorasms.app.strictmode.BuildVariantStrictMode
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.notifications.InlineReplyHandler
+import org.aurorasms.core.notifications.MarkConversationReadHandler
 import org.aurorasms.core.notifications.NotificationEntryPoint
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.EncodedMmsPdu
@@ -49,6 +50,9 @@ class AuroraSmsApplication : Application(), TelephonyEntryPoint, NotificationEnt
 
     override val inlineReplyHandler: InlineReplyHandler
         get() = container.inlineReplyHandler
+
+    override val markConversationReadHandler: MarkConversationReadHandler
+        get() = container.markConversationReadHandler
 
     override suspend fun onTransportResult(result: TransportResult) {
         container.onTransportResult(result)

@@ -21,21 +21,7 @@ class InlineReplyReceiver : BroadcastReceiver() {
         if (intent.action != NotificationProtocol.ACTION_INLINE_REPLY) return
 
         val entryPoint = context.applicationContext as? NotificationEntryPoint ?: return
-        val entryPointMaximum = entryPoint.maximumInlineReplyCharacters
-        if (entryPointMaximum !in 1..NotificationConfig.ABSOLUTE_MAXIMUM_REPLY_CHARACTERS) return
-        val protocolData = parseInlineReplyData(intent.data) ?: return
-        val maximumCharacters = minOf(entryPointMaximum, protocolData.maximumCharacters)
-        val remoteInput = RemoteInput.getResultsFromIntent(intent) ?: return
-        val reply = remoteInput.getCharSequence(NotificationProtocol.REMOTE_INPUT_REPLY)?.toString()
-        val request = validatedInlineReplyRequest(
-            conversationValue = protocolData.conversationValue,
-            notificationId = notificationIdForConversation(
-                ConversationId(protocolData.conversationValue),
-            ),
-            requestId = protocolData.requestId,
-            reply = reply,
-            maximumCharacters = maximumCharacters,
-        ) ?: return
+        val request = inlineReplyRequestFromIntent(entryPoint, intent) ?: return
 
         val pendingResult = goAsync()
         val handlerWork = InlineReplyReceiverScope.scope.launch {
@@ -49,6 +35,27 @@ class InlineReplyReceiver : BroadcastReceiver() {
             )
         }
     }
+}
+
+internal fun inlineReplyRequestFromIntent(
+    entryPoint: NotificationEntryPoint,
+    intent: Intent,
+): InlineReplyRequest? {
+    val entryPointMaximum = entryPoint.maximumInlineReplyCharacters
+    if (entryPointMaximum !in 1..NotificationConfig.ABSOLUTE_MAXIMUM_REPLY_CHARACTERS) return null
+    val protocolData = parseInlineReplyData(intent.data) ?: return null
+    val maximumCharacters = minOf(entryPointMaximum, protocolData.maximumCharacters)
+    val remoteInput = RemoteInput.getResultsFromIntent(intent) ?: return null
+    val reply = remoteInput.getCharSequence(NotificationProtocol.REMOTE_INPUT_REPLY)?.toString()
+    return validatedInlineReplyRequest(
+        conversationValue = protocolData.conversationValue,
+        notificationId = notificationIdForConversation(
+            ConversationId(protocolData.conversationValue),
+        ),
+        requestId = protocolData.requestId,
+        reply = reply,
+        maximumCharacters = maximumCharacters,
+    )
 }
 
 internal suspend fun runInlineReplyHandlerSafely(

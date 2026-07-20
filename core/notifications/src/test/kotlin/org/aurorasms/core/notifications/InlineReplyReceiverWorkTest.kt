@@ -99,4 +99,26 @@ class InlineReplyReceiverWorkTest {
         assertTrue(sibling.isActive)
         sibling.cancel()
     }
+
+    @Test
+    fun markReadHandlerRuntimeFailureIsContained() = runTest {
+        var calls = 0
+        val request = MarkConversationReadRequest(
+            conversationId = org.aurorasms.core.model.ConversationId(17L),
+            throughMessageId = org.aurorasms.core.model.MessageId(
+                org.aurorasms.core.model.ProviderKind.SMS,
+                19L,
+            ),
+        )
+
+        runMarkConversationReadHandlerSafely(
+            handler = MarkConversationReadHandler {
+                calls += 1
+                throw IllegalStateException("test failure")
+            },
+            request = request,
+        )
+
+        assertEquals(1, calls)
+    }
 }

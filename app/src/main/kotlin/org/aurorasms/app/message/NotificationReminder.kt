@@ -4,6 +4,7 @@ package org.aurorasms.app.message
 
 import kotlinx.coroutines.flow.StateFlow
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.telephony.ProviderStoredMessage
 
 internal interface NotificationReminderController {
@@ -16,6 +17,12 @@ internal interface NotificationReminderController {
     suspend fun handleAlarm(id: NotificationReminderId)
 
     suspend fun cancelConversation(conversationId: ConversationId)
+
+    /** Removes only a reminder still owned by the exact incoming generation. */
+    suspend fun cancelGenerationOwner(
+        conversationId: ConversationId,
+        messageId: ProviderMessageId,
+    )
 
     suspend fun recover(reason: NotificationReminderRecoveryReason)
 

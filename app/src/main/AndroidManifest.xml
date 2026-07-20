@@ -31,6 +31,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AuroraSMS">
 
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+
         <!-- AuroraSMS uses one process and does not enable Room multi-instance invalidation. -->
         <service
             android:name="androidx.room.MultiInstanceInvalidationService"
