@@ -2,6 +2,7 @@
 
 package org.aurorasms.core.telephony
 
+import java.util.Arrays
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
@@ -65,22 +66,103 @@ data class MmsProviderMessage(
     }
 }
 
-/**
- * A future audited codec produces this normalized record. Phase 1 deliberately
- * does not infer it from untrusted WAP bytes.
- */
+/** One defensively copied, already bounded part admitted by the incoming codec. */
+class DecodedIncomingMmsPart(
+    val contentType: String,
+    val charsetMibEnum: Int?,
+    val name: String?,
+    val filename: String?,
+    val contentLocation: String?,
+    val contentId: String?,
+    val contentDisposition: String?,
+    val decodedText: String?,
+    bytes: ByteArray,
+) {
+    private val bytes = bytes.copyOf()
+
+    val size: Int
+        get() = bytes.size
+
+    init {
+        require(MIME_TYPE.matches(contentType)) { "MMS part content type is invalid" }
+        require(charsetMibEnum == null || charsetMibEnum >= 0) { "MMS part charset is invalid" }
+        listOf(name, filename, contentLocation, contentId).forEach { value ->
+            require(value == null || value.length <= MAX_METADATA_CHARACTERS) {
+                "MMS part metadata is too long"
+            }
+            require(value?.any(Char::isISOControl) != true) { "MMS part metadata contains a control character" }
+        }
+        require(contentDisposition == null || contentDisposition.length <= MAX_DISPOSITION_CHARACTERS) {
+            "MMS part disposition is too long"
+        }
+        require(contentDisposition?.any(Char::isISOControl) != true) {
+            "MMS part disposition contains a control character"
+        }
+        require(decodedText == null || decodedText.length <= MmsProviderMessage.MAX_MMS_TEXT_CHARACTERS) {
+            "MMS part text is too long"
+        }
+        require(size <= EncodedMmsPdu.MAX_ENCODED_BYTES) { "MMS part is too large" }
+    }
+
+    fun copyBytes(): ByteArray = bytes.copyOf()
+
+    override fun equals(other: Any?): Boolean =
+        other is DecodedIncomingMmsPart &&
+            contentType == other.contentType &&
+            charsetMibEnum == other.charsetMibEnum &&
+            name == other.name &&
+            filename == other.filename &&
+            contentLocation == other.contentLocation &&
+            contentId == other.contentId &&
+            contentDisposition == other.contentDisposition &&
+            decodedText == other.decodedText &&
+            Arrays.equals(bytes, other.bytes)
+
+    override fun hashCode(): Int = 31 * contentType.hashCode() + Arrays.hashCode(bytes)
+
+    override fun toString(): String =
+        "DecodedIncomingMmsPart(contentType=$contentType, size=$size, hasText=${decodedText != null}, REDACTED)"
+
+    companion object {
+        const val MAX_METADATA_CHARACTERS: Int = 255
+        const val MAX_DISPOSITION_CHARACTERS: Int = 64
+        private val MIME_TYPE = Regex(
+            "[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}",
+        )
+    }
+}
+
+/** Normalized, bounded record admitted for one idempotent incoming provider transaction. */
 data class DecodedIncomingMmsRecord(
+    val operationId: MessageId,
+    val sender: ParticipantAddress,
     val participants: List<ParticipantAddress>,
+    val to: List<ParticipantAddress>,
+    val cc: List<ParticipantAddress>,
     val subject: String?,
     val text: String?,
     val sentTimestampMillis: Long,
     val receivedTimestampMillis: Long,
-    val subscriptionId: AuroraSubscriptionId?,
+    val subscriptionId: AuroraSubscriptionId,
+    val notificationTransactionId: String,
+    val messageId: String?,
+    val parts: List<DecodedIncomingMmsPart>,
 ) {
     init {
+        require(operationId.kind == ProviderKind.PENDING_OPERATION) {
+            "Incoming MMS persistence needs a pending-operation ID"
+        }
+        require(operationId.value > 0L) { "Incoming MMS operation ID must be positive" }
         require(participants.isNotEmpty()) { "An incoming MMS needs a participant" }
+        require(sender in participants) { "Incoming MMS participants must include the sender" }
+        require(participants.distinctBy(ParticipantAddress::value).size == participants.size) {
+            "Incoming MMS participants must be unique"
+        }
         require(participants.size <= MmsProviderMessage.MAX_MMS_PARTICIPANTS) {
             "MMS participant list is too large"
+        }
+        require(to.size + cc.size <= MmsProviderMessage.MAX_MMS_PARTICIPANTS) {
+            "MMS address list is too large"
         }
         require(subject == null || subject.length <= MmsProviderMessage.MAX_MMS_SUBJECT_CHARACTERS) {
             "MMS subject is too long"
@@ -89,10 +171,26 @@ data class DecodedIncomingMmsRecord(
         require(sentTimestampMillis >= 0L && receivedTimestampMillis >= 0L) {
             "MMS timestamps cannot be negative"
         }
+        require(TRANSACTION_ID.matches(notificationTransactionId)) {
+            "MMS notification transaction ID is invalid"
+        }
+        require(messageId == null || MESSAGE_ID.matches(messageId)) { "MMS message ID is invalid" }
+        require(parts.size in 1..MAX_MMS_PARTS) { "MMS part count is invalid" }
+        require(parts.sumOf { it.size.toLong() } <= EncodedMmsPdu.MAX_ENCODED_BYTES) {
+            "MMS parts are too large"
+        }
     }
+
+    override fun toString(): String =
+        "DecodedIncomingMmsRecord(participantCount=${participants.size}, toCount=${to.size}, " +
+            "ccCount=${cc.size}, hasSubject=${subject != null}, textLength=${text?.length ?: 0}, " +
+            "partCount=${parts.size}, REDACTED)"
 
     companion object {
         const val MAX_MMS_TEXT_CHARACTERS: Int = 100_000
+        const val MAX_MMS_PARTS: Int = 25
+        private val TRANSACTION_ID = Regex("[ -~]{1,128}")
+        private val MESSAGE_ID = Regex("[ -~]{1,256}")
     }
 }
 

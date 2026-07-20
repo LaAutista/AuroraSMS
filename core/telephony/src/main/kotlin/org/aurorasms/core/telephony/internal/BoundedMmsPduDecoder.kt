@@ -131,7 +131,7 @@ internal class BoundedMmsPduDecoder {
                 return rejected(BoundedMmsDecodeFailure.LIMIT_EXCEEDED)
             }
             val charset = source.charset.takeIf { it != 0 }
-            val decodedText = if (contentType == TEXT_PLAIN) {
+            val decodedText = if (contentType == TEXT_PLAIN || contentType == APPLICATION_SMIL) {
                 bytes.decodeTextOrNull(charset)
                     ?: return rejected(BoundedMmsDecodeFailure.UNSUPPORTED_CONTENT)
             } else {
@@ -176,6 +176,7 @@ internal class BoundedMmsPduDecoder {
         private const val MAX_DISPOSITION_BYTES = 64
         private const val MAX_CONTENT_LOCATION_BYTES = 2_048
         private const val TEXT_PLAIN = "text/plain"
+        private const val APPLICATION_SMIL = "application/smil"
         private const val DRM_MIME_PREFIX = "application/vnd.oma.drm"
         private const val RETRIEVE_STATUS_OK = 0x80
         private val MIME_TYPE = Regex(

@@ -67,8 +67,9 @@ class BoundedMmsPduDecoderTest {
         assertEquals(SUBJECT, retrieved.subject)
         assertEquals(FIXED_DATE_SECONDS * 1_000L, retrieved.sentTimestampMillis)
         assertEquals(TRANSACTION_ID, retrieved.transactionId)
-        assertEquals(2, retrieved.parts.size)
-        assertEquals(TEXT, retrieved.parts.first().decodedText)
+        assertEquals(3, retrieved.parts.size)
+        assertEquals(SMIL, retrieved.parts.first().decodedText)
+        assertEquals(TEXT, retrieved.parts[1].decodedText)
         assertEquals("image/png", retrieved.parts.last().contentType)
 
         val imagePart = retrieved.parts.last()
@@ -119,7 +120,13 @@ class BoundedMmsPduDecoderTest {
         assertTrue(result is BoundedMmsDecodeResult.Rejected)
     }
 
-    private fun retrieveConfPdu(partCount: Int = 2): ByteArray {
+    private fun retrieveConfPdu(partCount: Int = 3): ByteArray {
+        val smilPart = part(
+            contentType = "application/smil",
+            location = "smil.xml",
+            data = SMIL.toByteArray(StandardCharsets.UTF_8),
+            charset = CharacterSets.UTF_8,
+        )
         val textPart = part(
             contentType = "text/plain",
             location = "text.txt",
@@ -132,7 +139,8 @@ class BoundedMmsPduDecoderTest {
             data = IMAGE_BYTES,
         )
         val body = PduBody().apply {
-            if (partCount == 2) {
+            if (partCount == 3) {
+                addPart(smilPart)
                 addPart(textPart)
                 addPart(imagePart)
             } else {
@@ -264,6 +272,7 @@ class BoundedMmsPduDecoderTest {
         private const val RECIPIENT_ONE = "+15551230001"
         private const val RECIPIENT_TWO = "+15551230002"
         private const val SUBJECT = "Synthetic group subject"
+        private const val SMIL = "<smil><body/></smil>"
         private const val TEXT = "Synthetic group body"
         private val IMAGE_BYTES = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x00, 0x01)
     }

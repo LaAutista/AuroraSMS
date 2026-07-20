@@ -22,10 +22,14 @@ import kotlinx.coroutines.runBlocking
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.DefaultSmsRoleState
+import org.aurorasms.core.telephony.DecodedIncomingMmsPart
+import org.aurorasms.core.telephony.DecodedIncomingMmsRecord
+import org.aurorasms.core.telephony.IncomingDeliveryDisposition
 import org.aurorasms.core.telephony.OutgoingMmsProviderStatus
 import org.aurorasms.core.telephony.OutgoingMmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.OutgoingVoiceMemo
@@ -56,6 +60,10 @@ class AndroidMmsProviderDataSourceOutgoingTest {
             roleState = HeldRole,
             ioDispatcher = Dispatchers.Unconfined,
             resolver = ContentResolver.wrap(provider),
+            threadIdResolver = { recipients ->
+                provider.threadRequests += recipients
+                73L
+            },
         )
     }
 
@@ -164,6 +172,87 @@ class AndroidMmsProviderDataSourceOutgoingTest {
         assertEquals(Telephony.Mms.MESSAGE_BOX_OUTBOX, provider.messageBox(secondStored.providerId.value))
     }
 
+    @Test
+    fun incomingGroupPartsAddressesAndRowArePersistedThenReplayIsIdempotent() = runBlocking {
+        val record = incomingRecord(operation = 109L, transaction = "incoming-provider-109")
+
+        val first = dataSource.insertIncoming(record).successValue()
+        val replay = dataSource.insertIncoming(record).successValue()
+
+        assertEquals(ProviderMessageId(ProviderKind.MMS, 41L), first.providerId)
+        assertEquals(ConversationId(73L), first.conversationId)
+        assertEquals(IncomingDeliveryDisposition.NEWLY_INSERTED, first.incomingDisposition)
+        assertEquals(first.providerId, replay.providerId)
+        assertEquals(IncomingDeliveryDisposition.COMPLETED_REPLAY, replay.incomingDisposition)
+        assertEquals(1, provider.messageCount())
+        assertEquals(0, provider.dummyPartCount(record.operationId.value))
+        assertEquals(3, provider.partCount(41L))
+        assertEquals(3, provider.addressCount(41L))
+        assertArrayEquals(IMAGE_BYTES, provider.partBytes(41L, "image/png"))
+        assertEquals(INCOMING_TEXT, provider.partText(41L, "text/plain"))
+        assertEquals(
+            setOf(SENDER.value, GROUP_MEMBER.value),
+            provider.threadRequests.single(),
+        )
+        assertEquals(
+            listOf(137, 151, 151),
+            provider.addressTypes(41L),
+        )
+        assertEquals(context.packageName, provider.messageValue(41L, Telephony.Mms.CREATOR))
+        assertEquals(73L, provider.messageValue(41L, Telephony.Mms.THREAD_ID))
+        assertEquals("incoming-provider-109", provider.messageValue(41L, Telephony.Mms.TRANSACTION_ID))
+        assertEquals("incoming-message-109", provider.messageValue(41L, Telephony.Mms.MESSAGE_ID))
+        assertEquals(2, provider.messageValue(41L, Telephony.Mms.SUBSCRIPTION_ID))
+        assertEquals(Telephony.Mms.MESSAGE_BOX_INBOX, provider.messageBox(41L))
+        assertEquals(0, provider.messageValue(41L, Telephony.Mms.READ))
+        assertEquals(0, provider.messageValue(41L, Telephony.Mms.SEEN))
+    }
+
+    @Test
+    fun incompleteIncomingAddressWriteDeletesRowAndEveryTemporaryPart() = runBlocking {
+        provider.failAddressInsert = true
+        val record = incomingRecord(operation = 111L, transaction = "incoming-provider-111")
+
+        val result = dataSource.insertIncoming(record)
+
+        assertTrue(result is ProviderAccessResult.Unavailable)
+        assertEquals(0, provider.messageCount())
+        assertEquals(0, provider.totalPartCount())
+        assertEquals(0, provider.totalAddressCount())
+    }
+
+    @Test
+    fun incompleteIncomingRowFromPriorProcessIsRemovedBeforeOneCompleteReplaySafeRow() = runBlocking {
+        val record = incomingRecord(operation = 113L, transaction = "incoming-provider-113")
+        seedIncomingRow(record)
+
+        val stored = dataSource.insertIncoming(record).successValue()
+        val replay = dataSource.insertIncoming(record).successValue()
+
+        assertEquals(ProviderMessageId(ProviderKind.MMS, 42L), stored.providerId)
+        assertEquals(IncomingDeliveryDisposition.NEWLY_INSERTED, stored.incomingDisposition)
+        assertEquals(stored.providerId, replay.providerId)
+        assertEquals(IncomingDeliveryDisposition.COMPLETED_REPLAY, replay.incomingDisposition)
+        assertEquals(1, provider.messageCount())
+        assertEquals(3, provider.partCount(stored.providerId.value))
+        assertEquals(3, provider.addressCount(stored.providerId.value))
+    }
+
+    @Test
+    fun ambiguousIncomingReplayKeyFailsClosedWithoutDeletingEitherRow() = runBlocking {
+        val record = incomingRecord(operation = 115L, transaction = "incoming-provider-115")
+        seedIncomingRow(record)
+        seedIncomingRow(record)
+
+        val result = dataSource.insertIncoming(record)
+
+        assertTrue(result is ProviderAccessResult.Unavailable)
+        assertEquals(2, provider.messageCount())
+        assertEquals(0, provider.totalPartCount())
+        assertEquals(0, provider.totalAddressCount())
+        assertTrue(provider.threadRequests.isEmpty())
+    }
+
     private fun record(operation: Long, transaction: String): OutgoingVoiceMemoProviderRecord =
         OutgoingVoiceMemoProviderRecord(
             operationId = MessageId(ProviderKind.PENDING_OPERATION, operation),
@@ -183,6 +272,76 @@ class AndroidMmsProviderDataSourceOutgoingTest {
             subscriptionId = AuroraSubscriptionId(2),
         )
 
+    private fun incomingRecord(operation: Long, transaction: String): DecodedIncomingMmsRecord =
+        DecodedIncomingMmsRecord(
+            operationId = MessageId(ProviderKind.PENDING_OPERATION, operation),
+            sender = SENDER,
+            participants = listOf(SENDER, GROUP_MEMBER),
+            to = listOf(LOCAL_RECIPIENT, GROUP_MEMBER),
+            cc = emptyList(),
+            subject = "Synthetic incoming subject",
+            text = INCOMING_TEXT,
+            sentTimestampMillis = 1_720_000_000_000L,
+            receivedTimestampMillis = 1_720_000_005_000L,
+            subscriptionId = AuroraSubscriptionId(2),
+            notificationTransactionId = transaction,
+            messageId = "incoming-message-$operation",
+            parts = listOf(
+                incomingPart(
+                    type = "application/smil",
+                    location = "smil.xml",
+                    text = "<smil><body/></smil>",
+                ),
+                incomingPart(
+                    type = "text/plain",
+                    location = "text.txt",
+                    text = INCOMING_TEXT,
+                    charset = 106,
+                ),
+                incomingPart(
+                    type = "image/png",
+                    location = "image.png",
+                    bytes = IMAGE_BYTES,
+                ),
+            ),
+        )
+
+    private fun incomingPart(
+        type: String,
+        location: String,
+        text: String? = null,
+        bytes: ByteArray = text?.encodeToByteArray() ?: byteArrayOf(),
+        charset: Int? = null,
+    ): DecodedIncomingMmsPart = DecodedIncomingMmsPart(
+        contentType = type,
+        charsetMibEnum = charset,
+        name = location,
+        filename = location,
+        contentLocation = location,
+        contentId = "<${location.substringBefore('.')}>",
+        contentDisposition = if (text == null) "attachment" else "inline",
+        decodedText = text,
+        bytes = bytes,
+    )
+
+    private fun seedIncomingRow(record: DecodedIncomingMmsRecord) {
+        provider.insert(
+            Telephony.Mms.CONTENT_URI,
+            ContentValues().apply {
+                put(Telephony.Mms.THREAD_ID, 73L)
+                put(Telephony.Mms.DATE, record.receivedTimestampMillis / 1_000L)
+                put(Telephony.Mms.DATE_SENT, record.sentTimestampMillis / 1_000L)
+                put(Telephony.Mms.MESSAGE_BOX, Telephony.Mms.MESSAGE_BOX_INBOX)
+                put(Telephony.Mms.MESSAGE_TYPE, 132)
+                put(Telephony.Mms.TRANSACTION_ID, record.notificationTransactionId)
+                put(Telephony.Mms.MESSAGE_ID, record.messageId)
+                put(Telephony.Mms.MESSAGE_SIZE, record.parts.sumOf { it.size.toLong() })
+                put(Telephony.Mms.SUBSCRIPTION_ID, record.subscriptionId.value)
+                put(Telephony.Mms.CREATOR, context.packageName)
+            },
+        )
+    }
+
     private fun <T> ProviderAccessResult<T>.successValue(): T =
         (this as ProviderAccessResult.Success<T>).value
 
@@ -193,6 +352,11 @@ class AndroidMmsProviderDataSourceOutgoingTest {
 
     private companion object {
         val MEMO_BYTES = byteArrayOf(0x00, 0x01, 0x7f, 0xff.toByte())
+        val IMAGE_BYTES = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x00, 0x01)
+        val SENDER = ParticipantAddress("+15551230000")
+        val LOCAL_RECIPIENT = ParticipantAddress("+15551230001")
+        val GROUP_MEMBER = ParticipantAddress("+15551230002")
+        const val INCOMING_TEXT = "Synthetic incoming group body"
     }
 }
 
@@ -217,6 +381,7 @@ internal class InMemoryMmsProvider : ContentProvider() {
     private var nextPartId = 61L
     private var nextAddressId = 81L
     var failAddressInsert: Boolean = false
+    val threadRequests = mutableListOf<Set<String>>()
 
     override fun onCreate(): Boolean = true
 
@@ -261,7 +426,9 @@ internal class InMemoryMmsProvider : ContentProvider() {
         val path = uri.pathSegments
         when {
             path.isEmpty() -> messages.forEach { (id, values) ->
-                if (matchesPreparation(values, selectionArgs)) cursor.addValues(columns, id, values)
+                if (matchesMessageQuery(values, selection, selectionArgs)) {
+                    cursor.addValues(columns, id, values)
+                }
             }
             path.size == 1 -> {
                 val id = path[0].toLongOrNull()
@@ -325,7 +492,7 @@ internal class InMemoryMmsProvider : ContentProvider() {
         if (path.size != 1) return 0
         val id = path[0].toLongOrNull() ?: return 0
         val row = messages[id] ?: return 0
-        if (selectionArgs != null && !matchesExactFailedPreparation(row, selectionArgs)) return 0
+        if (selectionArgs != null && !matchesExactOwnedRow(row, selection, selectionArgs)) return 0
         messages.remove(id)
         parts.values.filter { it.ownerId == id }.forEach(::deletePart)
         addresses.entries.removeAll { it.value.ownerId == id }
@@ -358,6 +525,17 @@ internal class InMemoryMmsProvider : ContentProvider() {
         parts.values.single {
             it.ownerId == messageId && it.values.getAsString(Telephony.Mms.Part.CONTENT_TYPE) == "audio/mp4"
         }.file.readBytes()
+    fun partBytes(messageId: Long, contentType: String): ByteArray =
+        parts.values.single {
+            it.ownerId == messageId && it.values.getAsString(Telephony.Mms.Part.CONTENT_TYPE) == contentType
+        }.file.readBytes()
+    fun partText(messageId: Long, contentType: String): String? =
+        parts.values.single {
+            it.ownerId == messageId && it.values.getAsString(Telephony.Mms.Part.CONTENT_TYPE) == contentType
+        }.values.getAsString(Telephony.Mms.Part.TEXT)
+    fun addressTypes(messageId: Long): List<Int> = addresses.values
+        .filter { it.ownerId == messageId }
+        .map { it.values.getAsInteger("type") }
 
     fun close() {
         parts.values.map(Part::file).forEach(File::delete)
@@ -366,21 +544,41 @@ internal class InMemoryMmsProvider : ContentProvider() {
         messages.clear()
     }
 
-    private fun matchesPreparation(values: ContentValues, args: Array<out String>?): Boolean =
-        args == null ||
-            (
-                args.size >= 3 &&
-                    values.getAsString(Telephony.Mms.CREATOR) == args[0] &&
-                    values.getAsString(Telephony.Mms.THREAD_ID) == args[1] &&
-                    values.getAsString(Telephony.Mms.TRANSACTION_ID) == args[2]
-                )
+    private fun matchesMessageQuery(
+        values: ContentValues,
+        selection: String?,
+        args: Array<out String>?,
+    ): Boolean = when {
+        args == null -> true
+        selection?.contains(Telephony.Mms.SUBSCRIPTION_ID) == true && args.size == 4 ->
+            values.getAsString(Telephony.Mms.CREATOR) == args[0] &&
+                values.getAsString(Telephony.Mms.TRANSACTION_ID) == args[1] &&
+                values.getAsString(Telephony.Mms.SUBSCRIPTION_ID) == args[2] &&
+                values.getAsString(Telephony.Mms.DATE_SENT) == args[3]
+        args.size >= 3 ->
+            values.getAsString(Telephony.Mms.CREATOR) == args[0] &&
+                values.getAsString(Telephony.Mms.THREAD_ID) == args[1] &&
+                values.getAsString(Telephony.Mms.TRANSACTION_ID) == args[2]
+        else -> false
+    }
 
-    private fun matchesExactFailedPreparation(values: ContentValues, args: Array<out String>): Boolean =
+    private fun matchesExactOwnedRow(
+        values: ContentValues,
+        selection: String?,
+        args: Array<out String>,
+    ): Boolean = if (selection?.contains(Telephony.Mms.SUBSCRIPTION_ID) == true && args.size == 5) {
+        values.getAsString(Telephony.Mms.CREATOR) == args[0] &&
+            values.getAsString(Telephony.Mms.TRANSACTION_ID) == args[1] &&
+            values.getAsString(Telephony.Mms.SUBSCRIPTION_ID) == args[2] &&
+            values.getAsString(Telephony.Mms.DATE_SENT) == args[3] &&
+            values.getAsString(Telephony.Mms.MESSAGE_BOX) == args[4]
+    } else {
         args.size >= 4 &&
             values.getAsString(Telephony.Mms.CREATOR) == args[0] &&
             values.getAsString(Telephony.Mms.THREAD_ID) == args[1] &&
             values.getAsString(Telephony.Mms.TRANSACTION_ID) == args[2] &&
             values.getAsString(Telephony.Mms.MESSAGE_BOX) == args[3]
+    }
 
     private fun deletePart(part: Part) {
         parts.remove(part.id)
