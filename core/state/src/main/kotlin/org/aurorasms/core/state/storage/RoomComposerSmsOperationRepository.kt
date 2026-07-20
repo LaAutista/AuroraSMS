@@ -33,6 +33,7 @@ import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.core.state.MAXIMUM_COMPOSER_SMS_OPERATIONS
 import org.aurorasms.core.state.MAXIMUM_ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS
 import org.aurorasms.core.state.isComposerSmsOperationId
+import org.aurorasms.core.state.providerKind
 
 class RoomComposerSmsOperationRepository(
     private val database: AuroraStateDatabase,
@@ -73,7 +74,10 @@ class RoomComposerSmsOperationRepository(
                 return@withTransaction ComposerSmsOperationResult.StaleWrite
             }
             val body = draft.body
-            if (body.isNullOrBlank() || draft.subject != null) {
+            if (body.isNullOrBlank()) {
+                return@withTransaction ComposerSmsOperationResult.IneligibleDraft
+            }
+            if (request.transport == org.aurorasms.core.model.MessageTransportKind.SMS && draft.subject != null) {
                 return@withTransaction ComposerSmsOperationResult.IneligibleDraft
             }
             val localId = dao.insert(
@@ -82,6 +86,7 @@ class RoomComposerSmsOperationRepository(
                     draftId = request.draftId.value,
                     draftRevisionMillis = request.expectedDraftRevision.updatedTimestampMillis,
                     subscriptionId = request.subscriptionId.value,
+                    transportCode = request.transport.storageCode,
                     phaseCode = ComposerSmsOperationPhase.RESERVED.storageCode,
                     providerMessageId = null,
                     providerConversationId = null,
@@ -97,7 +102,11 @@ class RoomComposerSmsOperationRepository(
             val operation = dao.findByLocalId(localId)?.toDomainOrNull()
                 ?: throw AbortTransaction(ComposerSmsOperationResult.CorruptData)
             ComposerSmsOperationResult.Success(
-                ComposerSmsReservation(operation = operation, authoritativeBody = body),
+                ComposerSmsReservation(
+                    operation = operation,
+                    authoritativeBody = body,
+                    authoritativeSubject = draft.subject,
+                ),
             )
         }
     }
@@ -428,6 +437,7 @@ class RoomComposerSmsOperationRepository(
                     AcknowledgedComposerSmsEntity(
                         localOperationId = localId,
                         providerMessageId = binding.providerMessageId.value,
+                        providerKindCode = binding.providerMessageId.kind.storageCode,
                         providerConversationId = binding.providerConversationId.value,
                         unitCount = binding.unitCount,
                         callbackProofCode =
@@ -580,6 +590,18 @@ class RoomComposerSmsOperationRepository(
             return ComposerSmsOperationResult.InvalidTimestamp
         }
         return database.withTransaction {
+            val current = dao.findByLocalId(localId)?.toDomainOrNull()
+                ?: return@withTransaction missingOrCorrupt(localId)
+            when {
+                current.revision != expectedRevision ->
+                    return@withTransaction ComposerSmsOperationResult.StaleWrite
+                current.phase != ComposerSmsOperationPhase.RESERVED ->
+                    return@withTransaction ComposerSmsOperationResult.PhaseMismatch
+                current.providerBinding != null ->
+                    return@withTransaction ComposerSmsOperationResult.CorruptData
+                current.transport.providerKind != providerBinding.providerMessageId.kind ->
+                    return@withTransaction ComposerSmsOperationResult.ProviderMismatch
+            }
             val changed = dao.markPreparedIfCurrent(
                 localOperationId = localId,
                 expectedUpdatedTimestampMillis = expectedRevision.updatedTimestampMillis,

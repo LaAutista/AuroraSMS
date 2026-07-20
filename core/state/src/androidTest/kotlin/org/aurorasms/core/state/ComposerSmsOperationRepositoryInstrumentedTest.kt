@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
@@ -150,6 +151,87 @@ class ComposerSmsOperationRepositoryInstrumentedTest {
             assertEquals(
                 ComposerSmsOperationResult.NotFound,
                 operations.read(callbackSucceeded.operationId),
+            )
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun mmsReservationRetainsSubjectAndProviderKindThroughLateCallbackReceipt() = runBlocking {
+        val database = openStateDatabase()
+        val drafts = RoomDraftRepository(database)
+        val operations = RoomComposerSmsOperationRepository(database)
+        try {
+            val threadId = ProviderThreadId(45L)
+            val draft = drafts.create(
+                NewDraft(
+                    identity = DraftIdentity.ProviderThread(threadId),
+                    body = "synthetic MMS body",
+                    subject = "synthetic MMS subject",
+                    createdTimestampMillis = 100L,
+                    updatedTimestampMillis = 100L,
+                ),
+            ).draftSuccessValue()
+            val reservation = operations.reserve(
+                reservationRequest(threadId, draft, 200L).copy(
+                    transport = MessageTransportKind.MMS,
+                ),
+            ).successValue()
+            assertEquals(MessageTransportKind.MMS, reservation.operation.transport)
+            assertEquals("synthetic MMS subject", reservation.authoritativeSubject)
+            assertEquals(
+                ComposerSmsOperationResult.ProviderMismatch,
+                operations.markPrepared(
+                    reservation.operation.operationId,
+                    reservation.operation.revision,
+                    providerBinding(511L),
+                    201L,
+                ),
+            )
+            val binding = ComposerSmsProviderBinding(
+                ProviderMessageId(ProviderKind.MMS, 511L),
+                ConversationId(45L),
+                1,
+            )
+            val prepared = operations.markPrepared(
+                reservation.operation.operationId,
+                reservation.operation.revision,
+                binding,
+                201L,
+            ).successValue()
+            val submitting = operations.markSubmitting(
+                prepared.operationId,
+                prepared.revision,
+                binding,
+                202L,
+            ).successValue()
+            val unknown = operations.markSubmissionUnknown(
+                submitting.operationId,
+                submitting.revision,
+                binding,
+                203L,
+            ).successValue()
+            assertEquals(
+                ComposerSmsOperationResult.Success(Unit),
+                operations.acknowledgeAndRemove(unknown.operationId, unknown.revision, 204L),
+            )
+            val receipt = operations.readAcknowledged(unknown.operationId).successValue()
+            assertEquals(ProviderKind.MMS, receipt.providerBinding.providerMessageId.kind)
+            val sent = operations.markAcknowledgedSent(
+                receipt.operationId,
+                receipt.revision,
+                binding,
+                205L,
+            ).successValue()
+            assertEquals(
+                ComposerSmsOperationResult.Success(Unit),
+                operations.completeAcknowledged(
+                    sent.operationId,
+                    sent.revision,
+                    binding,
+                    AcknowledgedComposerSmsCallbackProof.SENT,
+                ),
             )
         } finally {
             database.close()

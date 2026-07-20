@@ -25,6 +25,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInputSelection
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -532,6 +533,50 @@ class ConversationUiStateTest {
         compose.onNodeWithText(
             "This text needs 3 SMS parts. Multipart sending is not available yet.",
         ).assertIsDisplayed()
+    }
+
+    @Test
+    fun mmsComposerShowsSubjectAndKeepsImmediateSendAvailable() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic MMS draft",
+                    subject = "Synthetic subject",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.READY,
+                    segmentCount = 1,
+                    mmsRequired = true,
+                ),
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SUBJECT_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("Draft saved locally · MMS").assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsEnabled()
+        compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).assertIsNotEnabled()
+    }
+
+    @Test
+    fun subjectActionExposesBoundedDraftEditorCallback() {
+        var changedSubject: String? = null
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.READY,
+                    segmentCount = 1,
+                ),
+                onDraftSubjectChanged = { changedSubject = it },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SUBJECT_TEST_TAG).assertDoesNotExist()
+        compose.onNodeWithTag(COMPOSER_SUBJECT_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(COMPOSER_SUBJECT_TEST_TAG).assertIsDisplayed().performTextInput("Subject")
+        compose.runOnIdle { assertEquals("Subject", changedSubject) }
     }
 
     @Test
@@ -1211,6 +1256,7 @@ private fun SyntheticThreadScreen(
     onUndoDeletion: () -> Unit = {},
     conversationSignatureAvailable: Boolean = false,
     onOpenConversationSignature: () -> Unit = {},
+    onDraftSubjectChanged: (String) -> Unit = {},
 ) {
     MaterialTheme {
         ThreadScreen(
@@ -1235,6 +1281,7 @@ private fun SyntheticThreadScreen(
             onAnchorRestored = {},
             onToggleMessageExpansion = {},
             onDraftChanged = {},
+            onDraftSubjectChanged = onDraftSubjectChanged,
             voiceMemo = voiceMemo,
             onRecordVoiceMemo = onRecordVoiceMemo,
             onStopVoiceMemo = onStopVoiceMemo,

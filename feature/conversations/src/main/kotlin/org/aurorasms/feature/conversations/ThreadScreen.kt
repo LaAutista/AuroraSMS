@@ -127,6 +127,7 @@ fun ThreadScreen(
     onAnchorRestored: () -> Unit,
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
     onDraftChanged: (String) -> Unit,
+    onDraftSubjectChanged: (String) -> Unit = {},
     voiceMemo: VoiceMemoUiState = VoiceMemoUiState(),
     onRecordVoiceMemo: () -> Unit = {},
     onStopVoiceMemo: () -> Unit = {},
@@ -377,6 +378,7 @@ fun ThreadScreen(
                 state = composer,
                 voiceMemo = voiceMemo,
                 onBodyChanged = onDraftChanged,
+                onSubjectChanged = onDraftSubjectChanged,
                 onFocusChanged = { composerFocused = it },
                 onRecordVoiceMemo = onRecordVoiceMemo,
                 onStopVoiceMemo = onStopVoiceMemo,
@@ -1787,6 +1789,7 @@ private fun Composer(
     state: ComposerUiState,
     voiceMemo: VoiceMemoUiState,
     onBodyChanged: (String) -> Unit,
+    onSubjectChanged: (String) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
     onRecordVoiceMemo: () -> Unit,
     onStopVoiceMemo: () -> Unit,
@@ -1802,6 +1805,10 @@ private fun Composer(
     val visualTokens = LocalAuroraVisualTokens.current
     var showUnknownConfirmation by remember { mutableStateOf(false) }
     var showScheduleDetails by remember { mutableStateOf(false) }
+    var showSubject by rememberSaveable { mutableStateOf(state.subject.isNotBlank()) }
+    LaunchedEffect(state.subject) {
+        if (state.subject.isNotBlank()) showSubject = true
+    }
     LaunchedEffect(state.sendState) {
         if (state.sendState != ComposerSendState.SUBMISSION_UNKNOWN) {
             showUnknownConfirmation = false
@@ -1953,6 +1960,8 @@ private fun Composer(
             stringResource(R.string.type_message_to_send)
         state.unavailableReason == ComposerUnavailableReason.DRAFT_NOT_DURABLE ->
             stringResource(R.string.saving_draft)
+        state.sendState == ComposerSendState.READY && state.mmsRequired ->
+            stringResource(R.string.draft_saved_mms)
         state.sendState == ComposerSendState.READY -> if (state.signatureApplied) {
             stringResource(
                 R.string.signature_included_sms_segments,
@@ -1990,6 +1999,15 @@ private fun Composer(
         state.sendState == ComposerSendState.DELAY_PENDING ||
         state.sendState == ComposerSendState.DELAY_REVIEW ||
         state.sendState == ComposerSendState.SUBMISSION_UNKNOWN)
+    val composerEditingEnabled = !state.failed &&
+        !scheduleActive &&
+        !scheduleLoading &&
+        state.sendState != ComposerSendState.SENDING &&
+        state.sendState != ComposerSendState.DELAY_PENDING &&
+        state.sendState != ComposerSendState.DELAY_REVIEW &&
+        state.sendState != ComposerSendState.SUBMISSION_UNKNOWN &&
+        state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING &&
+        state.unavailableReason != ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2002,6 +2020,36 @@ private fun Composer(
             onCancel = onCancelVoiceMemo,
             onSend = onSendVoiceMemo,
         )
+        if (showSubject) {
+            OutlinedTextField(
+                value = state.subject,
+                onValueChange = { value ->
+                    if (value.length <= MAXIMUM_COMPOSER_SUBJECT_CHARACTERS) {
+                        onSubjectChanged(value)
+                    }
+                },
+                enabled = composerEditingEnabled,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 56.dp, end = 16.dp, top = 8.dp)
+                    .testTag(COMPOSER_SUBJECT_TEST_TAG),
+                singleLine = true,
+                label = { Text(stringResource(R.string.message_subject)) },
+                shape = RoundedCornerShape(20.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = visualTokens.onIncoming,
+                    unfocusedTextColor = visualTokens.onIncoming,
+                    disabledTextColor = visualTokens.lilacSecondary,
+                    focusedContainerColor = visualTokens.nearBlack.copy(alpha = 0.96f),
+                    unfocusedContainerColor = visualTokens.nearBlack.copy(alpha = 0.9f),
+                    disabledContainerColor = visualTokens.nearBlack.copy(alpha = 0.78f),
+                    cursorColor = visualTokens.cyan,
+                    focusedBorderColor = visualTokens.cyan,
+                    unfocusedBorderColor = visualTokens.violet.copy(alpha = 0.68f),
+                    disabledBorderColor = visualTokens.violet.copy(alpha = 0.3f),
+                ),
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2009,20 +2057,28 @@ private fun Composer(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val subjectActionLabel = stringResource(
+                if (showSubject) R.string.remove_message_subject else R.string.add_message_subject,
+            )
+            AuroraIconAction(
+                glyph = AuroraGlyph.ADD,
+                contentDescription = subjectActionLabel,
+                onClick = {
+                    if (showSubject) onSubjectChanged("")
+                    showSubject = !showSubject
+                },
+                enabled = composerEditingEnabled,
+                modifier = Modifier
+                    .testTag(COMPOSER_SUBJECT_ACTION_TEST_TAG)
+                    .semantics { text = AnnotatedString(subjectActionLabel) },
+                tint = if (showSubject) visualTokens.cyan else visualTokens.violet,
+            )
             OutlinedTextField(
                 value = state.body,
                 onValueChange = { value ->
                     if (value.length <= MAXIMUM_COMPOSER_CHARACTERS) onBodyChanged(value)
                 },
-                enabled = !state.failed &&
-                    !scheduleActive &&
-                    !scheduleLoading &&
-                    state.sendState != ComposerSendState.SENDING &&
-                    state.sendState != ComposerSendState.DELAY_PENDING &&
-                    state.sendState != ComposerSendState.DELAY_REVIEW &&
-                    state.sendState != ComposerSendState.SUBMISSION_UNKNOWN &&
-                    state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING &&
-                    state.unavailableReason != ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE,
+                enabled = composerEditingEnabled,
                 modifier = Modifier
                     .weight(1f)
                     .onFocusChanged { onFocusChanged(it.isFocused) }
@@ -2073,7 +2129,8 @@ private fun Composer(
                     onSchedule
                 },
                 enabled = scheduleActive ||
-                    (!scheduleLoading && state.sendState == ComposerSendState.READY),
+                    (!state.mmsRequired && !scheduleLoading &&
+                        state.sendState == ComposerSendState.READY),
                 modifier = Modifier
                     .testTag(COMPOSER_SCHEDULE_TEST_TAG)
                     .semantics { text = AnnotatedString(scheduleLabel) },
@@ -2289,6 +2346,7 @@ private const val MAXIMUM_HEADER_NAMES: Int = 3
 private const val THREAD_VIEWPORT_PREFETCH_ROWS: Int = 10
 private const val MAXIMUM_VIEWPORT_THREAD_ROWS: Int = 100
 private const val MAXIMUM_COMPOSER_CHARACTERS: Int = 100_000
+private const val MAXIMUM_COMPOSER_SUBJECT_CHARACTERS: Int = 1_000
 const val THREAD_SCREEN_TEST_TAG: String = "aurora-thread-screen"
 const val THREAD_LIST_TEST_TAG: String = "aurora-thread-list"
 const val MESSAGE_BUBBLE_TEST_TAG: String = "aurora-message-bubble"
@@ -2302,6 +2360,8 @@ const val COPY_SELECTED_TEXT_TEST_TAG: String = "aurora-copy-selected-text"
 const val MESSAGE_DETAILS_DIALOG_TEST_TAG: String = "aurora-message-details"
 const val REACTION_FALLBACK_TEST_TAG: String = "aurora-reaction-fallback"
 const val COMPOSER_TEST_TAG: String = "aurora-composer"
+const val COMPOSER_SUBJECT_TEST_TAG: String = "aurora-composer-subject"
+const val COMPOSER_SUBJECT_ACTION_TEST_TAG: String = "aurora-composer-subject-action"
 const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"
 const val COMPOSER_SCHEDULE_TEST_TAG: String = "aurora-composer-schedule"
 const val COMPOSER_VOICE_MEMO_TEST_TAG: String = "aurora-composer-voice-memo"

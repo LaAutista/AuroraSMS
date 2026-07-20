@@ -11,6 +11,7 @@ import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
@@ -27,7 +28,7 @@ internal const val COMPOSER_SMS_OPERATIONS_TABLE: String = "composer_sms_operati
     tableName = COMPOSER_SMS_OPERATIONS_TABLE,
     indices = [
         Index(value = ["provider_thread_id"], unique = true),
-        Index(value = ["provider_message_id"], unique = true),
+        Index(value = ["transport_code", "provider_message_id"], unique = true),
         Index(value = ["draft_id", "draft_revision_ms"]),
         Index(value = ["updated_timestamp_ms", "local_operation_id"]),
     ],
@@ -44,6 +45,8 @@ internal data class ComposerSmsOperationEntity(
     val draftRevisionMillis: Long,
     @ColumnInfo(name = "subscription_id")
     val subscriptionId: Int,
+    @ColumnInfo(name = "transport_code", defaultValue = "'sms_v1'")
+    val transportCode: String = MessageTransportKind.SMS.storageCode,
     @ColumnInfo(name = "phase_code")
     val phaseCode: String,
     @ColumnInfo(name = "provider_message_id")
@@ -74,8 +77,10 @@ internal fun ComposerSmsOperationEntity.toDomain(): ComposerSmsOperation {
         "Stored composer SMS provider binding is partial"
     }
     val binding = providerMessageId?.let { providerId ->
+        val transport = messageTransportKindFromStorageCode(transportCode)
+            ?: error("Stored composer transport code is unknown")
         ComposerSmsProviderBinding(
-            providerMessageId = ProviderMessageId(ProviderKind.SMS, providerId),
+            providerMessageId = ProviderMessageId(transport.providerKind, providerId),
             providerConversationId = ConversationId(checkNotNull(providerConversationId)),
             unitCount = checkNotNull(unitCount),
         )
@@ -94,6 +99,8 @@ internal fun ComposerSmsOperationEntity.toDomain(): ComposerSmsOperation {
         createdTimestampMillis = createdTimestampMillis,
         updatedTimestampMillis = updatedTimestampMillis,
         frozenSignature = signatureText?.let(MessageSignature::fromStorageValue),
+        transport = messageTransportKindFromStorageCode(transportCode)
+            ?: error("Stored composer transport code is unknown"),
     )
 }
 
@@ -118,6 +125,24 @@ internal fun composerSmsOperationPhaseFromStorageCode(value: String): ComposerSm
         "submission_unknown_v1" -> ComposerSmsOperationPhase.SUBMISSION_UNKNOWN
         "known_unsent_v1" -> ComposerSmsOperationPhase.KNOWN_UNSENT
         else -> null
+    }
+
+internal val MessageTransportKind.storageCode: String
+    get() = when (this) {
+        MessageTransportKind.SMS -> "sms_v1"
+        MessageTransportKind.MMS -> "mms_v1"
+    }
+
+internal fun messageTransportKindFromStorageCode(value: String): MessageTransportKind? = when (value) {
+    "sms_v1" -> MessageTransportKind.SMS
+    "mms_v1" -> MessageTransportKind.MMS
+    else -> null
+}
+
+internal val MessageTransportKind.providerKind: ProviderKind
+    get() = when (this) {
+        MessageTransportKind.SMS -> ProviderKind.SMS
+        MessageTransportKind.MMS -> ProviderKind.MMS
     }
 
 internal const val COMPOSER_SMS_LOCAL_ID_LIMIT_EXCLUSIVE: Long =

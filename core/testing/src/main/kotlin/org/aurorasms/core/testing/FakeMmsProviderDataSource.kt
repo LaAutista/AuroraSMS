@@ -13,6 +13,8 @@ import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.DecodedIncomingMmsRecord
 import org.aurorasms.core.telephony.MmsProviderDataSource
 import org.aurorasms.core.telephony.MmsProviderMessage
+import org.aurorasms.core.telephony.OutgoingMmsProviderStatus
+import org.aurorasms.core.telephony.OutgoingMmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderPage
 import org.aurorasms.core.telephony.ProviderPageCursor
@@ -37,6 +39,7 @@ class FakeMmsProviderDataSource(
 
     var failure: ProviderAccessResult<Nothing>? = null
     val insertedIncoming = mutableListOf<DecodedIncomingMmsRecord>()
+    val outgoingStatusUpdates = mutableListOf<Triple<ProviderMessageId, ConversationId, OutgoingMmsProviderStatus>>()
 
     override suspend fun count(): ProviderAccessResult<Long> = synchronized(lock) {
         failure ?: ProviderAccessResult.Success(messages.size.toLong())
@@ -88,6 +91,17 @@ class FakeMmsProviderDataSource(
                 ),
             )
             ProviderAccessResult.Success(ProviderStoredMessage(id, conversationId))
+        }
+    }
+
+    override suspend fun updateOutgoingStatus(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+        status: OutgoingMmsProviderStatus,
+    ): ProviderAccessResult<OutgoingMmsStatusUpdateOutcome> = synchronized(lock) {
+        failure ?: run {
+            outgoingStatusUpdates += Triple(id, conversationId, status)
+            ProviderAccessResult.Success(OutgoingMmsStatusUpdateOutcome.ROW_ABSENT)
         }
     }
 

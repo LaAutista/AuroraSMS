@@ -11,6 +11,7 @@ import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.MmsDownloadRequest
 import org.aurorasms.core.telephony.MmsSendRequest
+import org.aurorasms.core.telephony.MmsSubmissionOwnership
 import org.aurorasms.core.telephony.RecipientSet
 import org.aurorasms.core.telephony.SmsSendRequest
 import org.aurorasms.core.telephony.SmsSubmissionOwnership
@@ -87,7 +88,10 @@ class RespondViaMessageRoutingTest {
             )
         }
 
-        override suspend fun sendMms(request: MmsSendRequest): TransportResult {
+        override suspend fun sendMms(
+            request: MmsSendRequest,
+            ownership: MmsSubmissionOwnership,
+        ): TransportResult {
             mmsRequests += request
             return if (mmsFailure) {
                 TransportResult.Rejected(

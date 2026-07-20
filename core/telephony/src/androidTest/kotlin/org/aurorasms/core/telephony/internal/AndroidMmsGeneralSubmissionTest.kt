@@ -26,6 +26,8 @@ import org.aurorasms.core.telephony.MmsDownloadRequest
 import org.aurorasms.core.telephony.MmsProviderDataSource
 import org.aurorasms.core.telephony.MmsProviderMessage
 import org.aurorasms.core.telephony.MmsSendRequest
+import org.aurorasms.core.telephony.MmsSubmissionObserver
+import org.aurorasms.core.telephony.MmsSubmissionOwnership
 import org.aurorasms.core.telephony.OutgoingMmsAttachment
 import org.aurorasms.core.telephony.OutgoingMmsPayload
 import org.aurorasms.core.telephony.OutgoingMmsProviderRecord
@@ -102,6 +104,51 @@ class AndroidMmsGeneralSubmissionTest {
             provider.statuses,
         )
         assertTrue(journalRecords().isEmpty())
+    }
+
+    @Test
+    fun composerSubmissionAwaitsBothCallerCheckpointsAndPreservesOrigin() = runBlocking {
+        val provider = CapturingProvider()
+        val checkpoints = mutableListOf<String>()
+        val transport = transport(provider) { request, staged, _ ->
+            assertEquals(listOf("prepared", "submitting"), checkpoints)
+            assertEquals(TransportResult.OperationOrigin.COMPOSER, request.operationOrigin)
+            submitted += staged
+        }
+        val observer = object : MmsSubmissionObserver {
+            override suspend fun onPrepared(
+                providerId: ProviderMessageId,
+                providerConversationId: ConversationId,
+                unitCount: Int,
+            ): Boolean {
+                assertEquals(PROVIDER, providerId)
+                assertEquals(CONVERSATION, providerConversationId)
+                assertEquals(1, unitCount)
+                checkpoints += "prepared"
+                return true
+            }
+
+            override suspend fun onSubmitting(
+                providerId: ProviderMessageId,
+                providerConversationId: ConversationId,
+                unitCount: Int,
+            ): Boolean {
+                assertEquals(PROVIDER, providerId)
+                assertEquals(CONVERSATION, providerConversationId)
+                assertEquals(1, unitCount)
+                checkpoints += "submitting"
+                return true
+            }
+        }
+
+        val result = transport.sendMms(
+            request().copy(operationOrigin = TransportResult.OperationOrigin.COMPOSER),
+            MmsSubmissionOwnership.CallerOwned(observer),
+        ) as TransportResult.Submitted
+
+        assertEquals(listOf("prepared", "submitting"), checkpoints)
+        assertEquals(TransportResult.OperationOrigin.COMPOSER, result.operationOrigin)
+        assertEquals(listOf(OutgoingMmsProviderStatus.OUTBOX), provider.statuses)
     }
 
     @Test

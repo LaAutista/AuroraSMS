@@ -107,6 +107,9 @@
     <string name="back">Back</string>
     <string name="conversation">Conversation</string>
     <string name="message_draft">Message draft</string>
+    <string name="message_subject">Subject</string>
+    <string name="add_message_subject">Add subject</string>
+    <string name="remove_message_subject">Remove subject</string>
     <string name="record_voice_memo">Record voice memo</string>
     <string name="stop_voice_memo">Stop voice recording</string>
     <string name="preparing_voice_memo">Preparing microphone…</string>
@@ -167,6 +170,7 @@
     <string name="messaging_send_unavailable">SMS sending is unavailable. Check the SMS role and permissions.</string>
     <string name="signature_state_unavailable">Signature settings are unavailable. Sending is paused to avoid changing outgoing text.</string>
     <string name="draft_saved_one_sms">Draft saved locally · 1 SMS</string>
+    <string name="draft_saved_mms">Draft saved locally · MMS</string>
     <string name="signature_included_sms_segments">Signature included · %1$d SMS segment</string>
     <string name="message_signature">Message signature</string>
     <string name="conversation_signature">Conversation signature</string>

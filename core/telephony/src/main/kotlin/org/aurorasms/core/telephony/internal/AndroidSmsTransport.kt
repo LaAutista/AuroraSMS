@@ -355,8 +355,10 @@ class AndroidSmsTransport(
         }
     }
 
-    override suspend fun sendMms(request: MmsSendRequest): TransportResult =
-        mmsTransport.sendMms(request)
+    override suspend fun sendMms(
+        request: MmsSendRequest,
+        ownership: org.aurorasms.core.telephony.MmsSubmissionOwnership,
+    ): TransportResult = mmsTransport.sendMms(request, ownership)
 
     override suspend fun downloadMms(request: MmsDownloadRequest): TransportResult =
         mmsTransport.downloadMms(request)

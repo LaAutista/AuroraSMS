@@ -5,6 +5,49 @@ package org.aurorasms.core.state.storage
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+val STATE_MIGRATION_12_13: Migration = object : Migration(12, 13) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "ALTER TABLE `composer_sms_operations` " +
+                "ADD COLUMN `transport_code` TEXT NOT NULL DEFAULT 'sms_v1'",
+        )
+        db.execSQL(
+            "ALTER TABLE `acknowledged_composer_sms_receipts` " +
+                "ADD COLUMN `provider_kind_code` TEXT NOT NULL DEFAULT 'sms_v1'",
+        )
+        db.execSQL("DROP INDEX IF EXISTS `index_composer_sms_operations_provider_message_id`")
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                "`index_composer_sms_operations_transport_code_provider_message_id` " +
+                "ON `composer_sms_operations` (`transport_code`, `provider_message_id`)",
+        )
+        db.execSQL(
+            "DROP INDEX IF EXISTS " +
+                "`index_acknowledged_composer_sms_receipts_provider_message_id`",
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                "`index_acknowledged_composer_sms_receipts_provider_kind_code_provider_message_id` " +
+                "ON `acknowledged_composer_sms_receipts` " +
+                "(`provider_kind_code`, `provider_message_id`)",
+        )
+        db.execSQL("DROP TRIGGER IF EXISTS ${ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        db.execSQL("DROP TRIGGER IF EXISTS ${ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        db.execSQL(
+            "DROP TRIGGER IF EXISTS " +
+                AcknowledgedComposerSmsEnforcement.INSERT_INTEGRITY_TRIGGER_NAME,
+        )
+        db.execSQL(
+            "DROP TRIGGER IF EXISTS " +
+                AcknowledgedComposerSmsEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME,
+        )
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+        db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+    }
+}
+
 val STATE_MIGRATION_11_12: Migration = object : Migration(11, 12) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(
@@ -47,8 +90,8 @@ val STATE_MIGRATION_10_11: Migration = object : Migration(10, 11) {
         db.execSQL("DROP TRIGGER IF EXISTS ${ScheduledSmsEnforcement.UPDATE_INTEGRITY_TRIGGER}")
         db.execSQL("DROP TRIGGER IF EXISTS ${SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
         db.execSQL("DROP TRIGGER IF EXISTS ${SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
-        db.execSQL(ComposerSmsOperationEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
-        db.execSQL(ComposerSmsOperationEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER_V11)
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER_V11)
         db.execSQL(ScheduledSmsEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
         db.execSQL(ScheduledSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
         db.execSQL(SendDelayEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
@@ -305,8 +348,8 @@ val STATE_MIGRATION_5_6: Migration = object : Migration(5, 6) {
             """.trimIndent(),
         )
         db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_INSERT_LIMIT_TRIGGER)
-        db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
-        db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+        db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER_V6)
+        db.execSQL(AcknowledgedComposerSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER_V6)
     }
 }
 

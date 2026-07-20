@@ -47,6 +47,6 @@ abstract class AuroraStateDatabase : RoomDatabase() {
     internal abstract fun spamSafetyDecisionDao(): SpamSafetyDecisionDao
 
     companion object {
-        const val VERSION: Int = 12
+        const val VERSION: Int = 13
     }
 }

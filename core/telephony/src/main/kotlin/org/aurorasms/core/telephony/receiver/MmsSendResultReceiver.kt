@@ -24,6 +24,7 @@ class MmsSendResultReceiver : BroadcastReceiver() {
         val operationId = intent.pendingOperationIdOrNull() ?: return
         val uri = intent.stagedUriOrNull() ?: return
         val providerIdentity = intent.outgoingMmsProviderIdentity()
+        val operationOrigin = intent.transportOperationOrigin()
         val code = resultCode
         dispatchAsync(context) { entryPoint ->
             MmsPduStagingStore(context).cleanup(uri, MmsPduDirection.SEND_SOURCE)
@@ -33,6 +34,7 @@ class MmsSendResultReceiver : BroadcastReceiver() {
                 platformResultCode = code,
                 providerId = exactIdentity?.providerId,
                 conversationId = exactIdentity?.conversationId,
+                operationOrigin = operationOrigin,
             )
             entryPoint.onTransportResult(result)
         }
@@ -50,6 +52,8 @@ class MmsSendResultReceiver : BroadcastReceiver() {
             stagedUri: Uri,
             providerId: ProviderMessageId? = null,
             conversationId: ConversationId? = null,
+            operationOrigin: TransportResult.OperationOrigin =
+                TransportResult.OperationOrigin.UNMARKED,
         ): Intent {
             require((providerId == null) == (conversationId == null)) {
                 "Outgoing MMS callback identity must be complete"
@@ -59,6 +63,7 @@ class MmsSendResultReceiver : BroadcastReceiver() {
                 .setAction(ACTION_MMS_SENT)
                 .putExtra(SmsSentReceiver.EXTRA_OPERATION_ID, operationId.value)
                 .putExtra(EXTRA_STAGED_URI, stagedUri)
+                .putExtra(SmsSentReceiver.EXTRA_OPERATION_ORIGIN, operationOrigin.toStorageCode())
                 .apply {
                     if (providerId != null && conversationId != null) {
                         putExtra(EXTRA_PROVIDER_ID, providerId.value)
@@ -74,6 +79,7 @@ internal fun mmsSendResult(
     platformResultCode: Int,
     providerId: ProviderMessageId? = null,
     conversationId: ConversationId? = null,
+    operationOrigin: TransportResult.OperationOrigin = TransportResult.OperationOrigin.UNMARKED,
 ): TransportResult = if (platformResultCode == Activity.RESULT_OK) {
     TransportResult.Sent(
         operationId = operationId,
@@ -81,6 +87,7 @@ internal fun mmsSendResult(
         platformResultCode = platformResultCode,
         providerMessageId = providerId,
         providerConversationId = conversationId,
+        operationOrigin = operationOrigin,
     )
 } else {
     TransportResult.Failed(
@@ -93,6 +100,7 @@ internal fun mmsSendResult(
         stage = TransportResult.FailureStage.SENT_CALLBACK,
         providerMessageId = providerId,
         providerConversationId = conversationId,
+        operationOrigin = operationOrigin,
     )
 }
 

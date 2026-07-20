@@ -132,6 +132,7 @@ sealed interface SearchUiState {
 
 data class ComposerUiState(
     val body: String,
+    val subject: String = "",
     val saving: Boolean,
     val failed: Boolean,
     val sendState: ComposerSendState = ComposerSendState.UNAVAILABLE,
@@ -139,6 +140,7 @@ data class ComposerUiState(
     val segmentCount: Int? = null,
     val unsignedSegmentCount: Int? = null,
     val signatureApplied: Boolean = false,
+    val mmsRequired: Boolean = false,
     val scheduleState: ComposerScheduleState = ComposerScheduleState.None,
     val sendDelayDueTimestampMillis: Long? = null,
 ) {
@@ -165,6 +167,7 @@ data class ComposerUiState(
 
     override fun toString(): String =
         "ComposerUiState(bodyLength=${body.length}, saving=$saving, failed=$failed, " +
+            "subjectLength=${subject.length}, mmsRequired=$mmsRequired, " +
             "sendState=$sendState, unavailableReason=$unavailableReason, " +
             "segmentCount=$segmentCount, unsignedSegmentCount=$unsignedSegmentCount, " +
             "signatureApplied=$signatureApplied, scheduleState=$scheduleState, " +

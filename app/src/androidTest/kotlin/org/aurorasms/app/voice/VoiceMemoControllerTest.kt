@@ -23,6 +23,7 @@ import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.MmsDownloadRequest
 import org.aurorasms.core.telephony.MmsSendRequest
+import org.aurorasms.core.telephony.MmsSubmissionOwnership
 import org.aurorasms.core.telephony.OutgoingMmsPayload
 import org.aurorasms.core.telephony.RecipientSet
 import org.aurorasms.core.telephony.SmsSendRequest
@@ -151,7 +152,10 @@ class VoiceMemoControllerTest {
             ownership: SmsSubmissionOwnership,
         ): TransportResult = error("SMS must not be used for a voice memo")
 
-        override suspend fun sendMms(request: MmsSendRequest): TransportResult {
+        override suspend fun sendMms(
+            request: MmsSendRequest,
+            ownership: MmsSubmissionOwnership,
+        ): TransportResult {
             this.request = request
             return TransportResult.Submitted(
                 operationId = request.operationId,

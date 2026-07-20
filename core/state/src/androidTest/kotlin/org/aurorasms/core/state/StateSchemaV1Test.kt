@@ -56,11 +56,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionTwelve_hasBoundedStateTablesSpamSafetyAndFrozenSignatures() {
+    fun schemaVersionThirteen_hasBoundedStateTablesAndComposerTransportOwnership() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(12, AuroraStateDatabase.VERSION)
+            assertEquals(13, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -219,6 +219,7 @@ class StateSchemaCurrentTest {
                     "draft_id",
                     "draft_revision_ms",
                     "subscription_id",
+                    "transport_code",
                     "phase_code",
                     "provider_message_id",
                     "provider_conversation_id",
@@ -242,13 +243,14 @@ class StateSchemaCurrentTest {
             assertTrue(
                 sqlite.indexIsUnique(
                     "composer_sms_operations",
-                    "index_composer_sms_operations_provider_message_id",
+                    "index_composer_sms_operations_transport_code_provider_message_id",
                 ),
             )
             assertEquals(
                 setOf(
                     "local_operation_id",
                     "provider_message_id",
+                    "provider_kind_code",
                     "provider_conversation_id",
                     "unit_count",
                     "callback_proof_code",
@@ -260,7 +262,7 @@ class StateSchemaCurrentTest {
             assertTrue(
                 sqlite.indexIsUnique(
                     "acknowledged_composer_sms_receipts",
-                    "index_acknowledged_composer_sms_receipts_provider_message_id",
+                    "index_acknowledged_composer_sms_receipts_provider_kind_code_provider_message_id",
                 ),
             )
             assertEquals(

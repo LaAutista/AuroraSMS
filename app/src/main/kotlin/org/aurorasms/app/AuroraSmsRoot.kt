@@ -99,6 +99,7 @@ import org.aurorasms.core.index.conversation.ConversationLookupResult
 import org.aurorasms.core.index.conversation.ConversationSummary
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageDirection
+import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
@@ -1073,6 +1074,11 @@ private fun ThreadRoute(
         is DraftWriteStatus.Active -> status.latest.body.orEmpty()
         is DraftWriteStatus.Failed -> status.latest.body.orEmpty()
     }
+    val visibleSubject = when (val status = draftStatus) {
+        DraftWriteStatus.Loading -> ""
+        is DraftWriteStatus.Active -> status.latest.subject.orEmpty()
+        is DraftWriteStatus.Failed -> status.latest.subject.orEmpty()
+    }
     val unsignedSegmentCount = visibleBody.takeIf(String::isNotBlank)
         ?.let(services::countSmsSegments)
     val resolvedOutgoingBody = visibleBody.takeIf(String::isNotBlank)
@@ -1300,7 +1306,21 @@ private fun ThreadRoute(
             onAnchorRestored = holder::anchorRestored,
             onToggleMessageExpansion = holder::toggleMessageExpansion,
             onDraftChanged = { body ->
-                val content = DraftEditorContent(body = body.takeIf(String::isNotEmpty), subject = null)
+                val content = DraftEditorContent(
+                    body = body.takeIf(String::isNotEmpty),
+                    subject = visibleSubject.takeIf(String::isNotEmpty),
+                )
+                if (writer.submit(content)) {
+                    val token = (writer.status.value as? DraftWriteStatus.Active)
+                        ?.toRestorationToken()
+                    if (token != null) savedDraftRestoration = SavedDraftRestoration(token)
+                }
+            },
+            onDraftSubjectChanged = { subject ->
+                val content = DraftEditorContent(
+                    body = visibleBody.takeIf(String::isNotEmpty),
+                    subject = subject.takeIf(String::isNotEmpty),
+                )
                 if (writer.submit(content)) {
                     val token = (writer.status.value as? DraftWriteStatus.Active)
                         ?.toRestorationToken()
@@ -1354,21 +1374,27 @@ private fun ThreadRoute(
                             val subscription = subscriptionSelection.selected
                                 ?.takeIf { it.smsCapable }
                                 ?: return@launch
-                            if (
-                                identity.providerThreadId != route.providerThreadId ||
-                                identity.participants.size != 1 ||
-                                resolveOutgoingBody(
-                                    frozen.content.body.orEmpty(),
-                                    effectiveSignature,
-                                )?.let(services::countSmsSegments) != 1
-                            ) {
+                            val outgoingSegmentCount = resolveOutgoingBody(
+                                frozen.content.body.orEmpty(),
+                                effectiveSignature,
+                            )?.let(services::countSmsSegments) ?: return@launch
+                            if (identity.providerThreadId != route.providerThreadId) {
                                 return@launch
+                            }
+                            val transportKind = if (
+                                identity.participants.size > 1 ||
+                                !frozen.content.subject.isNullOrBlank() ||
+                                outgoingSegmentCount != 1
+                            ) {
+                                MessageTransportKind.MMS
+                            } else {
+                                MessageTransportKind.SMS
                             }
                             // Once control enters the durable coordinator, a
                             // cancellation or unexpected exception is not proof
                             // that submission was refused. Keep the writer
                             // frozen until recovery classifies the operation.
-                            if (sendDelaySeconds > 0) {
+                            if (sendDelaySeconds > 0 && transportKind == MessageTransportKind.SMS) {
                                 sendDelayEntered = true
                                 sendDelayAttempt = withContext(NonCancellable) {
                                     sendDelayController.enqueue(
@@ -1392,6 +1418,7 @@ private fun ThreadRoute(
                                             draftId = frozen.draftId,
                                             draftRevision = frozen.revision,
                                             frozenSignature = effectiveSignature,
+                                            transport = transportKind,
                                         ),
                                     )
                                 }
@@ -2194,11 +2221,19 @@ private fun DraftWriteStatus.toComposerUiState(
         is DraftWriteStatus.Active -> latest.body.orEmpty()
         is DraftWriteStatus.Failed -> latest.body.orEmpty()
     }
+    val subject = when (this) {
+        DraftWriteStatus.Loading -> ""
+        is DraftWriteStatus.Active -> latest.subject.orEmpty()
+        is DraftWriteStatus.Failed -> latest.subject.orEmpty()
+    }
     val saving = this is DraftWriteStatus.Loading ||
         (this is DraftWriteStatus.Active && this.saving)
     val failed = this is DraftWriteStatus.Failed
     val ready = threadState as? ThreadUiState.Ready
     val verifiedIdentity = ready?.verifiedConversationIdentity
+    val mmsRequired = verifiedIdentity?.let { identity ->
+        identity.participants.size > 1 || subject.isNotBlank() || (segmentCount ?: 1) != 1
+    } ?: false
     val unavailableReason = when {
         sendObservation.phase == ThreadSmsSendPhase.RECOVERY_PENDING ->
             ComposerUnavailableReason.RECOVERY_PENDING
@@ -2213,12 +2248,9 @@ private fun DraftWriteStatus.toComposerUiState(
         !signatureStateAllowsSend -> ComposerUnavailableReason.SIGNATURE_STATE_UNAVAILABLE
         ready == null || !ready.verifiedConversationIdentityResolved || verifiedIdentity == null ->
             ComposerUnavailableReason.CONVERSATION_UNVERIFIED
-        verifiedIdentity.participants.size != 1 ->
-            ComposerUnavailableReason.GROUP_REQUIRES_MMS
         !selectedSubscriptionAvailable ->
             ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE
         segmentCount == null -> ComposerUnavailableReason.MESSAGING_UNAVAILABLE
-        segmentCount != 1 -> ComposerUnavailableReason.MULTIPART_UNAVAILABLE
         else -> null
     }
     val sendState = when {
@@ -2243,6 +2275,7 @@ private fun DraftWriteStatus.toComposerUiState(
     }
     return ComposerUiState(
         body = body,
+        subject = subject,
         saving = saving,
         failed = failed,
         sendState = sendState,
@@ -2250,6 +2283,7 @@ private fun DraftWriteStatus.toComposerUiState(
         segmentCount = segmentCount,
         unsignedSegmentCount = unsignedSegmentCount,
         signatureApplied = signatureApplied,
+        mmsRequired = mmsRequired,
         scheduleState = scheduleObservation.toComposerScheduleState(),
         sendDelayDueTimestampMillis = when (sendState) {
             ComposerSendState.DELAY_PENDING ->

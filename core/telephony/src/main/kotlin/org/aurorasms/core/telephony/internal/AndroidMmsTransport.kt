@@ -13,8 +13,10 @@ import android.telephony.SmsManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ParticipantAddress
@@ -30,6 +32,7 @@ import org.aurorasms.core.telephony.MmsDownloadRequest
 import org.aurorasms.core.telephony.MmsProviderDataSource
 import org.aurorasms.core.telephony.MmsStagedPduDisposition
 import org.aurorasms.core.telephony.MmsSendRequest
+import org.aurorasms.core.telephony.MmsSubmissionOwnership
 import org.aurorasms.core.telephony.OutgoingMmsPayload
 import org.aurorasms.core.telephony.OutgoingMmsProviderRecord
 import org.aurorasms.core.telephony.OutgoingMmsProviderStatus
@@ -40,6 +43,7 @@ import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderStoredMessage
 import org.aurorasms.core.telephony.SubscriptionRepository
 import org.aurorasms.core.telephony.acceptsNewSubmissions
+import org.aurorasms.core.telephony.hasValidOperationOwnership
 import org.aurorasms.core.telephony.receiver.MmsDownloadResultReceiver
 import org.aurorasms.core.telephony.receiver.MmsSendResultReceiver
 
@@ -62,8 +66,13 @@ class AndroidMmsTransport(
     private val incomingDownloadMutex = Mutex()
     private val incomingDecoder = BoundedMmsPduDecoder()
 
-    suspend fun sendMms(request: MmsSendRequest): TransportResult =
-        if (
+    suspend fun sendMms(
+        request: MmsSendRequest,
+        ownership: MmsSubmissionOwnership = MmsSubmissionOwnership.TransportOwned,
+    ): TransportResult =
+        if (!request.hasValidOperationOwnership(ownership)) {
+            request.failed(TransportResult.FailureReason.INTERNAL_ERROR, retryable = false)
+        } else if (
             request.payload is OutgoingMmsPayload.VoiceMemo ||
             request.payload is OutgoingMmsPayload.Message
         ) {
@@ -74,11 +83,11 @@ class AndroidMmsTransport(
                         retryable = true,
                     )
                 } else {
-                    sendMmsLocked(request)
+                    sendMmsLocked(request, ownership)
                 }
             }
         } else {
-            sendMmsLocked(request)
+            sendMmsLocked(request, ownership)
         }
 
     suspend fun recoverOutgoingSubmissions(): OutgoingMmsRecoveryResult =
@@ -131,7 +140,10 @@ class AndroidMmsTransport(
             )
         }
 
-    private suspend fun sendMmsLocked(request: MmsSendRequest): TransportResult {
+    private suspend fun sendMmsLocked(
+        request: MmsSendRequest,
+        ownership: MmsSubmissionOwnership,
+    ): TransportResult {
         val rejection = preflight(request.subscriptionId.value)
         if (rejection != null) return request.rejected(rejection)
         val encodedVoiceMemo = when (val payload = request.payload) {
@@ -196,6 +208,28 @@ class AndroidMmsTransport(
         if ((encodedVoiceMemo != null || encodedGeneral != null) && stored == null) {
             return request.rejected(TransportResult.FailureReason.PROVIDER_UNAVAILABLE)
         }
+        val observer = (ownership as? MmsSubmissionOwnership.CallerOwned)?.observer
+        if (stored != null && observer != null) {
+            val preparedAllowed = try {
+                mmsObserverAllows {
+                    observer.onPrepared(stored.providerId, stored.conversationId, MMS_UNIT_COUNT)
+                }
+            } catch (cancelled: CancellationException) {
+                withContext(NonCancellable) {
+                    runCatching { terminalizeKnownUnsent(request, stored) }
+                }
+                throw cancelled
+            }
+            if (!preparedAllowed) {
+                terminalizeKnownUnsent(request, stored)
+                return request.failed(
+                    reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                    retryable = true,
+                    providerId = stored.providerId,
+                    conversationId = stored.conversationId,
+                )
+            }
+        }
         val staged = when (val result = stagingStore.stageSend(request.operationId, encoded)) {
             is MmsStagingResult.Ready -> result.staged
             is MmsStagingResult.Failed -> {
@@ -221,6 +255,7 @@ class AndroidMmsTransport(
                     stagedUri = staged.uri,
                     providerId = stored?.providerId,
                     conversationId = stored?.conversationId,
+                    operationOrigin = request.operationOrigin,
                 ),
                 CALLBACK_FLAGS,
             )
@@ -259,6 +294,43 @@ class AndroidMmsTransport(
                 terminalizeKnownUnsent(request, stored)
                 return request.rejected(TransportResult.FailureReason.PROVIDER_UNAVAILABLE)
             }
+            if (observer != null) {
+                val submittingAllowed = try {
+                    mmsObserverAllows {
+                        observer.onSubmitting(
+                            stored.providerId,
+                            stored.conversationId,
+                            MMS_UNIT_COUNT,
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    stagingStore.cleanup(staged.uri, MmsPduDirection.SEND_SOURCE)
+                    withContext(NonCancellable) {
+                        runCatching { terminalizeKnownUnsent(request, stored) }
+                    }
+                    throw cancelled
+                }
+                if (!submittingAllowed) {
+                    stagingStore.cleanup(staged.uri, MmsPduDirection.SEND_SOURCE)
+                    terminalizeKnownUnsent(request, stored)
+                    return request.failed(
+                        reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                        retryable = true,
+                        providerId = stored.providerId,
+                        conversationId = stored.conversationId,
+                    )
+                }
+            }
+            if (!roleState.isRoleHeld()) {
+                stagingStore.cleanup(staged.uri, MmsPduDirection.SEND_SOURCE)
+                terminalizeKnownUnsent(request, stored)
+                return request.failed(
+                    reason = TransportResult.FailureReason.ROLE_NOT_HELD,
+                    retryable = false,
+                    providerId = stored.providerId,
+                    conversationId = stored.conversationId,
+                )
+            }
         }
         return try {
             val submitter = sendSubmitter
@@ -282,6 +354,7 @@ class AndroidMmsTransport(
                 unitCount = 1,
                 providerMessageId = stored?.providerId,
                 providerConversationId = stored?.conversationId,
+                operationOrigin = request.operationOrigin,
             )
         } catch (_: RuntimeException) {
             if (stored == null) {
@@ -903,6 +976,7 @@ class AndroidMmsTransport(
     }.getOrDefault(false)
 
     companion object {
+        private const val MMS_UNIT_COUNT = 1
         private const val MMS_SEND_CHANNEL = 0x4D51
         private const val MMS_DOWNLOAD_CHANNEL = 0x4D71
         private const val MMS_NOTIFICATION_FALLBACK_BODY = "Multimedia message"
@@ -910,6 +984,15 @@ class AndroidMmsTransport(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
     }
 }
+
+private suspend fun mmsObserverAllows(callback: suspend () -> Boolean): Boolean =
+    try {
+        callback()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: RuntimeException) {
+        false
+    }
 
 enum class OutgoingMmsCallbackDisposition {
     IGNORED,
@@ -1046,7 +1129,7 @@ private fun ProviderAccessResult<OutgoingMmsStatusUpdateOutcome>.isOwnershipConf
     this is ProviderAccessResult.Success && value == OutgoingMmsStatusUpdateOutcome.OWNERSHIP_CONFLICT
 
 private fun MmsSendRequest.rejected(reason: TransportResult.FailureReason): TransportResult.Rejected =
-    TransportResult.Rejected(operationId, MessageTransportKind.MMS, reason)
+    TransportResult.Rejected(operationId, MessageTransportKind.MMS, reason, operationOrigin)
 
 private fun MmsSendRequest.failed(
     reason: TransportResult.FailureReason,
@@ -1062,6 +1145,7 @@ private fun MmsSendRequest.failed(
     providerMessageId = providerId,
     providerConversationId = conversationId,
     stage = stage,
+    operationOrigin = operationOrigin,
 )
 
 private fun MmsDownloadRequest.rejected(reason: TransportResult.FailureReason): TransportResult.Rejected =

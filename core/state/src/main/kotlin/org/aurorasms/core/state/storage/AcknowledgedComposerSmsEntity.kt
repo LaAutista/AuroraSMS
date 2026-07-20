@@ -21,7 +21,7 @@ internal const val ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS_TABLE: String =
 @Entity(
     tableName = ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS_TABLE,
     indices = [
-        Index(value = ["provider_message_id"], unique = true),
+        Index(value = ["provider_kind_code", "provider_message_id"], unique = true),
         Index(value = ["updated_timestamp_ms", "local_operation_id"]),
     ],
 )
@@ -31,6 +31,8 @@ internal data class AcknowledgedComposerSmsEntity(
     val localOperationId: Long,
     @ColumnInfo(name = "provider_message_id")
     val providerMessageId: Long,
+    @ColumnInfo(name = "provider_kind_code", defaultValue = "'sms_v1'")
+    val providerKindCode: String = ProviderKind.SMS.storageCode,
     @ColumnInfo(name = "provider_conversation_id")
     val providerConversationId: Long,
     @ColumnInfo(name = "unit_count")
@@ -56,7 +58,11 @@ internal fun AcknowledgedComposerSmsEntity.toDomain(): AcknowledgedComposerSmsRe
             COMPOSER_OPERATION_ID_BOUNDARY + localOperationId,
         ),
         providerBinding = ComposerSmsProviderBinding(
-            providerMessageId = ProviderMessageId(ProviderKind.SMS, providerMessageId),
+            providerMessageId = ProviderMessageId(
+                providerKindFromStorageCode(providerKindCode)
+                    ?: error("Stored acknowledged composer provider kind is unknown"),
+                providerMessageId,
+            ),
             providerConversationId = ConversationId(providerConversationId),
             unitCount = unitCount,
         ),
@@ -65,6 +71,19 @@ internal fun AcknowledgedComposerSmsEntity.toDomain(): AcknowledgedComposerSmsRe
         acknowledgedTimestampMillis = acknowledgedTimestampMillis,
         updatedTimestampMillis = updatedTimestampMillis,
     )
+}
+
+internal val ProviderKind.storageCode: String
+    get() = when (this) {
+        ProviderKind.SMS -> "sms_v1"
+        ProviderKind.MMS -> "mms_v1"
+        else -> error("Only telephony provider kinds can be stored for composer callbacks")
+    }
+
+internal fun providerKindFromStorageCode(value: String): ProviderKind? = when (value) {
+    "sms_v1" -> ProviderKind.SMS
+    "mms_v1" -> ProviderKind.MMS
+    else -> null
 }
 
 internal val AcknowledgedComposerSmsCallbackProof.storageCode: String

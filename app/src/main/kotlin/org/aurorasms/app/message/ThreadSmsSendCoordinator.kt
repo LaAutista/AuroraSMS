@@ -22,6 +22,7 @@ import org.aurorasms.core.index.conversation.ConversationRepository
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.model.asConversationId
@@ -41,6 +42,13 @@ import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
 import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.MessageTransport
+import org.aurorasms.core.telephony.MmsProviderDataSource
+import org.aurorasms.core.telephony.MmsSendRequest
+import org.aurorasms.core.telephony.MmsSubmissionObserver
+import org.aurorasms.core.telephony.MmsSubmissionOwnership
+import org.aurorasms.core.telephony.OutgoingMmsPayload
+import org.aurorasms.core.telephony.OutgoingMmsProviderStatus
+import org.aurorasms.core.telephony.OutgoingMmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
 import org.aurorasms.core.telephony.OutgoingSmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
@@ -48,7 +56,6 @@ import org.aurorasms.core.telephony.RecipientSet
 import org.aurorasms.core.telephony.SmsProviderDataSource
 import org.aurorasms.core.telephony.SmsProviderStatus
 import org.aurorasms.core.telephony.SmsSendRequest
-import org.aurorasms.core.telephony.SmsSubmissionObserver
 import org.aurorasms.core.telephony.SmsSubmissionOwnership
 import org.aurorasms.core.telephony.SubscriptionRepository
 
@@ -60,6 +67,7 @@ internal class ThreadSmsSendCoordinator(
     private val operations: ComposerSmsOperationRepository,
     private val transport: MessageTransport,
     private val smsProvider: SmsProviderDataSource,
+    private val mmsProvider: MmsProviderDataSource,
     private val subscriptionPreferences: ConversationSubscriptionPreferenceRepository =
         NoConversationSubscriptionPreferenceRepository,
     private val segmentCounter: SmsSegmentCounter = AndroidSmsSegmentCounter,
@@ -111,11 +119,7 @@ internal class ThreadSmsSendCoordinator(
                 if (!prepareExistingTerminal(command.identity.providerThreadId)) {
                     return@withLock ThreadSmsSendAttempt.REFUSED
                 }
-                val recipient = revalidateCommand(command) ?: return@withLock ThreadSmsSendAttempt.REFUSED
-                val recipients = when (val parsed = RecipientSet.from(listOf(recipient))) {
-                    is RecipientSet.CreationResult.Valid -> parsed.recipients
-                    is RecipientSet.CreationResult.Rejected -> return@withLock ThreadSmsSendAttempt.REFUSED
-                }
+                val recipients = revalidateCommand(command) ?: return@withLock ThreadSmsSendAttempt.REFUSED
                 val reservation = when (
                     val result = operations.reserve(
                         ComposerSmsReservationRequest(
@@ -125,6 +129,7 @@ internal class ThreadSmsSendCoordinator(
                             subscriptionId = command.subscriptionId,
                             createdTimestampMillis = safeNow(),
                             frozenSignature = command.frozenSignature,
+                            transport = command.transport,
                         ),
                     )
                 ) {
@@ -143,15 +148,19 @@ internal class ThreadSmsSendCoordinator(
                         reservation.authoritativeBody,
                         ownedOperation.frozenSignature,
                     )
+                    if (outgoingBody == null) {
+                        if (markKnownUnsent(ownedOperation) == null) requestClassificationRecovery()
+                        return@withLock ThreadSmsSendAttempt.STARTED
+                    }
                     if (
-                        outgoingBody == null ||
+                        ownedOperation.transport == MessageTransportKind.SMS &&
                         segmentCounter.count(outgoingBody) != REQUIRED_SMS_UNIT_COUNT
                     ) {
                         if (markKnownUnsent(ownedOperation) == null) requestClassificationRecovery()
                         return@withLock ThreadSmsSendAttempt.STARTED
                     }
                     val expectedConversationId = command.identity.providerThreadId.asConversationId()
-                    val observer = object : SmsSubmissionObserver {
+                    val observer = object : MmsSubmissionObserver {
                         override suspend fun onPrepared(
                             providerId: ProviderMessageId,
                             providerConversationId: ConversationId,
@@ -216,17 +225,34 @@ internal class ThreadSmsSendCoordinator(
                             }
                         }
                     }
-                    val result = transport.sendSms(
-                        request = SmsSendRequest(
-                            operationId = ownedOperation.operationId,
-                            recipients = recipients,
-                            body = outgoingBody,
-                            subscriptionId = command.subscriptionId,
-                            requestDeliveryReport = false,
-                            operationOrigin = TransportResult.OperationOrigin.COMPOSER,
-                        ),
-                        ownership = SmsSubmissionOwnership.CallerOwned(observer),
-                    )
+                    val result = when (ownedOperation.transport) {
+                        MessageTransportKind.SMS -> transport.sendSms(
+                            request = SmsSendRequest(
+                                operationId = ownedOperation.operationId,
+                                recipients = recipients,
+                                body = outgoingBody,
+                                subscriptionId = command.subscriptionId,
+                                requestDeliveryReport = false,
+                                operationOrigin = TransportResult.OperationOrigin.COMPOSER,
+                            ),
+                            ownership = SmsSubmissionOwnership.CallerOwned(observer),
+                        )
+                        MessageTransportKind.MMS -> transport.sendMms(
+                            request = MmsSendRequest(
+                                operationId = ownedOperation.operationId,
+                                recipients = recipients,
+                                payload = OutgoingMmsPayload.Message(
+                                    text = outgoingBody,
+                                    subject = reservation.authoritativeSubject,
+                                    attachments = emptyList(),
+                                ),
+                                subscriptionId = command.subscriptionId,
+                                providerThreadId = command.identity.providerThreadId,
+                                operationOrigin = TransportResult.OperationOrigin.COMPOSER,
+                            ),
+                            ownership = MmsSubmissionOwnership.CallerOwned(observer),
+                        )
+                    }
                     // Once a durable reservation exists, immediate transport
                     // classification is part of the same safety envelope. Caller
                     // cancellation must not strand RESERVED or SUBMITTING work.
@@ -368,7 +394,7 @@ internal class ThreadSmsSendCoordinator(
         operationMutex.withLock {
             if (
                 result.operationOrigin != TransportResult.OperationOrigin.COMPOSER ||
-                result.transport != MessageTransportKind.SMS
+                result.transport !in setOf(MessageTransportKind.SMS, MessageTransportKind.MMS)
             ) {
                 return@withLock false
             }
@@ -381,6 +407,7 @@ internal class ThreadSmsSendCoordinator(
                     return@withLock false
                 }
             }
+            if (result.transport != operation.transport) return@withLock true
             val binding = result.exactSingleUnitBindingOrNull() ?: return@withLock true
             if (operation.providerBinding != binding) return@withLock true
             when (result) {
@@ -437,13 +464,22 @@ internal class ThreadSmsSendCoordinator(
 
     private suspend fun revalidateCommand(
         command: ThreadSmsSendCommand,
-    ): org.aurorasms.core.model.ParticipantAddress? {
+    ): RecipientSet? {
         val found = conversations.loadConversation(command.identity.providerThreadId)
             as? ConversationLookupResult.Found
             ?: return null
         val verifiedIdentity = found.verifiedIdentity ?: return null
         if (verifiedIdentity != command.identity) return null
-        val recipient = verifiedIdentity.participants.singleOrNull() ?: return null
+        val recipients = when (val parsed = RecipientSet.from(verifiedIdentity.participants)) {
+            is RecipientSet.CreationResult.Valid -> parsed.recipients
+            is RecipientSet.CreationResult.Rejected -> return null
+        }
+        if (
+            command.transport == MessageTransportKind.SMS &&
+            recipients.singleSmsRecipientOrNull() == null
+        ) {
+            return null
+        }
         val subscriptionScope = runCatching {
             ConversationSubscriptionScope(
                 participantSetKey = ConversationSubscriptionParticipantSetKey.fromParticipants(
@@ -465,7 +501,7 @@ internal class ThreadSmsSendCoordinator(
         }
         if (authoritativeSubscriptionId != command.subscriptionId) return null
         val subscription = subscriptions.findActive(command.subscriptionId) ?: return null
-        return recipient.takeIf { subscription.smsCapable && roleState.isRoleHeld() }
+        return recipients.takeIf { subscription.smsCapable && roleState.isRoleHeld() }
     }
 
     private suspend fun prepareExistingTerminal(providerThreadId: ProviderThreadId): Boolean {
@@ -582,7 +618,8 @@ internal class ThreadSmsSendCoordinator(
         }
         if (
             result.operationId != current.operationId ||
-            result.transport != MessageTransportKind.SMS
+            result.transport != current.transport ||
+            result.operationOrigin != TransportResult.OperationOrigin.COMPOSER
         ) {
             return reconcileInterrupted(current)
         }
@@ -660,6 +697,23 @@ internal class ThreadSmsSendCoordinator(
 
     private suspend fun rollbackPreBoundaryProvider(operation: ComposerSmsOperation): Boolean {
         val binding = operation.providerBinding ?: return false
+        if (binding.providerMessageId.kind == ProviderKind.MMS) {
+            return when (
+                val terminalized = mmsProvider.updateOutgoingStatus(
+                    binding.providerMessageId,
+                    binding.providerConversationId,
+                    OutgoingMmsProviderStatus.FAILED,
+                )
+            ) {
+                is ProviderAccessResult.Success -> when (terminalized.value) {
+                    OutgoingMmsStatusUpdateOutcome.APPLIED,
+                    OutgoingMmsStatusUpdateOutcome.ROW_ABSENT,
+                    OutgoingMmsStatusUpdateOutcome.OWNERSHIP_CONFLICT,
+                    -> true
+                }
+                else -> false
+            }
+        }
         return when (
             val rolledBack = smsProvider.rollbackOutgoing(
                 binding.providerMessageId,
@@ -770,18 +824,40 @@ internal class ThreadSmsSendCoordinator(
     private suspend fun settleProviderStatus(
         binding: ComposerSmsProviderBinding,
         status: SmsProviderStatus,
-    ): Boolean = when (
-        val result = smsProvider.updateOutgoingStatus(
-            id = binding.providerMessageId,
-            conversationId = binding.providerConversationId,
-            status = status,
-        )
-    ) {
-        is ProviderAccessResult.Success -> when (result.value) {
-            OutgoingSmsStatusUpdateOutcome.APPLIED,
-            OutgoingSmsStatusUpdateOutcome.ROW_ABSENT,
-            OutgoingSmsStatusUpdateOutcome.OWNERSHIP_CONFLICT,
-            -> true
+    ): Boolean = when (binding.providerMessageId.kind) {
+        ProviderKind.SMS -> when (
+            val result = smsProvider.updateOutgoingStatus(
+                id = binding.providerMessageId,
+                conversationId = binding.providerConversationId,
+                status = status,
+            )
+        ) {
+            is ProviderAccessResult.Success -> when (result.value) {
+                OutgoingSmsStatusUpdateOutcome.APPLIED,
+                OutgoingSmsStatusUpdateOutcome.ROW_ABSENT,
+                OutgoingSmsStatusUpdateOutcome.OWNERSHIP_CONFLICT,
+                -> true
+            }
+            else -> false
+        }
+        ProviderKind.MMS -> when (
+            val result = mmsProvider.updateOutgoingStatus(
+                id = binding.providerMessageId,
+                conversationId = binding.providerConversationId,
+                status = when (status) {
+                    SmsProviderStatus.COMPLETE -> OutgoingMmsProviderStatus.SENT
+                    SmsProviderStatus.FAILED -> OutgoingMmsProviderStatus.FAILED
+                    else -> return false
+                },
+            )
+        ) {
+            is ProviderAccessResult.Success -> when (result.value) {
+                OutgoingMmsStatusUpdateOutcome.APPLIED,
+                OutgoingMmsStatusUpdateOutcome.ROW_ABSENT,
+                OutgoingMmsStatusUpdateOutcome.OWNERSHIP_CONFLICT,
+                -> true
+            }
+            else -> false
         }
         else -> false
     }
@@ -864,7 +940,7 @@ internal class ThreadSmsSendCoordinator(
     private fun requestExactCallbackRetry(result: TransportResult): Boolean {
         if (
             result.operationOrigin != TransportResult.OperationOrigin.COMPOSER ||
-            result.transport != MessageTransportKind.SMS ||
+            result.transport !in setOf(MessageTransportKind.SMS, MessageTransportKind.MMS) ||
             result.exactSingleUnitBindingOrNull() == null
         ) {
             return false
@@ -1008,6 +1084,7 @@ internal class ThreadSmsSendCoordinator(
             draftId == other.draftId &&
             draftRevision == other.draftRevision &&
             subscriptionId == other.subscriptionId &&
+            transport == other.transport &&
             providerBinding == other.providerBinding
 
     private fun recordSentCompletion(operation: ComposerSmsOperation) {

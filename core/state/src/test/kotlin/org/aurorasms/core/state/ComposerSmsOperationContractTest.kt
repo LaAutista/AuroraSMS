@@ -7,6 +7,7 @@ import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
@@ -45,12 +46,18 @@ class ComposerSmsOperationContractTest {
         assertThrows(IllegalArgumentException::class.java) {
             validOperation(ComposerSmsOperationPhase.PREPARED, null)
         }
+        val mmsBinding = ComposerSmsProviderBinding(
+            providerMessageId = ProviderMessageId(ProviderKind.MMS, 9L),
+            providerConversationId = ConversationId(8L),
+            unitCount = 1,
+        )
+        validOperation(
+            ComposerSmsOperationPhase.PREPARED,
+            mmsBinding,
+            transport = MessageTransportKind.MMS,
+        )
         assertThrows(IllegalArgumentException::class.java) {
-            ComposerSmsProviderBinding(
-                providerMessageId = ProviderMessageId(ProviderKind.MMS, 9L),
-                providerConversationId = ConversationId(8L),
-                unitCount = 1,
-            )
+            validOperation(ComposerSmsOperationPhase.PREPARED, mmsBinding)
         }
         assertThrows(IllegalArgumentException::class.java) {
             binding.copy(unitCount = MAXIMUM_COMPOSER_SMS_UNIT_COUNT + 1)
@@ -58,14 +65,17 @@ class ComposerSmsOperationContractTest {
     }
 
     @Test
-    fun reservationCarriesAuthoritativeBodyOnlyInMemoryAndRedactsDiagnostics() {
+    fun reservationCarriesAuthoritativeContentOnlyInMemoryAndRedactsDiagnostics() {
         val secret = "synthetic-secret-composer-body"
+        val secretSubject = "synthetic-secret-composer-subject"
         val operation = validOperation(ComposerSmsOperationPhase.RESERVED, null)
-        val reservation = ComposerSmsReservation(operation, secret)
+        val reservation = ComposerSmsReservation(operation, secret, secretSubject)
 
         assertEquals(secret, reservation.authoritativeBody)
+        assertEquals(secretSubject, reservation.authoritativeSubject)
         assertFalse(operation.toString().contains(secret))
         assertFalse(reservation.toString().contains(secret))
+        assertFalse(reservation.toString().contains(secretSubject))
         assertEquals("ComposerSmsOperationRevision(REDACTED)", operation.revision.toString())
         assertEquals(
             "ComposerSmsOperationResult.Success(REDACTED)",
@@ -93,6 +103,7 @@ class ComposerSmsOperationContractTest {
         providerBinding: ComposerSmsProviderBinding?,
         createdTimestampMillis: Long = 10L,
         updatedTimestampMillis: Long = 20L,
+        transport: MessageTransportKind = MessageTransportKind.SMS,
     ): ComposerSmsOperation = ComposerSmsOperation(
         operationId = pendingId(COMPOSER_OPERATION_ID_BOUNDARY + 7L),
         providerThreadId = ProviderThreadId(6L),
@@ -103,6 +114,7 @@ class ComposerSmsOperationContractTest {
         providerBinding = providerBinding,
         createdTimestampMillis = createdTimestampMillis,
         updatedTimestampMillis = updatedTimestampMillis,
+        transport = transport,
     )
 
     private fun binding(): ComposerSmsProviderBinding = ComposerSmsProviderBinding(

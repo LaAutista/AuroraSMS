@@ -62,6 +62,8 @@ import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.telephony.ActiveSubscription
 import org.aurorasms.core.telephony.IncomingSmsRecord
 import org.aurorasms.core.telephony.OutgoingSmsRecord
+import org.aurorasms.core.telephony.OutgoingMmsPayload
+import org.aurorasms.core.telephony.OutgoingMmsProviderStatus
 import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
 import org.aurorasms.core.telephony.OutgoingSmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
@@ -74,6 +76,7 @@ import org.aurorasms.core.telephony.SmsProviderStatus
 import org.aurorasms.core.telephony.SmsSendRequest
 import org.aurorasms.core.telephony.SubscriptionSnapshot
 import org.aurorasms.core.testing.FakeMessageTransport
+import org.aurorasms.core.testing.FakeMmsProviderDataSource
 import org.aurorasms.core.testing.FakeRoleState
 import org.aurorasms.core.testing.FakeSubscriptionRepository
 import org.junit.Assert.assertEquals
@@ -130,6 +133,91 @@ class ThreadSmsSendCoordinatorTest {
             assertTrue(fixture.transport.mmsRequests.isEmpty())
             assertTrue(fixture.operations.draftPreserved)
         }
+    }
+
+    @Test
+    fun exactGroupConversationSubmitsOneDurablyOwnedMmsAndCompletesExactDraft() = runTest {
+        val groupIdentity = IDENTITY.copy(
+            participants = listOf(
+                ParticipantAddress("+12025550001"),
+                ParticipantAddress("+12025550002"),
+            ),
+        )
+        val fixture = fixture(verifiedIdentity = groupIdentity)
+        val mmsProviderId = ProviderMessageId(ProviderKind.MMS, PROVIDER_ID.value)
+        fixture.transport.mmsResponderWithObserver = { request, observer ->
+            assertTrue(observer.onPrepared(mmsProviderId, CONVERSATION_ID, unitCount = 1))
+            assertTrue(observer.onSubmitting(mmsProviderId, CONVERSATION_ID, unitCount = 1))
+            TransportResult.Submitted(
+                operationId = request.operationId,
+                transport = MessageTransportKind.MMS,
+                unitCount = 1,
+                providerMessageId = mmsProviderId,
+                providerConversationId = CONVERSATION_ID,
+                operationOrigin = request.operationOrigin,
+            )
+        }
+
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+        assertEquals(
+            ThreadSmsSendAttempt.STARTED,
+            fixture.coordinator.send(
+                COMMAND.copy(identity = groupIdentity, transport = MessageTransportKind.MMS),
+            ),
+        )
+
+        val request = fixture.transport.mmsRequests.single()
+        assertEquals(2, request.recipients.size)
+        assertEquals(TransportResult.OperationOrigin.COMPOSER, request.operationOrigin)
+        assertEquals(BODY, (request.payload as OutgoingMmsPayload.Message).text)
+        assertEquals(ComposerSmsOperationPhase.PLATFORM_ACCEPTED, fixture.operations.operation?.phase)
+        assertTrue(
+            fixture.coordinator.handleTransportResult(
+                TransportResult.Sent(
+                    operationId = checkNotNull(fixture.operations.operation).operationId,
+                    transport = MessageTransportKind.MMS,
+                    platformResultCode = 0,
+                    providerMessageId = mmsProviderId,
+                    providerConversationId = CONVERSATION_ID,
+                    operationOrigin = TransportResult.OperationOrigin.COMPOSER,
+                ),
+            ),
+        )
+        assertNull(fixture.operations.operation)
+        assertFalse(fixture.operations.draftPreserved)
+        assertEquals(
+            OutgoingMmsProviderStatus.SENT,
+            fixture.mmsProvider.outgoingStatusUpdates.single().third,
+        )
+    }
+
+    @Test
+    fun subjectUsesMmsAndRemainsBoundToAuthoritativeReservedDraft() = runTest {
+        val fixture = fixture()
+        fixture.operations.authoritativeSubject = "Synthetic subject"
+        val mmsProviderId = ProviderMessageId(ProviderKind.MMS, PROVIDER_ID.value)
+        fixture.transport.mmsResponderWithObserver = { request, observer ->
+            assertTrue(observer.onPrepared(mmsProviderId, CONVERSATION_ID, 1))
+            assertTrue(observer.onSubmitting(mmsProviderId, CONVERSATION_ID, 1))
+            TransportResult.Submitted(
+                operationId = request.operationId,
+                transport = MessageTransportKind.MMS,
+                unitCount = 1,
+                providerMessageId = mmsProviderId,
+                providerConversationId = CONVERSATION_ID,
+                operationOrigin = request.operationOrigin,
+            )
+        }
+
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+        assertEquals(
+            ThreadSmsSendAttempt.STARTED,
+            fixture.coordinator.send(COMMAND.copy(transport = MessageTransportKind.MMS)),
+        )
+
+        val payload = fixture.transport.mmsRequests.single().payload as OutgoingMmsPayload.Message
+        assertEquals("Synthetic subject", payload.subject)
+        assertEquals(BODY, payload.text)
     }
 
     @Test
@@ -1057,6 +1145,7 @@ class ThreadSmsSendCoordinatorTest {
         val transport = FakeMessageTransport()
         val conversations = ExactConversationRepository(conversationSubscriptionId, verifiedIdentity)
         val role = FakeRoleState(held = true)
+        val mmsProvider = FakeMmsProviderDataSource()
         val coordinator = ThreadSmsSendCoordinator(
             applicationScope = backgroundScope,
             roleState = role,
@@ -1076,13 +1165,14 @@ class ThreadSmsSendCoordinatorTest {
             operations = operations,
             transport = transport,
             smsProvider = provider,
+            mmsProvider = mmsProvider,
             subscriptionPreferences = FixedConversationSubscriptionPreferenceRepository(
                 subscriptionPreference,
             ),
             segmentCounter = segmentCounter,
             nowMillis = { operations.nextClockValue() },
         )
-        return Fixture(coordinator, operations, provider, transport, conversations, role)
+        return Fixture(coordinator, operations, provider, mmsProvider, transport, conversations, role)
     }
 
     private fun Fixture.exactSentCallback(): TransportResult.Sent {
@@ -1101,6 +1191,7 @@ class ThreadSmsSendCoordinatorTest {
         val coordinator: ThreadSmsSendCoordinator,
         val operations: RecordingComposerRepository,
         val provider: RecordingSmsProvider,
+        val mmsProvider: FakeMmsProviderDataSource,
         val transport: FakeMessageTransport,
         val conversations: ExactConversationRepository,
         val role: FakeRoleState,
@@ -1324,14 +1415,21 @@ private class RecordingComposerRepository(
             createdTimestampMillis = request.createdTimestampMillis,
             updatedTimestampMillis = request.createdTimestampMillis,
             frozenSignature = request.frozenSignature,
+            transport = request.transport,
         )
         publish(created)
         afterReserve()
         reserveResultAfterCommit?.let { return it }
         return ComposerSmsOperationResult.Success(
-            ComposerSmsReservation(created, ThreadSmsSendCoordinatorTest.BODY),
+            ComposerSmsReservation(
+                created,
+                ThreadSmsSendCoordinatorTest.BODY,
+                authoritativeSubject,
+            ),
         )
     }
+
+    var authoritativeSubject: String? = null
 
     override suspend fun read(
         operationId: MessageId,

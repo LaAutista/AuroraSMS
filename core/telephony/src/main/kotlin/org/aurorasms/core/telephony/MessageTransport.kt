@@ -396,6 +396,7 @@ data class MmsSendRequest(
     val payload: OutgoingMmsPayload,
     val subscriptionId: AuroraSubscriptionId,
     val providerThreadId: ProviderThreadId? = null,
+    val operationOrigin: TransportResult.OperationOrigin = TransportResult.OperationOrigin.UNMARKED,
 ) {
     init {
         require(operationId.kind == ProviderKind.PENDING_OPERATION) {
@@ -419,6 +420,32 @@ data class MmsSendRequest(
         return "MmsSendRequest(recipientCount=${recipients.size}, payload=$payloadKind, " +
             "hasProviderThread=${providerThreadId != null}, REDACTED)"
     }
+}
+
+/** Durability gates awaited around one irreversible high-level MMS platform submission. */
+interface MmsSubmissionObserver : SmsSubmissionObserver
+
+/** Selects the durable caller, if any, that owns the high-level MMS composer lifecycle. */
+sealed interface MmsSubmissionOwnership {
+    data object TransportOwned : MmsSubmissionOwnership
+
+    data class CallerOwned(val observer: MmsSubmissionObserver) : MmsSubmissionOwnership
+}
+
+fun MmsSendRequest.hasValidOperationOwnership(
+    ownership: MmsSubmissionOwnership,
+): Boolean = when (ownership) {
+    MmsSubmissionOwnership.TransportOwned ->
+        operationOrigin == TransportResult.OperationOrigin.UNMARKED &&
+            operationId.pendingOperationNamespaceOrNull() in setOf(
+                PendingOperationNamespace.RESPOND_VIA,
+                PendingOperationNamespace.COMPOSER,
+            )
+    is MmsSubmissionOwnership.CallerOwned ->
+        operationOrigin == TransportResult.OperationOrigin.COMPOSER &&
+            operationId.pendingOperationNamespaceOrNull() == PendingOperationNamespace.COMPOSER &&
+            payload is OutgoingMmsPayload.Message &&
+            providerThreadId != null
 }
 
 data class MmsDownloadRequest(
@@ -461,7 +488,10 @@ interface MessageTransport {
         ownership: SmsSubmissionOwnership,
     ): TransportResult
 
-    suspend fun sendMms(request: MmsSendRequest): TransportResult
+    suspend fun sendMms(
+        request: MmsSendRequest,
+        ownership: MmsSubmissionOwnership = MmsSubmissionOwnership.TransportOwned,
+    ): TransportResult
 
     suspend fun downloadMms(request: MmsDownloadRequest): TransportResult
 }

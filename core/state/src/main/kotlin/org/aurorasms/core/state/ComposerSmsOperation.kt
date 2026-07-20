@@ -8,6 +8,7 @@ import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.INLINE_REPLY_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
@@ -47,8 +48,8 @@ data class ComposerSmsProviderBinding(
     val unitCount: Int,
 ) {
     init {
-        require(providerMessageId.kind == ProviderKind.SMS) {
-            "Composer SMS operations require an SMS provider ID"
+        require(providerMessageId.kind.isTelephonyProvider) {
+            "Composer operations require an SMS or MMS provider ID"
         }
         require(unitCount in 1..MAXIMUM_COMPOSER_SMS_UNIT_COUNT) {
             "Composer SMS unit count is out of bounds"
@@ -70,6 +71,7 @@ data class ComposerSmsOperation(
     val createdTimestampMillis: Long,
     val updatedTimestampMillis: Long,
     val frozenSignature: MessageSignature? = null,
+    val transport: MessageTransportKind = MessageTransportKind.SMS,
 ) {
     init {
         require(operationId.isComposerSmsOperationId()) {
@@ -81,6 +83,9 @@ data class ComposerSmsOperation(
         }
         require(phase.acceptsBinding(providerBinding)) {
             "Composer SMS phase and provider binding disagree"
+        }
+        require(providerBinding == null || providerBinding.providerMessageId.kind == transport.providerKind) {
+            "Composer transport and provider binding disagree"
         }
     }
 
@@ -142,6 +147,7 @@ data class ComposerSmsReservationRequest(
     val subscriptionId: AuroraSubscriptionId,
     val createdTimestampMillis: Long,
     val frozenSignature: MessageSignature? = null,
+    val transport: MessageTransportKind = MessageTransportKind.SMS,
 ) {
     init {
         require(createdTimestampMillis >= 0L) { "Composer SMS creation time cannot be negative" }
@@ -154,11 +160,18 @@ data class ComposerSmsReservationRequest(
 data class ComposerSmsReservation(
     val operation: ComposerSmsOperation,
     val authoritativeBody: String,
+    val authoritativeSubject: String? = null,
 ) {
     init {
         require(authoritativeBody.isNotBlank()) { "A reserved composer SMS body cannot be blank" }
         require(authoritativeBody.length <= Draft.MAX_BODY_CHARACTERS) {
             "A reserved composer SMS body is too large"
+        }
+        require(authoritativeSubject == null || authoritativeSubject.isNotBlank()) {
+            "A reserved composer subject cannot be blank"
+        }
+        require(authoritativeSubject == null || authoritativeSubject.length <= Draft.MAX_SUBJECT_CHARACTERS) {
+            "A reserved composer subject is too large"
         }
     }
 
@@ -349,3 +362,9 @@ internal fun ComposerSmsOperationPhase.acceptsBinding(binding: ComposerSmsProvid
 const val MAXIMUM_COMPOSER_SMS_OPERATIONS: Int = 128
 const val MAXIMUM_ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS: Int = 128
 const val MAXIMUM_COMPOSER_SMS_UNIT_COUNT: Int = 1
+
+internal val MessageTransportKind.providerKind: ProviderKind
+    get() = when (this) {
+        MessageTransportKind.SMS -> ProviderKind.SMS
+        MessageTransportKind.MMS -> ProviderKind.MMS
+    }

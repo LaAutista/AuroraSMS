@@ -29,6 +29,7 @@ internal object AcknowledgedComposerSmsEnforcement {
         "CREATE TRIGGER IF NOT EXISTS $INSERT_INTEGRITY_TRIGGER_NAME " +
             "BEFORE INSERT ON $ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS_TABLE WHEN " +
             "NEW.local_operation_id <= 0 OR " +
+            "NEW.provider_kind_code NOT IN ('sms_v1', 'mms_v1') OR " +
             "NEW.provider_message_id <= 0 OR NEW.provider_conversation_id <= 0 OR " +
             "NEW.unit_count < 1 OR NEW.unit_count > $MAXIMUM_COMPOSER_SMS_UNIT_COUNT OR " +
             "NEW.callback_proof_code != 'awaiting_callback_v1' OR " +
@@ -40,6 +41,7 @@ internal object AcknowledgedComposerSmsEnforcement {
         "CREATE TRIGGER IF NOT EXISTS $UPDATE_INTEGRITY_TRIGGER_NAME " +
             "BEFORE UPDATE ON $ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS_TABLE WHEN " +
             "NEW.local_operation_id != OLD.local_operation_id OR " +
+            "NEW.provider_kind_code != OLD.provider_kind_code OR " +
             "NEW.provider_message_id != OLD.provider_message_id OR " +
             "NEW.provider_conversation_id != OLD.provider_conversation_id OR " +
             "NEW.unit_count != OLD.unit_count OR " +
@@ -48,6 +50,16 @@ internal object AcknowledgedComposerSmsEnforcement {
             "OLD.callback_proof_code != 'awaiting_callback_v1' OR " +
             "NEW.callback_proof_code NOT IN ('sent_v1', 'failed_v1') " +
             "BEGIN SELECT RAISE(ABORT, 'invalid acknowledged composer SMS transition'); END"
+
+    /** The version-6 receipt table predates the explicit SMS/MMS provider kind. */
+    val CREATE_INSERT_INTEGRITY_TRIGGER_V6: String =
+        CREATE_INSERT_INTEGRITY_TRIGGER
+            .replace("NEW.provider_kind_code NOT IN ('sms_v1', 'mms_v1') OR ", "")
+
+    /** The version-6 receipt table predates the explicit SMS/MMS provider kind. */
+    val CREATE_UPDATE_INTEGRITY_TRIGGER_V6: String =
+        CREATE_UPDATE_INTEGRITY_TRIGGER
+            .replace("NEW.provider_kind_code != OLD.provider_kind_code OR ", "")
 
     val callback: RoomDatabase.Callback = object : RoomDatabase.Callback() {
         override fun onCreate(db: SupportSQLiteDatabase) = install(db)

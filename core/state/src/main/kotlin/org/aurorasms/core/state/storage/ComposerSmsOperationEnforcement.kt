@@ -34,6 +34,7 @@ internal object ComposerSmsOperationEnforcement {
             "BEFORE INSERT ON $COMPOSER_SMS_OPERATIONS_TABLE WHEN " +
             "NEW.provider_thread_id <= 0 OR NEW.draft_id <= 0 OR " +
             "NEW.draft_revision_ms < 0 OR NEW.subscription_id < 0 OR " +
+            "NEW.transport_code NOT IN ('sms_v1', 'mms_v1') OR " +
             "NEW.phase_code != 'reserved_v1' OR " +
             "NEW.provider_message_id IS NOT NULL OR " +
             "NEW.provider_conversation_id IS NOT NULL OR NEW.unit_count IS NOT NULL OR " +
@@ -50,6 +51,7 @@ internal object ComposerSmsOperationEnforcement {
             "NEW.draft_id != OLD.draft_id OR " +
             "NEW.draft_revision_ms != OLD.draft_revision_ms OR " +
             "NEW.subscription_id != OLD.subscription_id OR " +
+            "NEW.transport_code != OLD.transport_code OR " +
             SIGNATURE_UPDATE_CONDITION +
             "NEW.created_timestamp_ms != OLD.created_timestamp_ms OR " +
             "NEW.updated_timestamp_ms <= OLD.updated_timestamp_ms OR " +
@@ -95,11 +97,25 @@ internal object ComposerSmsOperationEnforcement {
 
     /** The version-5 table predates the optional frozen signature column. */
     val CREATE_INSERT_INTEGRITY_TRIGGER_V5: String =
-        CREATE_INSERT_INTEGRITY_TRIGGER.replace(SIGNATURE_INSERT_CONDITION, "")
+        CREATE_INSERT_INTEGRITY_TRIGGER
+            .replace("NEW.transport_code NOT IN ('sms_v1', 'mms_v1') OR ", "")
+            .replace(SIGNATURE_INSERT_CONDITION, "")
 
     /** The version-5 table predates the optional frozen signature column. */
     val CREATE_UPDATE_INTEGRITY_TRIGGER_V5: String =
-        CREATE_UPDATE_INTEGRITY_TRIGGER.replace(SIGNATURE_UPDATE_CONDITION, "")
+        CREATE_UPDATE_INTEGRITY_TRIGGER
+            .replace("NEW.transport_code != OLD.transport_code OR ", "")
+            .replace(SIGNATURE_UPDATE_CONDITION, "")
+
+    /** The version-11 table has frozen signatures but predates transport ownership. */
+    val CREATE_INSERT_INTEGRITY_TRIGGER_V11: String =
+        CREATE_INSERT_INTEGRITY_TRIGGER
+            .replace("NEW.transport_code NOT IN ('sms_v1', 'mms_v1') OR ", "")
+
+    /** The version-11 table has frozen signatures but predates transport ownership. */
+    val CREATE_UPDATE_INTEGRITY_TRIGGER_V11: String =
+        CREATE_UPDATE_INTEGRITY_TRIGGER
+            .replace("NEW.transport_code != OLD.transport_code OR ", "")
 
     val callback: RoomDatabase.Callback = object : RoomDatabase.Callback() {
         override fun onCreate(db: SupportSQLiteDatabase) = install(db)

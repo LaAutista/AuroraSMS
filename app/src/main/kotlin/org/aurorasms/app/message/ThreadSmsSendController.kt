@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.flowOf
 import org.aurorasms.core.index.conversation.VerifiedConversationIdentity
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ProviderThreadId
+import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
@@ -22,6 +23,7 @@ internal data class ThreadSmsSendCommand(
     val draftId: DraftId,
     val draftRevision: DraftRevision,
     val frozenSignature: MessageSignature? = null,
+    val transport: MessageTransportKind = MessageTransportKind.SMS,
 ) {
     override fun toString(): String = "ThreadSmsSendCommand(REDACTED)"
 }

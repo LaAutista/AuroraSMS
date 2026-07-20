@@ -525,6 +525,7 @@ class AppContainer(
                                 operations = composerRepository,
                                 transport = messageTransport,
                                 smsProvider = smsProviderDataSource,
+                                mmsProvider = mmsProviderDataSource,
                                 subscriptionPreferences =
                                     RoomConversationSubscriptionPreferenceRepository(result.database),
                             ),
@@ -612,6 +613,17 @@ class AppContainer(
                 enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
             }
             if (disposition.authenticated) voiceMemoController.handleTransportResult(result)
+            if (
+                disposition.authenticated &&
+                result.operationOrigin == TransportResult.OperationOrigin.COMPOSER
+            ) {
+                val composerOwned = threadSmsSendController.handleTransportResult(result)
+                if (composerOwned) {
+                    enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
+                    scheduledSmsController.reconcileDispatches()
+                    sendDelayController.reconcileDispatches()
+                }
+            }
             // A provider/role failure leaves the authenticated callback in the
             // content-free journal for the ordinary recovery pass.
             retryPendingInlineReplyOperations()
