@@ -1091,17 +1091,37 @@ private fun ThreadReady(
 
     Column(modifier = Modifier.fillMaxSize()) {
         if (!state.coverage.verifiedComplete) {
+            val checkedMessages = state.coverage.generationCommittedCount
+            val pluralCount = checkedMessages.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(INDEX_INCOMPLETE_NOTICE_TEST_TAG),
                 color = visualTokens.nearBlack.copy(alpha = 0.94f),
                 border = BorderStroke(1.dp, visualTokens.violet.copy(alpha = 0.32f)),
             ) {
-                Text(
-                    text = stringResource(R.string.index_incomplete),
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    color = visualTokens.lilacSecondary,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = visualTokens.violet,
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        text = pluralStringResource(
+                            R.plurals.index_incomplete_progress,
+                            pluralCount,
+                            checkedMessages,
+                        ),
+                        modifier = Modifier.weight(1f),
+                        color = visualTokens.lilacSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
         if (state.window.pendingNewer) {

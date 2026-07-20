@@ -85,6 +85,25 @@ class AppIndexCoordinatorTest {
     }
 
     @Test
+    fun roleChangeResumesCheckpointWithoutDirtyingPartialHistory() = runTest {
+        val events = mutableListOf<String>()
+        val coordinator = AppIndexCoordinator(
+            applicationScope = backgroundScope,
+            markPendingChanges = { events += "dirty" },
+            synchronize = { reasons ->
+                events += reasons.single().name
+                IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
+            },
+        )
+
+        assertTrue(coordinator.signal(IndexSignal.ROLE_CHANGED))
+        runCurrent()
+
+        assertEquals(listOf(IndexSignal.ROLE_CHANGED.name), events)
+        coordinator.close()
+    }
+
+    @Test
     fun pendingReconciliationContinuesWhileForegroundUntilComplete() = runTest {
         var runs = 0
         val coordinator = AppIndexCoordinator(

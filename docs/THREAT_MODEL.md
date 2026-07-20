@@ -751,6 +751,15 @@ prevents a stalled partial index from depending on incidental user navigation
 without introducing a background provider-read loop or weakening Android's
 default-SMS authority boundary.
 
+Physical large-history follow-up found that treating the role transition itself
+as a provider mutation abandoned the durable cursor every time the user switched
+temporarily to another SMS app. Role changes now pause/resume cleanly and do not
+create the ambiguous-provider ledger. Content-observer and external-provider
+signals remain dirty, while completion still requires exhausted SMS/MMS cursors,
+provider counts, and the bounded head/fingerprint verification. The partial UI
+prominently states that conversations and older messages are missing and exposes
+only a content-free committed-row count.
+
 Phase 6D treats a signature as outgoing message content, not decoration. ADR
 0018 stores settings outside drafts, addresses conversation overrides only by a
 purpose-separated hash of a complete verified participant set, and bounds the

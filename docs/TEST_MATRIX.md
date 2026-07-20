@@ -3318,6 +3318,72 @@ retained `com.android.messaging`. Aurora's SMS and notification permissions
 remain denied on both. AuroraSMS was not launched, no live message/address/body
 was read, and no carrier SMS/MMS was submitted.
 
+### Phase 6 large-history role-resume follow-up — 2026-07-19
+
+This source identifies as `0.6.5-phase6` (`versionCode` 16), retains index
+schema 3 and durable-state schema 11, and adds no permission. A content-free
+Pixel inspection of the preceding build found Fossify still held the SMS role
+and all Aurora messaging permissions were denied. The private rebuildable index
+contained four paused generations. The latest had committed 2,100 rows with
+`pending_changes=1`; its SMS checkpoint had committed 1,507 rows and its MMS
+checkpoint 593, and neither source was exhausted. The cache retained 5,226
+physical message projections and 73 conversation projections, while only 46
+conversation projections belonged to the newest incomplete generation. No
+address, participant, timestamp, body, or screenshot was read.
+
+The regression was that `ROLE_CHANGED` used the same durable dirty path as a
+real provider mutation. Switching temporarily to another SMS app therefore
+made a paused first-history checkpoint ineligible to resume, and the next role
+grant restarted from the newest messages. Role transitions are now clean
+authority signals: role loss still pauses immediately, but later explicit role
+recovery resumes the same durable cursor. Content-observer and external-provider
+signals still mark ambiguous changes dirty, and completion still requires both
+sources exhausted plus provider-count and bounded head/fingerprint verification.
+The incomplete Inbox and Thread notice is now a prominent progress surface that
+shows only the content-free committed count and explicitly says some
+conversations and older messages are missing.
+
+The first complete aggregate stopped only because lint correctly found the old
+generic incomplete-history string unused after both screens moved to the new
+pluralized progress copy. Removing that dead resource produced a definitive
+`BUILD SUCCESSFUL` in 1m41s across 886 tasks (110 executed, five from cache,
+771 up-to-date). All 579 host JUnit results passed with zero failures, errors,
+or skips: app 278, design system 11, index 69, model 19, notifications 21,
+state 56, telephony 82, testing 24, and conversations 19. Debug, R8 release,
+benchmark, all lint variants, clean-room/private-art scans, dependency locks,
+permission and APK-content ledgers, and license gates passed.
+
+The complete API 36 matrix was `BUILD SUCCESSFUL` in 2m01s across 456 tasks.
+It reported 333 tests with 10 intentional environment skips, 323 executed, and
+zero failures/errors: app 142/9 skips, benchmark 3/1, index 32/0,
+notifications 31/0, state 62/0, telephony 35/0, and conversations 28/0. The
+complete API 26 matrix was `BUILD SUCCESSFUL` in 2m11s across 456 tasks. Its
+authoritative XML reports 336 tests with 13 intentional skips, 323 executed,
+and zero failures/errors: app 145/12 skips, benchmark 3/1, index 32/0,
+notifications 31/0, state 62/0, telephony 35/0, and conversations 28/0. The
+focused updated conversation UI suite separately passed 28/28 on API 36.
+
+`bundleRelease` passed 269 tasks in 9s. CycloneDX 1.6 passed 15 tasks in 8s
+with its deterministic BOM unchanged.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 15,515,212 | `532d9e5a985db2b756f8c30593cbf7866b02740c5df7d838e624699619b4b4c1` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,888,993 | `e405e490abf546b3f30252da3ede967b2f5da384ef1b65ae9279751a28e2de7d` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,749,821 | `4d3732f984b3ea5a66811bddd8576bcb2af3fc5c7ea0e85089f914b514eeba57` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,888,098 | `b2b4e9f0986da28730a0555e381a5bdd3321f5c08c63895386b3a2956eecee43` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed with data preserved on the Pixel 8 and API 36
+emulator and was copied to each Download directory. Both copies hash-match the
+host artifact and both packages report version code 16/name `0.6.5-phase6`.
+The Pixel retained `org.fossify.messages.debug`; API 36 retained
+`com.android.messaging`. Aurora's SMS and notification permissions remain
+denied on both. AuroraSMS was not launched, no live message/address/body was
+read, and no carrier SMS/MMS was submitted. Physical completion remains open
+until the owner explicitly grants AuroraSMS the SMS role and leaves it
+foreground-readable through verified completion.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,

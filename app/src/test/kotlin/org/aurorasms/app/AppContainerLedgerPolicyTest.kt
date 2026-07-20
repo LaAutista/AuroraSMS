@@ -21,7 +21,11 @@ class AppContainerLedgerPolicyTest {
     fun cleanHealthSignalsDoNotClearAmbiguousLedgerByThemselves() {
         assertFalse(
             reconciliationCoversAmbiguousSignalLedger(
-                setOf(IndexSignal.STARTUP, IndexSignal.PERIODIC_RECONCILIATION),
+                setOf(
+                    IndexSignal.STARTUP,
+                    IndexSignal.ROLE_CHANGED,
+                    IndexSignal.PERIODIC_RECONCILIATION,
+                ),
             ),
         )
     }

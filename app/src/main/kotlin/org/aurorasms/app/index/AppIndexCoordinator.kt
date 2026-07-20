@@ -77,7 +77,14 @@ class AppIndexCoordinator(
 
     suspend fun signal(signal: IndexSignal): Boolean {
         resetPendingContinuation()
-        return signals.signal(signal)
+        return signals.signal(
+            signal = signal,
+            // Gaining or losing provider authority is not itself evidence that
+            // provider rows changed. Keeping this signal clean lets a paused,
+            // checkpointed first-history scan resume instead of abandoning its
+            // progress every time the user temporarily changes SMS apps.
+            requiresDirtyMark = signal != IndexSignal.ROLE_CHANGED,
+        )
     }
 
     /** Restarts deferred provider work without falsely marking provider data dirty. */

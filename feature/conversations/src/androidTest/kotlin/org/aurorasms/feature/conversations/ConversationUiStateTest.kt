@@ -860,6 +860,54 @@ class ConversationUiStateTest {
     }
 
     @Test
+    fun incompleteInboxProminentlyDisclosesMissingHistoryAndProgress() {
+        val partialCoverage = IndexCoverage(
+            generationId = 4L,
+            state = IndexRunState.SCANNING,
+            indexedMessageCount = 5_226L,
+            smsExhausted = false,
+            mmsExhausted = false,
+            pendingChanges = false,
+            generationCommittedCount = 2_100L,
+            smsCheckpointCommittedCount = 1_507L,
+            mmsCheckpointCommittedCount = 593L,
+        )
+        compose.setContent {
+            MaterialTheme {
+                InboxScreen(
+                    state = InboxUiState.Ready(
+                        window = BoundedInboxWindow.EMPTY,
+                        coverage = partialCoverage,
+                        contacts = emptyMap(),
+                        loadingOlder = false,
+                    ),
+                    diagnosticsAvailable = false,
+                    contactsPermissionGranted = true,
+                    onOpenConversation = {},
+                    onOpenSearch = {},
+                    onOpenAppearance = {},
+                    onOpenInboxAppearance = {},
+                    onOpenConversationDefaults = {},
+                    onOpenDiagnostics = {},
+                    onRequestContactsPermission = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag(INDEX_INCOMPLETE_NOTICE_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("History is still loading", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Some conversations and older messages are missing", substring = true)
+            .assertIsDisplayed()
+        compose.onNodeWithText("2100 messages checked", substring = true).assertIsDisplayed()
+    }
+
+    @Test
     fun inboxSignatureActionUsesOnlyTheRouteCallback() {
         var openCount = 0
         compose.setContent {

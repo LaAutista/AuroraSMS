@@ -1561,12 +1561,12 @@ private class StateStorageUnavailableException : IllegalStateException("State st
 private fun IndexSignal.requiresDurableAmbiguousLedger(): Boolean = when (this) {
     IndexSignal.FOREGROUND_RESUME,
     IndexSignal.STARTUP,
+    IndexSignal.ROLE_CHANGED,
     IndexSignal.INCOMING_INSERT,
     IndexSignal.PERIODIC_RECONCILIATION,
     -> false
     IndexSignal.CONTENT_OBSERVER_CHANGE,
     IndexSignal.EXTERNAL_PROVIDER_CHANGE,
-    IndexSignal.ROLE_CHANGED,
     -> true
 }
 

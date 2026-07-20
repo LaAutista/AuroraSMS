@@ -78,7 +78,10 @@
     <string name="load_failed">Messages are temporarily unavailable.</string>
     <string name="retry">Retry</string>
     <string name="new_messages">New messages</string>
-    <string name="index_incomplete">Showing the locally indexed portion while synchronization continues.</string>
+    <plurals name="index_incomplete_progress">
+        <item quantity="one">History is still loading: %1$d message checked. Some conversations and older messages are missing. Keep AuroraSMS open as the default SMS app.</item>
+        <item quantity="other">History is still loading: %1$d messages checked. Some conversations and older messages are missing. Keep AuroraSMS open as the default SMS app.</item>
+    </plurals>
     <plurals name="attachment_summary">
         <item quantity="one">%1$d attachment: %2$s</item>
         <item quantity="other">%1$d attachments: %2$s</item>

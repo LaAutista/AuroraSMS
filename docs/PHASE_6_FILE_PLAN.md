@@ -59,6 +59,23 @@ failures or errors. The exact debug APK was installed and hash-matched on the
 Pixel 8 and API 36 emulator without changing either SMS role, launching the
 app, reading live content, or submitting carrier traffic.
 
+### Phase 6 history follow-up — role-resumable initial scan — complete
+
+Physical content-free inspection found that repeated default-app switching had
+left four partial generations and caused the newest incomplete generation to
+expose fewer conversation projections than the rebuildable cache retained.
+Role transitions now pause/resume a clean checkpoint without falsely marking a
+provider mutation. Actual content-observer and external-provider signals remain
+dirty. Inbox and Thread use a prominent committed-row progress notice that says
+conversations and older messages are missing until verification finishes.
+
+Acceptance passed on 2026-07-19: 579 host tests, the complete 886-task offline
+aggregate, 333 API 36 tests, and 336 API 26 tests all completed with zero
+failures or errors. The version-16 APK installed and hash-matched on the Pixel 8
+and API 36 emulator without changing either role, launching the app, reading
+live content, or submitting carrier traffic. Physical complete-history evidence
+still requires the owner's explicit default-SMS approval.
+
 ### Phase 6E — local spam and blocking
 
 Implement bounded explainable rules, trust contacts by default, warn/highlight

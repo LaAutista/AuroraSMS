@@ -543,6 +543,10 @@ without a database migration.
 The `0.6.3-phase6` (`versionCode` 14) 2026-07-19 source hardens the existing
 rebuildable Telephony index without a database migration.
 
+The `0.6.5-phase6` (`versionCode` 16) physical-history follow-up preserves the
+same architecture and fixes repeated default-app switching during an incomplete
+initial scan.
+
 - The default-SMS role remains an explicit Android-controlled precondition.
   AuroraSMS never requests or grants itself that role, and onboarding now says
   that message-history access stays paused when another app is default.
@@ -554,6 +558,14 @@ rebuildable Telephony index without a database migration.
 - The Telephony synchronizer remains serialized, checkpointed, and resumable.
   No background busy loop, provider authority change, new permission, content
   log, or copy of message data is introduced.
+- A default-SMS role transition is an authority boundary, not proof that a
+  provider row changed. A partial generation therefore keeps its durable cursor
+  across role loss and resumes after explicit role recovery. Actual content
+  observer or external-provider signals still mark the generation dirty, and
+  final provider-count/head verification still rejects changed coverage.
+- Incomplete Inbox and Thread screens use a prominent progress notice with the
+  content-free committed-row count and explicitly say that conversations and
+  older messages are missing until synchronization finishes.
 - A large synthetic acceptance fixture proves cursor pagination returns 153
   conversations and all 151 messages in one long thread exactly once.
 

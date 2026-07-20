@@ -367,14 +367,36 @@ private fun InboxReady(
 
     Column(modifier = Modifier.fillMaxSize()) {
         if (!state.coverage.verifiedComplete) {
-            Text(
-                text = stringResource(R.string.index_incomplete),
+            val checkedMessages = state.coverage.generationCommittedCount
+            val pluralCount = checkedMessages.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                color = MaterialTheme.colorScheme.secondary,
-                style = MaterialTheme.typography.bodySmall,
-            )
+                    .testTag(INDEX_INCOMPLETE_NOTICE_TEST_TAG),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        text = pluralStringResource(
+                            R.plurals.index_incomplete_progress,
+                            pluralCount,
+                            checkedMessages,
+                        ),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
         }
         if (state.window.pendingNewer) {
             Button(
@@ -541,6 +563,7 @@ internal fun formatTimestamp(timestampMillis: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestampMillis))
 
 const val INBOX_SCREEN_TEST_TAG: String = "aurora-inbox-screen"
+const val INDEX_INCOMPLETE_NOTICE_TEST_TAG: String = "aurora-index-incomplete-notice"
 const val INBOX_SEARCH_ACTION_TEST_TAG: String = "aurora-inbox-search-action"
 const val INBOX_MORE_ACTION_TEST_TAG: String = "aurora-inbox-more-action"
 const val INBOX_SIGNATURE_ACTION_TEST_TAG: String = "aurora-inbox-signature-action"
