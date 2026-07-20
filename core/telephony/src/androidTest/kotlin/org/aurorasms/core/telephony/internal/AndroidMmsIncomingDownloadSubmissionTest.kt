@@ -5,8 +5,11 @@ package org.aurorasms.core.telephony.internal
 import android.Manifest
 import android.app.PendingIntent
 import android.content.Context
+import android.os.Build
+import android.os.Process
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
@@ -48,6 +51,7 @@ import org.aurorasms.core.telephony.codec.aosp.pdu.SendReq
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -64,6 +68,7 @@ class AndroidMmsIncomingDownloadSubmissionTest {
     @Before
     @After
     fun clearProductionJournalAndFiles() {
+        if (incomingMmsColdRestartGateEnabled()) return
         runBlocking {
             submitted.forEach { staged ->
                 MmsPduStagingStore(context).cleanup(staged.uri, MmsPduDirection.DOWNLOAD_TARGET)
@@ -72,6 +77,17 @@ class AndroidMmsIncomingDownloadSubmissionTest {
         submitted.clear()
         context.getSharedPreferences(JOURNAL_NAME, Context.MODE_PRIVATE).edit().clear().commit()
     }
+
+    @Test
+    fun completedIncomingMmsSurvivesHostForceStopUntilFreshProcessNotificationAcknowledgement() =
+        runBlocking {
+            when (requireIncomingMmsColdRestartPhase()) {
+                COLD_RESTART_PHASE_PREPARE -> prepareIncomingMmsColdRestart()
+                COLD_RESTART_PHASE_VERIFY -> verifyIncomingMmsColdRestart()
+                COLD_RESTART_PHASE_CLEANUP -> cleanupIncomingMmsColdRestart()
+                else -> throw AssertionError(COLD_RESTART_PHASE_INVALID)
+            }
+        }
 
     @Test
     fun journalIsSubmittingBeforePlatformBoundaryAndDuplicateDoesNotSubmitAgain() = runBlocking {
@@ -282,6 +298,280 @@ class AndroidMmsIncomingDownloadSubmissionTest {
         assertEquals(SUBSCRIPTION, request.subscriptionId)
     }
 
+    private fun incomingMmsColdRestartGateEnabled(): Boolean =
+        InstrumentationRegistry.getArguments()
+            .getString(COLD_RESTART_GATE_ARGUMENT)
+            ?.equals("true", ignoreCase = true) == true
+
+    private fun requireIncomingMmsColdRestartPhase(): String {
+        assumeTrue(COLD_RESTART_GATE_REQUIRED, incomingMmsColdRestartGateEnabled())
+        assumeTrue(
+            COLD_RESTART_EMULATOR_REQUIRED,
+            Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish",
+        )
+        assumeTrue(
+            COLD_RESTART_API_REQUIRED,
+            Build.VERSION.SDK_INT == Build.VERSION_CODES.O ||
+                Build.VERSION.SDK_INT == Build.VERSION_CODES.BAKLAVA,
+        )
+        return InstrumentationRegistry.getArguments()
+            .getString(COLD_RESTART_PHASE_ARGUMENT)
+            .orEmpty()
+            .also { phase ->
+                coldRestartRequire(
+                    phase == COLD_RESTART_PHASE_PREPARE ||
+                        phase == COLD_RESTART_PHASE_VERIFY ||
+                        phase == COLD_RESTART_PHASE_CLEANUP,
+                    COLD_RESTART_PHASE_INVALID,
+                )
+            }
+    }
+
+    private suspend fun prepareIncomingMmsColdRestart() {
+        val checkpoint = incomingMmsColdRestartCheckpoint()
+        coldRestartRequire(checkpoint.all.isEmpty(), COLD_RESTART_STALE_CHECKPOINT)
+        coldRestartRequire(journalRecords().isEmpty(), COLD_RESTART_STALE_JOURNAL)
+        val preparedPid = Process.myPid()
+        val preparedStartUptimeMillis = Process.getStartUptimeMillis()
+        coldRestartRequire(
+            checkpoint.edit()
+                .putInt(COLD_RESTART_KEY_VERSION, COLD_RESTART_VERSION)
+                .putString(COLD_RESTART_KEY_STATE, COLD_RESTART_STATE_PREPARING)
+                .putInt(COLD_RESTART_KEY_PREPARED_PID, preparedPid)
+                .putLong(COLD_RESTART_KEY_PREPARED_START, preparedStartUptimeMillis)
+                .commit(),
+            COLD_RESTART_CHECKPOINT_WRITE_FAILED,
+        )
+
+        val provider = CapturingProvider()
+        val encoded = encoded(retrieveConfPdu())
+        val stagedTargets = mutableListOf<StagedMmsPdu>()
+        val transport = transport(
+            provider = provider,
+            ownAddress = { LOCAL_RECIPIENT },
+        ) { _, staged, _ ->
+            stagedTargets += staged
+            context.contentResolver.openOutputStream(staged.uri, "w")!!.use { output ->
+                output.write(encoded.copyBytes())
+            }
+        }
+
+        coldRestartRequire(
+            transport.downloadMms(request(OPERATION)) is TransportResult.Submitted,
+            COLD_RESTART_PREPARATION_FAILED,
+        )
+        val staged = stagedTargets.singleOrNull()
+            ?: throw AssertionError(COLD_RESTART_PREPARATION_FAILED)
+        val ready = transport.reconcileDownloadedMms(OPERATION, staged.uri, encoded)
+            as? IncomingMmsDownloadResult.ReadyForNotification
+            ?: throw AssertionError(COLD_RESTART_PREPARATION_FAILED)
+        coldRestartRequire(
+            ready.delivery == expectedIncomingMmsDelivery(staged.fileName) &&
+                provider.records.size == 1,
+            COLD_RESTART_DELIVERY_MISMATCH,
+        )
+        coldRestartRequire(
+            journalRecords().singleOrNull()?.let { record ->
+                record.operationId == OPERATION &&
+                    record.fileName == staged.fileName &&
+                    record.providerId == PROVIDER &&
+                    record.conversationId == CONVERSATION &&
+                    record.state == IncomingMmsDownloadJournal.State.PERSISTED
+            } == true,
+            COLD_RESTART_JOURNAL_MISMATCH,
+        )
+        coldRestartRequire(
+            MmsPduStagingStore(context).recoverDownloadTarget(OPERATION, staged.fileName) == staged,
+            COLD_RESTART_STAGING_MISMATCH,
+        )
+        coldRestartRequire(
+            checkpoint.edit()
+                .clear()
+                .putInt(COLD_RESTART_KEY_VERSION, COLD_RESTART_VERSION)
+                .putString(COLD_RESTART_KEY_STATE, COLD_RESTART_STATE_PREPARED)
+                .putString(COLD_RESTART_KEY_FILE_NAME, staged.fileName)
+                .putInt(COLD_RESTART_KEY_PREPARED_PID, preparedPid)
+                .putLong(COLD_RESTART_KEY_PREPARED_START, preparedStartUptimeMillis)
+                .commit(),
+            COLD_RESTART_CHECKPOINT_WRITE_FAILED,
+        )
+    }
+
+    private suspend fun verifyIncomingMmsColdRestart() {
+        val checkpoint = incomingMmsColdRestartCheckpoint()
+        val evidence = readIncomingMmsColdRestartEvidence(
+            checkpoint = checkpoint,
+            expectedState = COLD_RESTART_STATE_PREPARED,
+        )
+        val currentPid = Process.myPid()
+        val currentStartUptimeMillis = Process.getStartUptimeMillis()
+        coldRestartRequire(
+            currentPid != evidence.preparedPid &&
+                currentStartUptimeMillis > evidence.preparedStartUptimeMillis,
+            COLD_RESTART_PROCESS_NOT_RESTARTED,
+        )
+
+        var platformSubmissions = 0
+        val provider = CapturingProvider()
+        val transport = transport(
+            provider = provider,
+            ownAddress = { LOCAL_RECIPIENT },
+        ) { _, _, _ -> platformSubmissions += 1 }
+        val recovery = transport.recoverIncomingDownloads() as? IncomingMmsRecoveryResult.Available
+            ?: throw AssertionError(COLD_RESTART_RECOVERY_FAILED)
+
+        coldRestartRequire(platformSubmissions == 0, COLD_RESTART_PLATFORM_RESUBMITTED)
+        coldRestartRequire(
+            recovery.recoveredCount == 0 &&
+                recovery.deferredCount == 0 &&
+                recovery.unknownSubmissionCount == 0 &&
+                recovery.pendingNotifications ==
+                listOf(expectedIncomingMmsDelivery(evidence.fileName)) &&
+                provider.records.size == 1,
+            COLD_RESTART_DELIVERY_MISMATCH,
+        )
+        coldRestartRequire(
+            journalRecords().singleOrNull()?.state == IncomingMmsDownloadJournal.State.PERSISTED,
+            COLD_RESTART_JOURNAL_MISMATCH,
+        )
+        coldRestartRequire(
+            MmsPduStagingStore(context).recoverDownloadTarget(OPERATION, evidence.fileName) != null,
+            COLD_RESTART_STAGING_MISMATCH,
+        )
+        coldRestartRequire(
+            checkpoint.edit()
+                .putString(COLD_RESTART_KEY_STATE, COLD_RESTART_STATE_VERIFIED)
+                .putInt(COLD_RESTART_KEY_VERIFIED_PID, currentPid)
+                .putLong(COLD_RESTART_KEY_VERIFIED_START, currentStartUptimeMillis)
+                .commit(),
+            COLD_RESTART_CHECKPOINT_WRITE_FAILED,
+        )
+    }
+
+    private suspend fun cleanupIncomingMmsColdRestart() {
+        val checkpoint = incomingMmsColdRestartCheckpoint()
+        val state = checkpoint.getString(COLD_RESTART_KEY_STATE, null)
+        if (state == COLD_RESTART_STATE_VERIFIED) {
+            val evidence = readIncomingMmsColdRestartEvidence(
+                checkpoint = checkpoint,
+                expectedState = COLD_RESTART_STATE_VERIFIED,
+            )
+            coldRestartRequire(
+                evidence.verifiedPid != null &&
+                    Process.myPid() != evidence.verifiedPid &&
+                    Process.getStartUptimeMillis() > checkNotNull(evidence.verifiedStartUptimeMillis),
+                COLD_RESTART_CLEANUP_PROCESS_NOT_RESTARTED,
+            )
+            var platformSubmissions = 0
+            val transport = transport(
+                provider = CapturingProvider(),
+                ownAddress = { LOCAL_RECIPIENT },
+            ) { _, _, _ -> platformSubmissions += 1 }
+            val recovery = transport.recoverIncomingDownloads()
+                as? IncomingMmsRecoveryResult.Available
+                ?: throw AssertionError(COLD_RESTART_RECOVERY_FAILED)
+            val delivery = recovery.pendingNotifications.singleOrNull()
+                ?: throw AssertionError(COLD_RESTART_DELIVERY_MISMATCH)
+            coldRestartRequire(
+                delivery == expectedIncomingMmsDelivery(evidence.fileName) &&
+                    platformSubmissions == 0,
+                COLD_RESTART_DELIVERY_MISMATCH,
+            )
+            coldRestartRequire(
+                transport.acknowledgeDownloadedMms(delivery),
+                COLD_RESTART_ACKNOWLEDGEMENT_FAILED,
+            )
+            coldRestartRequire(journalRecords().isEmpty(), COLD_RESTART_JOURNAL_NOT_CLEARED)
+            coldRestartRequire(
+                MmsPduStagingStore(context).recoverDownloadTarget(OPERATION, evidence.fileName) == null,
+                COLD_RESTART_STAGING_NOT_CLEARED,
+            )
+        } else {
+            cleanupInterruptedIncomingMmsColdRestart()
+        }
+        coldRestartRequire(
+            checkpoint.edit().clear().commit(),
+            COLD_RESTART_CHECKPOINT_CLEAR_FAILED,
+        )
+    }
+
+    private suspend fun cleanupInterruptedIncomingMmsColdRestart() {
+        val snapshot = IncomingMmsDownloadJournal(context).recoverySnapshot()
+            as? IncomingMmsDownloadJournal.RecoveryResult.Available
+            ?: throw AssertionError(COLD_RESTART_CLEANUP_FAILED)
+        coldRestartRequire(
+            snapshot.records.all { it.operationId == OPERATION },
+            COLD_RESTART_CLEANUP_FAILED,
+        )
+        snapshot.records.forEach { record ->
+            record.fileName?.let { fileName ->
+                MmsPduStagingStore(context).recoverDownloadTarget(OPERATION, fileName)?.let { staged ->
+                    coldRestartRequire(
+                        MmsPduStagingStore(context).cleanup(
+                            staged.uri,
+                            MmsPduDirection.DOWNLOAD_TARGET,
+                        ),
+                        COLD_RESTART_STAGING_NOT_CLEARED,
+                    )
+                }
+            }
+        }
+        coldRestartRequire(
+            context.getSharedPreferences(JOURNAL_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit(),
+            COLD_RESTART_JOURNAL_NOT_CLEARED,
+        )
+    }
+
+    private fun expectedIncomingMmsDelivery(fileName: String) =
+        org.aurorasms.core.telephony.IncomingMmsDelivery(
+            operationId = OPERATION,
+            stagedFileName = fileName,
+            providerId = PROVIDER,
+            conversationId = CONVERSATION,
+            sender = SENDER,
+            participants = listOf(SENDER, GROUP_MEMBER),
+            body = TEXT,
+            receivedTimestampMillis = FIXED_DATE_SECONDS * 1_000L,
+            subscriptionId = SUBSCRIPTION,
+        )
+
+    private fun incomingMmsColdRestartCheckpoint() = context.getSharedPreferences(
+        COLD_RESTART_CHECKPOINT_NAME,
+        Context.MODE_PRIVATE,
+    )
+
+    private fun readIncomingMmsColdRestartEvidence(
+        checkpoint: android.content.SharedPreferences,
+        expectedState: String,
+    ): IncomingMmsColdRestartEvidence {
+        val evidence = IncomingMmsColdRestartEvidence(
+            fileName = checkpoint.getString(COLD_RESTART_KEY_FILE_NAME, null).orEmpty(),
+            preparedPid = checkpoint.getInt(COLD_RESTART_KEY_PREPARED_PID, -1),
+            preparedStartUptimeMillis = checkpoint.getLong(COLD_RESTART_KEY_PREPARED_START, -1L),
+            verifiedPid = checkpoint.getInt(COLD_RESTART_KEY_VERIFIED_PID, -1).takeIf { it > 0 },
+            verifiedStartUptimeMillis = checkpoint.getLong(COLD_RESTART_KEY_VERIFIED_START, -1L)
+                .takeIf { it >= 0L },
+        )
+        coldRestartRequire(
+            checkpoint.getInt(COLD_RESTART_KEY_VERSION, 0) == COLD_RESTART_VERSION &&
+                checkpoint.getString(COLD_RESTART_KEY_STATE, null) == expectedState &&
+                evidence.fileName.isNotEmpty() &&
+                evidence.preparedPid > 0 &&
+                evidence.preparedStartUptimeMillis >= 0L &&
+                (expectedState == COLD_RESTART_STATE_VERIFIED) ==
+                (evidence.verifiedPid != null && evidence.verifiedStartUptimeMillis != null),
+            COLD_RESTART_CHECKPOINT_INVALID,
+        )
+        return evidence
+    }
+
+    private fun coldRestartRequire(condition: Boolean, message: String) {
+        if (!condition) throw AssertionError(message)
+    }
+
     private fun transport(
         provider: MmsProviderDataSource = UnusedProvider,
         ownAddress: ((AuroraSubscriptionId) -> ParticipantAddress?)? = null,
@@ -490,5 +780,53 @@ class AndroidMmsIncomingDownloadSubmissionTest {
             ProviderKind.PENDING_OPERATION,
             INCOMING_MMS_OPERATION_ID_BOUNDARY + 103L,
         )
+
+        const val COLD_RESTART_GATE_ARGUMENT = "auroraEmulatorIncomingMmsColdRestart"
+        const val COLD_RESTART_PHASE_ARGUMENT = "auroraEmulatorIncomingMmsColdRestartPhase"
+        const val COLD_RESTART_PHASE_PREPARE = "prepare"
+        const val COLD_RESTART_PHASE_VERIFY = "verify"
+        const val COLD_RESTART_PHASE_CLEANUP = "cleanup"
+        const val COLD_RESTART_CHECKPOINT_NAME = "aurora_incoming_mms_cold_restart_evidence"
+        const val COLD_RESTART_VERSION = 1
+        const val COLD_RESTART_KEY_VERSION = "version"
+        const val COLD_RESTART_KEY_STATE = "state"
+        const val COLD_RESTART_STATE_PREPARING = "preparing"
+        const val COLD_RESTART_STATE_PREPARED = "prepared"
+        const val COLD_RESTART_STATE_VERIFIED = "verified"
+        const val COLD_RESTART_KEY_FILE_NAME = "file_name"
+        const val COLD_RESTART_KEY_PREPARED_PID = "prepared_pid"
+        const val COLD_RESTART_KEY_PREPARED_START = "prepared_start_uptime"
+        const val COLD_RESTART_KEY_VERIFIED_PID = "verified_pid"
+        const val COLD_RESTART_KEY_VERIFIED_START = "verified_start_uptime"
+        const val COLD_RESTART_GATE_REQUIRED = "incoming MMS cold-restart gate was not enabled"
+        const val COLD_RESTART_EMULATOR_REQUIRED = "incoming MMS cold-restart test requires an emulator"
+        const val COLD_RESTART_API_REQUIRED = "incoming MMS cold-restart test requires API 26 or API 36"
+        const val COLD_RESTART_PHASE_INVALID = "incoming MMS cold-restart phase was invalid"
+        const val COLD_RESTART_STALE_CHECKPOINT = "incoming MMS cold-restart checkpoint already exists"
+        const val COLD_RESTART_STALE_JOURNAL = "incoming MMS cold-restart journal was not empty"
+        const val COLD_RESTART_CHECKPOINT_WRITE_FAILED = "incoming MMS checkpoint write failed"
+        const val COLD_RESTART_CHECKPOINT_CLEAR_FAILED = "incoming MMS checkpoint clear failed"
+        const val COLD_RESTART_CHECKPOINT_INVALID = "incoming MMS checkpoint was invalid"
+        const val COLD_RESTART_PREPARATION_FAILED = "incoming MMS preparation failed"
+        const val COLD_RESTART_DELIVERY_MISMATCH = "incoming MMS delivery changed across restart"
+        const val COLD_RESTART_JOURNAL_MISMATCH = "incoming MMS journal changed across restart"
+        const val COLD_RESTART_STAGING_MISMATCH = "incoming MMS staged PDU changed across restart"
+        const val COLD_RESTART_PROCESS_NOT_RESTARTED = "incoming MMS verification reused its process"
+        const val COLD_RESTART_CLEANUP_PROCESS_NOT_RESTARTED =
+            "incoming MMS cleanup reused the verification process"
+        const val COLD_RESTART_RECOVERY_FAILED = "incoming MMS recovery failed"
+        const val COLD_RESTART_PLATFORM_RESUBMITTED = "incoming MMS recovery resubmitted to the platform"
+        const val COLD_RESTART_ACKNOWLEDGEMENT_FAILED = "incoming MMS acknowledgement failed"
+        const val COLD_RESTART_JOURNAL_NOT_CLEARED = "incoming MMS journal was not cleared"
+        const val COLD_RESTART_STAGING_NOT_CLEARED = "incoming MMS staged PDU was not cleared"
+        const val COLD_RESTART_CLEANUP_FAILED = "incoming MMS interrupted cleanup failed"
     }
+
+    private data class IncomingMmsColdRestartEvidence(
+        val fileName: String,
+        val preparedPid: Int,
+        val preparedStartUptimeMillis: Long,
+        val verifiedPid: Int?,
+        val verifiedStartUptimeMillis: Long?,
+    )
 }
