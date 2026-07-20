@@ -68,7 +68,15 @@ not an indexing delay.
 
 The physical scan requires a separate owner-visible protocol because assigning
 AuroraSMS the SMS role temporarily displaces the daily messaging app and grants
-provider access. It does not authorize a carrier send.
+provider access. It does not authorize a carrier send. The reviewed procedure
+is `docs/PHYSICAL_PROVIDER_COMPLETION_PROTOCOL.md`; its runner is fail-closed,
+does not change the role or permissions itself, and reports only aggregate
+generation/checkpoint/index consistency fields. The protocol remains unexecuted
+for the current candidate until the Pixel is connected and the owner opens that
+provider-read window. Role recovery preserves the durable cursor of an
+incomplete first-history scan, but now starts a fresh full generation when the
+previous state was complete, closing the interval in which another default SMS
+app could have changed deep provider history beyond a bounded head check.
 
 ## Workstream 7D: complete SMS/MMS vertical
 

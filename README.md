@@ -19,12 +19,27 @@ unsigned release APKs and AABs. The reproducible APK SHA-256 is
 `acd1517b5c01a7c14be6d2fce06cb9dbe44276f6db51693bf2f31253e8d78ee6`;
 the AAB SHA-256 is
 `349ea4f6a1be6f348cbd54c64bdf06e3fe56f7bc13f1eaef2aa4d807d7a86b1b`.
-All 636 host tests and the 978-task governed aggregate pass. The exact release
+All 653 host tests and the 986-task governed aggregate pass. The exact release
 and gold checklist is in [the Phase 7 plan](docs/PHASE_7_RELEASE_PLAN.md).
 Signing, a complete nonempty physical-provider scan, physical outgoing/incoming
 MMS and OEM/carrier/accessibility/performance/Android Auto
 acceptance, and the final F-Droid build recipe remain open. AuroraSMS is not
 gold.
+
+Implementation commit `d052db0` gives the current-candidate Pixel history gate a
+reviewed [physical provider-completion protocol](docs/PHYSICAL_PROVIDER_COMPLETION_PROTOCOL.md)
+and a governed fail-closed runner. It requires the owner to select AuroraSMS
+through normal Android UI, never changes the SMS role or permissions itself,
+and emits only aggregate generation/checkpoint/index consistency counts. A
+paused first-history scan still resumes its durable cursor, while recovery from
+a previously complete state now starts a fresh full generation so changes made
+under another default SMS app cannot hide beyond the bounded head. The
+runner and its parser are implemented, but the physical scan and private
+Inbox/Thread/search/old-result confirmation remain unexecuted until the Pixel
+is connected and the owner opens that explicit provider-read window.
+The protocol parser, fail-closed emulator refusal, role-recovery host coverage,
+and complete API 36/API 26 connected matrices pass with zero failures or
+errors; those local checks do not substitute for the unexecuted physical gate.
 
 Outgoing MMS implementation commits `7a45033`, `a71c623`, `0b27160`, and
 `1e2344b` complete ADR 0026's synthetic direct/group vertical. Commit

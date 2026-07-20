@@ -319,6 +319,23 @@ Run on a telephony-capable device after explicit test-recipient approval.
 - [ ] Provider failure/storage-full produces an actionable state and no false
   success notification.
 
+The current-candidate physical read gate uses
+`docs/PHYSICAL_PROVIDER_COMPLETION_PROTOCOL.md` and
+`scripts/run-physical-provider-completion-smoke.sh`. The runner cannot assign
+the SMS role, grant a permission, install an APK, read provider rows through
+ADB, capture a screen/log, write the provider, or submit carrier traffic. It
+requires an owner-selected AuroraSMS role, a continuously alive/foreground app,
+and fixed aggregate-only database queries, then accepts only a nonempty verified
+generation whose SMS/MMS checkpoints, index, conversation summaries, unread
+totals, and FTS count reconcile for three identical polls after a proven cold-
+start refresh. Its parser has an offline governed self-test; physical execution
+and private owner UI confirmation remain open.
+
+Host coverage separately proves that `ROLE_CHANGED` resumes the exact durable
+cursor of a paused first-history generation, while role recovery after a
+complete generation creates a new full scan. Clean startup without a role
+transition retains the bounded head/count reconciliation path.
+
 ### One-to-one SMS
 
 - [ ] Send GSM-7 SMS; capture sent and delivered/unsupported status honestly.
@@ -4139,6 +4156,43 @@ group self-line discovery, media rendering, low-memory eviction, or death while
 an actual platform operation is in flight. No live provider content, SMS-role
 change, carrier operation, message-content capture, attachment export, or broad
 log participated.
+
+#### Physical provider-completion protocol and role-recovery acceptance — 2026-07-20
+
+Implementation commit `d052db0` adds the fail-closed
+`scripts/run-physical-provider-completion-smoke.sh` runner and the role-
+recovery behavior that the reviewed
+`docs/PHYSICAL_PROVIDER_COMPLETION_PROTOCOL.md` depends on. The governed offline
+parser self-test accepts a valid complete snapshot and rejects scanning,
+duplicate-checkpoint,
+and aggregate-count inconsistency fixtures. A safe invocation against
+`emulator-5554` refused the emulator before build, launch, role, permission, or
+provider access.
+
+Focused host coverage proves the role-recovery split: a paused first-history
+generation resumes the same generation and durable cursor, a role transition
+after a complete generation starts a fresh full scan, and an ordinary clean
+startup retains bounded steady-state reconciliation. This prevents deep
+provider changes made while another app held the SMS role from hiding beyond a
+bounded head/count check.
+
+Acceptance evidence:
+
+- the focused index synchronizer suite plus protocol/governance checks passed;
+- all 653 host tests passed across 114 suites with zero failures, errors, or
+  skips;
+- the complete 986-task governed host/lint/R8/benchmark/privacy/dependency/
+  license/APK-content/bundle aggregate passed in 1m56s;
+- the API 36 connected matrix passed 450 enumerated tests with 12 intentional
+  protocol skips in 2m41s; and
+- the API 26 connected matrix passed 444 enumerated tests with 15 intentional
+  protocol skips in 2m49s.
+
+No live provider content, message address/body/subject, search phrase, role or
+permission mutation, screenshot, broad log, provider write, or carrier action
+participated. The Pixel protocol and the owner's private Inbox, old Thread,
+known local-search, and exact-result-jump confirmation remain required and
+unexecuted. This local acceptance is not a complete-history or gold claim.
 
 ## Release gate
 
