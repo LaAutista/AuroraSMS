@@ -24,7 +24,7 @@ not declare AuroraSMS complete or gold.
 
 ## Slice order
 
-### Phase 6A — conservative reaction fallback presentation
+### Phase 6A — conservative reaction fallback presentation — complete
 
 Parse only exact, bounded, well-known English SMS fallback forms such as
 `Liked “…”` and `Removed a like from “…”`. Render a local structured reaction
@@ -32,7 +32,7 @@ card only when the complete visible body is an unambiguous match. Truncated,
 malformed, multiline, unknown, or oversized text remains the original raw SMS.
 The stored/indexed/provider body is never changed.
 
-### Phase 6B — selected-text copy and message details
+### Phase 6B — selected-text copy and message details — complete
 
 Provide explicit text selection and copy while keeping destructive long-press
 actions accessible. Copy only the selected range, never the whole conversation,

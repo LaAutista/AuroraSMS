@@ -3105,6 +3105,57 @@ handoff. The Pixel 8 install/copy/metadata-only launch therefore remains
 pending. All reaction fixtures were synthetic strings; no message content was
 read, no default-SMS role changed, and no carrier SMS/MMS was submitted.
 
+### Phase 6B selected-text copy and bounded-details acceptance — 2026-07-19
+
+This source identifies as `0.6.1-phase6` (`versionCode` 12), Room schema 10,
+and ADR 0016. Long press opens an explicit Message actions dialog. The
+read-only selector copies exactly one non-collapsed valid range from only the
+body displayed in that bubble and labels a truncated preview. Details contains
+only bounded type, direction, localized time, status, subscription, and
+attachment-count metadata. It excludes body, subject, address, provider/thread
+IDs, and attachment paths. Deletion remains a separate choice with the Phase
+5F confirmation and Undo protocol.
+
+The complete offline host/release/privacy/license aggregate passed. All 558
+host JUnit results passed with zero failures, errors, or skips: app 262, design
+system 11, index 69, model 19, notifications 21, state 51, telephony 82,
+testing 24, and conversations 19. Debug, R8 release, and benchmark assembly;
+debug/release/benchmark lint; clean-room/private-art scans; dependency locks;
+permission and APK-content ledgers; and license gates passed. `bundleRelease`
+and CycloneDX 1.6 also passed separately; the SBOM reports 441 components and
+442 dependencies.
+
+The focused API 26 run initially exposed two compatibility-test assumptions:
+the truncated bubble's center was occupied by its Show full message control,
+and Android 8 creates its clipboard service on a Looper thread. The test now
+targets the body area and accesses the clipboard on the main thread. The
+corrected 22-test feature class passed on both APIs.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m37s
+across 456 tasks. It passed 313 tests with 10 intentional assumption skips,
+303 executed, and zero failures/errors: app 132/9 skips, benchmark 3/1, index
+31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations 22/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m03s
+across 456 tasks. Authoritative XML reports 316 tests, 13 intentional assumption
+skips, 303 executed, and zero failures/errors: app 135/12 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations
+22/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,780,470 | `11652e008ce466f259e56ab642b17b73a5c65e3e1b698a3650b39676e9d27af2` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,860,821 | `7a4673e81fc0837e1fc869a78ea627ab783e8244762149685ad42bbc48504921` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,721,657 | `68c505bab6f01e7f77914a5c8ba91dfa4c33e0fe977f8c79a5d28e4dafd1702c` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,826,971 | `3d56a196a7232c6d5dc230c65a8d30071d85db241702eaf2fb0504ea39827ba8` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+Only the API 36 and API 26 emulators were enumerated by ADB at Phase 6B
+handoff. The Pixel 8 install/copy/metadata-only launch therefore remains
+pending. Clipboard checks used only `Synthetic message` and reset the emulator
+clipboard afterward. No live message content was read or copied, no default-SMS
+role changed, and no carrier SMS/MMS was submitted.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
@@ -3142,7 +3193,9 @@ read, no default-SMS role changed, and no carrier SMS/MMS was submitted.
   forms fail open to the original raw text.
 - [ ] Voice memo requests microphone only from explicit Record action, indicates
   recording, limits output, and cleans temporary files.
-- [ ] Selected-text copy exposes only the selected content.
+- [x] Selected-text copy exposes only the selected content. Invalid/collapsed
+  selections fail closed, truncated previews are labeled, and details excludes
+  bodies, addresses, provider IDs, and attachment paths.
 - [ ] Global/per-thread signatures show segment/MMS impact before send.
 - [ ] Spam rules are bounded, explainable, contacts-trusting by default, and
   support unspam/unblock; suspected spam is never silently deleted.

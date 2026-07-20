@@ -2,6 +2,8 @@
 
 package org.aurorasms.feature.conversations
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,9 +11,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -20,9 +24,11 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInputSelection
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import kotlin.math.absoluteValue
 import kotlinx.coroutines.delay
 import org.aurorasms.core.index.IndexCoverage
@@ -43,6 +49,7 @@ import org.aurorasms.core.telephony.MmsAttachmentListResult
 import org.aurorasms.core.telephony.MmsAttachmentReadResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -156,6 +163,13 @@ class ConversationUiStateTest {
 
         compose.onNodeWithTag(REACTION_FALLBACK_TEST_TAG).assertDoesNotExist()
         compose.onNodeWithText(ambiguous).assertIsDisplayed()
+        compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).performTouchInput {
+            longClick(topCenter + Offset(0f, 12f))
+        }
+        compose.onNodeWithTag(SELECT_MESSAGE_TEXT_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithText(
+            "Only the loaded preview is available. Show the full message first to select more.",
+        ).assertIsDisplayed()
     }
 
     @Test
@@ -538,7 +552,67 @@ class ConversationUiStateTest {
     }
 
     @Test
-    fun exactMessageDeletionRequiresConfirmationAfterLongPress() {
+    fun selectedTextActionCopiesOnlyTheExplicitRange() {
+        var clipboard: ClipboardManager? = null
+        try {
+            compose.setContent {
+                SyntheticThreadScreen(
+                    composer = ComposerUiState(body = "", saving = false, failed = false),
+                )
+            }
+            compose.runOnIdle {
+                clipboard = InstrumentationRegistry.getInstrumentation()
+                    .targetContext
+                    .getSystemService(ClipboardManager::class.java)
+                checkNotNull(clipboard).setPrimaryClip(ClipData.newPlainText("AuroraSMS test reset", ""))
+            }
+
+            compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).performTouchInput { longClick() }
+            compose.onNodeWithTag(MESSAGE_ACTIONS_DIALOG_TEST_TAG).assertIsDisplayed()
+            compose.onNodeWithTag(SELECT_MESSAGE_TEXT_ACTION_TEST_TAG).performClick()
+            compose.onNodeWithTag(COPY_SELECTED_TEXT_TEST_TAG).assertIsNotEnabled()
+            compose.onNodeWithTag(MESSAGE_TEXT_SELECTION_FIELD_TEST_TAG)
+                .performTextInputSelection(TextRange(0, 9))
+            compose.onNodeWithTag(COPY_SELECTED_TEXT_TEST_TAG).assertIsEnabled().performClick()
+            compose.waitForIdle()
+
+            var copiedText: String? = null
+            compose.runOnIdle {
+                copiedText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()
+            }
+            assertEquals("Synthetic", copiedText)
+        } finally {
+            clipboard?.let { initializedClipboard ->
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    initializedClipboard.setPrimaryClip(
+                        ClipData.newPlainText("AuroraSMS test reset", ""),
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun messageDetailsShowBoundedMetadataWithoutProviderIdentifiers() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(body = "", saving = false, failed = false),
+            )
+        }
+
+        compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).performTouchInput { longClick() }
+        compose.onNodeWithTag(MESSAGE_DETAILS_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(MESSAGE_DETAILS_DIALOG_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("SMS").assertIsDisplayed()
+        compose.onNodeWithText("Incoming message").assertIsDisplayed()
+        compose.onNodeWithText("Received · read").assertIsDisplayed()
+        compose.onNodeWithText("Not available").assertIsDisplayed()
+        compose.onNodeWithText("No attachments").assertIsDisplayed()
+        compose.onNodeWithText("ProviderMessageId", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun exactMessageDeletionRequiresActionChoiceAndConfirmationAfterLongPress() {
         var requested: TimelineMessage? = null
         compose.setContent {
             SyntheticThreadScreen(
@@ -548,6 +622,8 @@ class ConversationUiStateTest {
         }
 
         compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).performTouchInput { longClick() }
+        compose.onNodeWithTag(MESSAGE_ACTIONS_DIALOG_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithTag(DELETE_MESSAGE_ACTION_TEST_TAG).performClick()
         compose.onNodeWithText("Permanently delete this message?").assertIsDisplayed()
         compose.onNodeWithTag(CONFIRM_DELETE_MESSAGE_TEST_TAG).performClick()
         compose.runOnIdle { check(requested?.providerMessageId == ProviderMessageId(ProviderKind.SMS, 1L)) }

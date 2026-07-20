@@ -493,6 +493,26 @@ without a database migration.
 This is compatible fallback presentation, not native reaction transport or an
 outgoing reaction feature.
 
+### Phase 6B explicit selected-text copy and bounded message details
+
+The `0.6.1-phase6` (`versionCode` 12) 2026-07-19 source implements ADR 0016
+without a database migration.
+
+- Long press opens Message actions instead of invoking deletion directly.
+- Select text uses a read-only view of only the body displayed in that bubble.
+  Copy selected is disabled for collapsed or invalid ranges and writes exactly
+  the selected substring to Android's clipboard.
+- A truncated preview is explicitly labeled; copy does not fetch, fabricate, or
+  imply hidden text and never adds a sender, subject, timestamp, adjacent text,
+  conversation metadata, or provider identifier.
+- Message details is bounded to SMS/MMS type, direction, localized timestamp,
+  status, subscription availability, and attachment count. It contains no body,
+  subject, address, provider/thread ID, or attachment path.
+- Selection state is transient and content is not logged or stored. Clipboard
+  export occurs only from the visible Copy selected action.
+- Delete remains a separate Message actions choice and still requires Phase
+  5F's confirmation and durable Undo protocol.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls

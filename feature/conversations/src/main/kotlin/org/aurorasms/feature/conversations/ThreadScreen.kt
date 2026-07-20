@@ -2,6 +2,7 @@
 
 package org.aurorasms.feature.conversations
 
+import android.content.ClipData
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -47,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -57,6 +59,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -70,10 +74,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import org.aurorasms.core.designsystem.AuroraGlyph
 import org.aurorasms.core.designsystem.AuroraIconAction
 import org.aurorasms.core.designsystem.LocalAuroraVisualTokens
@@ -140,13 +146,50 @@ fun ThreadScreen(
     val visualTokens = LocalAuroraVisualTokens.current
     var composerFocused by remember { mutableStateOf(false) }
     var messagePendingConfirmation by remember { mutableStateOf<TimelineMessage?>(null) }
+    var messageActionTarget by remember { mutableStateOf<MessageActionTarget?>(null) }
+    var textSelectionTarget by remember { mutableStateOf<MessageActionTarget?>(null) }
+    var messageDetailsTarget by remember { mutableStateOf<TimelineMessage?>(null) }
     var threadConfirmationStep by remember { mutableStateOf(0) }
     val deletionActive = deletion !is PermanentDeletionUiState.None
     LaunchedEffect(deletion) {
         if (deletionActive) {
             messagePendingConfirmation = null
+            messageActionTarget = null
+            textSelectionTarget = null
+            messageDetailsTarget = null
             threadConfirmationStep = 0
         }
+    }
+    messageActionTarget?.let { target ->
+        MessageActionsDialog(
+            target = target,
+            deleteAvailable = target.message.syncFingerprint != null && !deletionActive,
+            onDismiss = { messageActionTarget = null },
+            onSelectText = {
+                messageActionTarget = null
+                textSelectionTarget = target
+            },
+            onShowDetails = {
+                messageActionTarget = null
+                messageDetailsTarget = target.message
+            },
+            onDelete = {
+                messageActionTarget = null
+                messagePendingConfirmation = target.message
+            },
+        )
+    }
+    textSelectionTarget?.let { target ->
+        MessageTextSelectionDialog(
+            target = target,
+            onDismiss = { textSelectionTarget = null },
+        )
+    }
+    messageDetailsTarget?.let { message ->
+        MessageDetailsDialog(
+            message = message,
+            onDismiss = { messageDetailsTarget = null },
+        )
     }
     messagePendingConfirmation?.let { message ->
         AlertDialog(
@@ -276,6 +319,9 @@ fun ThreadScreen(
                             onAnchorRestored = onAnchorRestored,
                             onToggleMessageExpansion = onToggleMessageExpansion,
                             deletionActive = deletionActive,
+                            onOpenMessageActions = { message, body, truncated ->
+                                messageActionTarget = MessageActionTarget(message, body, truncated)
+                            },
                             onRequestDeleteMessage = { messagePendingConfirmation = it },
                         )
                     }
@@ -293,6 +339,216 @@ fun ThreadScreen(
                 onAcknowledgeSubmissionUnknown = onAcknowledgeSubmissionUnknown,
             )
         }
+    }
+}
+
+@Composable
+private fun MessageActionsDialog(
+    target: MessageActionTarget,
+    deleteAvailable: Boolean,
+    onDismiss: () -> Unit,
+    onSelectText: () -> Unit,
+    onShowDetails: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    AlertDialog(
+        modifier = Modifier.testTag(MESSAGE_ACTIONS_DIALOG_TEST_TAG),
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.message_actions)) },
+        text = {
+            Column {
+                TextButton(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(SELECT_MESSAGE_TEXT_ACTION_TEST_TAG),
+                    enabled = !target.displayedBody.isNullOrEmpty(),
+                    onClick = onSelectText,
+                ) { Text(stringResource(R.string.select_text)) }
+                TextButton(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(MESSAGE_DETAILS_ACTION_TEST_TAG),
+                    onClick = onShowDetails,
+                ) { Text(stringResource(R.string.message_details)) }
+                if (deleteAvailable) {
+                    TextButton(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(DELETE_MESSAGE_ACTION_TEST_TAG),
+                        onClick = onDelete,
+                    ) { Text(stringResource(R.string.delete_message)) }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun MessageTextSelectionDialog(
+    target: MessageActionTarget,
+    onDismiss: () -> Unit,
+) {
+    val displayedText = target.displayedBody.orEmpty()
+    var fieldValue by remember(target.message.providerMessageId, displayedText) {
+        mutableStateOf(TextFieldValue(displayedText))
+    }
+    val selectedText = selectedMessageTextOrNull(
+        displayedText = displayedText,
+        selectionStart = fieldValue.selection.start,
+        selectionEnd = fieldValue.selection.end,
+    )
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    var copying by remember(target.message.providerMessageId) { mutableStateOf(false) }
+    var copyFailed by remember(target.message.providerMessageId) { mutableStateOf(false) }
+    AlertDialog(
+        modifier = Modifier.testTag(MESSAGE_TEXT_SELECTION_DIALOG_TEST_TAG),
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.select_text)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (target.displayedBodyTruncated) {
+                    Text(
+                        text = stringResource(R.string.select_text_truncated_notice),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                OutlinedTextField(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(MESSAGE_TEXT_SELECTION_FIELD_TEST_TAG),
+                    value = fieldValue,
+                    onValueChange = { updated ->
+                        if (updated.text == displayedText) fieldValue = updated
+                    },
+                    readOnly = true,
+                    maxLines = 12,
+                    label = { Text(stringResource(R.string.message_text)) },
+                )
+                Text(
+                    text = stringResource(R.string.select_text_instruction),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (copyFailed) {
+                    Text(
+                        text = stringResource(R.string.copy_selected_failed),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                modifier = Modifier.testTag(COPY_SELECTED_TEXT_TEST_TAG),
+                enabled = selectedText != null && !copying,
+                onClick = {
+                    val exactSelection = selectedText ?: return@TextButton
+                    copying = true
+                    copyFailed = false
+                    scope.launch {
+                        try {
+                            clipboard.setClipEntry(
+                                ClipEntry(
+                                    ClipData.newPlainText(
+                                        "AuroraSMS selected text",
+                                        exactSelection,
+                                    ),
+                                ),
+                            )
+                            onDismiss()
+                        } catch (_: SecurityException) {
+                            copying = false
+                            copyFailed = true
+                        }
+                    }
+                },
+            ) { Text(stringResource(R.string.copy_selected)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun MessageDetailsDialog(
+    message: TimelineMessage,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        modifier = Modifier.testTag(MESSAGE_DETAILS_DIALOG_TEST_TAG),
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.message_details)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                MessageDetailRow(
+                    label = stringResource(R.string.message_type),
+                    value = stringResource(
+                        if (message.providerMessageId.kind == ProviderKind.SMS) {
+                            R.string.message_type_sms
+                        } else {
+                            R.string.message_type_mms
+                        },
+                    ),
+                )
+                MessageDetailRow(
+                    label = stringResource(R.string.message_direction),
+                    value = stringResource(
+                        if (message.direction == MessageDirection.INCOMING) {
+                            R.string.incoming_message
+                        } else {
+                            R.string.outgoing_message
+                        },
+                    ),
+                )
+                MessageDetailRow(
+                    label = stringResource(R.string.message_date_and_time),
+                    value = formatMessageDetailsTimestamp(message.timestampMillis),
+                )
+                MessageDetailRow(
+                    label = stringResource(R.string.message_status),
+                    value = messageDetailsStatus(message),
+                )
+                MessageDetailRow(
+                    label = stringResource(R.string.message_subscription),
+                    value = message.subscriptionId?.let {
+                        stringResource(R.string.subscription_id, it.value)
+                    } ?: stringResource(R.string.not_available),
+                )
+                MessageDetailRow(
+                    label = stringResource(R.string.message_attachments),
+                    value = if (message.attachmentCount == 0) {
+                        stringResource(R.string.no_attachments)
+                    } else {
+                        pluralStringResource(
+                            R.plurals.attachment_count,
+                            message.attachmentCount,
+                            message.attachmentCount,
+                        )
+                    },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+        },
+    )
+}
+
+@Composable
+private fun MessageDetailRow(label: String, value: String) {
+    Column {
+        Text(
+            text = label,
+            color = LocalAuroraVisualTokens.current.lilacSecondary,
+            style = MaterialTheme.typography.labelMedium,
+        )
+        Text(text = value, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -669,6 +925,7 @@ private fun ThreadReady(
     onAnchorRestored: () -> Unit,
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
     deletionActive: Boolean,
+    onOpenMessageActions: (TimelineMessage, String?, Boolean) -> Unit,
     onRequestDeleteMessage: (TimelineMessage) -> Unit,
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
@@ -901,6 +1158,9 @@ private fun ThreadReady(
                         attachmentRepository = attachmentRepository,
                         previewLoader = previewLoader,
                         deleteAvailable = message.syncFingerprint != null && !deletionActive,
+                        onOpenActions = { body, truncated ->
+                            onOpenMessageActions(message, body, truncated)
+                        },
                         onRequestDelete = { onRequestDeleteMessage(message) },
                     )
                 }
@@ -925,6 +1185,7 @@ private fun MessageBubble(
     attachmentRepository: MmsAttachmentRepository,
     previewLoader: BoundedPreviewLoader,
     deleteAvailable: Boolean,
+    onOpenActions: (String?, Boolean) -> Unit,
     onRequestDelete: () -> Unit,
 ) {
     val tokens = LocalAuroraMaterialTokens.current
@@ -933,6 +1194,7 @@ private fun MessageBubble(
     val directionDescription = stringResource(
         if (incoming) R.string.incoming_message else R.string.outgoing_message,
     )
+    val messageActionsDescription = stringResource(R.string.message_actions)
     val deleteMessageDescription = stringResource(R.string.delete_message)
     val senderChanged = incoming && message.senderAddress != null &&
         message.senderAddress != previousMessage?.senderAddress
@@ -1003,28 +1265,33 @@ private fun MessageBubble(
                 shape = bubbleShape,
             )
             .clip(bubbleShape)
-            .then(
-                if (deleteAvailable) {
-                    Modifier.combinedClickable(
-                        onClick = {},
-                        onLongClick = onRequestDelete,
-                    )
-                } else {
-                    Modifier
-                },
+            .combinedClickable(
+                onClick = {},
+                onLongClick = { onOpenActions(displayedBody, displayedBodyTruncated) },
             )
             .semantics {
                 stateDescription = directionDescription
-                if (deleteAvailable) {
-                    customActions = listOf(
+                customActions = buildList {
+                    add(
                         CustomAccessibilityAction(
-                            label = deleteMessageDescription,
+                            label = messageActionsDescription,
                             action = {
-                                onRequestDelete()
+                                onOpenActions(displayedBody, displayedBodyTruncated)
                                 true
                             },
                         ),
                     )
+                    if (deleteAvailable) {
+                        add(
+                            CustomAccessibilityAction(
+                                label = deleteMessageDescription,
+                                action = {
+                                    onRequestDelete()
+                                    true
+                                },
+                            ),
+                        )
+                    }
                 }
             }
             .testTag(MESSAGE_BUBBLE_TEST_TAG)
@@ -1242,7 +1509,14 @@ private fun ThreadDateChip(
 
 @Composable
 private fun MessageDeliveryStatus(message: TimelineMessage) {
-    val text = when {
+    Text(
+        text = deliveryStatusText(message),
+        style = MaterialTheme.typography.labelSmall,
+    )
+}
+
+@Composable
+private fun deliveryStatusText(message: TimelineMessage): String = when {
         message.box == MessageBox.SENT && message.status == MessageStatus.FAILED ->
             stringResource(R.string.delivery_sent_failed)
         message.box == MessageBox.FAILED || message.status == MessageStatus.FAILED ->
@@ -1253,12 +1527,15 @@ private fun MessageDeliveryStatus(message: TimelineMessage) {
         message.status == MessageStatus.COMPLETE || message.box == MessageBox.SENT ->
             stringResource(R.string.delivery_sent)
         else -> stringResource(R.string.delivery_unknown)
-    }
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-    )
 }
+
+@Composable
+private fun messageDetailsStatus(message: TimelineMessage): String =
+    if (message.direction == MessageDirection.INCOMING) {
+        stringResource(if (message.read) R.string.received_read else R.string.received_unread)
+    } else {
+        deliveryStatusText(message)
+    }
 
 @Composable
 private fun AttachmentPreview(
@@ -1638,6 +1915,16 @@ private data class VisibleThreadItem(
     val offset: Int,
 )
 
+private data class MessageActionTarget(
+    val message: TimelineMessage,
+    val displayedBody: String?,
+    val displayedBodyTruncated: Boolean,
+) {
+    override fun toString(): String =
+        "MessageActionTarget(message=${message.providerMessageId}, " +
+            "hasBody=${displayedBody != null}, displayedBodyTruncated=$displayedBodyTruncated, REDACTED)"
+}
+
 private fun ProviderMessageId.stableUiKey(): String = "${kind.name}:$value"
 
 private fun localThreadDate(timestampMillis: Long) =
@@ -1655,6 +1942,12 @@ private fun formatScheduledTime(timestampMillis: Long): String =
         .withLocale(Locale.getDefault())
         .format(Instant.ofEpochMilli(timestampMillis).atZone(ZoneId.systemDefault()))
 
+private fun formatMessageDetailsTimestamp(timestampMillis: Long): String =
+    DateTimeFormatter
+        .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.MEDIUM)
+        .withLocale(Locale.getDefault())
+        .format(Instant.ofEpochMilli(timestampMillis).atZone(ZoneId.systemDefault()))
+
 private const val MAXIMUM_HEADER_NAMES: Int = 3
 private const val THREAD_VIEWPORT_PREFETCH_ROWS: Int = 10
 private const val MAXIMUM_VIEWPORT_THREAD_ROWS: Int = 100
@@ -1662,6 +1955,14 @@ private const val MAXIMUM_COMPOSER_CHARACTERS: Int = 100_000
 const val THREAD_SCREEN_TEST_TAG: String = "aurora-thread-screen"
 const val THREAD_LIST_TEST_TAG: String = "aurora-thread-list"
 const val MESSAGE_BUBBLE_TEST_TAG: String = "aurora-message-bubble"
+const val MESSAGE_ACTIONS_DIALOG_TEST_TAG: String = "aurora-message-actions"
+const val SELECT_MESSAGE_TEXT_ACTION_TEST_TAG: String = "aurora-select-message-text"
+const val MESSAGE_DETAILS_ACTION_TEST_TAG: String = "aurora-message-details-action"
+const val DELETE_MESSAGE_ACTION_TEST_TAG: String = "aurora-delete-message-action"
+const val MESSAGE_TEXT_SELECTION_DIALOG_TEST_TAG: String = "aurora-message-text-selection"
+const val MESSAGE_TEXT_SELECTION_FIELD_TEST_TAG: String = "aurora-message-text-selection-field"
+const val COPY_SELECTED_TEXT_TEST_TAG: String = "aurora-copy-selected-text"
+const val MESSAGE_DETAILS_DIALOG_TEST_TAG: String = "aurora-message-details"
 const val REACTION_FALLBACK_TEST_TAG: String = "aurora-reaction-fallback"
 const val COMPOSER_TEST_TAG: String = "aurora-composer"
 const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"

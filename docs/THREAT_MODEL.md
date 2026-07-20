@@ -3,10 +3,10 @@
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
 bounded ADR 0008 Phase 5A source implementation in commit `17fc421`, followed
-by accepted Phase 5B–5G controls and Phase 6A presentation through ADR 0015 and
-Room schema 10. Local/API 26/API 36 acceptance passed through Phase 6A. Safe
-install/migration
-and locked-device cold launch passed on a Pixel 8. Real-carrier, radio, billing,
+by accepted Phase 5B–5G controls and Phase 6A–6B presentation/action controls
+through ADR 0016 and Room schema 10. Local/API 26/API 36 acceptance passed
+through Phase 6B. Safe install/migration and locked-device cold launch passed
+on a Pixel 8. Real-carrier, radio, billing,
 and invasive physical lifecycle evidence remains open.
 
 ## Security and privacy objectives
@@ -720,6 +720,15 @@ text, and fail-open raw rendering. It never rewrites provider/index content,
 hides the fallback row, guesses a target row, or logs the quoted text. This
 prevents malformed or adversarial prose from masquerading as a reaction while
 still presenting exact common fallback forms clearly.
+
+Phase 6B treats clipboard export as an explicit privacy boundary. ADR 0016
+places copy behind Message actions, requires a non-collapsed valid selection,
+and copies only that displayed substring. The selector labels truncated input
+and never adds sender, subject, conversation, timestamp, or hidden content.
+Transient selection is not saved or logged. Message details is a body-free,
+address-free projection with no provider/thread IDs or attachment paths.
+Permanent deletion remains a separate choice and retains ADR 0013's confirmation
+and Undo protocol.
 
 ## Open security decisions
 
