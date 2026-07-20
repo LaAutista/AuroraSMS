@@ -233,6 +233,46 @@ class ThreadSmsSendCoordinatorTest {
     }
 
     @Test
+    fun attachmentOnlyDraftSubmitsOneMmsWithNoSyntheticTextPart() = runTest {
+        val fixture = fixture()
+        fixture.operations.authoritativeBody = null
+        val attachmentResult = OutgoingMmsAttachment.create(
+            OutgoingMmsAttachment.IMAGE_PNG,
+            byteArrayOf(5, 6, 7, 8),
+        )
+        val attachment = (attachmentResult as OutgoingMmsAttachment.CreationResult.Valid).attachment
+        val mmsProviderId = ProviderMessageId(ProviderKind.MMS, PROVIDER_ID.value)
+        fixture.transport.mmsResponderWithObserver = { request, observer ->
+            assertTrue(observer.onPrepared(mmsProviderId, CONVERSATION_ID, 1))
+            assertTrue(observer.onSubmitting(mmsProviderId, CONVERSATION_ID, 1))
+            TransportResult.Submitted(
+                operationId = request.operationId,
+                transport = MessageTransportKind.MMS,
+                unitCount = 1,
+                providerMessageId = mmsProviderId,
+                providerConversationId = CONVERSATION_ID,
+                operationOrigin = request.operationOrigin,
+            )
+        }
+
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+        assertEquals(
+            ThreadSmsSendAttempt.STARTED,
+            fixture.coordinator.send(
+                COMMAND.copy(
+                    transport = MessageTransportKind.MMS,
+                    frozenSignature = null,
+                    attachments = listOf(attachment),
+                ),
+            ),
+        )
+
+        val payload = fixture.transport.mmsRequests.single().payload as OutgoingMmsPayload.Message
+        assertNull(payload.text)
+        assertEquals(listOf(attachment), payload.attachments)
+    }
+
+    @Test
     fun durablePreferenceAuthorizesExplicitActiveSubscriptionInsteadOfLatestThreadSim() = runTest {
         val fixture = fixture(
             conversationSubscriptionId = AuroraSubscriptionId(9),
@@ -1435,12 +1475,13 @@ private class RecordingComposerRepository(
         return ComposerSmsOperationResult.Success(
             ComposerSmsReservation(
                 created,
-                ThreadSmsSendCoordinatorTest.BODY,
+                authoritativeBody,
                 authoritativeSubject,
             ),
         )
     }
 
+    var authoritativeBody: String? = ThreadSmsSendCoordinatorTest.BODY
     var authoritativeSubject: String? = null
 
     override suspend fun read(

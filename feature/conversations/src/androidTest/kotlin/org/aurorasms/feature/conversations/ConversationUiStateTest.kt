@@ -587,7 +587,7 @@ class ConversationUiStateTest {
         compose.setContent {
             SyntheticThreadScreen(
                 composer = ComposerUiState(
-                    body = "Synthetic image draft",
+                    body = "",
                     saving = false,
                     failed = false,
                     sendState = ComposerSendState.READY,
@@ -608,6 +608,7 @@ class ConversationUiStateTest {
 
         compose.onNodeWithTag("$COMPOSER_ATTACHMENT_TEST_TAG_PREFIX-0").assertIsDisplayed()
         compose.onNodeWithText("Image · 2 KiB").assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsEnabled()
         compose.onNodeWithText("Remove").performClick()
         compose.runOnIdle { assertEquals(0, removedIndex) }
 

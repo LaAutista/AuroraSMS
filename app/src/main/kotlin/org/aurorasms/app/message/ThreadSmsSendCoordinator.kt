@@ -130,6 +130,7 @@ internal class ThreadSmsSendCoordinator(
                             createdTimestampMillis = safeNow(),
                             frozenSignature = command.frozenSignature,
                             transport = command.transport,
+                            hasAttachments = command.attachments.isNotEmpty(),
                         ),
                     )
                 ) {
@@ -144,17 +145,21 @@ internal class ThreadSmsSendCoordinator(
                 reservationAccepted = true
                 var ownedOperation = reservation.operation
                 try {
-                    val outgoingBody = resolveOutgoingBody(
-                        reservation.authoritativeBody,
-                        ownedOperation.frozenSignature,
-                    )
-                    if (outgoingBody == null) {
+                    val outgoingBody = reservation.authoritativeBody?.let { body ->
+                        resolveOutgoingBody(body, ownedOperation.frozenSignature)
+                    }
+                    if (
+                        (reservation.authoritativeBody != null && outgoingBody == null) ||
+                        (ownedOperation.transport == MessageTransportKind.MMS &&
+                            outgoingBody == null && command.attachments.isEmpty())
+                    ) {
                         if (markKnownUnsent(ownedOperation) == null) requestClassificationRecovery()
                         return@withLock ThreadSmsSendAttempt.STARTED
                     }
                     if (
                         ownedOperation.transport == MessageTransportKind.SMS &&
-                        segmentCounter.count(outgoingBody) != REQUIRED_SMS_UNIT_COUNT
+                        (outgoingBody == null ||
+                            segmentCounter.count(outgoingBody) != REQUIRED_SMS_UNIT_COUNT)
                     ) {
                         if (markKnownUnsent(ownedOperation) == null) requestClassificationRecovery()
                         return@withLock ThreadSmsSendAttempt.STARTED
@@ -230,7 +235,9 @@ internal class ThreadSmsSendCoordinator(
                             request = SmsSendRequest(
                                 operationId = ownedOperation.operationId,
                                 recipients = recipients,
-                                body = outgoingBody,
+                                body = checkNotNull(outgoingBody) {
+                                    "A validated SMS operation requires text"
+                                },
                                 subscriptionId = command.subscriptionId,
                                 requestDeliveryReport = false,
                                 operationOrigin = TransportResult.OperationOrigin.COMPOSER,

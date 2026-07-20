@@ -158,6 +158,42 @@ class ComposerSmsOperationRepositoryInstrumentedTest {
     }
 
     @Test
+    fun emptyDraftReservesOnlyForExplicitAttachmentMms() = runBlocking {
+        val database = openStateDatabase()
+        val drafts = RoomDraftRepository(database)
+        val operations = RoomComposerSmsOperationRepository(database)
+        try {
+            val threadId = ProviderThreadId(84L)
+            val draft = drafts.create(
+                NewDraft(
+                    identity = DraftIdentity.ProviderThread(threadId),
+                    body = null,
+                    subject = null,
+                    createdTimestampMillis = 100L,
+                    updatedTimestampMillis = 100L,
+                ),
+            ).draftSuccessValue()
+            val base = reservationRequest(threadId, draft, 200L)
+
+            assertEquals(ComposerSmsOperationResult.IneligibleDraft, operations.reserve(base))
+            assertEquals(
+                ComposerSmsOperationResult.IneligibleDraft,
+                operations.reserve(base.copy(transport = MessageTransportKind.MMS)),
+            )
+            val reserved = operations.reserve(
+                base.copy(
+                    transport = MessageTransportKind.MMS,
+                    hasAttachments = true,
+                ),
+            ).successValue()
+            assertEquals(null, reserved.authoritativeBody)
+            assertEquals(MessageTransportKind.MMS, reserved.operation.transport)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun mmsReservationRetainsSubjectAndProviderKindThroughLateCallbackReceipt() = runBlocking {
         val database = openStateDatabase()
         val drafts = RoomDraftRepository(database)

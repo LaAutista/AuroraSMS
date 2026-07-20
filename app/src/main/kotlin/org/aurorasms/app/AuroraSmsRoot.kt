@@ -1102,6 +1102,18 @@ private fun ThreadRoute(
     }
     DisposableEffect(writer) { onDispose { services.releaseDraftWriter(writer) } }
     val draftStatus by writer.status.collectAsStateWithLifecycle()
+    LaunchedEffect(writer, composerAttachments.isNotEmpty(), draftStatus) {
+        val active = draftStatus as? DraftWriteStatus.Active
+        if (
+            composerAttachments.isNotEmpty() &&
+            active != null &&
+            !active.saving &&
+            active.acknowledgedRevision == null &&
+            active.latest == DraftEditorContent.EMPTY
+        ) {
+            writer.submit(DraftEditorContent.EMPTY)
+        }
+    }
     LaunchedEffect(writer, draftStatus) {
         if (writerCreationGeneration != writerGeneration) return@LaunchedEffect
         when (val status = draftStatus) {
@@ -1470,16 +1482,19 @@ private fun ThreadRoute(
                             savedDraftRestoration = SavedDraftRestoration(
                                 frozen.toExactRestorationToken(),
                             )
-                            if (frozen.content.body.isNullOrBlank()) return@launch
+                            val frozenBody = frozen.content.body?.takeIf(String::isNotBlank)
+                            if (frozenBody == null && frozenAttachments.isEmpty()) return@launch
                             val ready = threadState as? ThreadUiState.Ready ?: return@launch
                             val identity = ready.verifiedConversationIdentity ?: return@launch
                             val subscription = subscriptionSelection.selected
                                 ?.takeIf { it.smsCapable }
                                 ?: return@launch
-                            val outgoingSegmentCount = resolveOutgoingBody(
-                                frozen.content.body.orEmpty(),
-                                effectiveSignature,
-                            )?.let(services::countSmsSegments) ?: return@launch
+                            val frozenSignature = effectiveSignature.takeIf { frozenBody != null }
+                            val outgoingSegmentCount = frozenBody?.let { body ->
+                                resolveOutgoingBody(body, frozenSignature)
+                                    ?.let(services::countSmsSegments)
+                            }
+                            if (frozenBody != null && outgoingSegmentCount == null) return@launch
                             if (identity.providerThreadId != route.providerThreadId) {
                                 return@launch
                             }
@@ -1487,7 +1502,7 @@ private fun ThreadRoute(
                                 identity.participants.size > 1 ||
                                 !frozen.content.subject.isNullOrBlank() ||
                                 frozenAttachments.isNotEmpty() ||
-                                outgoingSegmentCount != 1
+                                (outgoingSegmentCount ?: 1) != 1
                             ) {
                                 MessageTransportKind.MMS
                             } else {
@@ -1520,7 +1535,7 @@ private fun ThreadRoute(
                                             subscriptionId = subscription.id,
                                             draftId = frozen.draftId,
                                             draftRevision = frozen.revision,
-                                            frozenSignature = effectiveSignature,
+                                            frozenSignature = frozenSignature,
                                             transport = transportKind,
                                             attachments = frozenAttachments,
                                         ),
@@ -2353,7 +2368,7 @@ private fun DraftWriteStatus.toComposerUiState(
         attachmentImporting -> ComposerUnavailableReason.ATTACHMENT_PROCESSING
         failed || saving ->
             ComposerUnavailableReason.DRAFT_NOT_DURABLE
-        body.isBlank() -> ComposerUnavailableReason.EMPTY_MESSAGE
+        body.isBlank() && attachments.isEmpty() -> ComposerUnavailableReason.EMPTY_MESSAGE
         (this as? DraftWriteStatus.Active)?.acknowledgedRevision == null ->
             ComposerUnavailableReason.DRAFT_NOT_DURABLE
         !signatureStateAllowsSend -> ComposerUnavailableReason.SIGNATURE_STATE_UNAVAILABLE
@@ -2361,7 +2376,8 @@ private fun DraftWriteStatus.toComposerUiState(
             ComposerUnavailableReason.CONVERSATION_UNVERIFIED
         !selectedSubscriptionAvailable ->
             ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE
-        segmentCount == null -> ComposerUnavailableReason.MESSAGING_UNAVAILABLE
+        segmentCount == null && body.isNotBlank() ->
+            ComposerUnavailableReason.MESSAGING_UNAVAILABLE
         else -> null
     }
     val sendState = when {

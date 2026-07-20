@@ -148,24 +148,33 @@ data class ComposerSmsReservationRequest(
     val createdTimestampMillis: Long,
     val frozenSignature: MessageSignature? = null,
     val transport: MessageTransportKind = MessageTransportKind.SMS,
+    val hasAttachments: Boolean = false,
 ) {
     init {
         require(createdTimestampMillis >= 0L) { "Composer SMS creation time cannot be negative" }
+        require(!hasAttachments || transport == MessageTransportKind.MMS) {
+            "Composer attachments require MMS transport"
+        }
     }
 
     override fun toString(): String = "ComposerSmsReservationRequest(REDACTED)"
 }
 
-/** Reservation plus the authoritative body read inside the committing transaction. */
+/** Reservation plus authoritative draft text read inside the committing transaction. */
 data class ComposerSmsReservation(
     val operation: ComposerSmsOperation,
-    val authoritativeBody: String,
+    val authoritativeBody: String?,
     val authoritativeSubject: String? = null,
 ) {
     init {
-        require(authoritativeBody.isNotBlank()) { "A reserved composer SMS body cannot be blank" }
-        require(authoritativeBody.length <= Draft.MAX_BODY_CHARACTERS) {
+        require(authoritativeBody == null || authoritativeBody.isNotBlank()) {
+            "A reserved composer body cannot be blank"
+        }
+        require(authoritativeBody == null || authoritativeBody.length <= Draft.MAX_BODY_CHARACTERS) {
             "A reserved composer SMS body is too large"
+        }
+        require(authoritativeBody != null || operation.transport == MessageTransportKind.MMS) {
+            "Only MMS can reserve an attachment-only draft"
         }
         require(authoritativeSubject == null || authoritativeSubject.isNotBlank()) {
             "A reserved composer subject cannot be blank"

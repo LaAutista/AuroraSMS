@@ -84,6 +84,29 @@ class ComposerSmsOperationContractTest {
     }
 
     @Test
+    fun attachmentOnlyReservationIsExclusiveToExplicitMms() {
+        val mmsOperation = validOperation(
+            ComposerSmsOperationPhase.RESERVED,
+            null,
+            transport = MessageTransportKind.MMS,
+        )
+        assertEquals(null, ComposerSmsReservation(mmsOperation, null).authoritativeBody)
+        assertThrows(IllegalArgumentException::class.java) {
+            ComposerSmsReservation(validOperation(ComposerSmsOperationPhase.RESERVED, null), null)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ComposerSmsReservationRequest(
+                providerThreadId = ProviderThreadId(1L),
+                draftId = DraftId(1L),
+                expectedDraftRevision = DraftRevision(1L),
+                subscriptionId = AuroraSubscriptionId(1),
+                createdTimestampMillis = 1L,
+                hasAttachments = true,
+            )
+        }
+    }
+
+    @Test
     fun revisionsAndTimestampsAreMonotonic() {
         assertThrows(IllegalArgumentException::class.java) {
             ComposerSmsOperationRevision(-1L)

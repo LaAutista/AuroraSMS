@@ -73,8 +73,12 @@ class RoomComposerSmsOperationRepository(
             ) {
                 return@withTransaction ComposerSmsOperationResult.StaleWrite
             }
-            val body = draft.body
-            if (body.isNullOrBlank()) {
+            val body = draft.body?.takeIf(String::isNotBlank)
+            if (
+                body == null &&
+                !(request.transport == org.aurorasms.core.model.MessageTransportKind.MMS &&
+                    request.hasAttachments)
+            ) {
                 return@withTransaction ComposerSmsOperationResult.IneligibleDraft
             }
             if (request.transport == org.aurorasms.core.model.MessageTransportKind.SMS && draft.subject != null) {
