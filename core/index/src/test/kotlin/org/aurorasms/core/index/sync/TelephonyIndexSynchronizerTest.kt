@@ -74,7 +74,9 @@ class TelephonyIndexSynchronizerTest {
             countResult = ProviderAccessResult.Success(6L),
         )
 
-        val outcome = synchronizer(database, sms, SyncTestMmsSource()).synchronize()
+        val outcome = synchronizer(database, sms, SyncTestMmsSource()).reconcile(
+            setOf(IndexSignal.ROLE_CHANGED),
+        )
 
         assertTrue(outcome is IndexSyncOutcome.Complete)
         assertEquals(1, database.sync.allGenerations().size)
@@ -183,6 +185,32 @@ class TelephonyIndexSynchronizerTest {
         assertEquals(1, startupMms.readRequests.size)
         assertEquals(1, database.sync.allGenerations().size)
         assertEquals(generationId, database.sync.latestGeneration()?.generationId)
+    }
+
+    @Test
+    fun `role recovery after complete history starts a fresh full generation`() = runTest {
+        val database = FakeIndexDatabase()
+        assertTrue(
+            synchronizer(
+                database,
+                SyncTestSmsSource(messages = listOf(sms(id = 1L, timestamp = 10L))),
+                SyncTestMmsSource(),
+            ).synchronize() is IndexSyncOutcome.Complete,
+        )
+        val completedGenerationId = requireNotNull(database.sync.latestGeneration()).generationId
+        val recoveredSms = SyncTestSmsSource(messages = listOf(sms(id = 1L, timestamp = 10L)))
+        val recoveredMms = SyncTestMmsSource()
+
+        val outcome = synchronizer(database, recoveredSms, recoveredMms).reconcile(
+            setOf(IndexSignal.ROLE_CHANGED),
+        )
+
+        assertTrue(outcome is IndexSyncOutcome.Complete)
+        assertEquals(2, recoveredSms.readRequests.size)
+        assertEquals(2, recoveredMms.readRequests.size)
+        assertEquals(2, database.sync.allGenerations().size)
+        assertTrue(database.sync.latestGeneration()?.generationId != completedGenerationId)
+        assertEquals(1L, database.messages.count())
     }
 
     @Test

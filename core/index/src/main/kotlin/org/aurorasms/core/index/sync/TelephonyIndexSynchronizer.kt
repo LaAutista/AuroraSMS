@@ -89,7 +89,17 @@ class TelephonyIndexSynchronizer(
 
         val active = syncDao.activeGeneration()
         val latest = syncDao.latestGeneration()
-        if (active == null && latest?.state == GenerationStateCode.COMPLETE) {
+        // A completed index may have missed arbitrary provider changes while
+        // Aurora lacked SMS-role authority. Role recovery therefore requires a
+        // new full generation. Paused first-history work remains resumable
+        // because this boundary applies only to a previously complete state.
+        val completeRoleRecovery =
+            latest?.state == GenerationStateCode.COMPLETE && IndexSignal.ROLE_CHANGED in signals
+        if (
+            active == null &&
+            latest?.state == GenerationStateCode.COMPLETE &&
+            !completeRoleRecovery
+        ) {
             val ownedIncomingInsert = signals == setOf(IndexSignal.INCOMING_INSERT)
             when (
                 val steadyState = reconciler.reconcileComplete(

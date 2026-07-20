@@ -48,7 +48,7 @@ jobs:
         run: >-
           ./gradlew --no-daemon --no-parallel
           verifyCleanRoom verifyPrivateAssets verifyDependencies
-          verifyReleaseMetadata
+          verifyReleaseMetadata verifyPhysicalProviderProtocol
 
       - name: Test, lint, and assemble governed variants
         run: >-

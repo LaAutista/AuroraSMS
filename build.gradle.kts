@@ -124,6 +124,16 @@ val verifyReleaseMetadata by tasks.registering(Exec::class) {
     commandLine("bash", layout.projectDirectory.file("scripts/verify-release-metadata.sh").asFile)
 }
 
+val verifyPhysicalProviderProtocol by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Self-tests the content-free physical provider-completion parser."
+    commandLine(
+        "bash",
+        layout.projectDirectory.file("scripts/run-physical-provider-completion-smoke.sh").asFile,
+        "--self-test",
+    )
+}
+
 val verifyPermissions by tasks.registering(Exec::class) {
     group = "verification"
     description = "Checks app manifests and built APKs against the permission ledger."
@@ -270,6 +280,7 @@ tasks.register("verifyGovernance") {
         verifyCleanRoom,
         verifyDependencies,
         verifyPermissions,
+        verifyPhysicalProviderProtocol,
         verifyPrivateAssets,
         verifyApkContents,
         verifyReleaseMetadata,
