@@ -182,6 +182,61 @@ class AuroraBackupMessageCodecTest {
         )
     }
 
+    @Test
+    fun validatedVisitorReceivesOneShotBinaryPayloadAndRequiresConsumption() {
+        val archive = AuroraBackupArchive()
+        val passphrase = "visitor schema secret".toCharArray()
+        val binary = byteArrayOf(9, 8, 7, 6)
+        val part = minimalPart(parent = 1).copy(
+            contentType = "application/octet-stream",
+            payload = AuroraBackupMmsPartPayload.Binary { it.write(binary) },
+        )
+        val plaintext = decrypt(
+            archive,
+            passphrase,
+            encrypted(
+                archive,
+                passphrase,
+                sequenceOf(
+                    AuroraBackupMessageCodec.mmsEntry(minimalMms(1)),
+                    AuroraBackupMessageCodec.mmsPartEntry(part),
+                ),
+            ),
+        )
+        val observed = ByteArrayOutputStream()
+        val result = archive.visitMessagePlaintext(
+            ByteArrayInputStream(plaintext),
+            object : AuroraBackupMessageVisitor {
+                override fun onSms(record: AuroraBackupSmsRecord) = Unit
+                override fun onMms(record: AuroraBackupMmsRecord) = Unit
+                override fun onMmsPart(
+                    record: AuroraBackupDecodedMmsPart,
+                    payload: AuroraBackupDecodedPartPayload,
+                ) {
+                    (payload as AuroraBackupDecodedPartPayload.Binary).copyTo(observed)
+                }
+            },
+        )
+        assertTrue(result is AuroraBackupValidationResult.Success)
+        assertTrue(binary.contentEquals(observed.toByteArray()))
+
+        val abandoned = archive.visitMessagePlaintext(
+            ByteArrayInputStream(plaintext),
+            object : AuroraBackupMessageVisitor {
+                override fun onSms(record: AuroraBackupSmsRecord) = Unit
+                override fun onMms(record: AuroraBackupMmsRecord) = Unit
+                override fun onMmsPart(
+                    record: AuroraBackupDecodedMmsPart,
+                    payload: AuroraBackupDecodedPartPayload,
+                ) = Unit
+            },
+        )
+        assertEquals(
+            AuroraBackupValidationResult.Failed(AuroraBackupFailure.SOURCE_FAILURE),
+            abandoned,
+        )
+    }
+
     private fun minimalSms(id: Long) = AuroraBackupSmsRecord(
         archiveMessageId = id,
         box = AuroraBackupMessageBox.INBOX,

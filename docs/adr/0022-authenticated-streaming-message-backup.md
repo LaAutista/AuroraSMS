@@ -100,6 +100,13 @@ Only then may the file become `.validated` and produce a dry-run summary. Leavin
 the screen/backgrounding before confirmation and startup reconciliation delete
 all owned temporary files.
 
+Provider application reopens only that private validated file and rechecks the
+complete framing, record checksums, schemas, sequential message graph, and final
+manifest while visiting records. SMS/MMS metadata callbacks occur after their
+record checksum is complete. A binary MMS payload is exposed only as a one-shot
+record stream during its callback and must be explicitly copied or discarded;
+retaining or abandoning it fails the visit.
+
 The user must explicitly confirm the dry-run summary. Restore requires the
 default-SMS role and write permission again. Existing provider rows are never
 overwritten. Exact content fingerprints skip duplicates.

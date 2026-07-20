@@ -214,15 +214,23 @@ class AuroraBackupArchive(
     }
 
     fun validatePlaintext(source: InputStream): AuroraBackupValidationResult =
-        validatePlaintext(source, validateMessageSchemas = false)
+        validatePlaintext(source, validateMessageSchemas = false, visitor = null)
 
     /** Full Phase 6G validation, including exact version-one SMS/MMS/part schemas. */
     fun validateMessagePlaintext(source: InputStream): AuroraBackupValidationResult =
-        validatePlaintext(source, validateMessageSchemas = true)
+        validatePlaintext(source, validateMessageSchemas = true, visitor = null)
+
+    /** Visits a previously validated private archive while rechecking all framing and schemas. */
+    fun visitMessagePlaintext(
+        source: InputStream,
+        visitor: AuroraBackupMessageVisitor,
+    ): AuroraBackupValidationResult =
+        validatePlaintext(source, validateMessageSchemas = true, visitor = visitor)
 
     private fun validatePlaintext(
         source: InputStream,
         validateMessageSchemas: Boolean,
+        visitor: AuroraBackupMessageVisitor?,
     ): AuroraBackupValidationResult = try {
         val reader = DataInputStream(MaximumInputStream(source, MAX_PLAINTEXT_ARCHIVE_BYTES))
         if (!MessageDigest.isEqual(readExact(reader, INNER_MAGIC.size), INNER_MAGIC)) {
@@ -265,7 +273,7 @@ class AuroraBackupArchive(
                 maximum = MAX_RECORD_CONTENT_BYTES,
                 validate = if (validateMessageSchemas) {
                     { record ->
-                        AuroraBackupMessageCodec.inspect(type, record)
+                        AuroraBackupMessageCodec.consume(type, record, visitor)
                             ?.also { schemaIdentity = it } != null
                     }
                 } else {
@@ -305,6 +313,8 @@ class AuroraBackupArchive(
         AuroraBackupValidationResult.Failed(AuroraBackupFailure.INVALID_ARCHIVE)
     } catch (_: ArchiveLimitException) {
         AuroraBackupValidationResult.Failed(AuroraBackupFailure.LIMIT_EXCEEDED)
+    } catch (_: VisitorFailureException) {
+        AuroraBackupValidationResult.Failed(AuroraBackupFailure.SOURCE_FAILURE)
     } catch (_: IOException) {
         AuroraBackupValidationResult.Failed(AuroraBackupFailure.INVALID_ARCHIVE)
     } catch (_: RuntimeException) {

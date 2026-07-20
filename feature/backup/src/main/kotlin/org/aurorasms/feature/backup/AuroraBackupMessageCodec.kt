@@ -169,6 +169,81 @@ data class AuroraBackupMmsPartRecord(
             "sequence=$sequence, contentType=$contentType, payload=$payload, REDACTED)"
 }
 
+data class AuroraBackupDecodedMmsPart(
+    val parentArchiveMessageId: Long,
+    val sequence: Int,
+    val contentType: String,
+    val charset: Int?,
+    val name: String?,
+    val contentDisposition: String?,
+    val filename: String?,
+    val contentId: String?,
+    val contentLocation: String?,
+) {
+    init {
+        require(parentArchiveMessageId > 0L)
+        require(contentType.isMimeType())
+        require(name.isNullOrSafeMetadata(AuroraBackupMessageCodec.MAX_METADATA_BYTES))
+        require(contentDisposition.isNullOrSafeMetadata(AuroraBackupMessageCodec.MAX_METADATA_BYTES))
+        require(filename.isNullOrSafeMetadata(AuroraBackupMessageCodec.MAX_METADATA_BYTES))
+        require(contentId.isNullOrSafeMetadata(AuroraBackupMessageCodec.MAX_METADATA_BYTES))
+        require(contentLocation.isNullOrSafeMetadata(AuroraBackupMessageCodec.MAX_METADATA_BYTES))
+    }
+
+    override fun toString(): String =
+        "AuroraBackupDecodedMmsPart(parentArchiveMessageId=$parentArchiveMessageId, " +
+            "sequence=$sequence, contentType=$contentType, REDACTED)"
+}
+
+sealed interface AuroraBackupDecodedPartPayload {
+    data object Empty : AuroraBackupDecodedPartPayload
+    data class Text(val value: String) : AuroraBackupDecodedPartPayload {
+        override fun toString(): String = "AuroraBackupDecodedPartPayload.Text(bytes=${value.utf8Size()})"
+    }
+
+    /** One-shot authenticated record stream, valid only during the visitor callback. */
+    class Binary internal constructor(
+        private val source: InputStream,
+    ) : AuroraBackupDecodedPartPayload {
+        private var completed = false
+
+        @Throws(IOException::class)
+        fun copyTo(destination: OutputStream): Long {
+            check(!completed) { "Binary backup payload is one-shot" }
+            val copied = source.copyTo(destination, 64 * 1_024)
+            completed = true
+            return copied
+        }
+
+        @Throws(IOException::class)
+        fun discard(): Long = copyTo(DiscardingOutputStream)
+
+        internal fun requireCompleted() {
+            if (!completed) {
+                throw VisitorFailureException(
+                    IllegalStateException("Binary backup payload was neither copied nor discarded"),
+                )
+            }
+        }
+
+        override fun toString(): String = "AuroraBackupDecodedPartPayload.Binary(REDACTED)"
+    }
+}
+
+interface AuroraBackupMessageVisitor {
+    @Throws(IOException::class)
+    fun onSms(record: AuroraBackupSmsRecord)
+
+    @Throws(IOException::class)
+    fun onMms(record: AuroraBackupMmsRecord)
+
+    @Throws(IOException::class)
+    fun onMmsPart(
+        record: AuroraBackupDecodedMmsPart,
+        payload: AuroraBackupDecodedPartPayload,
+    )
+}
+
 /** Exact version-one message schemas carried inside [AuroraBackupArchive]. */
 object AuroraBackupMessageCodec {
     const val SCHEMA_VERSION: Int = 1
@@ -223,46 +298,86 @@ object AuroraBackupMessageCodec {
     internal fun inspect(
         type: AuroraBackupEntryType,
         source: InputStream,
-    ): AuroraBackupSchemaIdentity? = when (type) {
-        AuroraBackupEntryType.SMS -> decode(source, ::readSms)?.let {
-            AuroraBackupSchemaIdentity.Message(it.archiveMessageId, isMms = false)
+    ): AuroraBackupSchemaIdentity? = consume(type, source, visitor = null)
+
+    internal fun consume(
+        type: AuroraBackupEntryType,
+        source: InputStream,
+        visitor: AuroraBackupMessageVisitor?,
+    ): AuroraBackupSchemaIdentity? = try {
+        when (type) {
+            AuroraBackupEntryType.SMS -> decode(source, ::readSms)?.let { record ->
+                invokeVisitor { visitor?.onSms(record) }
+                AuroraBackupSchemaIdentity.Message(record.archiveMessageId, isMms = false)
+            }
+            AuroraBackupEntryType.MMS -> decode(source, ::readMms)?.let { record ->
+                invokeVisitor { visitor?.onMms(record) }
+                AuroraBackupSchemaIdentity.Message(record.archiveMessageId, isMms = true)
+            }
+            AuroraBackupEntryType.MMS_PART -> consumeMmsPart(source, visitor)?.let {
+                AuroraBackupSchemaIdentity.MmsPart(it)
+            }
         }
-        AuroraBackupEntryType.MMS -> decode(source, ::readMms)?.let {
-            AuroraBackupSchemaIdentity.Message(it.archiveMessageId, isMms = true)
-        }
-        AuroraBackupEntryType.MMS_PART -> inspectMmsPart(source)?.let {
-            AuroraBackupSchemaIdentity.MmsPart(it)
-        }
+    } catch (error: VisitorFailureException) {
+        throw error
+    } catch (error: IOException) {
+        throw VisitorFailureException(error)
     }
 
     /**
      * Validates one complete part record without retaining a binary attachment.
      * The source must expose only this record's authenticated content bytes.
      */
-    fun validateMmsPart(source: InputStream): Boolean = inspectMmsPart(source) != null
+    fun validateMmsPart(source: InputStream): Boolean = runCatching {
+        consumeMmsPart(source, visitor = null)
+    }.getOrNull() != null
 
-    private fun inspectMmsPart(source: InputStream): Long? = try {
+    private fun consumeMmsPart(
+        source: InputStream,
+        visitor: AuroraBackupMessageVisitor?,
+    ): Long? = try {
         val data = DataInputStream(source)
         if (data.readUnsignedByte() != SCHEMA_VERSION) return null
         val parentArchiveMessageId = data.readLong()
         if (parentArchiveMessageId <= 0L) return null
-        data.readInt()
+        val sequence = data.readInt()
         val contentType = data.readRequiredString(MAX_MIME_BYTES)
         if (!contentType.isMimeType()) return null
-        data.readNullableInt()
-        repeat(5) {
-            val value = data.readNullableString(MAX_METADATA_BYTES)
-            if (value != null && !value.isMetadataValue(MAX_METADATA_BYTES)) return null
-        }
+        val charset = data.readNullableInt()
+        val metadata = ArrayList<String?>(5)
+        repeat(5) { metadata += data.readNullableString(MAX_METADATA_BYTES) }
+        if (metadata.any { it != null && !it.isMetadataValue(MAX_METADATA_BYTES) }) return null
+        val record = AuroraBackupDecodedMmsPart(
+            parentArchiveMessageId = parentArchiveMessageId,
+            sequence = sequence,
+            contentType = contentType,
+            charset = charset,
+            name = metadata[0],
+            contentDisposition = metadata[1],
+            filename = metadata[2],
+            contentId = metadata[3],
+            contentLocation = metadata[4],
+        )
         val complete = when (data.readUnsignedByte()) {
-            PAYLOAD_EMPTY -> data.read() == -1
+            PAYLOAD_EMPTY -> {
+                if (data.read() != -1) return null
+                invokePartVisitor(visitor, record, AuroraBackupDecodedPartPayload.Empty)
+                true
+            }
             PAYLOAD_TEXT -> {
-                data.readRequiredString(MAX_TEXT_BYTES)
-                data.read() == -1
+                val value = data.readRequiredString(MAX_TEXT_BYTES)
+                if (data.read() != -1) return null
+                invokePartVisitor(visitor, record, AuroraBackupDecodedPartPayload.Text(value))
+                true
             }
             PAYLOAD_BINARY -> {
-                val buffer = ByteArray(STREAM_BUFFER_BYTES)
-                while (data.read(buffer) >= 0) Unit
+                val payload = AuroraBackupDecodedPartPayload.Binary(data)
+                if (visitor == null) {
+                    payload.discard()
+                } else {
+                    invokePartVisitor(visitor, record, payload)
+                }
+                payload.requireCompleted()
                 true
             }
             else -> false
@@ -270,8 +385,30 @@ object AuroraBackupMessageCodec {
         parentArchiveMessageId.takeIf { complete }
     } catch (_: IOException) {
         null
+    } catch (error: VisitorFailureException) {
+        throw error
     } catch (_: RuntimeException) {
         null
+    }
+
+    private fun invokePartVisitor(
+        visitor: AuroraBackupMessageVisitor?,
+        record: AuroraBackupDecodedMmsPart,
+        payload: AuroraBackupDecodedPartPayload,
+    ) {
+        invokeVisitor { visitor?.onMmsPart(record, payload) }
+    }
+
+    private inline fun invokeVisitor(action: () -> Unit) {
+        try {
+            action()
+        } catch (error: VisitorFailureException) {
+            throw error
+        } catch (error: IOException) {
+            throw VisitorFailureException(error)
+        } catch (error: RuntimeException) {
+            throw VisitorFailureException(error)
+        }
     }
 
     private fun writeSms(output: DataOutputStream, record: AuroraBackupSmsRecord) {
@@ -456,6 +593,13 @@ object AuroraBackupMessageCodec {
 internal sealed interface AuroraBackupSchemaIdentity {
     data class Message(val archiveMessageId: Long, val isMms: Boolean) : AuroraBackupSchemaIdentity
     data class MmsPart(val parentArchiveMessageId: Long) : AuroraBackupSchemaIdentity
+}
+
+internal class VisitorFailureException(cause: Throwable) : RuntimeException(cause)
+
+private data object DiscardingOutputStream : OutputStream() {
+    override fun write(value: Int) = Unit
+    override fun write(source: ByteArray, offset: Int, length: Int) = Unit
 }
 
 private fun DataOutputStream.writeNullableInt(value: Int?) {

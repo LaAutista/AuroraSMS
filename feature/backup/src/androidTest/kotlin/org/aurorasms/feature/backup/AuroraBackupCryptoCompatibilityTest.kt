@@ -83,6 +83,39 @@ class AuroraBackupCryptoCompatibilityTest {
             AuroraBackupValidationResult.Success(written.summary),
             archive.validateMessagePlaintext(ByteArrayInputStream(plaintext.toByteArray())),
         )
+        var visitedSms = 0
+        var visitedMms = 0
+        var visitedParts = 0
+        var binaryBytes = 0L
+        assertEquals(
+            AuroraBackupValidationResult.Success(written.summary),
+            archive.visitMessagePlaintext(
+                ByteArrayInputStream(plaintext.toByteArray()),
+                object : AuroraBackupMessageVisitor {
+                    override fun onSms(record: AuroraBackupSmsRecord) {
+                        visitedSms += 1
+                    }
+
+                    override fun onMms(record: AuroraBackupMmsRecord) {
+                        visitedMms += 1
+                    }
+
+                    override fun onMmsPart(
+                        record: AuroraBackupDecodedMmsPart,
+                        payload: AuroraBackupDecodedPartPayload,
+                    ) {
+                        visitedParts += 1
+                        if (payload is AuroraBackupDecodedPartPayload.Binary) {
+                            binaryBytes += payload.discard()
+                        }
+                    }
+                },
+            ),
+        )
+        assertEquals(1, visitedSms)
+        assertEquals(1, visitedMms)
+        assertEquals(2, visitedParts)
+        assertEquals(196_608L, binaryBytes)
     }
 
     @Test
