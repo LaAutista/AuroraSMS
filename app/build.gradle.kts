@@ -17,8 +17,8 @@ android {
         applicationId = "org.aurorasms.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "0.6.8-phase6"
+        versionCode = 20
+        versionName = "0.6.9-phase6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -91,6 +91,7 @@ dependencies {
     implementation(project(":core:index"))
     implementation(project(":core:state"))
     implementation(project(":core:telephony"))
+    implementation(project(":feature:backup"))
     implementation(project(":feature:conversations"))
 
     implementation(libs.kotlin.stdlib)

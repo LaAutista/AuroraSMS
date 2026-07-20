@@ -60,6 +60,7 @@
     <string name="keep_item">Keep</string>
     <string name="check_status">Check status</string>
     <string name="appearance">Appearance</string>
+    <string name="settings">Settings</string>
     <string name="inbox_appearance">Inbox appearance</string>
     <string name="conversation_defaults">Conversation defaults</string>
     <string name="conversation_appearance">Conversation appearance</string>

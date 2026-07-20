@@ -71,6 +71,7 @@ fun InboxScreen(
     onOpenConversation: (ProviderThreadId) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenSettings: () -> Unit = {},
     onOpenSpamBlocked: () -> Unit = {},
     onOpenInboxAppearance: () -> Unit,
     onOpenConversationDefaults: () -> Unit,
@@ -109,6 +110,7 @@ fun InboxScreen(
                             diagnosticsAvailable = diagnosticsAvailable,
                             contactsPermissionGranted = contactsPermissionGranted,
                             onOpenAppearance = onOpenAppearance,
+                            onOpenSettings = onOpenSettings,
                             onOpenSpamBlocked = onOpenSpamBlocked,
                             onOpenInboxAppearance = onOpenInboxAppearance,
                             onOpenConversationDefaults = onOpenConversationDefaults,
@@ -191,6 +193,7 @@ private fun InboxMoreMenu(
     diagnosticsAvailable: Boolean,
     contactsPermissionGranted: Boolean,
     onOpenAppearance: () -> Unit,
+    onOpenSettings: () -> Unit,
     onOpenSpamBlocked: () -> Unit,
     onOpenInboxAppearance: () -> Unit,
     onOpenConversationDefaults: () -> Unit,
@@ -218,6 +221,14 @@ private fun InboxMoreMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
+            DropdownMenuItem(
+                modifier = Modifier.testTag(INBOX_SETTINGS_ACTION_TEST_TAG),
+                text = { Text(stringResource(R.string.settings)) },
+                onClick = {
+                    expanded = false
+                    onOpenSettings()
+                },
+            )
             DropdownMenuItem(
                 modifier = Modifier.testTag(INBOX_SPAM_BLOCKED_ACTION_TEST_TAG),
                 text = { Text(stringResource(R.string.spam_and_blocked)) },
@@ -604,6 +615,7 @@ const val INBOX_SEARCH_ACTION_TEST_TAG: String = "aurora-inbox-search-action"
 const val INBOX_MORE_ACTION_TEST_TAG: String = "aurora-inbox-more-action"
 const val INBOX_SIGNATURE_ACTION_TEST_TAG: String = "aurora-inbox-signature-action"
 const val INBOX_APPEARANCE_ACTION_TEST_TAG: String = "aurora-inbox-appearance-action"
+const val INBOX_SETTINGS_ACTION_TEST_TAG: String = "aurora-inbox-settings-action"
 const val INBOX_SPAM_BLOCKED_ACTION_TEST_TAG: String = "aurora-inbox-spam-blocked-action"
 const val INBOX_SPAM_WARNING_TEST_TAG: String = "aurora-inbox-spam-warning"
 const val INBOX_NOTIFICATION_REMINDER_ACTION_TEST_TAG: String =

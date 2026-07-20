@@ -10,6 +10,10 @@ internal sealed interface AppRoute {
 
     data object Appearance : AppRoute
 
+    data object Settings : AppRoute
+
+    data object BackupRestore : AppRoute
+
     data object SpamBlocked : AppRoute
 
     data class Search(val query: String = "") : AppRoute {

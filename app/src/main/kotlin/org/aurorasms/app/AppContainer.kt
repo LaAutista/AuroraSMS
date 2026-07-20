@@ -214,6 +214,8 @@ import org.aurorasms.core.state.SpamSafetyStorageOperation
 import org.aurorasms.core.state.storage.RoomSpamSafetyRepository
 import org.aurorasms.core.telephony.internal.AndroidPermanentDeletionProvider
 import org.aurorasms.feature.conversations.BoundedPreviewLoader
+import org.aurorasms.feature.backup.AuroraBackupDocumentController
+import org.aurorasms.feature.backup.AuroraBackupStartupRecoveryResult
 
 class AppContainer(
     val application: Application,
@@ -333,6 +335,10 @@ class AppContainer(
         repository = appearanceWallpaperRepository,
         store = ManagedWallpaperStore(application, boundedMediaDecodeGate),
     )
+    internal val backupDocumentController = AuroraBackupDocumentController(application)
+    private val _backupStartupRecovery = MutableStateFlow<AuroraBackupStartupRecoveryResult?>(null)
+    internal val backupStartupRecovery: StateFlow<AuroraBackupStartupRecoveryResult?> =
+        _backupStartupRecovery.asStateFlow()
     @Volatile
     private var stateDatabase: AuroraStateDatabase? = null
 
@@ -449,6 +455,9 @@ class AppContainer(
                 notificationReminderController.recover(
                     NotificationReminderRecoveryReason.APP_STARTUP,
                 )
+            }
+            applicationScope.launch(Dispatchers.IO) {
+                _backupStartupRecovery.value = backupDocumentController.recoverStartup()
             }
         }
         if (!syntheticIndexOnly) {
@@ -767,6 +776,9 @@ class AppContainer(
     }
 
     fun onMessagingActivityStopped() {
+        applicationScope.launch(Dispatchers.IO) {
+            backupDocumentController.cancelRestore()
+        }
         foregroundIndexReadGate.onActivityStopped()
     }
 

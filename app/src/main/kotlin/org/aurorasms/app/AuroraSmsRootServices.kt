@@ -40,6 +40,8 @@ import org.aurorasms.core.telephony.ContactCache
 import org.aurorasms.core.telephony.MmsAttachmentRepository
 import org.aurorasms.core.telephony.SubscriptionRepository
 import org.aurorasms.feature.conversations.BoundedPreviewLoader
+import org.aurorasms.feature.backup.AuroraBackupDocumentController
+import org.aurorasms.feature.backup.AuroraBackupStartupRecoveryResult
 
 /** Presentation dependencies used by [AuroraSmsRoot], isolated from the full app container. */
 internal interface AuroraSmsRootServices {
@@ -72,6 +74,10 @@ internal interface AuroraSmsRootServices {
         get() = UnavailableMessageSignaturePreferenceStore
     val voiceMemoController: VoiceMemoController?
         get() = null
+    val backupDocumentController: AuroraBackupDocumentController?
+        get() = null
+    val backupStartupRecovery: Flow<AuroraBackupStartupRecoveryResult?>
+        get() = flowOf(null)
 
     fun countSmsSegments(body: String): Int? = null
 
@@ -147,6 +153,10 @@ internal class AppContainerAuroraSmsRootServices(
         get() = container.messageSignaturePreferenceStore
     override val voiceMemoController: VoiceMemoController
         get() = container.voiceMemoController
+    override val backupDocumentController: AuroraBackupDocumentController
+        get() = container.backupDocumentController
+    override val backupStartupRecovery: Flow<AuroraBackupStartupRecoveryResult?>
+        get() = container.backupStartupRecovery
 
     override fun countSmsSegments(body: String): Int? = AndroidSmsSegmentCounter.count(body)
 

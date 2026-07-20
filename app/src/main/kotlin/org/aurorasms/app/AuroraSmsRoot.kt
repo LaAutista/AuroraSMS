@@ -65,6 +65,8 @@ import org.aurorasms.app.appearance.wallpaper.WallpaperApplyControllerResult
 import org.aurorasms.app.appearance.wallpaper.WallpaperControllerError
 import org.aurorasms.app.appearance.wallpaper.WallpaperRenderRequestEpoch
 import org.aurorasms.app.appearance.wallpaper.resolveWallpaperCandidates
+import org.aurorasms.app.backup.BackupRestoreScreen
+import org.aurorasms.app.settings.SettingsScreen
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.DraftRestorationToken
 import org.aurorasms.app.drafts.DraftUnfreezeReason
@@ -219,6 +221,9 @@ internal fun AuroraSmsRoot(
     val saveableScreens = rememberSaveableStateHolder()
     val route = routes.last()
     val context = LocalContext.current
+    val backupStartupRecovery by services.backupStartupRecovery.collectAsStateWithLifecycle(
+        initialValue = null,
+    )
 
     fun newThreadRoute(
         providerThreadId: ProviderThreadId,
@@ -307,6 +312,7 @@ internal fun AuroraSmsRoot(
                 },
                 onOpenSearch = { push(AppRoute.Search()) },
                 onOpenAppearance = { push(AppRoute.Appearance) },
+                onOpenSettings = { push(AppRoute.Settings) },
                 onOpenSpamBlocked = { push(AppRoute.SpamBlocked) },
                 onOpenDiagnostics = onOpenDiagnostics,
                 onRequestContactsPermission = onRequestContactsPermission,
@@ -325,6 +331,26 @@ internal fun AuroraSmsRoot(
                     saveableScreens.removeState(AppRoute.Appearance.saveableScreenKey())
                     pop()
                 },
+            )
+            AppRoute.Settings -> SettingsScreen(
+                onOpenAppearance = { push(AppRoute.Appearance) },
+                onOpenSpamBlocked = { push(AppRoute.SpamBlocked) },
+                onOpenBackupRestore = {
+                    if (services.backupDocumentController != null) push(AppRoute.BackupRestore)
+                },
+                onBack = ::pop,
+            )
+            AppRoute.BackupRestore -> services.backupDocumentController?.let { controller ->
+                BackupRestoreScreen(
+                    controller = controller,
+                    startupRecovery = backupStartupRecovery,
+                    onBack = ::pop,
+                )
+            } ?: SettingsScreen(
+                onOpenAppearance = { replaceCurrent(AppRoute.Appearance) },
+                onOpenSpamBlocked = { replaceCurrent(AppRoute.SpamBlocked) },
+                onOpenBackupRestore = {},
+                onBack = ::pop,
             )
             AppRoute.SpamBlocked -> SpamBlockedRoute(
                 services = services,
@@ -380,6 +406,7 @@ private fun InboxRoute(
     onOpenConversation: (ProviderThreadId) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenSettings: () -> Unit,
     onOpenSpamBlocked: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onRequestContactsPermission: () -> Unit,
@@ -467,6 +494,7 @@ private fun InboxRoute(
             onOpenConversation = onOpenConversation,
             onOpenSearch = onOpenSearch,
             onOpenAppearance = onOpenAppearance,
+            onOpenSettings = onOpenSettings,
             onOpenSpamBlocked = onOpenSpamBlocked,
             onOpenInboxAppearance = {
                 editorScopeCode = AppearanceScreenScope.INBOX.storageCode
@@ -2346,6 +2374,8 @@ private fun launchSystemDialer(context: Context, address: ParticipantAddress) {
 private fun AppRoute.saveableScreenKey(): String = when (this) {
     AppRoute.Inbox -> "inbox"
     AppRoute.Appearance -> "appearance"
+    AppRoute.Settings -> "settings"
+    AppRoute.BackupRestore -> "backup-restore"
     AppRoute.SpamBlocked -> "spam-blocked"
     is AppRoute.Search -> "search"
     is AppRoute.Thread -> "thread-entry-$stateEntryId"
@@ -2413,6 +2443,8 @@ private fun saveRoute(route: AppRoute): Bundle = Bundle().apply {
     when (route) {
         AppRoute.Inbox -> putString(ROUTE_TYPE_KEY, ROUTE_INBOX)
         AppRoute.Appearance -> putString(ROUTE_TYPE_KEY, ROUTE_APPEARANCE)
+        AppRoute.Settings -> putString(ROUTE_TYPE_KEY, ROUTE_SETTINGS)
+        AppRoute.BackupRestore -> putString(ROUTE_TYPE_KEY, ROUTE_BACKUP_RESTORE)
         AppRoute.SpamBlocked -> putString(ROUTE_TYPE_KEY, ROUTE_SPAM_BLOCKED)
         is AppRoute.Search -> {
             putString(ROUTE_TYPE_KEY, ROUTE_SEARCH)
@@ -2435,6 +2467,8 @@ private fun restoreRoute(bundle: Bundle): AppRoute? = try {
     when (bundle.getString(ROUTE_TYPE_KEY)) {
         ROUTE_INBOX -> AppRoute.Inbox
         ROUTE_APPEARANCE -> AppRoute.Appearance
+        ROUTE_SETTINGS -> AppRoute.Settings
+        ROUTE_BACKUP_RESTORE -> AppRoute.BackupRestore
         ROUTE_SPAM_BLOCKED -> AppRoute.SpamBlocked
         ROUTE_SEARCH -> AppRoute.Search(bundle.getString(ROUTE_QUERY_KEY).orEmpty())
         ROUTE_THREAD -> {
@@ -2485,6 +2519,8 @@ private const val SAVED_DRAFT_ID_KEY: String = "draft_id"
 private const val SAVED_DRAFT_REVISION_KEY: String = "draft_revision"
 private const val ROUTE_INBOX: String = "inbox"
 private const val ROUTE_APPEARANCE: String = "appearance"
+private const val ROUTE_SETTINGS: String = "settings"
+private const val ROUTE_BACKUP_RESTORE: String = "backup_restore"
 private const val ROUTE_SPAM_BLOCKED: String = "spam_blocked"
 private const val ROUTE_SEARCH: String = "search"
 private const val ROUTE_THREAD: String = "thread"

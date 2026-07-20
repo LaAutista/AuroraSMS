@@ -108,6 +108,9 @@ import org.aurorasms.app.message.ThreadSmsSendController
 import org.aurorasms.app.message.ThreadSmsSendObservation
 import org.aurorasms.app.message.ThreadSmsSendPhase
 import org.aurorasms.app.preview.BoundedMediaDecodeGate
+import org.aurorasms.app.settings.SETTINGS_BACKUP_RESTORE_TEST_TAG
+import org.aurorasms.app.settings.SETTINGS_BACK_TEST_TAG
+import org.aurorasms.app.settings.SETTINGS_SCREEN_TEST_TAG
 import org.aurorasms.core.index.AnchorWindowResult
 import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.core.index.IndexRunState
@@ -192,6 +195,7 @@ import org.aurorasms.feature.conversations.INBOX_MORE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_LIST_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_SCOPE_APPEARANCE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_SCREEN_TEST_TAG
+import org.aurorasms.feature.conversations.INBOX_SETTINGS_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.MESSAGE_BUBBLE_TEST_TAG
 import org.aurorasms.feature.conversations.SEARCH_FIELD_TEST_TAG
 import org.aurorasms.feature.conversations.SEARCH_HIT_TEST_TAG
@@ -274,6 +278,28 @@ class AuroraSmsRootAcceptanceTest {
                     AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD),
                 ),
             )
+        }
+    }
+
+    @Test
+    fun inboxSettingsRouteExposesBackupRestoreAndReturnsToInbox() {
+        val fixture = SyntheticFixture()
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+            waitForTag(INBOX_SCREEN_TEST_TAG)
+            compose.waitUntil(TIMEOUT_MILLIS) { fixture.conversations.inboxLoadCount.get() == 1 }
+
+            compose.onNodeWithTag(INBOX_MORE_ACTION_TEST_TAG).performClick()
+            compose.onNodeWithTag(INBOX_SETTINGS_ACTION_TEST_TAG).performClick()
+            waitForTag(SETTINGS_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(SETTINGS_BACKUP_RESTORE_TEST_TAG)
+                .performScrollTo()
+                .assertIsDisplayed()
+
+            compose.onNodeWithTag(SETTINGS_BACK_TEST_TAG).performClick()
+            waitForTag(INBOX_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(INBOX_SCREEN_TEST_TAG).assertIsDisplayed()
         }
     }
 
