@@ -19,6 +19,7 @@ import org.aurorasms.core.notifications.NotificationPostResult
 import org.aurorasms.core.telephony.ContactResolver
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.IncomingMessage
+import org.aurorasms.core.telephony.IncomingMmsDelivery
 import org.aurorasms.core.telephony.IncomingMessageSink
 import org.aurorasms.core.telephony.IncomingPersistResult
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
@@ -35,6 +36,10 @@ class IncomingMessageOrchestrator(
     private val messageNotifier: MessageNotifier,
     private val replyTargets: ReplyTargetRegistry,
     private val isSenderBlocked: suspend (ParticipantAddress) -> Boolean = { false },
+    private val persistMms: suspend (IncomingMessage.MmsWapPush) -> IncomingPersistResult = {
+        IncomingPersistResult.Rejected(IncomingPersistResult.Reason.CODEC_UNAVAILABLE)
+    },
+    private val acknowledgeMms: suspend (IncomingMmsDelivery) -> Boolean = { false },
     private val notificationConfig: NotificationConfig = NotificationConfig(),
     private val onProviderInsertComplete: suspend () -> Unit = {},
     private val onIncomingNotificationCommitted: suspend (ProviderStoredMessage) -> Unit = {},
@@ -50,8 +55,13 @@ class IncomingMessageOrchestrator(
                     persistSms(message)
                 }
             }
-            is IncomingMessage.MmsWapPush ->
-                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.CODEC_UNAVAILABLE)
+            is IncomingMessage.MmsWapPush -> incomingWorkMutex.withLock {
+                if (!roleState.isRoleHeld()) {
+                    IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+                } else {
+                    persistMms(message)
+                }
+            }
         }
 
     /**
@@ -98,6 +108,85 @@ class IncomingMessageOrchestrator(
             }
         }
         IncomingNotificationRecoveryResult.Deferred(recoveredCount)
+    }
+
+    internal suspend fun notifyDownloadedMms(
+        delivery: IncomingMmsDelivery,
+    ): IncomingPersistResult = incomingWorkMutex.withLock {
+        if (!roleState.isRoleHeld()) {
+            return@withLock IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        onProviderInsertComplete()
+        val stored = ProviderStoredMessage(delivery.providerId, delivery.conversationId)
+        val explicitlyBlocked = try {
+            isSenderBlocked(delivery.sender)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            false
+        }
+        if (explicitlyBlocked) {
+            return@withLock if (acknowledgeMms(delivery)) {
+                IncomingPersistResult.Persisted(delivery.providerId, delivery.conversationId)
+            } else {
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.PROVIDER_UNAVAILABLE)
+            }
+        }
+        val displayName = contactResolver.resolve(listOf(delivery.sender))
+            .singleOrNull()
+            ?.displayNameOrAddress
+            ?: delivery.sender.value
+        if (!roleState.isRoleHeld()) {
+            return@withLock IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        val notificationResult = try {
+            messageNotifier.notifyIncoming(
+                IncomingMessageNotification(
+                    messageId = delivery.providerId.asMessageId(),
+                    conversationId = delivery.conversationId,
+                    senderDisplayName = displayName,
+                    senderPersonKey = "conversation-${delivery.conversationId.value}",
+                    body = delivery.body,
+                    receivedAtEpochMillis = delivery.receivedTimestampMillis,
+                    isGroupConversation = delivery.isGroupConversation,
+                    canReply = false,
+                ),
+                notificationConfig,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            return@withLock IncomingPersistResult.Rejected(
+                IncomingPersistResult.Reason.NOTIFICATION_UNAVAILABLE,
+            )
+        }
+        if (notificationResult is NotificationPostResult.Rejected) {
+            return@withLock IncomingPersistResult.Rejected(
+                IncomingPersistResult.Reason.NOTIFICATION_UNAVAILABLE,
+            )
+        }
+        if (!roleState.isRoleHeld() || !acknowledgeMms(delivery)) {
+            if (notificationResult is NotificationPostResult.Posted) {
+                cancelPostedGeneration(delivery.conversationId, delivery.providerId.asMessageId())
+            }
+            return@withLock IncomingPersistResult.Rejected(
+                if (roleState.isRoleHeld()) {
+                    IncomingPersistResult.Reason.PROVIDER_UNAVAILABLE
+                } else {
+                    IncomingPersistResult.Reason.ROLE_NOT_HELD
+                },
+            )
+        }
+        if (notificationResult is NotificationPostResult.Posted) {
+            try {
+                onIncomingNotificationCommitted(stored)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: RuntimeException) {
+                // Reminder ownership is optional after durable MMS acknowledgement.
+            }
+        }
+        IncomingPersistResult.Persisted(delivery.providerId, delivery.conversationId)
     }
 
     /**

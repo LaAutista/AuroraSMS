@@ -12,6 +12,7 @@ import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.notifications.NotificationPostResult
 import org.aurorasms.core.telephony.IncomingMessage
+import org.aurorasms.core.telephony.IncomingMmsDelivery
 import org.aurorasms.core.telephony.IncomingPersistResult
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
 import org.aurorasms.core.telephony.IncomingSmsNotificationReplayRequest
@@ -596,6 +597,72 @@ class IncomingMessageOrchestratorTest {
             result,
         )
         assertEquals(0, notifier.incoming.size)
+    }
+
+    @Test
+    fun admittedMmsNotificationReturnsItsDurablePendingOperation() = runTest {
+        val operation = MessageId(ProviderKind.PENDING_OPERATION, 1L shl 60)
+        val orchestrator = IncomingMessageOrchestrator(
+            roleState = FakeRoleState(held = true),
+            smsProvider = FakeSmsProviderDataSource(),
+            contactResolver = FakeContactResolver(),
+            messageNotifier = FakeMessageNotifier(),
+            replyTargets = ReplyTargetRegistry(clockMillis = { NOW }),
+            persistMms = { IncomingPersistResult.Pending(operation) },
+        )
+
+        val result = orchestrator.persist(
+            IncomingMessage.MmsWapPush(
+                pdu = byteArrayOf(1, 2, 3),
+                mimeType = IncomingMessage.MmsWapPush.MMS_MIME_TYPE,
+                receivedTimestampMillis = NOW,
+                subscriptionId = AuroraSubscriptionId(1),
+            ),
+        )
+
+        assertEquals(IncomingPersistResult.Pending(operation), result)
+    }
+
+    @Test
+    fun downloadedGroupMmsNotifiesWithoutSmsReplyThenAcknowledgesExactJournalOwner() = runTest {
+        val sender = ParticipantAddress("+12025550931")
+        val groupMember = ParticipantAddress("+12025550932")
+        val notifier = FakeMessageNotifier()
+        val acknowledgements = mutableListOf<IncomingMmsDelivery>()
+        val reminders = mutableListOf<org.aurorasms.core.telephony.ProviderStoredMessage>()
+        var providerSignals = 0
+        val orchestrator = IncomingMessageOrchestrator(
+            roleState = FakeRoleState(held = true),
+            smsProvider = FakeSmsProviderDataSource(),
+            contactResolver = FakeContactResolver(),
+            messageNotifier = notifier,
+            replyTargets = ReplyTargetRegistry(clockMillis = { NOW }),
+            acknowledgeMms = { delivery -> acknowledgements += delivery; true },
+            onProviderInsertComplete = { providerSignals += 1 },
+            onIncomingNotificationCommitted = reminders::add,
+        )
+        val delivery = IncomingMmsDelivery(
+            operationId = MessageId(ProviderKind.PENDING_OPERATION, 1L shl 60),
+            stagedFileName = "11111111-1111-4111-8111-111111111111.pdu",
+            providerId = ProviderMessageId(ProviderKind.MMS, 71L),
+            conversationId = ConversationId(81L),
+            sender = sender,
+            participants = listOf(sender, groupMember),
+            body = "Synthetic group MMS",
+            receivedTimestampMillis = NOW,
+            subscriptionId = AuroraSubscriptionId(1),
+        )
+
+        val result = orchestrator.notifyDownloadedMms(delivery)
+
+        assertEquals(IncomingPersistResult.Persisted(delivery.providerId, delivery.conversationId), result)
+        assertEquals(listOf(delivery), acknowledgements)
+        assertEquals(1, providerSignals)
+        assertEquals(listOf(delivery.providerId), reminders.map { it.providerId })
+        val notification = notifier.incoming.single().message
+        assertTrue(notification.isGroupConversation)
+        assertFalse(notification.canReply)
+        assertEquals(delivery.body, notification.body)
     }
 
     @Test

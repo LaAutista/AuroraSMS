@@ -10,15 +10,25 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.telephony.SmsManager
+import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.aurorasms.core.model.MessageTransportKind
+import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.TransportResult
+import org.aurorasms.core.telephony.EncodedMmsPdu
 import org.aurorasms.core.telephony.DefaultSmsRoleState
+import org.aurorasms.core.telephony.IncomingMmsDelivery
+import org.aurorasms.core.telephony.IncomingMmsDownloadResult
+import org.aurorasms.core.telephony.IncomingMmsRecoveryResult
+import org.aurorasms.core.telephony.IncomingMessage
+import org.aurorasms.core.telephony.IncomingPersistResult
 import org.aurorasms.core.telephony.MmsDownloadRequest
 import org.aurorasms.core.telephony.MmsProviderDataSource
+import org.aurorasms.core.telephony.MmsStagedPduDisposition
 import org.aurorasms.core.telephony.MmsSendRequest
 import org.aurorasms.core.telephony.OutgoingMmsPayload
 import org.aurorasms.core.telephony.OutgoingMmsProviderStatus
@@ -38,11 +48,16 @@ class AndroidMmsTransport(
     private val subscriptions: SubscriptionRepository,
     private val stagingStore: MmsPduStagingStore,
     private val provider: MmsProviderDataSource,
+    private val downloadSubmitter: ((MmsDownloadRequest, StagedMmsPdu, PendingIntent) -> Unit)? = null,
+    private val ownAddressResolver: ((org.aurorasms.core.model.AuroraSubscriptionId) -> ParticipantAddress?)? = null,
 ) {
     private val appContext = context.applicationContext
     private val voiceMemoEncoder = VoiceMemoMmsEncoder(appContext)
     private val submissionJournal = OutgoingMmsSubmissionJournal(appContext)
     private val submissionMutex = Mutex()
+    private val incomingDownloadJournal = IncomingMmsDownloadJournal(appContext)
+    private val incomingDownloadMutex = Mutex()
+    private val incomingDecoder = BoundedMmsPduDecoder()
 
     suspend fun sendMms(request: MmsSendRequest): TransportResult =
         if (request.payload is OutgoingMmsPayload.VoiceMemo) {
@@ -375,57 +390,402 @@ class AndroidMmsTransport(
         }
     }
 
-    suspend fun downloadMms(request: MmsDownloadRequest): TransportResult {
+    suspend fun downloadMms(request: MmsDownloadRequest): TransportResult = incomingDownloadMutex.withLock {
+        downloadMmsLocked(request)
+    }
+
+    suspend fun submitIncomingNotification(message: IncomingMessage.MmsWapPush): IncomingPersistResult {
+        if (!roleState.isRoleHeld()) {
+            return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        val subscriptionId = message.subscriptionId
+            ?: return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.MALFORMED_INPUT)
+        val encoded = when (val created = EncodedMmsPdu.create(message.copyPdu())) {
+            is EncodedMmsPdu.CreationResult.Valid -> created.pdu
+            is EncodedMmsPdu.CreationResult.Rejected ->
+                return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.MALFORMED_INPUT)
+        }
+        val notification = when (val decoded = incomingDecoder.decode(encoded)) {
+            is BoundedMmsDecodeResult.Decoded -> decoded.pdu as? BoundedMmsPdu.Notification
+            is BoundedMmsDecodeResult.Rejected -> null
+        } ?: return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.MALFORMED_INPUT)
+        val request = MmsDownloadRequest(
+            operationId = allocateIncomingMmsOperationId(),
+            contentLocation = notification.contentLocation,
+            subscriptionId = subscriptionId,
+            notificationTransactionId = notification.transactionId,
+            expectedSizeBytes = notification.messageSizeBytes,
+            receivedTimestampMillis = message.receivedTimestampMillis,
+        )
+        return when (val result = downloadMms(request)) {
+            is TransportResult.Submitted -> IncomingPersistResult.Pending(result.operationId)
+            is TransportResult.Rejected -> IncomingPersistResult.Rejected(result.reason.toIncomingRejection())
+            is TransportResult.Failed -> IncomingPersistResult.Rejected(result.reason.toIncomingRejection())
+            is TransportResult.Sent,
+            is TransportResult.Delivered,
+            is TransportResult.Downloaded,
+            -> IncomingPersistResult.Rejected(IncomingPersistResult.Reason.PROVIDER_UNAVAILABLE)
+        }
+    }
+
+    private suspend fun downloadMmsLocked(request: MmsDownloadRequest): TransportResult {
         val rejection = preflight(request.subscriptionId.value)
         if (rejection != null) return request.rejected(rejection)
         if (!isValidContentLocation(request.contentLocation)) {
             return request.rejected(TransportResult.FailureReason.PLATFORM_REJECTED)
         }
+        when (val reservation = incomingDownloadJournal.reserve(request)) {
+            is IncomingMmsDownloadJournal.ReserveResult.Reserved -> Unit
+            is IncomingMmsDownloadJournal.ReserveResult.Duplicate -> return TransportResult.Submitted(
+                operationId = reservation.record.operationId,
+                transport = MessageTransportKind.MMS,
+                unitCount = 1,
+                providerMessageId = reservation.record.providerId,
+                providerConversationId = reservation.record.conversationId,
+            )
+            IncomingMmsDownloadJournal.ReserveResult.Rejected,
+            IncomingMmsDownloadJournal.ReserveResult.PersistenceFailure,
+            -> return request.rejected(TransportResult.FailureReason.INTERNAL_ERROR)
+        }
         val staged = when (val result = stagingStore.createDownloadTarget(request.operationId)) {
             is MmsStagingResult.Ready -> result.staged
-            is MmsStagingResult.Failed -> return request.rejected(TransportResult.FailureReason.INTERNAL_ERROR)
+            is MmsStagingResult.Failed -> {
+                incomingDownloadJournal.abandonBeforeSubmission(request.operationId, null)
+                return request.rejected(TransportResult.FailureReason.INTERNAL_ERROR)
+            }
         }
-        return try {
-            val resultIntent = PendingIntent.getBroadcast(
+        if (
+            incomingDownloadJournal.markStaged(request.operationId, staged.fileName) !is
+            IncomingMmsDownloadJournal.TransitionResult.Applied
+        ) {
+            stagingStore.cleanup(staged.uri, MmsPduDirection.DOWNLOAD_TARGET)
+            incomingDownloadJournal.abandonBeforeSubmission(request.operationId, null)
+            return request.rejected(TransportResult.FailureReason.INTERNAL_ERROR)
+        }
+        val resultIntent: PendingIntent
+        try {
+            resultIntent = PendingIntent.getBroadcast(
                 appContext,
                 AndroidSmsTransport.requestCode(request.operationId.value, 0, MMS_DOWNLOAD_CHANNEL),
                 MmsDownloadResultReceiver.createIntent(appContext, request.operationId, staged.uri),
                 CALLBACK_FLAGS,
             )
-            val manager = smsManager(request.subscriptionId.value)
-            if (Build.VERSION.SDK_INT >= 31) {
-                manager.downloadMultimediaMessage(
-                    appContext,
-                    request.contentLocation,
-                    staged.uri,
-                    null,
-                    resultIntent,
-                    request.operationId.value,
-                )
-            } else {
-                manager.downloadMultimediaMessage(
-                    appContext,
-                    request.contentLocation,
-                    staged.uri,
-                    null,
-                    resultIntent,
-                )
-            }
-            TransportResult.Submitted(request.operationId, MessageTransportKind.MMS, unitCount = 1)
         } catch (_: SecurityException) {
             stagingStore.cleanup(staged.uri, MmsPduDirection.DOWNLOAD_TARGET)
-            request.failed(TransportResult.FailureReason.PERMISSION_DENIED, false)
+            incomingDownloadJournal.abandonBeforeSubmission(request.operationId, staged.fileName)
+            return request.failed(TransportResult.FailureReason.PERMISSION_DENIED, false)
         } catch (_: UnsupportedOperationException) {
             stagingStore.cleanup(staged.uri, MmsPduDirection.DOWNLOAD_TARGET)
-            request.failed(TransportResult.FailureReason.FEATURE_UNAVAILABLE, false)
+            incomingDownloadJournal.abandonBeforeSubmission(request.operationId, staged.fileName)
+            return request.failed(TransportResult.FailureReason.FEATURE_UNAVAILABLE, false)
         } catch (_: IllegalArgumentException) {
             stagingStore.cleanup(staged.uri, MmsPduDirection.DOWNLOAD_TARGET)
-            request.failed(TransportResult.FailureReason.PLATFORM_REJECTED, false)
+            incomingDownloadJournal.abandonBeforeSubmission(request.operationId, staged.fileName)
+            return request.failed(TransportResult.FailureReason.PLATFORM_REJECTED, false)
         } catch (_: RuntimeException) {
             stagingStore.cleanup(staged.uri, MmsPduDirection.DOWNLOAD_TARGET)
-            request.failed(TransportResult.FailureReason.INTERNAL_ERROR, true)
+            incomingDownloadJournal.abandonBeforeSubmission(request.operationId, staged.fileName)
+            return request.failed(TransportResult.FailureReason.INTERNAL_ERROR, true)
+        }
+        if (
+            incomingDownloadJournal.markSubmitting(request.operationId, staged.fileName) !is
+            IncomingMmsDownloadJournal.TransitionResult.Applied
+        ) {
+            stagingStore.cleanup(staged.uri, MmsPduDirection.DOWNLOAD_TARGET)
+            incomingDownloadJournal.abandonBeforeSubmission(request.operationId, staged.fileName)
+            return request.rejected(TransportResult.FailureReason.INTERNAL_ERROR)
+        }
+        return try {
+            val submitter = downloadSubmitter ?: ::submitDownloadToPlatform
+            submitter(request, staged, resultIntent)
+            TransportResult.Submitted(request.operationId, MessageTransportKind.MMS, unitCount = 1)
+        } catch (_: RuntimeException) {
+            incomingDownloadJournal.markSubmissionUnknown(request.operationId, staged.fileName)
+            request.failed(
+                reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                retryable = false,
+                stage = TransportResult.FailureStage.SUBMISSION_UNKNOWN,
+            )
         }
     }
+
+    private fun submitDownloadToPlatform(
+        request: MmsDownloadRequest,
+        staged: StagedMmsPdu,
+        resultIntent: PendingIntent,
+    ) {
+        val manager = smsManager(request.subscriptionId.value)
+        if (Build.VERSION.SDK_INT >= 31) {
+            manager.downloadMultimediaMessage(
+                appContext,
+                request.contentLocation,
+                staged.uri,
+                null,
+                resultIntent,
+                request.operationId.value,
+            )
+        } else {
+            manager.downloadMultimediaMessage(
+                appContext,
+                request.contentLocation,
+                staged.uri,
+                null,
+                resultIntent,
+            )
+        }
+    }
+
+    /** Authenticates and durably persists one exact successful private download callback. */
+    suspend fun reconcileDownloadedMms(
+        operationId: MessageId,
+        stagedUri: Uri,
+        pdu: EncodedMmsPdu,
+    ): IncomingMmsDownloadResult = incomingDownloadMutex.withLock {
+        reconcileDownloadedMmsLocked(operationId, stagedUri, pdu)
+    }
+
+    private suspend fun reconcileDownloadedMmsLocked(
+        operationId: MessageId,
+        stagedUri: Uri,
+        pdu: EncodedMmsPdu,
+    ): IncomingMmsDownloadResult {
+        val fileName = stagedUri.lastPathSegment
+            ?: return IncomingMmsDownloadResult.Ignored
+        val staged = stagingStore.recoverDownloadTarget(operationId, fileName)
+            ?: return IncomingMmsDownloadResult.Deferred
+        if (staged.uri != stagedUri) return IncomingMmsDownloadResult.Ignored
+        val callback = when (
+            val transition = incomingDownloadJournal.recordSuccessCallback(operationId, fileName)
+        ) {
+            is IncomingMmsDownloadJournal.TransitionResult.Applied -> transition.record
+            IncomingMmsDownloadJournal.TransitionResult.PersistenceFailure ->
+                return IncomingMmsDownloadResult.Deferred
+            IncomingMmsDownloadJournal.TransitionResult.Rejected ->
+                return IncomingMmsDownloadResult.Ignored
+        }
+        val retrieved = when (val decoded = incomingDecoder.decode(pdu)) {
+            is BoundedMmsDecodeResult.Decoded -> decoded.pdu as? BoundedMmsPdu.Retrieved
+            is BoundedMmsDecodeResult.Rejected -> null
+        } ?: return terminalizeMalformedDownload(callback)
+        val ownAddress = try {
+            (ownAddressResolver ?: ::resolveOwnMmsAddress)(callback.subscriptionId)
+        } catch (_: RuntimeException) {
+            null
+        }
+        val projected = retrieved.toIncomingProviderRecord(callback, ownAddress)
+        val record = when (projected) {
+            is IncomingMmsProjectionResult.Ready -> projected.record
+            IncomingMmsProjectionResult.Malformed ->
+                return terminalizeMalformedDownload(callback)
+            IncomingMmsProjectionResult.OwnAddressUnavailable ->
+                return IncomingMmsDownloadResult.Deferred
+        }
+        val insert = try {
+            provider.insertIncoming(record)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            return IncomingMmsDownloadResult.Deferred
+        }
+        val stored = when (insert) {
+            is ProviderAccessResult.Success -> insert.value
+            is ProviderAccessResult.InvalidInput ->
+                return terminalizeMalformedDownload(callback)
+            ProviderAccessResult.RoleRequired,
+            ProviderAccessResult.PermissionDenied,
+            is ProviderAccessResult.Unsupported,
+            is ProviderAccessResult.Unavailable,
+            -> return IncomingMmsDownloadResult.Deferred
+        }
+        val persisted = incomingDownloadJournal.markPersisted(
+            operationId = operationId,
+            fileName = fileName,
+            providerId = stored.providerId,
+            conversationId = stored.conversationId,
+        )
+        if (persisted !is IncomingMmsDownloadJournal.TransitionResult.Applied) {
+            return IncomingMmsDownloadResult.Deferred
+        }
+        val body = record.text
+            ?.takeIf(String::isNotBlank)
+            ?: record.subject?.takeIf(String::isNotBlank)
+            ?: MMS_NOTIFICATION_FALLBACK_BODY
+        return IncomingMmsDownloadResult.ReadyForNotification(
+            IncomingMmsDelivery(
+                operationId = operationId,
+                stagedFileName = fileName,
+                providerId = stored.providerId,
+                conversationId = stored.conversationId,
+                sender = record.sender,
+                participants = record.participants,
+                body = body,
+                receivedTimestampMillis = record.receivedTimestampMillis,
+                subscriptionId = record.subscriptionId,
+            ),
+        )
+    }
+
+    suspend fun acknowledgeDownloadedMms(delivery: IncomingMmsDelivery): Boolean =
+        incomingDownloadMutex.withLock {
+            val acknowledged = incomingDownloadJournal.acknowledgePersisted(
+                operationId = delivery.operationId,
+                fileName = delivery.stagedFileName,
+                providerId = delivery.providerId,
+                conversationId = delivery.conversationId,
+            )
+            if (acknowledged) cleanupRecoveredDownload(delivery.operationId, delivery.stagedFileName)
+            acknowledged
+        }
+
+    suspend fun reconcileFailedMmsDownload(
+        operationId: MessageId,
+        stagedUri: Uri,
+    ): MmsStagedPduDisposition = incomingDownloadMutex.withLock {
+        val fileName = stagedUri.lastPathSegment
+            ?: return@withLock MmsStagedPduDisposition.RETAIN
+        when (incomingDownloadJournal.recordFailureCallback(operationId, fileName)) {
+            is IncomingMmsDownloadJournal.TransitionResult.Applied ->
+                if (incomingDownloadJournal.acknowledgeFailure(operationId, fileName)) {
+                    cleanupRecoveredDownload(operationId, fileName)
+                    MmsStagedPduDisposition.CLEANUP
+                } else {
+                    MmsStagedPduDisposition.RETAIN
+                }
+            IncomingMmsDownloadJournal.TransitionResult.PersistenceFailure,
+            IncomingMmsDownloadJournal.TransitionResult.Rejected,
+            -> MmsStagedPduDisposition.RETAIN
+        }
+    }
+
+    /** Recovers bounded completed work without ever reissuing an uncertain carrier download. */
+    suspend fun recoverIncomingDownloads(): IncomingMmsRecoveryResult = incomingDownloadMutex.withLock {
+        val records = when (val snapshot = incomingDownloadJournal.recoverySnapshot()) {
+            is IncomingMmsDownloadJournal.RecoveryResult.Available -> snapshot.records
+            IncomingMmsDownloadJournal.RecoveryResult.PersistenceFailure ->
+                return@withLock IncomingMmsRecoveryResult.JournalBlocked
+        }
+        val pendingNotifications = mutableListOf<IncomingMmsDelivery>()
+        var recoveredCount = 0
+        var deferredCount = 0
+        var unknownSubmissionCount = 0
+        for (record in records) {
+            val fileName = record.fileName
+            when (record.state) {
+                IncomingMmsDownloadJournal.State.RESERVED -> {
+                    if (incomingDownloadJournal.abandonBeforeSubmission(record.operationId, null)) {
+                        recoveredCount += 1
+                    } else {
+                        return@withLock IncomingMmsRecoveryResult.JournalBlocked
+                    }
+                }
+                IncomingMmsDownloadJournal.State.STAGED -> {
+                    checkNotNull(fileName)
+                    cleanupRecoveredDownload(record.operationId, fileName)
+                    if (incomingDownloadJournal.abandonBeforeSubmission(record.operationId, fileName)) {
+                        recoveredCount += 1
+                    } else {
+                        return@withLock IncomingMmsRecoveryResult.JournalBlocked
+                    }
+                }
+                IncomingMmsDownloadJournal.State.SUBMITTING -> {
+                    checkNotNull(fileName)
+                    if (
+                        incomingDownloadJournal.markSubmissionUnknown(record.operationId, fileName) is
+                        IncomingMmsDownloadJournal.TransitionResult.Applied
+                    ) {
+                        recoveredCount += 1
+                        unknownSubmissionCount += 1
+                    } else {
+                        return@withLock IncomingMmsRecoveryResult.JournalBlocked
+                    }
+                }
+                IncomingMmsDownloadJournal.State.SUBMISSION_UNKNOWN -> unknownSubmissionCount += 1
+                IncomingMmsDownloadJournal.State.CALLBACK_FAILED -> {
+                    checkNotNull(fileName)
+                    cleanupRecoveredDownload(record.operationId, fileName)
+                    if (incomingDownloadJournal.acknowledgeFailure(record.operationId, fileName)) {
+                        recoveredCount += 1
+                    } else {
+                        return@withLock IncomingMmsRecoveryResult.JournalBlocked
+                    }
+                }
+                IncomingMmsDownloadJournal.State.CALLBACK_SUCCEEDED,
+                IncomingMmsDownloadJournal.State.PERSISTED,
+                -> {
+                    checkNotNull(fileName)
+                    val staged = stagingStore.recoverDownloadTarget(record.operationId, fileName)
+                    if (staged == null) {
+                        deferredCount += 1
+                        continue
+                    }
+                    val pdu = when (val read = stagingStore.readCompletedDownload(staged)) {
+                        is EncodedMmsPdu.CreationResult.Valid -> read.pdu
+                        is EncodedMmsPdu.CreationResult.Rejected -> {
+                            val terminal = terminalizeMalformedDownload(record)
+                            if (terminal == IncomingMmsDownloadResult.TerminalRejected) {
+                                cleanupRecoveredDownload(record.operationId, fileName)
+                                recoveredCount += 1
+                            } else {
+                                deferredCount += 1
+                            }
+                            continue
+                        }
+                    }
+                    when (val reconciled = reconcileDownloadedMmsLocked(record.operationId, staged.uri, pdu)) {
+                        is IncomingMmsDownloadResult.ReadyForNotification ->
+                            pendingNotifications += reconciled.delivery
+                        IncomingMmsDownloadResult.TerminalRejected -> {
+                            cleanupRecoveredDownload(record.operationId, fileName)
+                            recoveredCount += 1
+                        }
+                        IncomingMmsDownloadResult.Deferred,
+                        IncomingMmsDownloadResult.Ignored,
+                        -> deferredCount += 1
+                    }
+                }
+            }
+        }
+        IncomingMmsRecoveryResult.Available(
+            pendingNotifications = pendingNotifications,
+            recoveredCount = recoveredCount,
+            deferredCount = deferredCount,
+            unknownSubmissionCount = unknownSubmissionCount,
+        )
+    }
+
+    private suspend fun cleanupRecoveredDownload(operationId: MessageId, fileName: String) {
+        stagingStore.recoverDownloadTarget(operationId, fileName)?.let { staged ->
+            stagingStore.cleanup(staged.uri, MmsPduDirection.DOWNLOAD_TARGET)
+        }
+    }
+
+    private fun terminalizeMalformedDownload(
+        record: IncomingMmsDownloadJournal.Record,
+    ): IncomingMmsDownloadResult = if (
+        record.fileName != null &&
+        record.state == IncomingMmsDownloadJournal.State.CALLBACK_SUCCEEDED &&
+        incomingDownloadJournal.acknowledgeMalformed(record.operationId, record.fileName)
+    ) {
+        IncomingMmsDownloadResult.TerminalRejected
+    } else {
+        IncomingMmsDownloadResult.Deferred
+    }
+
+    // The default SMS app needs the active line only to exclude itself from a
+    // received group-MMS thread. The value is used ephemerally and never stored,
+    // logged, or exposed outside this projection boundary.
+    @SuppressLint("HardwareIds", "MissingPermission")
+    @Suppress("DEPRECATION")
+    private fun resolveOwnMmsAddress(
+        subscriptionId: org.aurorasms.core.model.AuroraSubscriptionId,
+    ): ParticipantAddress? = runCatching {
+        val manager = checkNotNull(appContext.getSystemService(TelephonyManager::class.java))
+            .createForSubscriptionId(subscriptionId.value)
+        manager.line1Number
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.let(::ParticipantAddress)
+    }.getOrNull()
 
     private suspend fun preflight(subscriptionId: Int): TransportResult.FailureReason? =
         TransportPolicy.mmsRejection(
@@ -469,6 +829,7 @@ class AndroidMmsTransport(
     companion object {
         private const val MMS_SEND_CHANNEL = 0x4D51
         private const val MMS_DOWNLOAD_CHANNEL = 0x4D71
+        private const val MMS_NOTIFICATION_FALLBACK_BODY = "Multimedia message"
         private const val CALLBACK_FLAGS =
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
     }
@@ -633,9 +994,28 @@ private fun MmsDownloadRequest.rejected(reason: TransportResult.FailureReason): 
 private fun MmsDownloadRequest.failed(
     reason: TransportResult.FailureReason,
     retryable: Boolean,
+    stage: TransportResult.FailureStage = TransportResult.FailureStage.SUBMISSION,
 ): TransportResult.Failed = TransportResult.Failed(
     operationId = operationId,
     transport = MessageTransportKind.MMS,
     reason = reason,
     retryable = retryable,
+    stage = stage,
 )
+
+private fun TransportResult.FailureReason.toIncomingRejection(): IncomingPersistResult.Reason = when (this) {
+    TransportResult.FailureReason.ROLE_NOT_HELD -> IncomingPersistResult.Reason.ROLE_NOT_HELD
+    TransportResult.FailureReason.PERMISSION_DENIED -> IncomingPersistResult.Reason.PERMISSION_DENIED
+    TransportResult.FailureReason.PAYLOAD_TOO_LARGE,
+    TransportResult.FailureReason.INVALID_RECIPIENT,
+    TransportResult.FailureReason.EMPTY_CONTENT,
+    TransportResult.FailureReason.PLATFORM_REJECTED,
+    -> IncomingPersistResult.Reason.MALFORMED_INPUT
+    TransportResult.FailureReason.SUBSCRIPTION_UNAVAILABLE,
+    TransportResult.FailureReason.FEATURE_UNAVAILABLE,
+    TransportResult.FailureReason.CODEC_UNAVAILABLE,
+    TransportResult.FailureReason.PROVIDER_UNAVAILABLE,
+    TransportResult.FailureReason.CANCELLED,
+    TransportResult.FailureReason.INTERNAL_ERROR,
+    -> IncomingPersistResult.Reason.PROVIDER_UNAVAILABLE
+}

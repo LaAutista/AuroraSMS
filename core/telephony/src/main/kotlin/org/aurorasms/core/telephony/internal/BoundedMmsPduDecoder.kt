@@ -117,6 +117,7 @@ internal class BoundedMmsPduDecoder {
         }
 
         var aggregateBytes = 0L
+        var aggregateTextCharacters = 0
         val parts = ArrayList<BoundedMmsPart>(body.partsNum)
         repeat(body.partsNum) { index ->
             val source = body.getPart(index)
@@ -136,6 +137,12 @@ internal class BoundedMmsPduDecoder {
                     ?: return rejected(BoundedMmsDecodeFailure.UNSUPPORTED_CONTENT)
             } else {
                 null
+            }
+            if (contentType == TEXT_PLAIN && decodedText != null) {
+                aggregateTextCharacters += decodedText.length
+                if (aggregateTextCharacters > MmsProviderMessage.MAX_MMS_TEXT_CHARACTERS) {
+                    return rejected(BoundedMmsDecodeFailure.LIMIT_EXCEEDED)
+                }
             }
             parts += BoundedMmsPart(
                 contentType = contentType,

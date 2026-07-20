@@ -6,6 +6,7 @@ import android.app.Application
 import android.annotation.SuppressLint
 import android.content.Context
 import android.database.ContentObserver
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.Telephony
@@ -100,9 +101,11 @@ import org.aurorasms.app.message.SharedPreferencesNotificationReminderStore
 import org.aurorasms.app.message.requiresFollowUp
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
+import org.aurorasms.core.model.PendingOperationNamespace
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.TransportResult
+import org.aurorasms.core.model.pendingOperationNamespaceOrNull
 import org.aurorasms.core.index.MessageIndex
 import org.aurorasms.core.index.conversation.ConversationInvalidation
 import org.aurorasms.core.index.conversation.ConversationLookupResult
@@ -135,12 +138,16 @@ import org.aurorasms.core.telephony.ContactCache
 import org.aurorasms.core.telephony.ContactCacheInvalidation
 import org.aurorasms.core.telephony.EncodedMmsPdu
 import org.aurorasms.core.telephony.IncomingMessageSink
+import org.aurorasms.core.telephony.IncomingMmsDownloadResult
+import org.aurorasms.core.telephony.IncomingMmsRecoveryResult
+import org.aurorasms.core.telephony.IncomingPersistResult
 import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.MmsAttachmentContentReader
 import org.aurorasms.core.telephony.MmsAttachmentId
 import org.aurorasms.core.telephony.MmsAttachmentListResult
 import org.aurorasms.core.telephony.MmsAttachmentReadResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
+import org.aurorasms.core.telephony.MmsStagedPduDisposition
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.OutgoingSmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ResolvedContact
@@ -433,6 +440,8 @@ class AppContainer(
             (spamSafetyRepository.isSenderBlocked(sender) as? SpamSafetyRepositoryResult.Success)
                 ?.value == true
         },
+        persistMms = mmsTransport::submitIncomingNotification,
+        acknowledgeMms = mmsTransport::acknowledgeDownloadedMms,
         onProviderInsertComplete = {
             enqueueIndexSignal(IndexSignal.INCOMING_INSERT)
             retryPendingInlineReplyOperations()
@@ -585,6 +594,14 @@ class AppContainer(
     suspend fun onTransportResult(result: TransportResult) {
         _lastTransportResult.value = result
         if (
+            result is TransportResult.Failed &&
+            result.transport == MessageTransportKind.MMS &&
+            result.stage == TransportResult.FailureStage.DOWNLOAD_CALLBACK &&
+            result.operationId.pendingOperationNamespaceOrNull() == PendingOperationNamespace.INCOMING_MMS
+        ) {
+            return
+        }
+        if (
             result.transport == MessageTransportKind.MMS &&
             (result is TransportResult.Sent ||
                 (result is TransportResult.Failed &&
@@ -694,12 +711,59 @@ class AppContainer(
         }
     }
 
-    fun onDownloadedMms(
-        @Suppress("UNUSED_PARAMETER") operationId: MessageId,
-        @Suppress("UNUSED_PARAMETER") pdu: EncodedMmsPdu,
+    suspend fun onDownloadedMms(
+        operationId: MessageId,
+        stagedUri: Uri,
+        pdu: EncodedMmsPdu,
+    ): MmsStagedPduDisposition = when (
+        val result = mmsTransport.reconcileDownloadedMms(operationId, stagedUri, pdu)
     ) {
-        // ADR 0001 intentionally forbids retaining or partially decoding this
-        // payload until an audited codec is admitted.
+        is IncomingMmsDownloadResult.ReadyForNotification -> {
+            when (incomingMessageOrchestrator.notifyDownloadedMms(result.delivery)) {
+                is IncomingPersistResult.Persisted -> {
+                    _lastTransportResult.value = TransportResult.Downloaded(
+                        operationId = operationId,
+                        transport = MessageTransportKind.MMS,
+                        platformResultCode = android.app.Activity.RESULT_OK,
+                        byteCount = pdu.size,
+                    )
+                    MmsStagedPduDisposition.CLEANUP
+                }
+                is IncomingPersistResult.Duplicate,
+                is IncomingPersistResult.Pending,
+                is IncomingPersistResult.Rejected,
+                -> MmsStagedPduDisposition.RETAIN
+            }
+        }
+        IncomingMmsDownloadResult.TerminalRejected -> {
+            _lastTransportResult.value = TransportResult.Failed(
+                operationId = operationId,
+                transport = MessageTransportKind.MMS,
+                reason = TransportResult.FailureReason.PLATFORM_REJECTED,
+                retryable = false,
+                platformResultCode = android.app.Activity.RESULT_OK,
+                stage = TransportResult.FailureStage.DOWNLOAD_CALLBACK,
+            )
+            MmsStagedPduDisposition.CLEANUP
+        }
+        IncomingMmsDownloadResult.Deferred,
+        IncomingMmsDownloadResult.Ignored,
+        -> MmsStagedPduDisposition.RETAIN
+    }
+
+    suspend fun onFailedMmsDownload(
+        operationId: MessageId,
+        stagedUri: Uri,
+        result: TransportResult.Failed,
+    ): MmsStagedPduDisposition {
+        if (
+            result.operationId != operationId ||
+            operationId.pendingOperationNamespaceOrNull() != PendingOperationNamespace.INCOMING_MMS
+        ) {
+            return MmsStagedPduDisposition.RETAIN
+        }
+        _lastTransportResult.value = result
+        return mmsTransport.reconcileFailedMmsDownload(operationId, stagedUri)
     }
 
     suspend fun onDefaultSmsRoleChanged(
@@ -878,6 +942,31 @@ class AppContainer(
         val transportOwnedRecovery =
             androidSmsTransport.recoverTransportOwnedSubmissions()
         val outgoingMmsRecovery = mmsTransport.recoverOutgoingSubmissions()
+        val incomingMmsRecovery = try {
+            mmsTransport.recoverIncomingDownloads()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            IncomingMmsRecoveryResult.JournalBlocked
+        }
+        var incomingMmsFollowUp = when (incomingMmsRecovery) {
+            is IncomingMmsRecoveryResult.Available ->
+                incomingMmsRecovery.deferredCount > 0 || incomingMmsRecovery.unknownSubmissionCount > 0
+            IncomingMmsRecoveryResult.JournalBlocked -> true
+        }
+        if (incomingMmsRecovery is IncomingMmsRecoveryResult.Available) {
+            for (delivery in incomingMmsRecovery.pendingNotifications) {
+                if (!defaultSmsRoleState.isRoleHeld()) return
+                val notified = try {
+                    incomingMessageOrchestrator.notifyDownloadedMms(delivery)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: RuntimeException) {
+                    null
+                }
+                if (notified !is IncomingPersistResult.Persisted) incomingMmsFollowUp = true
+            }
+        }
         val composerRecovery = threadSmsSendController.recover()
         if (scheduledStartupRecoveryPending) {
             scheduledSmsController.recover(ScheduledSmsRecoveryReason.APP_STARTUP)
@@ -893,6 +982,7 @@ class AppContainer(
         var retryDelayMillis = INCOMING_NOTIFICATION_RECOVERY_INITIAL_RETRY_MILLIS
         var followUpRequired = transportOwnedRecovery.followUpRequired ||
             outgoingMmsRecovery.followUpRequired ||
+            incomingMmsFollowUp ||
             composerRecovery.requiresFollowUp
         for (attempt in 0 until INCOMING_NOTIFICATION_RECOVERY_MAXIMUM_ATTEMPTS) {
             if (!defaultSmsRoleState.isRoleHeld()) return

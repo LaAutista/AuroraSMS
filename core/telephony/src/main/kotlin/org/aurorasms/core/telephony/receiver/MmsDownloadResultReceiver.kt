@@ -12,6 +12,7 @@ import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.telephony.EncodedMmsPdu
+import org.aurorasms.core.telephony.MmsStagedPduDisposition
 import org.aurorasms.core.telephony.internal.MmsPduDirection
 import org.aurorasms.core.telephony.internal.MmsPduStagingStore
 
@@ -23,6 +24,7 @@ class MmsDownloadResultReceiver : BroadcastReceiver() {
         val code = resultCode
         dispatchAsync(context) { entryPoint ->
             val store = MmsPduStagingStore(context)
+            var disposition = MmsStagedPduDisposition.RETAIN
             try {
                 if (code == Activity.RESULT_OK) {
                     when (val downloaded = store.readCompletedDownload(
@@ -34,39 +36,38 @@ class MmsDownloadResultReceiver : BroadcastReceiver() {
                         ),
                     )) {
                         is EncodedMmsPdu.CreationResult.Valid -> {
-                            entryPoint.onDownloadedMms(operationId, downloaded.pdu)
-                            entryPoint.onTransportResult(
-                                TransportResult.Downloaded(
-                                    operationId = operationId,
-                                    transport = MessageTransportKind.MMS,
-                                    platformResultCode = code,
-                                    byteCount = downloaded.pdu.size,
-                                ),
+                            disposition = entryPoint.onDownloadedMms(
+                                operationId = operationId,
+                                stagedUri = uri,
+                                pdu = downloaded.pdu,
                             )
                         }
                         is EncodedMmsPdu.CreationResult.Rejected -> {
-                            entryPoint.onTransportResult(
-                                mmsDownloadFailureResult(
-                                    operationId = operationId,
-                                    reason = downloaded.toFailureReason(),
-                                    retryable = false,
-                                    platformResultCode = code,
-                                ),
+                            val failure = mmsDownloadFailureResult(
+                                operationId = operationId,
+                                reason = downloaded.toFailureReason(),
+                                retryable = false,
+                                platformResultCode = code,
                             )
+                            disposition = entryPoint.onFailedMmsDownload(operationId, uri, failure)
+                            entryPoint.onTransportResult(failure)
                         }
                     }
                 } else {
-                    entryPoint.onTransportResult(
-                        mmsDownloadFailureResult(
-                            operationId = operationId,
-                            reason = TransportResult.FailureReason.PLATFORM_REJECTED,
-                            retryable = code == SmsManager.MMS_ERROR_RETRY || code == SmsManager.MMS_ERROR_NO_DATA_NETWORK,
-                            platformResultCode = code,
-                        ),
+                    val failure = mmsDownloadFailureResult(
+                        operationId = operationId,
+                        reason = TransportResult.FailureReason.PLATFORM_REJECTED,
+                        retryable = code == SmsManager.MMS_ERROR_RETRY ||
+                            code == SmsManager.MMS_ERROR_NO_DATA_NETWORK,
+                        platformResultCode = code,
                     )
+                    disposition = entryPoint.onFailedMmsDownload(operationId, uri, failure)
+                    entryPoint.onTransportResult(failure)
                 }
             } finally {
-                store.cleanup(uri, MmsPduDirection.DOWNLOAD_TARGET)
+                if (disposition == MmsStagedPduDisposition.CLEANUP) {
+                    store.cleanup(uri, MmsPduDirection.DOWNLOAD_TARGET)
+                }
             }
         }
     }

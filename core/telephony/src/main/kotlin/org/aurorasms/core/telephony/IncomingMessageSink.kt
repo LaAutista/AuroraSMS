@@ -6,6 +6,7 @@ import java.util.Arrays
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageDeliveryFingerprint
+import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderMessageId
 
@@ -74,6 +75,8 @@ sealed interface IncomingMessage {
 }
 
 sealed interface IncomingPersistResult {
+    data class Pending(val operationId: MessageId) : IncomingPersistResult
+
     data class Persisted(
         val providerId: ProviderMessageId,
         val conversationId: ConversationId,
