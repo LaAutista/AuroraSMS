@@ -163,9 +163,20 @@ symlink/path-replacement rejection under `noBackupFilesDir`. A single-owner
 document workflow now streams export to one explicit content URI, deletes failed
 destinations when the provider permits it, stages `OpenDocument` input, and
 makes provider restore reachable only after authenticated-summary confirmation.
-Its six focused fake-document/provider journeys pass on both APIs. Compose SAF
-launchers/UI integration, full aggregate/release evidence, and approved
-physical/OEM verification remain before Phase 6G is complete.
+Its six focused fake-document/provider journeys pass on both APIs.
+
+The app integration passed on 2026-07-20 as `0.6.9-phase6`: Inbox now exposes a
+searchable Settings destination and a production `CreateDocument`/`OpenDocument`
+journey with ephemeral passphrases, startup-recovery gating, authenticated
+review, explicit confirmation, incomplete-destination disclosure, and
+background/navigation invalidation before provider mutation. Six focused UI
+tests and one real root-navigation journey pass on both APIs. All 628 host tests,
+the 977-task offline release/privacy aggregate, and 390 connected tests on each
+of API 26 and API 36 passed with zero failures or errors. Release bundle and
+CycloneDX generation passed. Exact commit `2c3cfb0` installed and hash-matched on
+both emulators without changing their non-Aurora SMS role. The Pixel was not
+attached, so real physical/OEM document-picker selection/cancellation remains
+the sole Phase 6G acceptance item before the phase can be called complete.
 
 ### Phase 6H — Android Auto and notification completion
 

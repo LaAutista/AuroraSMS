@@ -9,6 +9,29 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+The 2026-07-20 Phase 6G app integration identifies as `0.6.9-phase6`
+(`versionCode` 20). Inbox now opens a searchable Settings screen whose encrypted
+Backup & restore journey uses Android `CreateDocument`/`OpenDocument`, ephemeral
+passphrases, private authenticated staging, an exact pre-mutation summary, and a
+separate confirmation action. Startup recovery and staging reconciliation must
+both succeed before either file action appears. Backgrounding or navigation
+invalidates pre-mutation restore authority, while a confirmed restore remains a
+serialized, journaled provider operation. Historical Draft/Outbox/Queued rows
+can restore only as inert Failed history and are never sent or scheduled.
+
+All 628 host tests, the complete 977-task offline release/privacy aggregate, and
+390 connected tests on each of API 26 and API 36 passed with zero failures or
+errors. The 21-test backup module and six focused Settings/backup UI tests passed
+on both APIs; the real Inbox-to-Settings route passed on both as well. R8 release
+APK/AAB, benchmark, permission/APK-content, license, and CycloneDX 1.6 gates are
+green. Exact pushed commit `2c3cfb0` produced the 15,384,521-byte debug APK with
+SHA-256 `8652064112772bbdaaf62b3c641bddf9001081d8c81a2105c6f12b819bb2edab`;
+it installed and hash-matched on both emulators while preserving
+`com.android.messaging` as their default SMS app. No live message content, SMS
+role transition, or carrier boundary participated. The Pixel was not attached,
+so physical/OEM document-picker acceptance remains open and AuroraSMS is not
+gold.
+
 The 2026-07-19 Phase 6F source identifies as `0.6.8-phase6` (`versionCode` 19)
 and implements ADR 0021's bounded one-person voice memo. Microphone access is
 excluded from onboarding and requested only after Record. Capture is visibly

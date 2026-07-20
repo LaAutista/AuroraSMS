@@ -3685,9 +3685,50 @@ staging cleanup. No test resolves a live document or Telephony URI.
 The tests used only canonical synthetic addresses, bodies, metadata, and a
 196,608-byte generated binary part. They did not acquire the SMS role, inspect
 live provider rows, mutate a real Telephony provider, launch a carrier boundary,
-or install a user-facing backup flow. Phase 6G remains open for SAF controllers
-and UI confirmation, app integration, full aggregate/release gates, and
-separately approved physical-device/OEM verification.
+or cross a carrier boundary.
+
+The `0.6.9-phase6` app-integration slice at exact commit
+`2c3cfb0bfef5092b734464e80f38792c8b012091` adds a searchable Settings screen and
+the production `CreateDocument`/`OpenDocument` route. Passphrases are neither
+saveable nor durable, startup recovery and private staging reconciliation gate
+all file actions, only an authenticated summary exposes confirmation, and
+background/navigation invalidates pre-mutation restore work. Export failure
+reports when a provider refuses incomplete-destination deletion. Restore UI
+states explicitly disclose duplicate skipping, non-sendable historical boxes,
+and incomplete rollback.
+
+Focused app evidence passed on both API 26 and API 36: five Backup & restore
+state tests, one searchable-Settings test, and one real Inbox-to-Settings route
+journey. The state suite proves that pending or failed startup recovery exposes
+no file action, wrong-passphrase state exposes no confirmation, only
+authenticated review exposes the explicit restore action, and incomplete-file
+and rollback warnings remain visible. The complete backup module passed 21/21
+connected tests on each API with no failures, errors, or skips.
+
+The exact source then passed all 628 host tests and the complete offline
+host/lint/R8-release/benchmark/privacy/dependency/permission/APK-content/license
+aggregate: `BUILD SUCCESSFUL` in 1m54s across 977 tasks (175 executed, 24 from
+cache, 778 up-to-date). Release-bundle generation passed 306 tasks, and the
+CycloneDX 1.6 aggregate passed 16 tasks with 444 components and 445 dependency
+relationships. The complete connected matrix passed 390 tests on API 26 (13
+intentional opt-in skips) and 390 on API 36 (10 intentional opt-in skips), with
+zero failures or errors on either device.
+
+| Exact commit `2c3cfb0` artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `app-debug.apk` | 15,384,521 | `8652064112772bbdaaf62b3c641bddf9001081d8c81a2105c6f12b819bb2edab` |
+| `app-release-unsigned.apk` | 3,104,353 | `bcbf1b9a66829c57551ba1e11243a829683175d6eb0602ffbc91364093c3124b` |
+| `app-benchmark.apk` | 2,948,797 | `7d54b1fc9e5493d181b40c3e8b947f79be518d16db514545ed2be293a56ebe7e` |
+| `app-release.aab` | 6,303,529 | `163a6705a25d6ddae82836e0d55ec2468819c81a79839e59b29a791f393d9de4` |
+
+The exact debug APK installed and hash-matched at
+`/sdcard/Download/AuroraSMS-0.6.9-phase6-debug.apk` on both emulators. Installed
+versionCode 20/versionName `0.6.9-phase6` was confirmed, and both retained
+`com.android.messaging` as the default SMS app. No live message inspection,
+role transition, provider mutation, screenshot, or carrier submission occurred.
+The Pixel was not attached. Phase 6G's code and release gates are closed, but the
+phase remains open for real physical/OEM document-picker selection and
+cancellation acceptance.
 
 ## Remaining Phase 5 lifecycle/action matrix
 
@@ -3739,7 +3780,7 @@ separately approved physical-device/OEM verification.
   multipart and group transport continue to fail closed.
 - [x] Spam rules are bounded, explainable, contacts-trusting by default, and
   support unspam/unblock; suspected spam is never silently deleted.
-- [ ] Versioned streaming backup validates limits, paths, checksums,
+- [x] Versioned streaming backup validates limits, paths, checksums,
   authentication/encryption, schema, and media before atomic import.
 - [ ] Android Auto notification and reply behavior passes device/host checks.
 - [ ] No feature adds an undeclared network path.
