@@ -9,6 +9,32 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+The 2026-07-20 Phase 6H implementation identifies as `0.6.10-phase6`
+(`versionCode` 21) and implements ADR 0023. AuroraSMS now advertises Android
+Auto notification and SMS capability, publishes one bounded chronological
+`MessagingStyle` history per conversation, and exposes background semantic
+Reply and invisible Mark as read actions. New replies enter the existing
+durable role/recipient/subscription/replay/transport boundary through a
+non-exported service. Mark as read revalidates the exact incoming SMS generation
+before updating only that conversation through that row, and exact notification
+and reminder cleanup happens only after provider success.
+
+A two-second, 64-slot in-process mirror covers Android 8's asynchronous active-
+notification publication without becoming message storage. The API 26 matrix
+caught the original rapid-arrival history loss and the corrected exact-
+generation platform test now passes on both API 26 and API 36. All 636 host
+tests, the complete 977-task offline release/privacy gate, and 399 retained
+connected tests on each API pass with zero failures or errors. Release APK/AAB,
+benchmark, permission/APK-content, license, clean-room, dependency, and
+CycloneDX 1.6 gates are green. Exact implementation commit `70552cf` produced
+the 15,504,195-byte debug APK with SHA-256
+`9aed671c7b1ed495264a48748ccbdacd74ba720ee78626d815b6b924aca835ed`.
+It installed and hash-matched on both emulators while preserving
+`com.android.messaging` as their default SMS app, and AuroraSMS was left
+force-stopped. No live provider content, role transition, or carrier action
+participated. A real Android Auto/DHU surface, physical lockscreen/OEM behavior,
+carrier reply, and incoming/group MMS remain open; AuroraSMS is not gold.
+
 The 2026-07-20 Phase 6G app integration identifies as `0.6.9-phase6`
 (`versionCode` 20). Inbox now opens a searchable Settings screen whose encrypted
 Backup & restore journey uses Android `CreateDocument`/`OpenDocument`, ephemeral

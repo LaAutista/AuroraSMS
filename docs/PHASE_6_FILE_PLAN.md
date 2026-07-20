@@ -2,10 +2,11 @@
 
 # Phase 6 feature and privacy plan
 
-Status: active. Phase 5A through 5G and Phase 6A through 6E are implemented and
-locally accepted. This
-plan sequences the remaining user-facing work into reviewable slices; it does
-not declare AuroraSMS complete or gold.
+Status: active. Phase 5A through 5G and Phase 6A through 6H are implemented and
+locally accepted within the evidence boundaries below. Phase 6G still needs a
+physical/OEM document-picker journey, and Phase 6H still needs real Android
+Auto/DHU plus physical lockscreen/OEM and carrier-reply acceptance. This plan
+does not declare AuroraSMS complete or gold.
 
 ## Shared boundaries
 
@@ -178,11 +179,31 @@ both emulators without changing their non-Aurora SMS role. The Pixel was not
 attached, so real physical/OEM document-picker selection/cancellation remains
 the sole Phase 6G acceptance item before the phase can be called complete.
 
-### Phase 6H — Android Auto and notification completion
+### Phase 6H — Android Auto and notification completion — implementation and emulator acceptance complete
 
 Verify metadata, privacy modes, grouping, direct reply, failure alerts, channel
 behavior, lockscreen/OEM behavior, and Android Auto without weakening durable
 reply ownership or group identity.
+
+The `0.6.10-phase6` implementation at exact commit `70552cf` adds the Android
+Auto `notification` and `sms` descriptor, one bounded chronological
+`MessagingStyle` notification per conversation, background semantic Reply, and
+an invisible semantic Mark as read action. The reply path retains the existing
+durable send owner. Mark as read binds the expected conversation to one exact
+incoming SMS generation, rechecks role and provider identity, updates only
+incoming SMS through that row, and removes only matching notification/reminder
+ownership after provider success. Privacy or group-identity changes start a
+fresh history so stricter presentation cannot retain prior content.
+
+All 636 host tests and the 977-task offline release/privacy aggregate pass. The
+retained connected XML records 399 tests on API 26 and 399 on API 36 with zero
+failures/errors. API 26 exposed a real rapid-replacement timing race; a bounded
+64-slot, two-second in-process publication mirror now preserves the just-posted
+history while Android's notification manager catches up. The exact APK
+installed and hash-matched on both emulators without changing their non-Aurora
+SMS role. Actual Android Auto/DHU rendering and voice action, physical/OEM
+lockscreen behavior, a real provider read mutation, and carrier submission were
+not exercised and remain open.
 
 ## Stop conditions
 

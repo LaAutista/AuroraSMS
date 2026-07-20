@@ -3,9 +3,9 @@
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
 bounded ADR 0008 Phase 5A source implementation in commit `17fc421`, followed
-by accepted Phase 5B–5G controls and Phase 6A–6F presentation/action controls
-through ADR 0021 and Room schema 12. Local/API 26/API 36 focused acceptance
-passes through the Phase 6F implementation. Safe install/migration and
+by accepted Phase 5B–5G controls and Phase 6A–6H presentation/action controls
+through ADR 0023 and Room schema 12. Local/API 26/API 36 focused acceptance
+passes through the Phase 6H implementation. Safe install/migration and
 locked-device cold launch passed
 on a Pixel 8. Real-carrier, radio, billing,
 and invasive physical lifecycle evidence remains open.
@@ -857,13 +857,33 @@ three real virtual-microphone lifecycle cases on both API 26 and API 36. No live
 provider content or carrier transmission was used. Full carrier/OEM/group and
 incoming-PDU acceptance remains open.
 
+Phase 6G treats archive selection, passphrases, and provider restore as separate
+capabilities. ADR 0022 authenticates and validates the entire bounded stream
+before exposing confirmation, keeps passphrases ephemeral, stages only private
+owner-checked regular files, and serializes a journaled provider mutation.
+Historical send-capable boxes are restored only as inert Failed history. Path,
+symlink, checksum, archive-limit, duplicate, partial-write, process-death, and
+rollback ambiguity fail closed. Physical/OEM document-picker acceptance remains
+open.
+
+Phase 6H treats notification actions as stale external capabilities. ADR 0023
+binds Mark as read to an exact incoming SMS generation, rechecks the default-SMS
+role and expected thread before mutation, and updates only incoming rows through
+that generation. Cleanup is exact and follows provider success, so a stale
+action cannot consume a newer message or reminder. Reply enters the unchanged
+durable send owner through a non-exported background service. Notification
+history is bounded to 25 entries, restarts on privacy or group-identity change,
+and uses a short bounded publication mirror only to cover platform propagation.
+Actual Android Auto/DHU, physical lockscreen/OEM, real-provider read mutation,
+and carrier-reply acceptance remain open.
+
 ## Open security decisions
 
 These do not block Phase 1 foundation unless explicitly named, but block their
 feature's release:
 
-- backup archive encryption, authentication, key derivation/recovery, limits,
-  retention, and corruption policy;
+- physical/OEM backup document selection, cancellation, unavailable-provider,
+  and user-recovery acceptance for ADR 0022's implemented archive protocol;
 - physical OEM/Doze exact-alarm timing and revocation acceptance;
 - app-lock and secure-recents defaults/copy;
 - broader/group/incoming MMS PDU, carrier, OEM, roaming, and billing audit beyond

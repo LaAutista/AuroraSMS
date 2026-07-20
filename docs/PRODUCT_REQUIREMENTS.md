@@ -684,6 +684,39 @@ This is not a full MMS composer. Group MMS, incoming PDU decoding, arbitrary
 attachments, carrier/OEM acceptance, billing/roaming behavior, and automatic
 retry of ambiguous submissions remain explicitly open.
 
+### Phase 6G authenticated streaming backup and restore
+
+The `0.6.9-phase6` (`versionCode` 20) source implements ADR 0022. Export and
+restore use Android document capabilities, ephemeral passphrases, authenticated
+streaming archives, bounded private staging, full pre-mutation validation, and
+a separate exact confirmation. Restore is serialized and journaled; historical
+Draft, Outbox, or Queued rows become inert Failed history and can never acquire
+send authority. Synthetic provider and UI journeys pass on API 26 and API 36.
+Real physical/OEM document selection and cancellation remain open.
+
+### Phase 6H generation-fenced Android Auto notifications
+
+The `0.6.10-phase6` (`versionCode` 21) source implements ADR 0023.
+
+- The application descriptor declares Android Auto `notification` and `sms`
+  capability without adding a proprietary runtime or network permission.
+- Each conversation owns one private `MessagingStyle` notification with at most
+  25 chronological messages. History is retained only while privacy and group
+  identity match; public versions and failure/reminder alerts remain generic.
+- Reply and Mark as read use a non-exported background service. Reply retains
+  the existing durable role, identity, SIM, replay, provider-staging, and
+  transport checks.
+- Mark as read validates one exact incoming SMS in the expected thread and may
+  update only incoming rows no newer than that generation. A stale action cannot
+  consume a newer message, notification, or reminder.
+- A 64-entry, two-second process mirror covers only asynchronous notification-
+  manager publication on older Android and is neither durable nor a message
+  store.
+
+Host and API 26/API 36 notification contracts pass. Actual Android Auto/DHU,
+physical lockscreen/OEM behavior, carrier-success reply, and incoming/group MMS
+remain release acceptance work.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls

@@ -413,7 +413,11 @@ Run on a telephony-capable device after explicit test-recipient approval.
   cleanup, sibling preservation, platform-manager identity, and crash-
   idempotent replay passed the focused notification module 29/29 on API 26 and
   29/29 on API 36. Broader surface and release evidence remain pending.
-- [ ] Android Auto metadata/reply verification is completed in Phase 6.
+- [x] Android Auto metadata, `MessagingStyle`, background Reply/Mark as read
+  semantics, privacy reset, bounded history, and generation fencing pass host
+  plus API 26/API 36 notification contracts.
+- [ ] Android Auto Desktop Head Unit or a physical car surface renders the
+  conversation and completes a voice reply and Mark as read journey.
 
 ## Cross-phase lifecycle and storage pressure
 
@@ -3730,6 +3734,70 @@ The Pixel was not attached. Phase 6G's code and release gates are closed, but th
 phase remains open for real physical/OEM document-picker selection and
 cancellation acceptance.
 
+## Phase 6H generation-fenced Android Auto notification acceptance
+
+Version `0.6.10-phase6` (`versionCode=21`) at exact implementation commit
+`70552cff386895b9497e95d14992bf5284806e12` implements ADR 0023. The app manifest
+references `automotive_app_desc.xml`, whose exact capabilities are
+`notification` and `sms`. The merged notification module registers one enabled,
+non-exported background action service while retaining the legacy receiver only
+for already-issued reply intents.
+
+Each incoming conversation publishes one private `MessagingStyle` generation
+with a generic public version. At most 25 chronological same-conversation
+messages are retained, and only when privacy mode, group flag, and conversation
+title still match. A privacy or group-identity transition starts fresh. New
+notifications expose semantic Reply with exactly one `RemoteInput` and semantic
+invisible Mark as read without a `RemoteInput`; neither opens UI. Reply enters
+the existing durable inline-reply owner. Mark as read validates the exact SMS
+source row and expected thread, changes only incoming SMS rows through that ID,
+then cancels only that generation and reminder owner before requesting index
+reconciliation.
+
+The first complete API 26 pass exposed a real platform timing defect: a second
+notification posted before Android 8 surfaced the first in
+`activeNotifications` could lose the first message from the car-visible style.
+The corrected gateway keeps at most 64 just-posted snapshots for two seconds and
+drops each as soon as the platform reports it. It is process-local presentation
+state, not durable or provider authority. A subsequent run exposed that the
+platform assertion itself could briefly observe the older shared slot; the test
+now waits for the exact expected source generation. The focused seven-test
+Android Auto class and final full notification module both pass on API 26 and
+API 36.
+
+Acceptance evidence on 2026-07-20:
+
+- 636/636 retained host tests pass with zero skips, failures, or errors;
+- the complete offline host/lint/R8/benchmark/privacy/dependency/permission/
+  APK-content/license aggregate passes in 1m39s across 977 tasks (109 executed,
+  two from cache, 866 up-to-date);
+- retained connected XML records 399 tests on API 26 with 13 intentional opt-in
+  skips and 399 tests on API 36 with 10, with zero failures or errors;
+- release bundle generation passes 306 tasks, and CycloneDX 1.6 generation
+  passes 16 tasks with 444 components and 445 dependency relationships; and
+- permission and packaged-APK checks confirm no `INTERNET` or
+  `ACCESS_NETWORK_STATE` addition.
+
+| Exact commit `70552cf` artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `app-debug.apk` | 15,504,195 | `9aed671c7b1ed495264a48748ccbdacd74ba720ee78626d815b6b924aca835ed` |
+| `app-release-unsigned.apk` | 3,150,197 | `cfcd1b334916d666ea387984c5b4cd9841f525c1b3728a4689fedf705928b94d` |
+| `app-benchmark.apk` | 2,994,641 | `ff6a914fd746c23289dd76bbd955fa34a2c99ec6340c505d91a15d41d7f67944` |
+| `app-release.aab` | 6,358,836 | `5a615999d38547d4403ddaf4b4b75a09400749d220f2bc03866f220933accf34` |
+
+The exact debug APK installed and hash-matched at
+`/sdcard/Download/AuroraSMS-0.6.10-phase6-debug.apk` on both emulators. Installed
+versionCode 21/versionName `0.6.10-phase6` was confirmed, both retained
+`com.android.messaging` as the default SMS application, and AuroraSMS was left
+force-stopped. No live message/address/body was inspected, no role or permission
+was changed, and no carrier action occurred. The Pixel was not attached.
+
+Actual Android Auto/DHU rendering and voice interaction, physical/OEM shade and
+lockscreen behavior, carrier-success reply, real-provider Mark as read mutation,
+and incoming/group MMS remain open. These are not inferred from host or emulator
+notification metadata. Phase 6H's implementation and synthetic API-floor/latest
+contracts are closed; its physical/carrier acceptance is not.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
@@ -3782,8 +3850,12 @@ cancellation acceptance.
   support unspam/unblock; suspected spam is never silently deleted.
 - [x] Versioned streaming backup validates limits, paths, checksums,
   authentication/encryption, schema, and media before atomic import.
-- [ ] Android Auto notification and reply behavior passes device/host checks.
-- [ ] No feature adds an undeclared network path.
+- [x] Android Auto notification metadata, bounded conversation history,
+  privacy/group reset, reply/mark-read action semantics, and exact stale-action
+  fencing pass host and API 26/API 36 checks.
+- [ ] Android Auto/DHU or a physical car completes reply and Mark as read.
+- [x] Phase 6 adds no undeclared network path; merged manifests and packaged
+  APKs pass the permission ledger.
 
 ## Release gate
 

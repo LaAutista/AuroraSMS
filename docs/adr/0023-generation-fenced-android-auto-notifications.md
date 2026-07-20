@@ -74,3 +74,9 @@ mutation, carrier send path, or fallback transport.
   unavailable until Aurora has a complete MMS receive codec and provider path.
 - Desktop Head Unit, physical lockscreen, OEM, and carrier-success behavior are
   acceptance evidence and are never inferred from host tests.
+
+## References
+
+- [Extend messaging notifications to Android Auto](https://developer.android.com/training/cars/communication/notification-messaging)
+- [Android app quality for cars](https://developer.android.com/docs/quality-guidelines/car-app-quality)
+- [Create a conversation notification](https://developer.android.com/develop/ui/views/notifications/conversations)
