@@ -37,6 +37,7 @@ data class AuroraRestoreOwnership(
     val archiveMessageId: Long,
     val providerKind: AuroraRestoreProviderKind,
     val providerRowId: Long?,
+    val targetBox: AuroraBackupMessageBox,
 ) {
     init {
         require(archiveMessageId > 0L)
@@ -123,10 +124,16 @@ class AuroraRestoreJournal internal constructor(
         session: AuroraRestoreSession,
         archiveMessageId: Long,
         providerKind: AuroraRestoreProviderKind,
+        targetBox: AuroraBackupMessageBox,
     ): Boolean {
         val state = active?.takeIf { it.session == session } ?: return false
-        if (state.pending != null || archiveMessageId != state.lastMessageId + 1L) return false
-        val ownership = AuroraRestoreOwnership(archiveMessageId, providerKind, providerRowId = null)
+        if (state.pending != null || archiveMessageId <= state.lastMessageId) return false
+        val ownership = AuroraRestoreOwnership(
+            archiveMessageId,
+            providerKind,
+            providerRowId = null,
+            targetBox = targetBox,
+        )
         if (!append(encodeEvent(session, state.nextSequence, EVENT_RESERVE, ownership))) return false
         active = state.copy(
             nextSequence = state.nextSequence + 1L,
@@ -168,6 +175,7 @@ class AuroraRestoreJournal internal constructor(
             archiveMessageId = state.lastMessageId.coerceAtLeast(1L),
             providerKind = AuroraRestoreProviderKind.SMS,
             providerRowId = null,
+            targetBox = AuroraBackupMessageBox.FAILED,
         )
         if (!append(encodeEvent(session, state.nextSequence, EVENT_COMPLETE, complete))) return false
         active = null
@@ -258,7 +266,7 @@ class AuroraRestoreJournal internal constructor(
                         if (
                             pending != null ||
                             event.ownership.providerRowId != null ||
-                            event.ownership.archiveMessageId != lastMessageId + 1L
+                            event.ownership.archiveMessageId <= lastMessageId
                         ) {
                             return ParsedJournal.Corrupt
                         }
@@ -270,7 +278,8 @@ class AuroraRestoreJournal internal constructor(
                         if (
                             event.ownership.providerRowId == null ||
                             event.ownership.archiveMessageId != reserved.archiveMessageId ||
-                            event.ownership.providerKind != reserved.providerKind
+                            event.ownership.providerKind != reserved.providerKind ||
+                            event.ownership.targetBox != reserved.targetBox
                         ) {
                             return ParsedJournal.Corrupt
                         }
@@ -278,7 +287,11 @@ class AuroraRestoreJournal internal constructor(
                         pending = null
                     }
                     EVENT_COMPLETE -> {
-                        if (pending != null || event.ownership.providerRowId != null) {
+                        if (
+                            pending != null ||
+                            event.ownership.providerRowId != null ||
+                            event.ownership.targetBox != AuroraBackupMessageBox.FAILED
+                        ) {
                             return ParsedJournal.Corrupt
                         }
                         val encodedCount = if (lastMessageId == 0L) 1L else lastMessageId
@@ -367,7 +380,7 @@ class AuroraRestoreJournal internal constructor(
         private const val EVENT_COMPLETE = "C"
         private const val SEPARATOR = "|"
         private const val HEADER_FIELDS = 4
-        private const val EVENT_FIELDS = 8
+        private const val EVENT_FIELDS = 9
         private const val MAX_LINE_CHARACTERS = 256
         private const val BUFFER_BYTES = 16 * 1_024
 
@@ -398,6 +411,7 @@ class AuroraRestoreJournal internal constructor(
                 ownership.archiveMessageId,
                 ownership.providerKind.code,
                 ownership.providerRowId ?: 0L,
+                ownership.targetBox.code,
                 session.value,
                 VERSION,
             ).joinToString(SEPARATOR)
@@ -406,7 +420,7 @@ class AuroraRestoreJournal internal constructor(
 
         private fun decodeEvent(line: String): Event? {
             val fields = line.split(SEPARATOR)
-            if (fields.size != EVENT_FIELDS || fields[6] != VERSION) return null
+            if (fields.size != EVENT_FIELDS || fields[7] != VERSION) return null
             val payload = fields.take(EVENT_FIELDS - 1).joinToString(SEPARATOR)
             if (!constantEquals(checksum(payload), fields.last())) return null
             val sequence = fields[0].toLongOrNull()?.takeIf { it > 0L } ?: return null
@@ -420,12 +434,14 @@ class AuroraRestoreJournal internal constructor(
                 providerValue > 0L -> providerValue
                 else -> return null
             }
-            val session = runCatching { AuroraRestoreSession(fields[5]) }.getOrNull() ?: return null
+            val targetBox = fields[5].toIntOrNull()?.let { AuroraBackupMessageBox.decode(it) }
+                ?: return null
+            val session = runCatching { AuroraRestoreSession(fields[6]) }.getOrNull() ?: return null
             return Event(
                 session,
                 sequence,
                 type,
-                AuroraRestoreOwnership(archiveMessageId, kind, providerId),
+                AuroraRestoreOwnership(archiveMessageId, kind, providerId, targetBox),
             )
         }
 

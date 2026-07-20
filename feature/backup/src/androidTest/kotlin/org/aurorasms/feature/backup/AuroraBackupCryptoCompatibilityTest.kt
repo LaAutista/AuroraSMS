@@ -145,7 +145,14 @@ class AuroraBackupCryptoCompatibilityTest {
                 newSession = { sessionValue },
             )
             val session = (journal.begin() as AuroraRestoreJournalBeginResult.Success).session
-            assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS))
+            assertTrue(
+                journal.reserve(
+                    session,
+                    1,
+                    AuroraRestoreProviderKind.SMS,
+                    AuroraBackupMessageBox.INBOX,
+                ),
+            )
             assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 77))
 
             val recovered = AuroraRestoreJournal(directory)

@@ -20,9 +20,9 @@ class AuroraRestoreJournalTest {
         val directory = temporaryFolder.newFolder("journal")
         val journal = newJournal(directory)
         val session = (journal.begin() as AuroraRestoreJournalBeginResult.Success).session
-        assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS))
+        assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS, AuroraBackupMessageBox.INBOX))
         assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 101))
-        assertTrue(journal.reserve(session, 2, AuroraRestoreProviderKind.MMS))
+        assertTrue(journal.reserve(session, 2, AuroraRestoreProviderKind.MMS, AuroraBackupMessageBox.SENT))
 
         val recoveredJournal = newJournal(directory)
         assertEquals(
@@ -38,8 +38,8 @@ class AuroraRestoreJournalTest {
         assertTrue(recoveredJournal.forEachOwnership(session, ownership::add))
         assertEquals(
             listOf(
-                AuroraRestoreOwnership(1, AuroraRestoreProviderKind.SMS, 101),
-                AuroraRestoreOwnership(2, AuroraRestoreProviderKind.MMS, null),
+                AuroraRestoreOwnership(1, AuroraRestoreProviderKind.SMS, 101, AuroraBackupMessageBox.INBOX),
+                AuroraRestoreOwnership(2, AuroraRestoreProviderKind.MMS, null, AuroraBackupMessageBox.SENT),
             ),
             ownership,
         )
@@ -55,7 +55,7 @@ class AuroraRestoreJournalTest {
         val directory = temporaryFolder.newFolder("complete")
         val journal = newJournal(directory)
         val session = (journal.begin() as AuroraRestoreJournalBeginResult.Success).session
-        assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.MMS))
+        assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.MMS, AuroraBackupMessageBox.OUTBOX))
         assertFalse(journal.markComplete(session))
         assertFalse(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 9))
         assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.MMS, 9))
@@ -77,7 +77,7 @@ class AuroraRestoreJournalTest {
         val directory = temporaryFolder.newFolder("corrupt")
         val journal = newJournal(directory)
         val session = (journal.begin() as AuroraRestoreJournalBeginResult.Success).session
-        assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS))
+        assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS, AuroraBackupMessageBox.INBOX))
         val file = File(directory, "aurora_restore_journal_v1.log")
         RandomAccessFile(file, "rw").use { random ->
             random.seek(file.length() - 3L)

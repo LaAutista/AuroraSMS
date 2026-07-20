@@ -111,6 +111,14 @@ The user must explicitly confirm the dry-run summary. Restore requires the
 default-SMS role and write permission again. Existing provider rows are never
 overwritten. Exact content fingerprints skip duplicates.
 
+The coordinator performs a bounded duplicate-analysis pass before creating the
+restore journal. A Boolean decision table indexed by sequential archive message
+ID is capped by the archive's two-million-record limit. Duplicate SMS and fully
+matched MMS parents/addresses/parts are skipped before mutation. The staging
+pass then keeps every new parent in `FAILED`; a final journal-driven pass exposes
+only safe historical boxes. Imported `DRAFT`, `OUTBOX`, `QUEUED`, and `FAILED`
+rows all remain `FAILED`, so archive data cannot recreate send authority.
+
 ### Provider staging and crash recovery
 
 Every new provider message begins in a non-sendable placeholder state. The
