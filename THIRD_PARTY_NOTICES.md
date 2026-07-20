@@ -2,7 +2,8 @@
 
 Status: Phase 1 resolved inventory; Phase 2 Room/KSP and Phase 3 performance
 tool additions admitted; Phase 4 foundation adds no new coordinate; Phase 6F
-admits one pinned official-AOSP outgoing composer source subset
+admits one pinned official-AOSP outgoing composer source subset; Phase 7D
+extends that exact-revision subset with the bounded incoming parser closure
 
 AuroraSMS uses independently selected, exact-version build, AndroidX, Kotlin,
 Compose, coroutine, and test dependencies admitted by
@@ -63,7 +64,7 @@ AuroraSMS artwork offered under GPL-3.0-or-later and recorded in
 artwork may enter the repository only after its per-asset owner approval,
 license boundary, and attribution are recorded there.
 
-## Android Open Source Project MMS composer subset
+## Android Open Source Project MMS codec subset
 
 Phase 6F vendors twelve Java source files from the official AOSP
 `platform/frameworks/opt/mms` repository at immutable revision
@@ -74,10 +75,20 @@ in `third_party/aosp-mms/`.
 
 AuroraSMS repackages this selected outgoing `SendReq` composition graph and
 changes malformed first-part handling to fail closed without printing. It does
-not include the AOSP incoming parser, APN/network client, transaction service,
+not include the AOSP APN/network client, persister, transaction service,
 database, UI, or end-user messaging application. ADR 0021 limits the admitted
-runtime use to one bounded one-person SMIL/text/AAC voice-memo PDU. The wrapper,
-provider/journal policy, UI, and tests are original GPL-3.0-or-later code.
+outgoing runtime use to one bounded one-person SMIL/text/AAC voice-memo PDU.
+
+Phase 7D adds twelve files from the same immutable revision: `ContentType`, the
+`PduParser`, notification/retrieval PDU models, the parser's remaining typed-PDU
+closure, and its Base64/quoted-printable helpers. The parser is modified to use
+defensive input copies, explicit byte/part/header/string/depth limits, checked
+lengths and end-of-input reads, instance-local parameter state, deterministic
+anonymous-part identifiers, and content-free logging behavior. ADR 0024 admits
+only notification and retrieved-message results through an original,
+GPL-3.0-or-later typed validation wrapper. Other parsed PDU types are rejected.
+The wrapper, provider/journal policy, UI, and tests remain original
+GPL-3.0-or-later code.
 
 ## Tux
 

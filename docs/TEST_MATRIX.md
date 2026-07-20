@@ -3906,6 +3906,39 @@ physical history, physical/OEM/carrier/accessibility/performance/Android Auto
 acceptance, F-Droid source-build verification, release tagging, and publication
 also remain open. AuroraSMS is not gold.
 
+### Phase 7D bounded incoming MMS codec foundation — 2026-07-20
+
+ADR 0024 adds twelve noticed Java files from the same immutable official-AOSP
+MMS revision as ADR 0021, bringing the isolated Apache-2.0 codec subset to 24
+files without adding a dependency coordinate, native library, manifest
+component, initializer, or application network permission. The parser now
+defensively copies at most 1,048,576 input bytes; caps parts at 25, part headers
+at 8,192 bytes, WAP strings at 2,048 bytes, and multipart nesting at eight;
+checks uintvar width, declared lengths, allocations, skips, and end-of-input;
+uses instance-local content-type parameters; generates deterministic anonymous-
+part identifiers; and emits no message-derived runtime logs.
+
+The original GPL wrapper accepts only bounded `M-Notification.ind` and
+`M-Retrieve.conf` values. It validates HTTP/HTTPS download locations, advertised
+size, addresses, group recipient sets, IDs, subject, timestamp, concrete MIME,
+charset text, aggregate bytes, and excludes OMA DRM. Parts are defensively
+copied and all diagnostic strings redact URL, address, ID, subject, text, and
+binary content.
+
+Focused compile plus API 26 and API 36 emulator acceptance passed 5/5 tests on
+each runtime. The synthetic
+fixtures cover one complete notification and one group retrieved message with
+two TO recipients, UTF-8 text, and an opaque PNG part. Every truncation of both
+fixtures, 1,024 deterministic hostile byte inputs, a 26-part message, an unsafe
+transport scheme, and an over-limit advertisement returned without an uncaught
+exception and failed closed where required. No live provider or message data
+was read, no role or permission changed, and no carrier operation was issued.
+
+This is codec-boundary evidence only. Durable notification/download/callback
+ownership, atomic provider rows/addresses/parts, acknowledgement/notification,
+general/group outgoing composition, and carrier acceptance
+remain open. AuroraSMS is not gold.
+
 ## Release gate
 
 - [ ] All relevant platform/device/telephony/message/lifecycle/appearance rows

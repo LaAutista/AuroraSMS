@@ -717,6 +717,24 @@ Host and API 26/API 36 notification contracts pass. Actual Android Auto/DHU,
 physical lockscreen/OEM behavior, carrier-success reply, and incoming/group MMS
 remain release acceptance work.
 
+### Phase 7D bounded incoming MMS codec foundation
+
+ADR 0024 admits twelve additional Java files from the same immutable, official-
+AOSP Apache-2.0 MMS revision as ADR 0021 and an original GPL validation wrapper.
+The parser copies at most 1 MiB, caps parts/headers/strings/nesting, checks every
+declared length and end-of-input, keeps parser parameters instance-local, and
+emits no message-derived runtime logs. Only bounded `M-Notification.ind` and
+`M-Retrieve.conf` results may cross the wrapper; other PDU types, unsafe URLs,
+oversized advertisements, wildcard/malformed MIME, and OMA DRM fail closed.
+
+The retrieved result preserves bounded sender/TO/CC group identity, subject,
+timestamp, UTF-8 or declared-charset plain text, and defensively copied opaque
+parts without media decode. API 26/API 36 synthetic tests cover complete notification
+and group-retrieve fixtures, every truncation, 1,024 deterministic hostile
+inputs, redaction/immutability, and part/URL/size limits. This foundation does
+not yet authorize download, provider insertion, acknowledgement, notification,
+general/group composition, or carrier traffic; those release gates remain open.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls

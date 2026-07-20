@@ -136,3 +136,12 @@ This does not amend the incoming-decoder, group/general-composer, arbitrary
 attachment, or physical carrier/OEM requirements above. `CODEC_UNAVAILABLE`
 remains correct for every high-level payload outside ADR 0021, and AuroraSMS
 still cannot claim general end-to-end MMS until those remaining gates pass.
+
+## Phase 7D incoming-codec amendment
+
+ADR 0024 satisfies the exact source/provenance, bounded notification/retrieved-
+message decode, and initial malformed/mutation-corpus gates. It does not yet
+open provider persistence, download ownership, acknowledgement, incoming
+notification, outgoing general/group composition, or carrier acceptance.
+`CODEC_UNAVAILABLE` remains correct at those integration boundaries until their
+durable state machines and API 26/API 36 evidence are complete.

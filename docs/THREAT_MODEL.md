@@ -877,6 +877,19 @@ and uses a short bounded publication mirror only to cover platform propagation.
 Actual Android Auto/DHU, physical lockscreen/OEM, real-provider read mutation,
 and carrier-reply acceptance remain open.
 
+Phase 7D ADR 0024 treats every incoming WAP/MMS byte and metadata field as
+carrier-controlled. The exact-revision AOSP parser closure is isolated behind an
+original typed wrapper and hard 1-MiB input/aggregate, 25-part, 8-KiB part-
+header, 2-KiB WAP-string, and depth-eight multipart limits. Declared lengths,
+end-of-input, and uintvar width are checked before use; unknown skips allocate
+nothing; parser state is per instance; diagnostics contain no addresses, URLs,
+IDs, subjects, text, or binary data. The wrapper accepts only HTTPS/HTTP
+notification locations and concrete non-DRM part MIME types. It performs no
+network, provider, notification, acknowledgement, or media-decode action.
+Durable download/callback/provider ownership remains a closed gate, so the app
+entry points still reject incoming MMS after this codec-only
+foundation.
+
 ## Open security decisions
 
 These do not block Phase 1 foundation unless explicitly named, but block their
@@ -886,7 +899,8 @@ feature's release:
   and user-recovery acceptance for ADR 0022's implemented archive protocol;
 - physical OEM/Doze exact-alarm timing and revocation acceptance;
 - app-lock and secure-recents defaults/copy;
-- broader/group/incoming MMS PDU, carrier, OEM, roaming, and billing audit beyond
-  ADR 0021's bounded outgoing one-person voice memo;
+- incoming MMS download/provider ownership, general/group composition, and
+  carrier/OEM/roaming/billing audit beyond ADR 0021 and ADR 0024's bounded
+  codec-only surfaces;
 - optional SQLCipher hardened mode after measured FTS/migration impact;
 - artwork license and attribution.

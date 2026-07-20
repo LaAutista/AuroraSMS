@@ -71,7 +71,7 @@ provider access. It does not authorize a carrier send.
 
 ## Workstream 7D: complete SMS/MMS vertical
 
-- [ ] Admit a bounded incoming WSP/MMS decoder from an approved, immutable,
+- [x] Admit a bounded incoming WSP/MMS decoder from an approved, immutable,
   noticed source or a separately reviewed original implementation.
 - [ ] Persist notification-indication/download/retrieve results atomically with
   bounded addresses, text, SMIL, and supported media parts.
@@ -84,7 +84,9 @@ provider access. It does not authorize a carrier send.
 - [ ] Pass approved physical one-person and group MMS send/receive cases.
 
 The existing ADR 0021 voice-memo path remains a narrow one-person outgoing
-subset. It is not evidence for general or incoming MMS.
+subset. ADR 0024 and its initial API 26/API 36 synthetic corpus admit the incoming
+codec boundary only; they are not evidence for provider/download integration,
+general/group composition, or carrier behavior.
 
 ## Workstream 7E: physical and platform hardening
 

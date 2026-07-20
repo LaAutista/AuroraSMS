@@ -324,7 +324,7 @@ Navigation Compose, DataStore, icon packs, fonts, and remote theme/media SDKs
 remain unapproved. Artwork remains outside dependency policy and behind the
 separate rights gate in `docs/ARTWORK_CATALOG.md`.
 
-## Phase 6F official-AOSP MMS source admission
+## Phase 6F and Phase 7D official-AOSP MMS source admission
 
 ADR 0021 admits no Maven coordinate, repository, transitive artifact, native
 binary, initializer, component, service, or network client. It vendors twelve
@@ -334,21 +334,24 @@ Apache-2.0 Java files from the official AOSP
 retained notices, modifications, and full license are recorded in
 `third_party/aosp-mms/` and `THIRD_PARTY_NOTICES.md`.
 
-Only the `SendReq` model and outgoing PDU composer graph is compiled. Incoming
-parsers, APN/network code, transaction services, storage, UI, and end-user
-messaging-app source are excluded. The original wrapper admits one recipient,
-one bounded SMIL/optional-text/AAC voice memo, and no general attachment or
-incoming-decode surface. `RECORD_AUDIO` is an app permission owned by the
-feature and ledger, not a contribution from the vendored code. Carrier MMS uses
-Android's existing `SmsManager` path and does not add general application
-Internet access.
+ADR 0024 adds twelve parser-closure files from that same immutable revision, for
+twenty-four noticed source files total. Only the `SendReq` composer and the PDU
+model/parser closure needed to validate notification and retrieved messages are
+compiled. APN/network code, transaction services, upstream persistence, UI,
+and end-user messaging-app source remain excluded. The original wrappers admit
+one bounded outgoing voice-memo shape and a separately bounded incoming typed
+result; they do not admit a general composer, network client, or provider write
+by themselves. `RECORD_AUDIO` is an app permission owned by the feature and
+ledger, not a contribution from the vendored code. Carrier MMS uses Android's
+existing `SmsManager` path and does not add general application Internet access.
 
 This source admission must be updated or removed as one unit. Any upstream
-revision change, added AOSP file, incoming parser, PDU type, MIME type, recipient
-shape, or general composer reopens provenance, license, malformed-input, size,
-provider, and carrier review. Removal means disabling the high-level voice-memo
-payload and returning to `CODEC_UNAVAILABLE`; existing SMS, MMS metadata, and
-incoming WAP handling remain intact.
+revision change, added AOSP file, admitted PDU type, MIME policy, recipient
+shape, limit, or general composer reopens provenance, license, malformed-input,
+size, provider, and carrier review. Removal means disabling the high-level
+voice-memo payload and incoming decode boundary and returning to
+`CODEC_UNAVAILABLE`; existing SMS and stored-MMS metadata handling remains
+intact.
 
 ## Deferred and decision-gated dependencies
 

@@ -24,7 +24,7 @@ identified separately. Third-party material keeps its original compatible
 license and notices under `THIRD_PARTY_NOTICES.md` and the generated license
 report.
 
-The twelve modified official-AOSP MMS composer source files under
+The twenty-four modified official-AOSP MMS codec source files under
 `core/telephony/src/main/java/org/aurorasms/core/telephony/codec/aosp` retain
 their Apache-2.0 headers and upstream copyright notices. Their immutable source
 revision, exact file list, change notices, and complete Apache-2.0 text are in

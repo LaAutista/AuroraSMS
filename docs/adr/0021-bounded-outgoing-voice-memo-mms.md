@@ -96,3 +96,10 @@ its general and incoming MMS surfaces closed. The source distribution must
 retain the AOSP notices and Apache-2.0 text. Any additional PDU type, recipient
 shape, attachment MIME type, decoder, or upstream update requires a new reviewed
 decision and new golden/corpus/provider/carrier evidence.
+
+## Phase 7D amendment
+
+ADR 0024 later admits the bounded parser dependency closure from the same exact
+AOSP revision and an original notification/retrieved-message validation
+wrapper. It does not broaden this ADR's outgoing voice-memo shape or carrier
+authority.
