@@ -44,13 +44,13 @@ not an indexing delay.
 
 ## Workstream 7B: reproducible artifacts
 
-- [ ] Prove two isolated builds from one clean commit produce byte-identical
+- [x] Prove two isolated builds from one clean commit produce byte-identical
   unsigned release APK and AAB outputs.
-- [ ] Retain exact source commit, toolchain, artifact sizes, SHA-256 hashes,
+- [x] Retain exact source commit, toolchain, artifact sizes, SHA-256 hashes,
   license inventory, and CycloneDX 1.6 SBOM.
-- [ ] Keep release builds R8/resource-shrunk, non-debuggable, Baseline Profile
+- [x] Keep release builds R8/resource-shrunk, non-debuggable, Baseline Profile
   equipped, and free of debug/test/private-reference material.
-- [ ] Explain every release-APK growth above the five-percent budget.
+- [x] Explain every release-APK growth above the five-percent budget.
 - [ ] Sign final artifacts and `SHA256SUMS` only with an owner-controlled key
   stored outside the repository.
 

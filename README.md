@@ -9,6 +9,22 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+Phase 7 release hardening is active. Implementation commit
+`d163811653e69ec8e1ad505a454b51770180ef73` aligns the app and CycloneDX
+version at `0.6.10-phase6`, adds a data-minimizing security policy, deterministic
+checksum/reproducibility helpers, release instructions, localized store copy,
+and valid F-Droid metadata that remains disabled while the app is pre-release.
+Two independent Git clones of that exact commit produced byte-identical R8
+unsigned release APKs and AABs. The reproducible APK SHA-256 is
+`acd1517b5c01a7c14be6d2fce06cb9dbe44276f6db51693bf2f31253e8d78ee6`;
+the AAB SHA-256 is
+`349ea4f6a1be6f348cbd54c64bdf06e3fe56f7bc13f1eaef2aa4d807d7a86b1b`.
+All 636 host tests and the 978-task governed aggregate pass. The exact release
+and gold checklist is in [the Phase 7 plan](docs/PHASE_7_RELEASE_PLAN.md).
+Signing, a complete nonempty physical-provider scan, general/incoming/group MMS,
+physical/OEM/carrier/accessibility/performance/Android Auto acceptance, and the
+final F-Droid build recipe remain open. AuroraSMS is not gold.
+
 The 2026-07-20 Phase 6H implementation identifies as `0.6.10-phase6`
 (`versionCode` 21) and implements ADR 0023. AuroraSMS now advertises Android
 Auto notification and SMS capability, publishes one bounded chronological

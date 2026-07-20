@@ -3857,6 +3857,55 @@ contracts are closed; its physical/carrier acceptance is not.
 - [x] Phase 6 adds no undeclared network path; merged manifests and packaged
   APKs pass the permission ledger.
 
+### Phase 7A release governance and reproducibility — 2026-07-20
+
+Implementation commit `d163811653e69ec8e1ad505a454b51770180ef73`
+centralizes the app and aggregate-project version at `0.6.10-phase6`, adds the
+source release process, security policy, checksum/reproducibility helpers,
+localized store copy, and valid disabled F-Droid metadata. The F-Droid record
+cannot advertise a build until a gold commit exists, so it truthfully retains
+`Disabled`, no `Builds` entry, and explicit incoming/group-MMS and physical-
+carrier limitations. Store copy also says AuroraSMS does not provide RCS.
+
+The complete offline host/lint/R8/benchmark/privacy/dependency/license/metadata
+aggregate was `BUILD SUCCESSFUL` in 1m04s across 978 tasks (158 executed, 820
+up-to-date). All 636 host tests passed with zero failures, errors, or skips.
+Release APK/AAB assembly, the Baseline Profile and R8/resource-shrink boundary,
+merged/package permission ledgers, APK-content/debug-leak checks, 41-hash
+private-asset denylist, dependency locks, and license inventory passed. The
+separate CycloneDX 1.6 gate passed 16 tasks and now identifies the aggregate as
+`org.aurorasms:AuroraSMS:0.6.10-phase6`, with 444 components and 445 dependency
+nodes.
+
+`scripts/verify-reproducible-release.sh --offline` cloned the exact source
+commit into two independent temporary Git repositories and built each release
+through R8. Both pairs were byte-identical:
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| unsigned release APK | 3,150,197 | `acd1517b5c01a7c14be6d2fce06cb9dbe44276f6db51693bf2f31253e8d78ee6` |
+| release AAB | 6,358,836 | `349ea4f6a1be6f348cbd54c64bdf06e3fe56f7bc13f1eaef2aa4d807d7a86b1b` |
+
+The release APK grew from 2,928,769 bytes at Phase 6E commit `370baf9` to
+3,150,197 bytes here: 221,428 bytes, or 7.56%. An isolated same-toolchain
+baseline build attributes 140,818 compressed bytes to `classes.dex`, 71,500
+bytes to the stored resource table, 111 compressed bytes to the manifest, and
+the remaining 8,999 bytes to other packaged metadata/resources. That range adds
+the admitted bounded AOSP voice-memo composer/provider/recovery surface,
+authenticated streaming backup/restore and Settings UI, and Android Auto
+notification actions. It adds no new runtime dependency, native library,
+Internet/network permission, or private artwork. The measured functional range
+therefore explains the over-budget growth; later releases return to the normal
+five-percent regression threshold.
+
+The checksum helper staged the exact tested APK, AAB, SBOM, notices, and license
+and its generated `SHA256SUMS` verified all five files. It deliberately does
+not sign them: a production signing identity and signed final checksum manifest
+remain owner-controlled release gates. General/incoming/group MMS, complete
+physical history, physical/OEM/carrier/accessibility/performance/Android Auto
+acceptance, F-Droid source-build verification, release tagging, and publication
+also remain open. AuroraSMS is not gold.
+
 ## Release gate
 
 - [ ] All relevant platform/device/telephony/message/lifecycle/appearance rows
@@ -3865,7 +3914,7 @@ contracts are closed; its physical/carrier acceptance is not.
   group MMS without fan-out, and handles notifications/direct reply.
 - [ ] Complete indexed search and exact old-result jump meet measured budgets.
 - [x] Every shipped database version has a migration test.
-- [ ] R8/resource shrinking, Baseline Profile, APK size, and permission
+- [x] R8/resource shrinking, Baseline Profile, APK size, and permission
   regression checks pass.
 - [x] Clean-room source/dependency/private-asset scans pass.
 - [ ] Notices/SBOM, source license, artwork license/attribution, reproducible
