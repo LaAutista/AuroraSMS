@@ -863,7 +863,7 @@ class ConversationUiStateTest {
     }
 
     @Test
-    fun incompleteInboxProminentlyDisclosesMissingHistoryAndProgress() {
+    fun incompleteInboxProminentlyDisclosesCachedHistoryAndProgress() {
         val partialCoverage = IndexCoverage(
             generationId = 4L,
             state = IndexRunState.SCANNING,
@@ -904,8 +904,8 @@ class ConversationUiStateTest {
         }
 
         compose.onNodeWithTag(INDEX_INCOMPLETE_NOTICE_TEST_TAG).assertIsDisplayed()
-        compose.onNodeWithText("History is still loading", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Some conversations and older messages are missing", substring = true)
+        compose.onNodeWithText("History refresh is incomplete", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("showing its best-known cached history", substring = true)
             .assertIsDisplayed()
         compose.onNodeWithText("2100 messages checked", substring = true).assertIsDisplayed()
     }

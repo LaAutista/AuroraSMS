@@ -77,6 +77,20 @@ and API 36 emulator without changing either role, launching the app, reading
 live content, or submitting carrier traffic. Physical complete-history evidence
 still requires the owner's explicit default-SMS approval.
 
+### Phase 6 history follow-up — interrupted-refresh cache presentation — complete
+
+The physical report confirmed the remaining presentation defect: the newest
+partial generation exposed only 2,100 rows while 5,226 messages and 73
+conversation projections remained in Aurora's private cache. ADR 0020 makes an
+incomplete Inbox and Thread page across all best-known retained generations,
+with explicit stale-cache disclosure. Exact-identity actions remain unavailable
+until verified completion; a complete generation returns to strict generation
+queries and atomically removes stale rows. No provider read, role change,
+permission, network path, carrier action, or schema migration is introduced.
+
+Focused acceptance passed on API 26 and API 36. Full aggregate, artifact, and
+physical handoff evidence is recorded in `docs/TEST_MATRIX.md`.
+
 ### Phase 6E — local spam and blocking — complete
 
 Implement bounded explainable rules, trust contacts by default, warn/highlight

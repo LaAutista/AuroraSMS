@@ -63,6 +63,15 @@ abstract class ConversationDao {
     @Query(
         """
         SELECT * FROM indexed_conversations
+        ORDER BY latest_timestamp_ms DESC, latest_row_id DESC
+        LIMIT :limit
+        """,
+    )
+    protected abstract suspend fun cachedInboxFirstQuery(limit: Int): List<IndexedConversationEntity>
+
+    @Query(
+        """
+        SELECT * FROM indexed_conversations
         INDEXED BY index_indexed_conversations_last_seen_generation_latest_timestamp_ms_latest_row_id
         WHERE last_seen_generation = :generationId
           AND (
@@ -75,6 +84,21 @@ abstract class ConversationDao {
     )
     protected abstract suspend fun inboxOlderQuery(
         generationId: Long,
+        timestampMillis: Long,
+        rowId: Long,
+        limit: Int,
+    ): List<IndexedConversationEntity>
+
+    @Query(
+        """
+        SELECT * FROM indexed_conversations
+        WHERE latest_timestamp_ms < :timestampMillis OR
+              (latest_timestamp_ms = :timestampMillis AND latest_row_id < :rowId)
+        ORDER BY latest_timestamp_ms DESC, latest_row_id DESC
+        LIMIT :limit
+        """,
+    )
+    protected abstract suspend fun cachedInboxOlderQuery(
         timestampMillis: Long,
         rowId: Long,
         limit: Int,
@@ -100,10 +124,33 @@ abstract class ConversationDao {
         limit: Int,
     ): List<IndexedConversationEntity>
 
-    suspend fun inboxFirst(generationId: Long, limit: Int): List<IndexedConversationEntity> {
+    @Query(
+        """
+        SELECT * FROM indexed_conversations
+        WHERE latest_timestamp_ms > :timestampMillis OR
+              (latest_timestamp_ms = :timestampMillis AND latest_row_id > :rowId)
+        ORDER BY latest_timestamp_ms ASC, latest_row_id ASC
+        LIMIT :limit
+        """,
+    )
+    protected abstract suspend fun cachedInboxNewerQuery(
+        timestampMillis: Long,
+        rowId: Long,
+        limit: Int,
+    ): List<IndexedConversationEntity>
+
+    suspend fun inboxFirst(
+        generationId: Long,
+        limit: Int,
+        includeUnverifiedCache: Boolean = false,
+    ): List<IndexedConversationEntity> {
         require(generationId > 0L)
         require(limit in 1..MAXIMUM_CONVERSATION_PAGE_SIZE + 1)
-        return inboxFirstQuery(generationId, limit)
+        return if (includeUnverifiedCache) {
+            cachedInboxFirstQuery(limit)
+        } else {
+            inboxFirstQuery(generationId, limit)
+        }
     }
 
     suspend fun inboxOlder(
@@ -111,10 +158,15 @@ abstract class ConversationDao {
         timestampMillis: Long,
         rowId: Long,
         limit: Int,
+        includeUnverifiedCache: Boolean = false,
     ): List<IndexedConversationEntity> {
         require(generationId > 0L && timestampMillis >= 0L && rowId > 0L)
         require(limit in 1..MAXIMUM_CONVERSATION_PAGE_SIZE + 1)
-        return inboxOlderQuery(generationId, timestampMillis, rowId, limit)
+        return if (includeUnverifiedCache) {
+            cachedInboxOlderQuery(timestampMillis, rowId, limit)
+        } else {
+            inboxOlderQuery(generationId, timestampMillis, rowId, limit)
+        }
     }
 
     suspend fun inboxNewer(
@@ -122,10 +174,15 @@ abstract class ConversationDao {
         timestampMillis: Long,
         rowId: Long,
         limit: Int,
+        includeUnverifiedCache: Boolean = false,
     ): List<IndexedConversationEntity> {
         require(generationId > 0L && timestampMillis >= 0L && rowId > 0L)
         require(limit in 1..MAXIMUM_CONVERSATION_PAGE_SIZE + 1)
-        return inboxNewerQuery(generationId, timestampMillis, rowId, limit)
+        return if (includeUnverifiedCache) {
+            cachedInboxNewerQuery(timestampMillis, rowId, limit)
+        } else {
+            inboxNewerQuery(generationId, timestampMillis, rowId, limit)
+        }
     }
 
     @Query(
@@ -149,16 +206,40 @@ abstract class ConversationDao {
         perThreadLimit: Int,
     ): List<IndexedConversationParticipantEntity>
 
+    @Query(
+        """
+        SELECT p.* FROM indexed_conversation_participants AS p
+        WHERE p.provider_thread_id IN (:providerThreadIds)
+          AND (
+            SELECT COUNT(*)
+            FROM indexed_conversation_participants AS ranked
+            WHERE ranked.provider_thread_id = p.provider_thread_id
+              AND ranked.address <= p.address
+          ) <= :perThreadLimit
+        ORDER BY p.provider_thread_id ASC, p.address ASC
+        """,
+    )
+    protected abstract suspend fun cachedParticipantPreviewsQuery(
+        providerThreadIds: List<Long>,
+        perThreadLimit: Int,
+    ): List<IndexedConversationParticipantEntity>
+
     suspend fun participantPreviews(
         generationId: Long,
         providerThreadIds: List<Long>,
         perThreadLimit: Int,
+        includeUnverifiedCache: Boolean = false,
     ): List<IndexedConversationParticipantEntity> {
         require(generationId > 0L)
         require(providerThreadIds.size in 1..MAXIMUM_CONVERSATION_PAGE_SIZE)
         require(providerThreadIds.all { it > 0L })
         require(perThreadLimit in 1..8)
-        return participantPreviewsQuery(generationId, providerThreadIds.distinct(), perThreadLimit)
+        val distinctThreadIds = providerThreadIds.distinct()
+        return if (includeUnverifiedCache) {
+            cachedParticipantPreviewsQuery(distinctThreadIds, perThreadLimit)
+        } else {
+            participantPreviewsQuery(generationId, distinctThreadIds, perThreadLimit)
+        }
     }
 
     @Query(
@@ -197,6 +278,9 @@ abstract class ConversationDao {
         generationId: Long,
     ): IndexedConversationEntity?
 
+    @Query("SELECT * FROM indexed_conversations WHERE provider_thread_id = :providerThreadId LIMIT 1")
+    abstract suspend fun cachedConversation(providerThreadId: Long): IndexedConversationEntity?
+
     @Query(
         """
         SELECT row_id, provider_kind, provider_id, provider_thread_id,
@@ -217,6 +301,28 @@ abstract class ConversationDao {
     protected abstract suspend fun timelineLatestQuery(
         providerThreadId: Long,
         generationId: Long,
+        limit: Int,
+        bodyLimit: Int,
+    ): List<StoredTimelineMessage>
+
+    @Query(
+        """
+        SELECT row_id, provider_kind, provider_id, provider_thread_id,
+               timestamp_ms, sent_timestamp_ms, direction, message_box,
+               message_status, subscription_id, sender_address,
+               substr(body, 1, :bodyLimit) AS body_preview,
+               CASE WHEN body IS NOT NULL AND length(body) > :bodyLimit THEN 1 ELSE 0 END AS body_truncated,
+               subject, attachment_count, attachment_type_summary,
+               is_read, is_seen, is_locked, sync_fingerprint
+        FROM indexed_messages
+        INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
+        WHERE provider_thread_id = :providerThreadId
+        ORDER BY timestamp_ms DESC, row_id DESC
+        LIMIT :limit
+        """,
+    )
+    protected abstract suspend fun cachedTimelineLatestQuery(
+        providerThreadId: Long,
         limit: Int,
         bodyLimit: Int,
     ): List<StoredTimelineMessage>
@@ -260,6 +366,31 @@ abstract class ConversationDao {
         FROM indexed_messages
         INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
         WHERE provider_thread_id = :providerThreadId
+          AND (timestamp_ms < :timestampMillis OR (timestamp_ms = :timestampMillis AND row_id < :rowId))
+        ORDER BY timestamp_ms DESC, row_id DESC
+        LIMIT :limit
+        """,
+    )
+    protected abstract suspend fun cachedTimelineOlderQuery(
+        providerThreadId: Long,
+        timestampMillis: Long,
+        rowId: Long,
+        limit: Int,
+        bodyLimit: Int,
+    ): List<StoredTimelineMessage>
+
+    @Query(
+        """
+        SELECT row_id, provider_kind, provider_id, provider_thread_id,
+               timestamp_ms, sent_timestamp_ms, direction, message_box,
+               message_status, subscription_id, sender_address,
+               substr(body, 1, :bodyLimit) AS body_preview,
+               CASE WHEN body IS NOT NULL AND length(body) > :bodyLimit THEN 1 ELSE 0 END AS body_truncated,
+               subject, attachment_count, attachment_type_summary,
+               is_read, is_seen, is_locked, sync_fingerprint
+        FROM indexed_messages
+        INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
+        WHERE provider_thread_id = :providerThreadId
           AND last_seen_generation = :generationId
           AND (timestamp_ms > :timestampMillis OR (timestamp_ms = :timestampMillis AND row_id > :rowId))
         ORDER BY timestamp_ms ASC, row_id ASC
@@ -275,19 +406,53 @@ abstract class ConversationDao {
         bodyLimit: Int,
     ): List<StoredTimelineMessage>
 
+    @Query(
+        """
+        SELECT row_id, provider_kind, provider_id, provider_thread_id,
+               timestamp_ms, sent_timestamp_ms, direction, message_box,
+               message_status, subscription_id, sender_address,
+               substr(body, 1, :bodyLimit) AS body_preview,
+               CASE WHEN body IS NOT NULL AND length(body) > :bodyLimit THEN 1 ELSE 0 END AS body_truncated,
+               subject, attachment_count, attachment_type_summary,
+               is_read, is_seen, is_locked, sync_fingerprint
+        FROM indexed_messages
+        INDEXED BY index_indexed_messages_provider_thread_id_timestamp_ms_row_id
+        WHERE provider_thread_id = :providerThreadId
+          AND (timestamp_ms > :timestampMillis OR (timestamp_ms = :timestampMillis AND row_id > :rowId))
+        ORDER BY timestamp_ms ASC, row_id ASC
+        LIMIT :limit
+        """,
+    )
+    protected abstract suspend fun cachedTimelineNewerQuery(
+        providerThreadId: Long,
+        timestampMillis: Long,
+        rowId: Long,
+        limit: Int,
+        bodyLimit: Int,
+    ): List<StoredTimelineMessage>
+
     suspend fun timelineLatest(
         providerThreadId: Long,
         generationId: Long,
         limit: Int,
+        includeUnverifiedCache: Boolean = false,
     ): List<StoredTimelineMessage> {
         require(providerThreadId > 0L && generationId > 0L)
         require(limit in 1..MAXIMUM_TIMELINE_PAGE_SIZE + 1)
-        return timelineLatestQuery(
-            providerThreadId,
-            generationId,
-            limit,
-            MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS,
-        )
+        return if (includeUnverifiedCache) {
+            cachedTimelineLatestQuery(
+                providerThreadId,
+                limit,
+                MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS,
+            )
+        } else {
+            timelineLatestQuery(
+                providerThreadId,
+                generationId,
+                limit,
+                MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS,
+            )
+        }
     }
 
     suspend fun timelineOlder(
@@ -296,18 +461,29 @@ abstract class ConversationDao {
         timestampMillis: Long,
         rowId: Long,
         limit: Int,
+        includeUnverifiedCache: Boolean = false,
     ): List<StoredTimelineMessage> {
         require(providerThreadId > 0L && generationId > 0L)
         require(timestampMillis >= 0L && rowId > 0L)
         require(limit in 1..MAXIMUM_TIMELINE_PAGE_SIZE + 1)
-        return timelineOlderQuery(
-            providerThreadId,
-            generationId,
-            timestampMillis,
-            rowId,
-            limit,
-            MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS,
-        )
+        return if (includeUnverifiedCache) {
+            cachedTimelineOlderQuery(
+                providerThreadId,
+                timestampMillis,
+                rowId,
+                limit,
+                MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS,
+            )
+        } else {
+            timelineOlderQuery(
+                providerThreadId,
+                generationId,
+                timestampMillis,
+                rowId,
+                limit,
+                MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS,
+            )
+        }
     }
 
     suspend fun timelineNewer(
@@ -316,18 +492,29 @@ abstract class ConversationDao {
         timestampMillis: Long,
         rowId: Long,
         limit: Int,
+        includeUnverifiedCache: Boolean = false,
     ): List<StoredTimelineMessage> {
         require(providerThreadId > 0L && generationId > 0L)
         require(timestampMillis >= 0L && rowId > 0L)
         require(limit in 1..MAXIMUM_TIMELINE_PAGE_SIZE + 1)
-        return timelineNewerQuery(
-            providerThreadId,
-            generationId,
-            timestampMillis,
-            rowId,
-            limit,
-            MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS,
-        )
+        return if (includeUnverifiedCache) {
+            cachedTimelineNewerQuery(
+                providerThreadId,
+                timestampMillis,
+                rowId,
+                limit,
+                MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS,
+            )
+        } else {
+            timelineNewerQuery(
+                providerThreadId,
+                generationId,
+                timestampMillis,
+                rowId,
+                limit,
+                MAXIMUM_TIMELINE_BODY_PREVIEW_CHARACTERS,
+            )
+        }
     }
 
     @Query(
@@ -356,20 +543,55 @@ abstract class ConversationDao {
         subjectLimit: Int,
     ): StoredTimelineContent?
 
+    @Query(
+        """
+        SELECT substr(body, 1, :bodyLimit) AS body,
+               substr(subject, 1, :subjectLimit) AS subject,
+               CASE
+                 WHEN (body IS NOT NULL AND length(body) > :bodyLimit)
+                   OR (subject IS NOT NULL AND length(subject) > :subjectLimit)
+                 THEN 1 ELSE 0
+               END AS source_truncated
+        FROM indexed_messages
+        WHERE provider_kind = :providerKind
+          AND provider_id = :providerId
+          AND provider_thread_id = :providerThreadId
+        LIMIT 1
+        """,
+    )
+    protected abstract suspend fun cachedTimelineContentQuery(
+        providerKind: Int,
+        providerId: Long,
+        providerThreadId: Long,
+        bodyLimit: Int,
+        subjectLimit: Int,
+    ): StoredTimelineContent?
+
     suspend fun timelineContent(
         providerKind: Int,
         providerId: Long,
         providerThreadId: Long,
         generationId: Long,
+        includeUnverifiedCache: Boolean = false,
     ): StoredTimelineContent? {
         require(providerKind in 1..2 && providerId > 0L && providerThreadId > 0L && generationId > 0L)
-        return timelineContentQuery(
-            providerKind = providerKind,
-            providerId = providerId,
-            providerThreadId = providerThreadId,
-            generationId = generationId,
-            bodyLimit = MAXIMUM_TIMELINE_FULL_BODY_CHARACTERS,
-            subjectLimit = MAXIMUM_TIMELINE_FULL_SUBJECT_CHARACTERS,
-        )
+        return if (includeUnverifiedCache) {
+            cachedTimelineContentQuery(
+                providerKind = providerKind,
+                providerId = providerId,
+                providerThreadId = providerThreadId,
+                bodyLimit = MAXIMUM_TIMELINE_FULL_BODY_CHARACTERS,
+                subjectLimit = MAXIMUM_TIMELINE_FULL_SUBJECT_CHARACTERS,
+            )
+        } else {
+            timelineContentQuery(
+                providerKind = providerKind,
+                providerId = providerId,
+                providerThreadId = providerThreadId,
+                generationId = generationId,
+                bodyLimit = MAXIMUM_TIMELINE_FULL_BODY_CHARACTERS,
+                subjectLimit = MAXIMUM_TIMELINE_FULL_SUBJECT_CHARACTERS,
+            )
+        }
     }
 }

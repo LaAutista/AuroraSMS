@@ -564,8 +564,13 @@ initial scan.
   observer or external-provider signals still mark the generation dirty, and
   final provider-count/head verification still rejects changed coverage.
 - Incomplete Inbox and Thread screens use a prominent progress notice with the
-  content-free committed-row count and explicitly say that conversations and
-  older messages are missing until synchronization finishes.
+  content-free committed-row count. ADR 0020's `0.6.7-phase6` follow-up presents
+  all best-known physically retained generations during an incomplete refresh
+  and explicitly warns that recent provider changes may not be reflected.
+- Incomplete cache presentation never creates a verified participant identity
+  or enables an authoritative action. Verified completion returns to strict
+  current-generation queries and deletes stale rows in the existing atomic
+  reconciliation transaction.
 - A large synthetic acceptance fixture proves cursor pagination returns 153
   conversations and all 151 messages in one long thread exactly once.
 

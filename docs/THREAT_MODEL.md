@@ -768,8 +768,13 @@ temporarily to another SMS app. Role changes now pause/resume cleanly and do not
 create the ambiguous-provider ledger. Content-observer and external-provider
 signals remain dirty, while completion still requires exhausted SMS/MMS cursors,
 provider counts, and the bounded head/fingerprint verification. The partial UI
-prominently states that conversations and older messages are missing and exposes
-only a content-free committed-row count.
+exposes a content-free committed-row count. ADR 0020 permits Inbox and Thread to
+show the best-known union of private cached generations while coverage is
+incomplete, with explicit disclosure that recent provider changes may not be
+reflected. This presentation union grants no verified conversation identity and
+therefore cannot authorize send, delete, spam/block, subscription, or other
+exact-identity actions. Verified completion returns to strict current-generation
+queries and atomically removes stale rows.
 
 Phase 6D treats a signature as outgoing message content, not decoration. ADR
 0018 stores settings outside drafts, addresses conversation overrides only by a

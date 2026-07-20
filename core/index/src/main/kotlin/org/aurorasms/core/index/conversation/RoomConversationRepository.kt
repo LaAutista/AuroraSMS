@@ -69,24 +69,31 @@ class RoomConversationRepository(
                     messageDao.count()
                 },
             )
+            val includeUnverifiedCache = !coverage.verifiedComplete
             if (request.cursor != null && request.cursor.generationId != generation.generationId) {
                 return@withTransaction ConversationPageResult.StaleGeneration(coverage)
             }
 
             val requestedRows = request.limit + 1
             val stored = when {
-                request.cursor == null -> conversationDao.inboxFirst(generation.generationId, requestedRows)
+                request.cursor == null -> conversationDao.inboxFirst(
+                    generationId = generation.generationId,
+                    limit = requestedRows,
+                    includeUnverifiedCache = includeUnverifiedCache,
+                )
                 request.direction == ConversationPageDirection.OLDER -> conversationDao.inboxOlder(
                     generationId = generation.generationId,
                     timestampMillis = request.cursor.latestTimestampMillis,
                     rowId = request.cursor.latestLocalRowId,
                     limit = requestedRows,
+                    includeUnverifiedCache = includeUnverifiedCache,
                 )
                 else -> conversationDao.inboxNewer(
                     generationId = generation.generationId,
                     timestampMillis = request.cursor.latestTimestampMillis,
                     rowId = request.cursor.latestLocalRowId,
                     limit = requestedRows,
+                    includeUnverifiedCache = includeUnverifiedCache,
                 )
             }
             val queryOrderedPage = stored.take(request.limit)
@@ -102,6 +109,7 @@ class RoomConversationRepository(
                     generationId = generation.generationId,
                     providerThreadIds = canonicalPage.map(IndexedConversationEntity::providerThreadId),
                     perThreadLimit = MAXIMUM_PARTICIPANT_PREVIEW,
+                    includeUnverifiedCache = includeUnverifiedCache,
                 ).groupBy { it.providerThreadId }
             }
             val next = if (stored.size > request.limit) {
@@ -146,12 +154,18 @@ class RoomConversationRepository(
                     messageDao.count()
                 },
             )
-            val entity = conversationDao.conversation(providerThreadId.value, generation.generationId)
-                ?: return@withTransaction ConversationLookupResult.Missing(coverage)
+            val includeUnverifiedCache = !coverage.verifiedComplete
+            val entity = if (includeUnverifiedCache) {
+                conversationDao.cachedConversation(providerThreadId.value)
+            } else {
+                conversationDao.conversation(providerThreadId.value, generation.generationId)
+            }
+            if (entity == null) return@withTransaction ConversationLookupResult.Missing(coverage)
             val participants = conversationDao.participantPreviews(
                 generationId = generation.generationId,
                 providerThreadIds = listOf(providerThreadId.value),
                 perThreadLimit = MAXIMUM_PARTICIPANT_PREVIEW,
+                includeUnverifiedCache = includeUnverifiedCache,
             ).map { ParticipantAddress(it.address) }
             val verifiedIdentity = loadVerifiedIdentity(
                 requestedThreadId = providerThreadId,

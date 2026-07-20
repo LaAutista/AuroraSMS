@@ -9,6 +9,18 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+The 2026-07-19 interrupted-history repair identifies as `0.6.7-phase6`
+(`versionCode` 18) and implements ADR 0020. When a newer refresh is incomplete,
+Inbox and Thread now present all best-known rows retained across durable index
+generations instead of hiding rows not yet revisited by the partial scan. The
+incomplete notice explicitly says cached history may not reflect recent provider
+changes, and every exact-identity action remains disabled until full provider
+verification. On the Pixel this addresses the observed split between 2,100 rows
+in the newest partial generation and 5,226 cached messages across 73 conversation
+projections. Aurora remains unable to refresh provider data while Fossify holds
+the default SMS role; one explicit Aurora-default foreground session is still
+required for authoritative complete-history acceptance.
+
 The 2026-07-19 Phase 6E source identifies as `0.6.6-phase6` (`versionCode` 17)
 and implements ADR 0019's local explainable spam and provider-preserving
 blocking. Saved contacts, short codes, and alphanumeric senders are trusted by
@@ -36,10 +48,11 @@ The 2026-07-19 large-history follow-up identifies as `0.6.5-phase6`
 same clean, checkpointed initial-history generation instead of falsely marking
 it as a provider mutation and restarting from the newest messages. Actual
 content-observer and external-provider signals remain conservative dirty
-boundaries. Incomplete Inbox and Thread screens now prominently disclose that
-conversations and older messages are missing, show the content-free number of
-messages checked, and ask the user to keep AuroraSMS open and default until
-verification completes.
+boundaries. Incomplete Inbox and Thread screens prominently show the
+content-free number of messages checked and ask the user to keep AuroraSMS open
+and default until verification completes. ADR 0020 subsequently changed partial
+presentation to show all best-known cached generations rather than hiding cached
+older rows.
 
 The preceding Phase 6D source identifies as `0.6.4-phase6` (`versionCode` 15)
 and implements bounded global and verified-conversation message signatures.

@@ -3456,6 +3456,75 @@ launch was issued; both packages were left force-stopped and the final PID
 checks were empty. No live message/address/body was read and no
 carrier SMS/MMS was submitted.
 
+### Phase 6 interrupted-history cache presentation repair — 2026-07-19
+
+This source identifies as `0.6.7-phase6` (`versionCode` 18), retains index
+schema 3 and durable-state schema 12, and implements ADR 0020 without a
+migration. Content-free Pixel inspection confirmed the user-visible failure:
+the newest paused generation had committed 2,100 rows, while the rebuildable
+index physically retained 5,226 messages and 73 conversation projections across
+four partial generations. Fossify held the SMS role and Android denied Aurora's
+SMS permissions, so Aurora could neither continue the provider scan nor claim
+that cached state was current.
+
+While coverage is incomplete, Inbox pagination, exact conversation lookup,
+Thread pagination, bounded content expansion, and participant previews now
+query the best-known union of retained rows rather than only the newest partial
+generation. Provider-qualified row keys still deduplicate content. The current
+generation remains the cursor/invalidation epoch, the UI labels the result as
+best-known cached history that may not reflect recent changes, and incomplete
+coverage still produces no verified participant identity. Every send, delete,
+spam/block, signature, subscription, and other exact-identity action therefore
+remains disabled or fails closed. Verified completion returns presentation to
+strict generation-qualified queries and the existing completion transaction
+removes stale rows.
+
+The new database regression constructs a verified generation, starts an
+interrupted replacement generation, and proves Inbox pages both generations,
+an older conversation remains openable, and Thread pages plus bounded content
+expansion retain both old and new rows. It passed 4/4 as part of the complete
+33-test index suite on both API 26 and API 36. The updated full conversation UI
+class passed 31/31 on API 36 and verifies the explicit best-known-cache notice.
+
+The complete offline host aggregate was `BUILD SUCCESSFUL` in 2m08s across all
+886 Gradle tasks (160 executed, 5 from cache, 721 up-to-date). All 587 host
+tests passed with zero failures, errors, or skips: app 284, design system 11,
+index 69, model 19, notifications 21, state 58, telephony 82, testing 24, and
+conversations 19. Debug, R8 release, benchmark, all lint variants, clean-room/
+private-art scans, dependency locks, permission and APK-content ledgers, and
+license gates passed.
+
+The complete API 36 matrix was `BUILD SUCCESSFUL` in 2m06s across 456 tasks and
+reports 340 tests with 10 intentional environment-gated skips, 330 executed,
+and zero failures/errors: app 142/9 skips, benchmark 3/1, index 33/0,
+notifications 31/0, state 65/0, telephony 35/0, and conversations 31/0. The
+complete API 26 matrix was `BUILD SUCCESSFUL` in 2m14s across 456 tasks and
+reports 343 tests with 13 intentional skips, 330 executed, and zero
+failures/errors: app 145/12 skips, benchmark 3/1, index 33/0, notifications
+31/0, state 65/0, telephony 35/0, and conversations 31/0.
+
+`bundleRelease` passed 269 tasks in 9s. CycloneDX 1.6 passed 15 tasks in 8s
+with 441 components, 442 dependency nodes, and no random serial number.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,979,598 | `9280c10acca23ac84dc69ab8301e137821b785de4c055097aae68dd16938c6e2` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,928,857 | `c1adc3e4eedc6c0a985e93341a6eefb09a1b7347067e826f1fe2d8a31fa78c7a` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,789,685 | `b4b31a11312704b9f75f30f3fca681290dbc6df896b8b95b9489a2c0cdf66cb7` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,974,316 | `c940f4aba9cc589ac8c48451bf85e55cc60abb2002eaf395cf11cfed16b024f7` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed with data preserved on the Pixel 8 and API 36
+emulator and was copied to `/sdcard/Download/AuroraSMS-debug.apk` on both. Both
+copies are 14,979,598 bytes and hash-match the host artifact. Both packages
+report version code 18/name `0.6.7-phase6`. The Pixel retained Fossify and API
+36 retained AOSP Messaging as their default SMS apps. The acceptance procedure
+did not request a role change, launch AuroraSMS, inspect a live message/address/
+body, or submit carrier traffic. Authoritative complete-history acceptance
+still requires the owner to explicitly make AuroraSMS default and keep it open
+through verified completion; the repair makes the existing private cache useful
+without misrepresenting it as current.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,

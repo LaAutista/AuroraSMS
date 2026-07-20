@@ -95,8 +95,8 @@
     <string name="retry">Retry</string>
     <string name="new_messages">New messages</string>
     <plurals name="index_incomplete_progress">
-        <item quantity="one">History is still loading: %1$d message checked. Some conversations and older messages are missing. Keep AuroraSMS open as the default SMS app.</item>
-        <item quantity="other">History is still loading: %1$d messages checked. Some conversations and older messages are missing. Keep AuroraSMS open as the default SMS app.</item>
+        <item quantity="one">History refresh is incomplete: %1$d message checked. AuroraSMS is showing its best-known cached history; recent changes may not be reflected until you keep it open as the default SMS app.</item>
+        <item quantity="other">History refresh is incomplete: %1$d messages checked. AuroraSMS is showing its best-known cached history; recent changes may not be reflected until you keep it open as the default SMS app.</item>
     </plurals>
     <plurals name="attachment_summary">
         <item quantity="one">%1$d attachment: %2$s</item>
