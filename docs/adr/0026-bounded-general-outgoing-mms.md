@@ -76,6 +76,10 @@ Send, the durable operation/provider/staging protocol owns crash classification.
   App acceptance restores the exact image after Activity recreation, routes one
   MMS with identical bytes, and disables Send when attachment storage is
   unavailable.
+- A separately gated API 36 host journey passes independently twice: the exact
+  production-Room draft and attachment survive host force-stop, a fresh process
+  renders them in the real root and routes one exact synthetic MMS operation,
+  and a third fresh process proves parent deletion cascades the attachment.
 - Three sanitizer tests pass on API 26 and API 36; the API 36 Compose suite
   covers the extras menu, generic attachment row, removal, MMS label, disabled
   scheduling, and image-only Send state.
@@ -94,7 +98,7 @@ AuroraSMS now implements a bounded general one-person/group outgoing MMS path
 without SMS fan-out and with one reviewed user-facing image pipeline. This is
 synthetic implementation evidence, not carrier acceptance. Physical direct and
 group send/receive, APN/carrier size behavior, billing/roaming, dual-SIM/OEM
-callbacks, media interoperability, and explicit host-force-stop/process-relaunch
-acceptance at every checkpoint remain release gates. Audio/video/vCard and
+callbacks, media interoperability, in-flight process death, and cold-relaunch
+acceptance at the remaining checkpoints remain release gates. Audio/video/vCard and
 animated-image composer UI are not admitted by this decision. AuroraSMS is not
 gold.

@@ -94,8 +94,12 @@ composer, one-operation durable ownership, subject/long-text routing, and the
 metadata-stripping JPEG/PNG picker surface. Commit `0d93626` adds schema-14
 draft-owned sanitized attachment persistence, close/reopen restoration,
 Activity-recreation acceptance, and fail-closed Send gating when that authority
-cannot be read. This synthetic evidence is not physical carrier behavior; an
-explicit host-force-stop/process-relaunch attachment journey remains open.
+cannot be read. Commit `b29b5ba` adds a separately gated API 36 host-force-stop
+journey: a production-Room draft and identical sanitized attachment bytes
+survive into a fresh process, the real root renders them and routes exactly one
+synthetic MMS operation, and a third fresh process proves parent/cascade
+cleanup. This is not physical carrier behavior; in-flight send death, physical
+carrier/OEM, and the broader process-death matrix remain open.
 
 ## Workstream 7E: physical and platform hardening
 

@@ -763,7 +763,12 @@ without live provider access or carrier submission. Physical carrier/OEM,
 billing/roaming, dual-SIM, and complete process-death acceptance remain release
 gates. Schema 14 now retains only the sanitized JPEG/PNG bytes under the exact
 draft, restores them across Room close/reopen and Activity recreation, and
-fails closed if that attachment authority is unavailable.
+fails closed if that attachment authority is unavailable. A separately gated
+API 36 host journey also proves a production-Room draft and identical image
+bytes survive host force-stop into a fresh process, render in the real root,
+route one exact synthetic MMS operation, and cascade-clean in a third fresh
+process. In-flight send death and the wider physical/carrier lifecycle remain
+release gates.
 
 ## AuroraMaterial requirements
 

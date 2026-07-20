@@ -912,9 +912,12 @@ aggregate, while draft deletion cascades cleanup. UI attachment mutation commits
 durably before publication, and Send freezes the text draft then rereads the
 attachment authority. Missing, stale, corrupt, or unavailable state blocks
 transport rather than dropping an image or downgrading. Room close/reopen and
-Activity-recreation acceptance pass on API 26/API 36; explicit host force-stop,
-physical carrier/OEM, size/APN, billing/roaming, and dual-SIM acceptance remain
-open.
+Activity-recreation acceptance pass on API 26/API 36. A gated API 36 host
+journey proves the exact draft and image bytes survive host force-stop into a
+fresh process, pass through real-root restoration and one synthetic MMS route,
+and are removed by fresh-process parent/cascade cleanup. In-flight transport
+death, physical carrier/OEM, size/APN, billing/roaming, and dual-SIM acceptance
+remain open.
 
 ## Open security decisions
 

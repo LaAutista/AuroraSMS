@@ -45,8 +45,15 @@ host/lint/R8/benchmark/privacy/dependency/license aggregate pass; standalone
 release AAB and CycloneDX 1.6 generation pass as well. At source commit
 `0d93626`, the complete connected matrices passed on API 36 and API 26 with
 448 and 442 enumerated tests, respectively, 10 and 13 intentional protocol
-skips, and zero failures or errors. Physical carrier/OEM interoperability and
-the explicit host-force-stop/process-relaunch attachment journey remain open.
+skips, and zero failures or errors. Implementation commit `b29b5ba` adds an
+explicit API 36 host-force-stop journey that twice restores the production-Room
+draft and identical image bytes in a fresh process, renders the attachment in
+the real root, routes one exact synthetic MMS operation, and proves fresh-
+process parent/cascade cleanup while preserving the APK, SMS role, and
+permissions. The follow-on complete matrices pass 449 API 36 tests with 11
+intentional skips and 443 API 26 tests with 14 intentional skips, with zero
+failures or errors. Physical carrier/OEM interoperability and broader in-flight
+process-death coverage remain open.
 
 Incoming MMS implementation commit
 `260fd18522a31b7bce4c4e6dbfbac99c9c83fecd` completes ADR 0025's

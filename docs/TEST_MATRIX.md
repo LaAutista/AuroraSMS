@@ -4009,6 +4009,11 @@ Acceptance evidence:
 - root acceptance restores an exact persisted image across Activity recreation,
   routes one MMS with the identical bytes, and proves unavailable attachment
   storage disables Send without a transport attempt;
+- implementation commit `b29b5ba` adds a preservation-safe API 36 host-force-
+  stop journey that passes independently twice; it restores the exact
+  production-Room draft and image bytes in a fresh process, renders the
+  attachment in the real root, routes one exact synthetic MMS operation, and
+  proves fresh-process parent/cascade cleanup;
 - at source commit `0d93626`, the complete `connectedDebugAndroidTest` matrix
   passed on `AuroraSMS_API36` in 2m40s with 448 enumerated tests, 10 intentional
   protocol-gated skips, and zero failures/errors; the complete
@@ -4025,9 +4030,67 @@ Acceptance evidence:
   capture, attachment export, or broad log was used.
 
 Physical carrier/OEM interoperability, carrier size/APN behavior,
-billing/roaming, dual-SIM, process death at every checkpoint, and an explicit
-host-force-stop/process-relaunch attachment journey remain open. AuroraSMS is
-not gold.
+billing/roaming, dual-SIM, and process death at the remaining and in-flight
+checkpoints remain open. AuroraSMS is not gold.
+
+#### ADR 0026 API 36 draft-attachment host-force-stop evidence — 2026-07-20
+
+Implementation commit `b29b5ba` adds the explicitly gated
+`durableImageAttachmentSurvivesHostForceStopAndColdProcessMmsRoute` method and
+the preservation-safe runner:
+
+```shell
+./scripts/run-emulator-draft-attachment-cold-restart-smoke.sh --device emulator-5554
+```
+
+The runner refuses physical devices and requires API 36 ranchu/goldfish, an
+already-installed target APK exactly matching the local build, and no
+preinstalled instrumentation package. It records the SMS-role holder and seven
+permission states, installs only the test APK, and first invokes an idempotent
+fresh-process cleanup phase. A private, versioned, content-free checkpoint is
+committed before any mutation so an interrupted run can delete only its exact
+synthetic draft.
+
+Prepare opens the production `AppContainer` and schema-14 Room authority,
+requires the reserved synthetic provider-thread draft identity to be absent,
+then creates one synthetic caption/subject draft and one bounded PNG-marked byte
+fixture. It rereads the exact parent, revision, content type, and defensively
+copied bytes before committing the prepared process identity. The host starts
+normal `MainActivity` only to expose the exact live target process and then
+requires `am force-stop` to remove that PID.
+
+Verification requires a different PID with a later process-start uptime, then
+rereads the identical production-Room parent and attachment. The real
+`AuroraSmsRoot` is hosted with synthetic conversation/index/subscription and
+transport services while retaining the production draft/attachment
+repositories. It restores the caption and attachment row, reports MMS,
+disables scheduling, and routes one command with the exact draft ID, verified
+identity, subscription, MMS transport, and identical bytes. The synthetic
+controller returns submission-unknown; no Android carrier API is called. After
+another exact force-stop, a third process deletes the parent, proves the foreign
+key cascade returns the attachment lookup to `NotFound`, clears the checkpoint,
+and leaves the target force-stopped.
+
+Two independent runs passed prepare/verify/cleanup exactly once each. The host
+removed prepared PIDs 27688 and 28052; verification took 2.721s and 2.771s,
+respectively. Both runs removed the instrumentation package and preserved the
+exact target APK, `com.android.messaging` SMS role, and all seven captured
+permission states. The complete follow-on API 36 connected matrix passed 449
+enumerated tests with 11 intentional protocol skips in 2m38s; API 26 passed 443
+tests with 14 intentional skips in 2m48s. Both had zero failures or errors.
+The combined 985-task governed host/lint/R8/benchmark/privacy/dependency/
+license/APK-content/bundle gate passed in 1m17s with all 652 host tests green.
+Standalone CycloneDX generation is retained as a separate invocation because
+combining that plugin with consumed Android artifact variants is unsupported.
+
+This closes only persisted pre-send attachment restoration across one host
+force-stop on an API 36 emulator and its fresh-process cleanup. The fixture,
+recipient, conversation, provider authority, and transport result are
+synthetic. It does not prove a platform MMS PDU, carrier submission/callback,
+picker admission in the same lifecycle, force-stop during an in-flight send,
+physical/OEM behavior, low-memory eviction, billing/roaming, dual-SIM, or gold
+readiness. No live provider content, role/permission change, carrier operation,
+attachment export, or broad log participated.
 
 ## Release gate
 
