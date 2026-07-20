@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+Categories:
+  - Connectivity
+License: GPL-3.0-or-later
+SourceCode: https://github.com/LaAutista/AuroraSMS
+IssueTracker: https://github.com/LaAutista/AuroraSMS/issues
+
+RepoType: git
+Repo: https://github.com/LaAutista/AuroraSMS.git
+
+Disabled: >-
+  AuroraSMS is pre-release; incoming/group MMS and physical carrier acceptance
+  are incomplete.
+AutoUpdateMode: None
+UpdateCheckMode: Static

@@ -26,7 +26,7 @@ plugins {
 }
 
 group = "org.aurorasms"
-version = "0.5.1-phase5"
+version = "0.6.10-phase6"
 
 allprojects {
     group = "org.aurorasms"
@@ -116,6 +116,12 @@ val verifyPrivateAssets by tasks.registering(Exec::class) {
         layout.projectDirectory.file("scripts/verify-clean-room.sh").asFile,
         "--hash-only",
     )
+}
+
+val verifyReleaseMetadata by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Checks version alignment and the source release-policy metadata."
+    commandLine("bash", layout.projectDirectory.file("scripts/verify-release-metadata.sh").asFile)
 }
 
 val verifyPermissions by tasks.registering(Exec::class) {
@@ -266,5 +272,6 @@ tasks.register("verifyGovernance") {
         verifyPermissions,
         verifyPrivateAssets,
         verifyApkContents,
+        verifyReleaseMetadata,
     )
 }

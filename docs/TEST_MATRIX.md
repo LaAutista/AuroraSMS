@@ -3864,14 +3864,14 @@ contracts are closed; its physical/carrier acceptance is not.
 - [ ] Release build installs, acquires role, sends/receives SMS and MMS, sends a
   group MMS without fan-out, and handles notifications/direct reply.
 - [ ] Complete indexed search and exact old-result jump meet measured budgets.
-- [ ] Every shipped database version has a migration test.
+- [x] Every shipped database version has a migration test.
 - [ ] R8/resource shrinking, Baseline Profile, APK size, and permission
   regression checks pass.
-- [ ] Clean-room source/dependency/private-asset scans pass.
+- [x] Clean-room source/dependency/private-asset scans pass.
 - [ ] Notices/SBOM, source license, artwork license/attribution, reproducible
   build instructions, security policy, and signed checksums are complete.
 - [ ] F-Droid metadata builds from source without proprietary services.
-- [ ] Release language accurately distinguishes SMS/MMS from RCS.
+- [x] Release language accurately distinguishes SMS/MMS from RCS.
 
 ## Evidence record template
 

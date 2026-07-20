@@ -1,0 +1,16 @@
+AuroraSMS is a clean-room Android messaging app built for private,
+local-first use. It has no ads, analytics, trackers, accounts, or Internet
+permission. Android's Telephony provider remains the authority for messages.
+
+The app includes a paged inbox and conversation view, complete-history local
+indexing and search, durable drafts and one-part SMS sending, scheduled and
+short-delay sending, message deletion safeguards, notification replies and
+reminders, local explainable spam warnings, encrypted backup and restore,
+appearance profiles, per-conversation wallpapers, and Android Auto messaging
+notification metadata.
+
+General incoming and group MMS remain unavailable. This source is still a
+pre-release, and carrier, OEM, physical-device, accessibility, and
+release-signing gates are not complete. AuroraSMS does not provide RCS. Review
+the current status and known limitations before using it as a primary messaging
+app.

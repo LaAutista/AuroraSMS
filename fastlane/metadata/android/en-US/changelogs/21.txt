@@ -1,0 +1,6 @@
+Phase 6H adds bounded Android Auto-compatible messaging notifications with
+background Reply and exact-generation Mark as read actions. It also preserves
+privacy when notification settings or group identity change.
+
+This remains a pre-release. General incoming/group MMS and physical carrier,
+OEM, and Android Auto/DHU acceptance are not complete.
