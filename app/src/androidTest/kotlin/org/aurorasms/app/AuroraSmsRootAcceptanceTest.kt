@@ -490,6 +490,16 @@ class AuroraSmsRootAcceptanceTest {
     }
 
     @Test
+    fun durableImageAttachmentSurvivesHostForceStopAndColdProcessMmsRoute() {
+        when (requireExplicitAttachmentColdRestartPhase()) {
+            ATTACHMENT_COLD_RESTART_PHASE_PREPARE -> prepareAttachmentColdRestart()
+            ATTACHMENT_COLD_RESTART_PHASE_VERIFY -> verifyAttachmentColdRestart()
+            ATTACHMENT_COLD_RESTART_PHASE_CLEANUP -> cleanupAttachmentColdRestart()
+            else -> throw AssertionError(ATTACHMENT_COLD_RESTART_PHASE_INVALID)
+        }
+    }
+
+    @Test
     fun unavailableDraftAttachmentStorageBlocksSendWithoutTransportAttempt() = runBlocking {
         val sendController = RecordingUnknownThreadSmsSendController()
         val fixture = SyntheticFixture(
@@ -901,6 +911,360 @@ class AuroraSmsRootAcceptanceTest {
             compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).assertDoesNotExist()
         }
     }
+
+    private fun requireExplicitAttachmentColdRestartPhase(): String {
+        val arguments = InstrumentationRegistry.getArguments()
+        val enabled = arguments.getString(ATTACHMENT_COLD_RESTART_GATE_ARGUMENT)
+            ?.equals("true", ignoreCase = true) == true
+        assumeTrue(ATTACHMENT_COLD_RESTART_GATE_REQUIRED, enabled)
+        assumeTrue(
+            ATTACHMENT_COLD_RESTART_EMULATOR_REQUIRED,
+            Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish",
+        )
+        assumeTrue(
+            ATTACHMENT_COLD_RESTART_API_REQUIRED,
+            Build.VERSION.SDK_INT == Build.VERSION_CODES.BAKLAVA,
+        )
+        return arguments.getString(ATTACHMENT_COLD_RESTART_PHASE_ARGUMENT).orEmpty().also { phase ->
+            restartRequire(
+                phase == ATTACHMENT_COLD_RESTART_PHASE_PREPARE ||
+                    phase == ATTACHMENT_COLD_RESTART_PHASE_VERIFY ||
+                    phase == ATTACHMENT_COLD_RESTART_PHASE_CLEANUP,
+                ATTACHMENT_COLD_RESTART_PHASE_INVALID,
+            )
+        }
+    }
+
+    private fun prepareAttachmentColdRestart() = runBlocking {
+        val environment = attachmentColdRestartEnvironment()
+        val preferences = environment.context.getSharedPreferences(
+            ATTACHMENT_COLD_RESTART_PREFERENCES,
+            Context.MODE_PRIVATE,
+        )
+        restartRequire(
+            preferences.all.isEmpty(),
+            ATTACHMENT_COLD_RESTART_STALE_CHECKPOINT,
+        )
+        restartRequire(
+            environment.drafts.read(ATTACHMENT_COLD_RESTART_IDENTITY) ==
+                DraftRepositoryResult.NotFound,
+            ATTACHMENT_COLD_RESTART_DRAFT_NOT_EMPTY,
+        )
+        val preparedPid = Process.myPid()
+        val preparedStartUptimeMillis = Process.getStartUptimeMillis()
+        restartRequire(
+            preferences.edit()
+                .putInt(ATTACHMENT_COLD_RESTART_KEY_VERSION, ATTACHMENT_COLD_RESTART_VERSION)
+                .putString(
+                    ATTACHMENT_COLD_RESTART_KEY_STATE,
+                    ATTACHMENT_COLD_RESTART_STATE_PREPARING,
+                )
+                .putInt(ATTACHMENT_COLD_RESTART_KEY_PREPARED_PID, preparedPid)
+                .putLong(
+                    ATTACHMENT_COLD_RESTART_KEY_PREPARED_START_UPTIME,
+                    preparedStartUptimeMillis,
+                )
+                .commit(),
+            ATTACHMENT_COLD_RESTART_CHECKPOINT_WRITE_FAILED,
+        )
+
+        val draft = environment.drafts.create(
+            NewDraft(
+                identity = ATTACHMENT_COLD_RESTART_IDENTITY,
+                body = ATTACHMENT_COLD_RESTART_BODY,
+                subject = ATTACHMENT_COLD_RESTART_SUBJECT,
+                createdTimestampMillis = ATTACHMENT_COLD_RESTART_TIMESTAMP_MILLIS,
+                updatedTimestampMillis = ATTACHMENT_COLD_RESTART_TIMESTAMP_MILLIS,
+            ),
+        ).successValue()
+        val attachment = attachmentColdRestartFixture()
+        restartRequire(
+            environment.attachments.replace(
+                draft.id,
+                draft.revision,
+                listOf(attachment),
+            ) == DraftRepositoryResult.Success(listOf(attachment)),
+            ATTACHMENT_COLD_RESTART_ATTACHMENT_WRITE_FAILED,
+        )
+        restartRequire(
+            environment.drafts.read(draft.id) == DraftRepositoryResult.Success(draft),
+            ATTACHMENT_COLD_RESTART_DRAFT_MISMATCH,
+        )
+        restartRequire(
+            environment.attachments.read(draft.id) ==
+                DraftRepositoryResult.Success(listOf(attachment)),
+            ATTACHMENT_COLD_RESTART_ATTACHMENT_MISMATCH,
+        )
+        restartRequire(
+            writeAttachmentColdRestartEvidence(
+                preferences,
+                AttachmentColdRestartEvidence(
+                    draftId = draft.id,
+                    initialRevision = draft.revision,
+                    preparedPid = preparedPid,
+                    preparedStartUptimeMillis = preparedStartUptimeMillis,
+                    verifiedPid = null,
+                    verifiedStartUptimeMillis = null,
+                ),
+            ),
+            ATTACHMENT_COLD_RESTART_CHECKPOINT_WRITE_FAILED,
+        )
+    }
+
+    private fun verifyAttachmentColdRestart() {
+        val environment = attachmentColdRestartEnvironment()
+        val preferences = environment.context.getSharedPreferences(
+            ATTACHMENT_COLD_RESTART_PREFERENCES,
+            Context.MODE_PRIVATE,
+        )
+        val evidence = readAttachmentColdRestartEvidence(preferences)
+        val currentPid = Process.myPid()
+        val currentStartUptimeMillis = Process.getStartUptimeMillis()
+        restartRequire(
+            currentPid != evidence.preparedPid &&
+                currentStartUptimeMillis > evidence.preparedStartUptimeMillis,
+            ATTACHMENT_COLD_RESTART_PROCESS_NOT_RESTARTED,
+        )
+        val attachment = attachmentColdRestartFixture()
+        val storedDraft = runBlocking {
+            environment.drafts.read(evidence.draftId).successValue()
+        }
+        restartRequire(
+            storedDraft.identity == ATTACHMENT_COLD_RESTART_IDENTITY &&
+                storedDraft.body == ATTACHMENT_COLD_RESTART_BODY &&
+                storedDraft.subject == ATTACHMENT_COLD_RESTART_SUBJECT &&
+                storedDraft.revision == evidence.initialRevision,
+            ATTACHMENT_COLD_RESTART_DRAFT_MISMATCH,
+        )
+        restartRequire(
+            runBlocking { environment.attachments.read(evidence.draftId) } ==
+                DraftRepositoryResult.Success(listOf(attachment)),
+            ATTACHMENT_COLD_RESTART_ATTACHMENT_MISMATCH,
+        )
+
+        val sendController = RecordingUnknownThreadSmsSendController()
+        val fixture = SyntheticFixture(
+            threadSummary = syntheticThreadSummary(
+                participants = SYNTHETIC_SEND_PARTICIPANTS,
+                latestSubscriptionId = SYNTHETIC_SEND_SUBSCRIPTION.id,
+            ),
+            verifiedIdentity = SYNTHETIC_SEND_VERIFIED_IDENTITY,
+            subscriptionRepository = FixedSubscriptionRepository(SYNTHETIC_SEND_SUBSCRIPTION),
+            threadSmsSendController = sendController,
+            draftRepositoryOverride = environment.drafts,
+            draftAttachmentRepositoryOverride = environment.attachments,
+        )
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+            openSyntheticThread()
+            compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                .assertTextContains(ATTACHMENT_COLD_RESTART_BODY)
+            waitForTag("$COMPOSER_ATTACHMENT_TEST_TAG_PREFIX-0")
+            waitForDisplayedText("Draft saved locally · MMS")
+            compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).assertIsNotEnabled()
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsEnabled().performClick()
+
+            compose.waitUntil(TIMEOUT_MILLIS) { sendController.sendCount == 1 }
+            val command = sendController.commandsSnapshot().single()
+            restartRequire(
+                command.draftId == evidence.draftId &&
+                    command.identity == SYNTHETIC_SEND_VERIFIED_IDENTITY &&
+                    command.subscriptionId == SYNTHETIC_SEND_SUBSCRIPTION.id &&
+                    command.transport == MessageTransportKind.MMS &&
+                    command.attachments == listOf(
+                        validOutgoingAttachment(
+                            OutgoingMmsAttachment.IMAGE_PNG,
+                            attachment.copyBytes(),
+                        ),
+                    ),
+                ATTACHMENT_COLD_RESTART_ROUTE_MISMATCH,
+            )
+            sendController.releaseAsSubmissionUnknown()
+            waitForDisplayedText("Send status unknown. Check the conversation before trying again.")
+            restartRequire(sendController.sendCount == 1, ATTACHMENT_COLD_RESTART_ROUTE_MISMATCH)
+        }
+
+        restartRequire(
+            runBlocking { environment.attachments.read(evidence.draftId) } ==
+                DraftRepositoryResult.Success(listOf(attachment)),
+            ATTACHMENT_COLD_RESTART_ATTACHMENT_MISMATCH,
+        )
+        restartRequire(
+            writeAttachmentColdRestartEvidence(
+                preferences,
+                evidence.copy(
+                    verifiedPid = currentPid,
+                    verifiedStartUptimeMillis = currentStartUptimeMillis,
+                ),
+            ),
+            ATTACHMENT_COLD_RESTART_CHECKPOINT_WRITE_FAILED,
+        )
+    }
+
+    private fun cleanupAttachmentColdRestart() = runBlocking {
+        val environment = attachmentColdRestartEnvironment()
+        val preferences = environment.context.getSharedPreferences(
+            ATTACHMENT_COLD_RESTART_PREFERENCES,
+            Context.MODE_PRIVATE,
+        )
+        val state = preferences.getString(ATTACHMENT_COLD_RESTART_KEY_STATE, null)
+        if (state == null) {
+            restartRequire(
+                preferences.all.isEmpty(),
+                ATTACHMENT_COLD_RESTART_CHECKPOINT_INVALID,
+            )
+            return@runBlocking
+        }
+        restartRequire(
+            preferences.getInt(ATTACHMENT_COLD_RESTART_KEY_VERSION, 0) ==
+                ATTACHMENT_COLD_RESTART_VERSION,
+            ATTACHMENT_COLD_RESTART_CHECKPOINT_INVALID,
+        )
+        if (state == ATTACHMENT_COLD_RESTART_STATE_VERIFIED) {
+            val evidence = readAttachmentColdRestartEvidence(preferences)
+            restartRequire(
+                evidence.verifiedPid != null &&
+                    Process.myPid() != evidence.verifiedPid &&
+                    Process.getStartUptimeMillis() >
+                    checkNotNull(evidence.verifiedStartUptimeMillis),
+                ATTACHMENT_COLD_RESTART_CLEANUP_PROCESS_NOT_RESTARTED,
+            )
+        } else {
+            restartRequire(
+                state == ATTACHMENT_COLD_RESTART_STATE_PREPARING ||
+                    state == ATTACHMENT_COLD_RESTART_STATE_PREPARED,
+                ATTACHMENT_COLD_RESTART_CHECKPOINT_INVALID,
+            )
+        }
+
+        val expectedDraftId = preferences.getLong(ATTACHMENT_COLD_RESTART_KEY_DRAFT_ID, -1L)
+            .takeIf { it > 0L }
+            ?.let(::DraftId)
+        when (val draftResult = environment.drafts.read(ATTACHMENT_COLD_RESTART_IDENTITY)) {
+            is DraftRepositoryResult.Success -> {
+                restartRequire(
+                    expectedDraftId == null || draftResult.value.id == expectedDraftId,
+                    ATTACHMENT_COLD_RESTART_DRAFT_MISMATCH,
+                )
+                environment.drafts.delete(draftResult.value.id).successValue()
+                restartRequire(
+                    environment.attachments.read(draftResult.value.id) ==
+                        DraftRepositoryResult.NotFound,
+                    ATTACHMENT_COLD_RESTART_ATTACHMENT_NOT_REMOVED,
+                )
+            }
+            DraftRepositoryResult.NotFound -> Unit
+            else -> throw AssertionError(ATTACHMENT_COLD_RESTART_CLEANUP_FAILED)
+        }
+        restartRequire(
+            environment.drafts.read(ATTACHMENT_COLD_RESTART_IDENTITY) ==
+                DraftRepositoryResult.NotFound,
+            ATTACHMENT_COLD_RESTART_DRAFT_NOT_REMOVED,
+        )
+        restartRequire(
+            preferences.edit().clear().commit(),
+            ATTACHMENT_COLD_RESTART_CHECKPOINT_CLEAR_FAILED,
+        )
+    }
+
+    private fun attachmentColdRestartEnvironment(): AttachmentColdRestartEnvironment {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val application = context as? AuroraSmsApplication
+            ?: throw AssertionError(ATTACHMENT_COLD_RESTART_APPLICATION_MISSING)
+        val status = runBlocking {
+            withTimeoutOrNull(ATTACHMENT_COLD_RESTART_TIMEOUT_MILLIS) {
+                application.container.stateStorageStatus.first { current ->
+                    current != StateStorageStatus.Opening
+                }
+            }
+        }
+        restartRequire(
+            status == StateStorageStatus.Ready,
+            ATTACHMENT_COLD_RESTART_STATE_NOT_READY,
+        )
+        return AttachmentColdRestartEnvironment(
+            context = context,
+            drafts = application.container.draftRepository,
+            attachments = application.container.draftAttachmentRepository,
+        )
+    }
+
+    private fun readAttachmentColdRestartEvidence(
+        preferences: android.content.SharedPreferences,
+    ): AttachmentColdRestartEvidence {
+        val state = preferences.getString(ATTACHMENT_COLD_RESTART_KEY_STATE, null)
+        restartRequire(
+            preferences.getInt(ATTACHMENT_COLD_RESTART_KEY_VERSION, 0) ==
+                ATTACHMENT_COLD_RESTART_VERSION &&
+                (state == ATTACHMENT_COLD_RESTART_STATE_PREPARED ||
+                    state == ATTACHMENT_COLD_RESTART_STATE_VERIFIED),
+            ATTACHMENT_COLD_RESTART_CHECKPOINT_INVALID,
+        )
+        val evidence = AttachmentColdRestartEvidence(
+            draftId = DraftId(
+                preferences.getLong(ATTACHMENT_COLD_RESTART_KEY_DRAFT_ID, -1L),
+            ),
+            initialRevision = DraftRevision(
+                preferences.getLong(ATTACHMENT_COLD_RESTART_KEY_INITIAL_REVISION, -1L),
+            ),
+            preparedPid = preferences.getInt(ATTACHMENT_COLD_RESTART_KEY_PREPARED_PID, -1),
+            preparedStartUptimeMillis = preferences.getLong(
+                ATTACHMENT_COLD_RESTART_KEY_PREPARED_START_UPTIME,
+                -1L,
+            ),
+            verifiedPid = preferences.getInt(ATTACHMENT_COLD_RESTART_KEY_VERIFIED_PID, -1)
+                .takeIf { it > 0 },
+            verifiedStartUptimeMillis = preferences.getLong(
+                ATTACHMENT_COLD_RESTART_KEY_VERIFIED_START_UPTIME,
+                -1L,
+            ).takeIf { it >= 0L },
+        )
+        restartRequire(
+            evidence.preparedPid > 0 &&
+                evidence.preparedStartUptimeMillis >= 0L &&
+                (state == ATTACHMENT_COLD_RESTART_STATE_VERIFIED) ==
+                (evidence.verifiedPid != null && evidence.verifiedStartUptimeMillis != null),
+            ATTACHMENT_COLD_RESTART_CHECKPOINT_INVALID,
+        )
+        return evidence
+    }
+
+    private fun writeAttachmentColdRestartEvidence(
+        preferences: android.content.SharedPreferences,
+        evidence: AttachmentColdRestartEvidence,
+    ): Boolean = preferences.edit()
+        .clear()
+        .putInt(ATTACHMENT_COLD_RESTART_KEY_VERSION, ATTACHMENT_COLD_RESTART_VERSION)
+        .putString(
+            ATTACHMENT_COLD_RESTART_KEY_STATE,
+            if (evidence.verifiedPid == null) {
+                ATTACHMENT_COLD_RESTART_STATE_PREPARED
+            } else {
+                ATTACHMENT_COLD_RESTART_STATE_VERIFIED
+            },
+        )
+        .putLong(ATTACHMENT_COLD_RESTART_KEY_DRAFT_ID, evidence.draftId.value)
+        .putLong(
+            ATTACHMENT_COLD_RESTART_KEY_INITIAL_REVISION,
+            evidence.initialRevision.updatedTimestampMillis,
+        )
+        .putInt(ATTACHMENT_COLD_RESTART_KEY_PREPARED_PID, evidence.preparedPid)
+        .putLong(
+            ATTACHMENT_COLD_RESTART_KEY_PREPARED_START_UPTIME,
+            evidence.preparedStartUptimeMillis,
+        )
+        .putInt(ATTACHMENT_COLD_RESTART_KEY_VERIFIED_PID, evidence.verifiedPid ?: -1)
+        .putLong(
+            ATTACHMENT_COLD_RESTART_KEY_VERIFIED_START_UPTIME,
+            evidence.verifiedStartUptimeMillis ?: -1L,
+        )
+        .commit()
+
+    private fun attachmentColdRestartFixture(): DraftAttachment = validDraftAttachment(
+        DraftAttachment.IMAGE_PNG,
+        ATTACHMENT_COLD_RESTART_PNG_BYTES,
+    )
 
     private fun requireExplicitColdRestartPhase(): String {
         val arguments = InstrumentationRegistry.getArguments()
@@ -1733,6 +2097,25 @@ private data class ColdRestartEnvironment(
     override fun toString(): String = "ColdRestartEnvironment(REDACTED)"
 }
 
+private data class AttachmentColdRestartEnvironment(
+    val context: Context,
+    val drafts: DraftRepository,
+    val attachments: DraftAttachmentRepository,
+) {
+    override fun toString(): String = "AttachmentColdRestartEnvironment(REDACTED)"
+}
+
+private data class AttachmentColdRestartEvidence(
+    val draftId: DraftId,
+    val initialRevision: DraftRevision,
+    val preparedPid: Int,
+    val preparedStartUptimeMillis: Long,
+    val verifiedPid: Int?,
+    val verifiedStartUptimeMillis: Long?,
+) {
+    override fun toString(): String = "AttachmentColdRestartEvidence(REDACTED)"
+}
+
 private data class ColdRestartRecovery(
     val baselineFiles: Set<String>,
     val baselineGrantCount: Int,
@@ -1778,6 +2161,7 @@ private class SyntheticFixture(
     subscriptionRepository: SubscriptionRepository = SyntheticSubscriptions,
     threadSmsSendController: ThreadSmsSendController = SyntheticIdleThreadSmsSendController,
     segmentCounter: (String) -> Int? = { body -> body.takeIf(String::isNotBlank)?.let { 1 } },
+    draftRepositoryOverride: DraftRepository? = null,
     draftAttachmentRepositoryOverride: DraftAttachmentRepository? = null,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -1789,6 +2173,7 @@ private class SyntheticFixture(
     val wallpaperStore = SyntheticWallpaperMediaStore()
     val drafts = InMemoryDraftRepository()
     val draftAttachments = InMemoryDraftAttachmentRepository(drafts)
+    private val rootDrafts = draftRepositoryOverride ?: drafts
     private val rootDraftAttachments = draftAttachmentRepositoryOverride ?: draftAttachments
     private val wallpaperController = wallpaperControllerOverride
         ?: WallpaperController(wallpapers, wallpaperStore)
@@ -1798,7 +2183,7 @@ private class SyntheticFixture(
         index = index,
         timeline = timeline,
         wallpaperController = wallpaperController,
-        drafts = drafts,
+        drafts = rootDrafts,
         draftAttachmentRepository = rootDraftAttachments,
         subscriptionRepository = subscriptionRepository,
         threadSmsSendController = threadSmsSendController,
@@ -1823,7 +2208,7 @@ private class SyntheticRootServices(
     index: SyntheticMessageIndex,
     timeline: RejectingTimelineRepository,
     override val wallpaperController: WallpaperController,
-    private val drafts: InMemoryDraftRepository,
+    private val drafts: DraftRepository,
     override val draftAttachmentRepository: DraftAttachmentRepository,
     override val subscriptionRepository: SubscriptionRepository,
     override val threadSmsSendController: ThreadSmsSendController,
@@ -2654,6 +3039,90 @@ private const val UPDATED_DIM = 720
 private const val WALLPAPER_PIXEL_TOLERANCE = 0.035f
 private const val WALLPAPER_PIXEL_SAMPLE_STRIDE = 8
 private const val MINIMUM_WALLPAPER_PIXEL_SAMPLES = 24
+private const val ATTACHMENT_COLD_RESTART_GATE_ARGUMENT =
+    "auroraEmulatorDraftAttachmentColdRestart"
+private const val ATTACHMENT_COLD_RESTART_PHASE_ARGUMENT =
+    "auroraEmulatorDraftAttachmentColdRestartPhase"
+private const val ATTACHMENT_COLD_RESTART_PHASE_PREPARE = "prepare"
+private const val ATTACHMENT_COLD_RESTART_PHASE_VERIFY = "verify"
+private const val ATTACHMENT_COLD_RESTART_PHASE_CLEANUP = "cleanup"
+private const val ATTACHMENT_COLD_RESTART_PREFERENCES =
+    "aurora_draft_attachment_cold_restart_evidence"
+private const val ATTACHMENT_COLD_RESTART_VERSION = 1
+private const val ATTACHMENT_COLD_RESTART_KEY_VERSION = "version"
+private const val ATTACHMENT_COLD_RESTART_KEY_STATE = "state"
+private const val ATTACHMENT_COLD_RESTART_STATE_PREPARING = "preparing"
+private const val ATTACHMENT_COLD_RESTART_STATE_PREPARED = "prepared"
+private const val ATTACHMENT_COLD_RESTART_STATE_VERIFIED = "verified"
+private const val ATTACHMENT_COLD_RESTART_KEY_DRAFT_ID = "draft_id"
+private const val ATTACHMENT_COLD_RESTART_KEY_INITIAL_REVISION = "initial_revision"
+private const val ATTACHMENT_COLD_RESTART_KEY_PREPARED_PID = "prepared_pid"
+private const val ATTACHMENT_COLD_RESTART_KEY_PREPARED_START_UPTIME =
+    "prepared_start_uptime"
+private const val ATTACHMENT_COLD_RESTART_KEY_VERIFIED_PID = "verified_pid"
+private const val ATTACHMENT_COLD_RESTART_KEY_VERIFIED_START_UPTIME =
+    "verified_start_uptime"
+private const val ATTACHMENT_COLD_RESTART_BODY = "Synthetic cold-process image caption"
+private const val ATTACHMENT_COLD_RESTART_SUBJECT = "Synthetic cold-process subject"
+private const val ATTACHMENT_COLD_RESTART_TIMESTAMP_MILLIS = 29_000L
+private const val ATTACHMENT_COLD_RESTART_TIMEOUT_MILLIS = 30_000L
+private val ATTACHMENT_COLD_RESTART_IDENTITY = DraftIdentity.ProviderThread(SYNTHETIC_THREAD_ID)
+private val ATTACHMENT_COLD_RESTART_PNG_BYTES = byteArrayOf(
+    0x89.toByte(),
+    0x50,
+    0x4e,
+    0x47,
+    0x0d,
+    0x0a,
+    0x1a,
+    0x0a,
+    0x41,
+    0x55,
+    0x52,
+    0x4f,
+    0x52,
+    0x41,
+)
+private const val ATTACHMENT_COLD_RESTART_GATE_REQUIRED =
+    "cold restart attachment gate was not enabled"
+private const val ATTACHMENT_COLD_RESTART_EMULATOR_REQUIRED =
+    "cold restart attachment evidence requires an emulator"
+private const val ATTACHMENT_COLD_RESTART_API_REQUIRED =
+    "cold restart attachment evidence requires API 36"
+private const val ATTACHMENT_COLD_RESTART_PHASE_INVALID =
+    "cold restart attachment phase was invalid"
+private const val ATTACHMENT_COLD_RESTART_APPLICATION_MISSING =
+    "AuroraSMS application was unavailable for cold restart attachment evidence"
+private const val ATTACHMENT_COLD_RESTART_STATE_NOT_READY =
+    "AuroraSMS state storage did not become ready for cold restart attachment evidence"
+private const val ATTACHMENT_COLD_RESTART_STALE_CHECKPOINT =
+    "cold restart attachment checkpoint already exists"
+private const val ATTACHMENT_COLD_RESTART_DRAFT_NOT_EMPTY =
+    "cold restart attachment draft identity was not empty"
+private const val ATTACHMENT_COLD_RESTART_ATTACHMENT_WRITE_FAILED =
+    "cold restart attachment could not be written"
+private const val ATTACHMENT_COLD_RESTART_DRAFT_MISMATCH =
+    "cold restart attachment draft changed"
+private const val ATTACHMENT_COLD_RESTART_ATTACHMENT_MISMATCH =
+    "cold restart attachment bytes changed"
+private const val ATTACHMENT_COLD_RESTART_ROUTE_MISMATCH =
+    "cold restart attachment did not route one exact MMS operation"
+private const val ATTACHMENT_COLD_RESTART_PROCESS_NOT_RESTARTED =
+    "cold restart attachment verification reused the preparation process"
+private const val ATTACHMENT_COLD_RESTART_CLEANUP_PROCESS_NOT_RESTARTED =
+    "cold restart attachment cleanup reused the verification process"
+private const val ATTACHMENT_COLD_RESTART_CHECKPOINT_WRITE_FAILED =
+    "cold restart attachment checkpoint could not be written"
+private const val ATTACHMENT_COLD_RESTART_CHECKPOINT_INVALID =
+    "cold restart attachment checkpoint was invalid"
+private const val ATTACHMENT_COLD_RESTART_CHECKPOINT_CLEAR_FAILED =
+    "cold restart attachment checkpoint could not be cleared"
+private const val ATTACHMENT_COLD_RESTART_CLEANUP_FAILED =
+    "cold restart attachment cleanup could not read its draft"
+private const val ATTACHMENT_COLD_RESTART_DRAFT_NOT_REMOVED =
+    "cold restart attachment draft was not removed"
+private const val ATTACHMENT_COLD_RESTART_ATTACHMENT_NOT_REMOVED =
+    "cold restart attachment cascade did not remove its bytes"
 private const val COLD_RESTART_GATE_ARGUMENT = "auroraEmulatorWallpaperColdRestart"
 private const val COLD_RESTART_PHASE_ARGUMENT = "auroraEmulatorWallpaperColdRestartPhase"
 private const val COLD_RESTART_PHASE_PREPARE = "prepare"
