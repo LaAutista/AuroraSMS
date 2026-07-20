@@ -57,10 +57,20 @@ Version-one bounds are:
 - 16 GiB combined record content; and
 - 16.5 GiB plaintext framing, with a separately bounded encrypted input.
 
-The first implementation slice admits and tests only the encrypted envelope,
+The first implementation slice admitted and tested the encrypted envelope,
 framing, canonical paths, per-record checksums, final manifest, and API 26/API 36
-platform crypto. A later slice in this ADR adds the exact SMS/MMS field schemas
-and provider adapter; Phase 6G is not implementation-complete before those pass.
+platform crypto. Phase 6G remains incomplete until provider restore, recovery,
+SAF/UI, and the complete acceptance matrix also pass.
+
+The second slice defines lossless, backup-only schemas rather than reusing the
+bounded presentation projections. Message archive IDs are sequential from one,
+contain no provider/thread IDs, and never encode send ownership. SMS records
+carry the historical box, address/body, provider timestamps and flags, raw
+status/error/protocol metadata, service center, and subscription. MMS records
+carry the historical box, timestamps and flags, standard transport/PDU metadata,
+subscription, and at most 100 typed addresses. Each MMS part immediately follows
+its parent and carries bounded MIME metadata plus empty, UTF-8 text, or streamed
+binary content. A full validator enforces this graph in constant memory.
 
 ### Export
 
@@ -70,6 +80,13 @@ user-selected SAF destination. Unknown-length provider parts stream in chunks;
 message bodies or attachments are never collected into one in-memory archive.
 Any provider, size, document, or crypto failure reports failure and attempts to
 delete the incomplete destination. No automatic/background export exists.
+
+The provider reader snapshots each provider's current highest positive row ID,
+then uses ascending 200-row keyset pages capped at that ID. New messages arriving
+during export remain for the next archive instead of extending the operation.
+Provider IDs are transient cursors and attachment handles only. An archive is a
+best-effort point-in-time history across Android's independent SMS/MMS providers;
+it does not claim a cross-provider read transaction.
 
 ### Validate, review, and restore
 

@@ -213,7 +213,17 @@ class AuroraBackupArchive(
         }
     }
 
-    fun validatePlaintext(source: InputStream): AuroraBackupValidationResult = try {
+    fun validatePlaintext(source: InputStream): AuroraBackupValidationResult =
+        validatePlaintext(source, validateMessageSchemas = false)
+
+    /** Full Phase 6G validation, including exact version-one SMS/MMS/part schemas. */
+    fun validateMessagePlaintext(source: InputStream): AuroraBackupValidationResult =
+        validatePlaintext(source, validateMessageSchemas = true)
+
+    private fun validatePlaintext(
+        source: InputStream,
+        validateMessageSchemas: Boolean,
+    ): AuroraBackupValidationResult = try {
         val reader = DataInputStream(MaximumInputStream(source, MAX_PLAINTEXT_ARCHIVE_BYTES))
         if (!MessageDigest.isEqual(readExact(reader, INNER_MAGIC.size), INNER_MAGIC)) {
             return AuroraBackupValidationResult.Failed(AuroraBackupFailure.INVALID_ARCHIVE)
@@ -223,6 +233,8 @@ class AuroraBackupArchive(
         var mmsCount = 0L
         var partCount = 0L
         var totalContentBytes = 0L
+        var expectedArchiveMessageId = 1L
+        var activeMmsArchiveMessageId: Long? = null
         while (true) {
             if (reader.readInt() != RECORD_MARKER) throw InvalidArchiveException()
             val typeCode = reader.readUnsignedByte()
@@ -230,7 +242,7 @@ class AuroraBackupArchive(
                 if (reader.readLong() != 0L || readPath(reader) != END_PATH) {
                     throw InvalidArchiveException()
                 }
-                val content = readRecordContent(reader, END_CONTENT_MAX_BYTES)
+                val content = readRecordContent(reader, END_CONTENT_MAX_BYTES, retain = true)
                 val declared = decodeEndSummary(content.bytes) ?: throw InvalidArchiveException()
                 if (content.length != END_CONTENT_BYTES.toLong()) throw InvalidArchiveException()
                 val observed = AuroraBackupSummary(
@@ -247,8 +259,36 @@ class AuroraBackupArchive(
             val ordinal = reader.readLong()
             if (ordinal != expectedOrdinal || ordinal > MAX_RECORD_COUNT) throw InvalidArchiveException()
             if (readPath(reader) != pathFor(ordinal, type)) throw InvalidArchiveException()
-            val content = readRecordContent(reader, MAX_RECORD_CONTENT_BYTES)
+            var schemaIdentity: AuroraBackupSchemaIdentity? = null
+            val content = readRecordContent(
+                input = reader,
+                maximum = MAX_RECORD_CONTENT_BYTES,
+                validate = if (validateMessageSchemas) {
+                    { record ->
+                        AuroraBackupMessageCodec.inspect(type, record)
+                            ?.also { schemaIdentity = it } != null
+                    }
+                } else {
+                    null
+                },
+            )
             if (content.firstByte != RECORD_SCHEMA_VERSION) throw InvalidArchiveException()
+            if (validateMessageSchemas) {
+                when (val identity = schemaIdentity ?: throw InvalidArchiveException()) {
+                    is AuroraBackupSchemaIdentity.Message -> {
+                        if (identity.archiveMessageId != expectedArchiveMessageId) {
+                            throw InvalidArchiveException()
+                        }
+                        expectedArchiveMessageId += 1L
+                        activeMmsArchiveMessageId = identity.archiveMessageId.takeIf { identity.isMms }
+                    }
+                    is AuroraBackupSchemaIdentity.MmsPart -> {
+                        if (identity.parentArchiveMessageId != activeMmsArchiveMessageId) {
+                            throw InvalidArchiveException()
+                        }
+                    }
+                }
+            }
             totalContentBytes = addWithinLimit(
                 totalContentBytes,
                 content.length,
@@ -480,25 +520,27 @@ class AuroraBackupArchive(
             }
         }
 
-        private fun readRecordContent(input: DataInputStream, maximum: Long): RecordContent {
-            val digest = MessageDigest.getInstance("SHA-256")
-            var total = 0L
-            var firstByte = -1
-            val retained = if (maximum <= END_CONTENT_MAX_BYTES) ByteArrayOutputStream() else null
-            while (true) {
-                val chunkLength = input.readInt()
-                if (chunkLength == 0) break
-                if (chunkLength !in 1..RECORD_CHUNK_BYTES) throw InvalidArchiveException()
-                total = addWithinLimit(total, chunkLength.toLong(), maximum)
-                val chunk = readExact(input, chunkLength)
-                if (firstByte < 0) firstByte = chunk[0].toInt() and 0xff
-                digest.update(chunk)
-                retained?.write(chunk)
+        private fun readRecordContent(
+            input: DataInputStream,
+            maximum: Long,
+            retain: Boolean = false,
+            validate: ((InputStream) -> Boolean)? = null,
+        ): RecordContent {
+            val record = ChunkedRecordInputStream(input, maximum)
+            val retained = if (retain) ByteArrayOutputStream() else null
+            val valid = if (validate != null) {
+                validate(record)
+            } else {
+                val buffer = ByteArray(COPY_BUFFER_BYTES)
+                while (true) {
+                    val read = record.read(buffer)
+                    if (read < 0) break
+                    retained?.write(buffer, 0, read)
+                }
+                true
             }
-            val expected = readExact(input, DIGEST_BYTES)
-            if (!MessageDigest.isEqual(digest.digest(), expected)) throw InvalidArchiveException()
-            if (total == 0L) throw InvalidArchiveException()
-            return RecordContent(total, firstByte, retained?.toByteArray() ?: ByteArray(0))
+            if (!valid || !record.finished || record.total == 0L) throw InvalidArchiveException()
+            return RecordContent(record.total, record.firstByte, retained?.toByteArray() ?: ByteArray(0))
         }
 
         private fun decodeEndSummary(bytes: ByteArray): AuroraBackupSummary? = try {
@@ -534,6 +576,73 @@ class AuroraBackupArchive(
             if (added < 0L || current > maximum - added) throw ArchiveLimitException()
             return current + added
         }
+    }
+}
+
+private class ChunkedRecordInputStream(
+    private val input: DataInputStream,
+    private val maximum: Long,
+) : InputStream() {
+    private val digest = MessageDigest.getInstance("SHA-256")
+    private var remainingInChunk = 0
+    var total: Long = 0L
+        private set
+    var firstByte: Int = -1
+        private set
+    var finished: Boolean = false
+        private set
+
+    override fun read(): Int {
+        if (!prepareChunk()) return -1
+        val value = input.read()
+        if (value < 0) throw IOException("Unexpected end of record")
+        account(byteArrayOf(value.toByte()), 0, 1)
+        return value
+    }
+
+    override fun read(destination: ByteArray, offset: Int, length: Int): Int {
+        destination.checkRange(offset, length)
+        if (length == 0) return 0
+        if (!prepareChunk()) return -1
+        val requested = minOf(length, remainingInChunk)
+        var readTotal = 0
+        while (readTotal < requested) {
+            val read = input.read(destination, offset + readTotal, requested - readTotal)
+            if (read < 0) throw IOException("Unexpected end of record")
+            if (read == 0) continue
+            readTotal += read
+        }
+        account(destination, offset, readTotal)
+        return readTotal
+    }
+
+    private fun prepareChunk(): Boolean {
+        if (finished) return false
+        if (remainingInChunk > 0) return true
+        val chunkLength = input.readInt()
+        if (chunkLength == 0) {
+            val expected = ByteArray(DIGEST_LENGTH_BYTES)
+            input.readFully(expected)
+            if (!MessageDigest.isEqual(digest.digest(), expected)) throw InvalidArchiveException()
+            finished = true
+            return false
+        }
+        if (chunkLength !in 1..MAXIMUM_CHUNK_BYTES) throw InvalidArchiveException()
+        if (total > maximum - chunkLength.toLong()) throw ArchiveLimitException()
+        remainingInChunk = chunkLength
+        return true
+    }
+
+    private fun account(bytes: ByteArray, offset: Int, length: Int) {
+        if (firstByte < 0 && length > 0) firstByte = bytes[offset].toInt() and 0xff
+        digest.update(bytes, offset, length)
+        total += length.toLong()
+        remainingInChunk -= length
+    }
+
+    private companion object {
+        const val MAXIMUM_CHUNK_BYTES = 64 * 1_024
+        const val DIGEST_LENGTH_BYTES = 32
     }
 }
 
