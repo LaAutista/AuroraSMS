@@ -338,12 +338,13 @@ ADR 0024 adds twelve parser-closure files from that same immutable revision, for
 twenty-four noticed source files total. Only the `SendReq` composer and the PDU
 model/parser closure needed to validate notification and retrieved messages are
 compiled. APN/network code, transaction services, upstream persistence, UI,
-and end-user messaging-app source remain excluded. The original wrappers admit
-one bounded outgoing voice-memo shape and a separately bounded incoming typed
-result; they do not admit a general composer, network client, or provider write
-by themselves. `RECORD_AUDIO` is an app permission owned by the feature and
-ledger, not a contribution from the vendored code. Carrier MMS uses Android's
-existing `SmsManager` path and does not add general application Internet access.
+and end-user messaging-app source remain excluded. ADR 0026 reuses the same
+compiled `SendReq`/`PduComposer` closure for an original bounded direct/group
+wrapper; it adds no source file, Maven coordinate, network client, or upstream
+provider implementation. `RECORD_AUDIO` is an app permission owned by the
+voice-memo feature and ledger, not a contribution from the vendored code.
+Carrier MMS uses Android's existing `SmsManager` path and does not add general
+application Internet access.
 
 This source admission must be updated or removed as one unit. Any upstream
 revision change, added AOSP file, admitted PDU type, MIME policy, recipient
@@ -357,7 +358,7 @@ intact.
 
 | Capability | Earliest phase | Decision gate |
 |---|---:|---|
-| Broader MMS PDU compose/parse | Later MMS slice | ADR 0021 admits only the pinned outgoing one-person voice-memo `SendReq` subset; every other PDU, parser, recipient shape, or attachment type requires a new audit |
+| Additional MMS PDU types or composer media | Later MMS slice | ADRs 0021, 0024, and 0026 admit only their exact voice-memo, incoming notification/retrieve, and general direct/group shapes; every other PDU or user-facing media type requires a new audit |
 | Phone-number normalization | 1 | Prefer platform APIs; approve libphonenumber only if measured correctness needs justify its size |
 | Room | 2 | Approved only as recorded above for separate index/state databases, FTS4, schema export, and explicit migrations |
 | Paging 3 | 2-3 | Confirm bounded keyset/anchor behavior and no deep OFFSET fallback |

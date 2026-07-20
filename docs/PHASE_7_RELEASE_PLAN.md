@@ -19,7 +19,7 @@ green. The following boundaries remain open and prevent a gold claim:
   deliberate Aurora-default, foreground-readable session;
 - physical incoming MMS carrier/OEM acceptance, including reliable group
   self-line resolution;
-- general one-person and group MMS composition/submission without SMS fan-out;
+- physical general one-person and group MMS carrier/OEM acceptance;
 - physical carrier SMS/MMS, dual-SIM, roaming/billing, OEM notification,
   lockscreen, picker, alarm, backup, and Android Auto/DHU acceptance;
 - measured physical-device search, jump, startup, frame, and memory budgets;
@@ -76,9 +76,9 @@ provider access. It does not authorize a carrier send.
   noticed source or a separately reviewed original implementation.
 - [x] Persist notification-indication/download/retrieve results atomically with
   bounded addresses, text, SMIL, and supported media parts.
-- [ ] Add a general outgoing `SendReq` composer for one-person and group MMS,
+- [x] Add a general outgoing `SendReq` composer for one-person and group MMS,
   including subject and reviewed attachment types.
-- [ ] Keep one group as one MMS operation; never fan out individual SMS messages
+- [x] Keep one group as one MMS operation; never fan out individual SMS messages
   and never silently downgrade after MMS failure.
 - [ ] Add malformed/mutation corpus, provider, process-death, callback, and
   notification tests on API 26 and API 36 before any carrier exercise.
@@ -88,8 +88,12 @@ The existing ADR 0021 voice-memo path remains a narrow one-person outgoing
 subset. ADR 0024 admits the incoming codec; ADR 0025 and implementation commit
 `260fd18522a31b7bce4c4e6dbfbac99c9c83fecd` add the metadata-only download
 journal, authenticated callback, atomic provider transaction, notification
-acknowledgement, and no-resubmission startup recovery. This synthetic evidence
-is not general/group outgoing composition or physical carrier behavior.
+acknowledgement, and no-resubmission startup recovery. ADR 0026 and commits
+`7a45033`, `a71c623`, `0b27160`, and `1e2344b` add the bounded general/group
+composer, one-operation durable ownership, subject/long-text routing, and the
+metadata-stripping JPEG/PNG picker surface. This synthetic evidence is not
+physical carrier behavior, and pre-send attachment restoration after process
+death remains open.
 
 ## Workstream 7E: physical and platform hardening
 

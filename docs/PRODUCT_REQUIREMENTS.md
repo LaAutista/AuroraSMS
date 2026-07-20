@@ -741,8 +741,27 @@ the exact staged file, and provider parts/message/addresses commit atomically or
 are cleaned. Notification acknowledgement owns final journal/file removal, and
 startup may replay only provider/notification completion. Group MMS never gains
 an SMS quick-reply path. Eight focused end-to-end cases pass on API 26 and API
-36 without live provider or carrier traffic. General/group outgoing composition
-and physical carrier/OEM incoming acceptance remain release gates.
+36 without live provider or carrier traffic. Physical carrier/OEM incoming
+acceptance remains a release gate.
+
+### Phase 7D bounded general outgoing MMS
+
+ADR 0026 and implementation commits `7a45033`, `a71c623`, `0b27160`, and
+`1e2344b` implement one direct/group `SendReq` operation for multi-unit text,
+subjects, captions, sanitized images, and image-only messages. Groups never fan
+out as SMS and failures never downgrade silently. Provider parts and the
+outgoing row precede the platform call; durable prepared/submitting ownership,
+content-free staging, non-retryable uncertainty, and authenticated exact
+callbacks preserve the reserved draft honestly.
+
+Photo Picker input is read under source/dimension/pixel limits and re-encoded as
+bounded metadata-free JPEG or PNG. Source URI, grant, filename, and metadata are
+not retained, and no broad media/storage or network permission is added.
+Focused encoder/provider/coordinator tests, the state-13 repository/migration
+suite, sanitizer tests on API 26/API 36, and the API 36 composer UI suite pass
+without live provider access or carrier submission. Physical carrier/OEM,
+billing/roaming, dual-SIM, complete process-death, and pre-send attachment
+restoration remain release gates.
 
 ## AuroraMaterial requirements
 

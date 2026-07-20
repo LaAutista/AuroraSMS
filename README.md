@@ -21,10 +21,25 @@ the AAB SHA-256 is
 `349ea4f6a1be6f348cbd54c64bdf06e3fe56f7bc13f1eaef2aa4d807d7a86b1b`.
 All 636 host tests and the 978-task governed aggregate pass. The exact release
 and gold checklist is in [the Phase 7 plan](docs/PHASE_7_RELEASE_PLAN.md).
-Signing, a complete nonempty physical-provider scan, general/group outgoing MMS,
-physical incoming-MMS and OEM/carrier/accessibility/performance/Android Auto
+Signing, a complete nonempty physical-provider scan, physical outgoing/incoming
+MMS and OEM/carrier/accessibility/performance/Android Auto
 acceptance, and the final F-Droid build recipe remain open. AuroraSMS is not
 gold.
+
+Outgoing MMS implementation commits `7a45033`, `a71c623`, `0b27160`, and
+`1e2344b` complete ADR 0026's synthetic direct/group vertical. Exact groups,
+multi-unit text, subjects, captions, images, and image-only drafts submit as one
+MMS operation and can never fan out as SMS. Photo Picker sources are bounded,
+decoded defensively, and re-encoded as metadata-free JPEG/PNG without retaining
+their URI, filename, grant, or metadata. The existing durable draft,
+provider-first preparation, submission journal, and authenticated callback
+protocol now owns SMS or MMS explicitly. Focused host, Room, sanitizer, and UI
+tests pass on API 26/API 36 where applicable without a live provider, role
+change, or carrier send. All 650 host tests and the complete 978-task governed
+host/lint/R8/benchmark/privacy/dependency/license aggregate pass; standalone
+release AAB and CycloneDX 1.6 generation pass as well. Physical carrier/OEM
+interoperability and pre-send attachment restoration after process death remain
+open.
 
 Incoming MMS implementation commit
 `260fd18522a31b7bce4c4e6dbfbac99c9c83fecd` completes ADR 0025's
@@ -1014,12 +1029,14 @@ real-provider reconciliation and privacy-safe inbox/thread/search reachability;
 release-equivalent physical performance measurements remain pending. Emulator
 timings are not product performance evidence.
 
-General end-to-end MMS is not yet claimed. ADR 0021 admits only the bounded
-outgoing one-person voice-memo encoder; incoming decoding, group/general
-composition, arbitrary attachments, and physical carrier/OEM behavior remain
-disabled or open. Platform staging and result handling still fail closed outside
-their admitted payloads. See ADR 0001, ADR 0008, ADR 0021, and the phase gates in
-`docs/TEST_MATRIX.md`.
+General outgoing and incoming MMS are now implemented behind bounded synthetic
+contracts, but end-to-end carrier acceptance is not yet claimed. ADR 0021 owns
+the one-person voice-memo path, ADRs 0024/0025 own bounded incoming decode and
+crash-safe persistence, and ADR 0026 owns direct/group text, subject, and
+sanitized JPEG/PNG composition. Other arbitrary attachment UI, physical
+carrier/OEM behavior, billing/roaming, and the complete process-death matrix
+remain open. Platform staging and result handling fail closed outside their
+admitted payloads. See the phase gates in `docs/TEST_MATRIX.md`.
 
 ## Build
 

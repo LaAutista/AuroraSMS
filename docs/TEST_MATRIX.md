@@ -3973,7 +3973,44 @@ Acceptance evidence:
 
 Physical carrier/OEM receive, group self-line behavior where the SIM does not
 publish its number, media presentation, and process-death acceptance remain
-open. General/group outgoing MMS is not implemented. AuroraSMS is not gold.
+open. AuroraSMS is not gold.
+
+### Phase 7D bounded general outgoing MMS — 2026-07-20
+
+Implementation commits `7a45033`, `a71c623`, `0b27160`, and `1e2344b`
+complete ADR 0026's synthetic outgoing path. One direct/group payload owns
+bounded text, optional subject, and at most 10 defensively copied attachments;
+the aggregate is capped before PDU overhead. The AOSP-derived encoder closure
+was already noticed and pinned by ADRs 0021/0024. No new source dependency,
+network client, or application Internet permission was added.
+
+The composer routes exact groups, multi-unit text, subjects, images, and
+image-only drafts to one MMS operation. It cannot fan out SMS or silently
+downgrade. Selected images are copied under source/dimension/pixel limits and
+re-encoded as bounded JPEG/PNG; the source URI, filename, grant, and metadata do
+not survive admission. State schema 13 and caller-owned transport observation
+bind the exact draft, provider preparation, platform submission, and private
+callback to SMS or MMS explicitly.
+
+Acceptance evidence:
+
+- focused general encoder, fake-provider, platform ownership, durable
+  coordinator, callback, and state contract host tests pass;
+- the six-case composer-operation repository suite, including attachment-only
+  reservation, passes on API 26 and API 36;
+- three sanitizer tests pass on API 26 and API 36;
+- the 36-case API 36 Compose suite passes, including generic image metadata,
+  add/remove callbacks, MMS status, disabled scheduling, and image-only Send;
+- relevant app/state/telephony/conversations lint gates pass;
+- all 650 host tests and the complete 978-task governed host/lint/R8/benchmark/
+  privacy/dependency/license aggregate pass in 1m59s; standalone release AAB
+  and CycloneDX 1.6 generation pass; and
+- no live provider read, SMS-role change, carrier send, message-content
+  capture, attachment export, or broad log was used.
+
+Physical carrier/OEM interoperability, carrier size/APN behavior,
+billing/roaming, dual-SIM, process death at every checkpoint, and pre-send
+attachment restoration remain open. AuroraSMS is not gold.
 
 ## Release gate
 
