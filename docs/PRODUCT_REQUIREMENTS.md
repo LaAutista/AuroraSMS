@@ -535,6 +535,30 @@ without a database migration.
   timezone change cancel or fence pending work. Startup recovery rearms only
   validated future reminders.
 
+### Phase 6 history-completeness hardening
+
+The `0.6.3-phase6` (`versionCode` 14) 2026-07-19 source hardens the existing
+rebuildable Telephony index without a database migration.
+
+- The default-SMS role remains an explicit Android-controlled precondition.
+  AuroraSMS never requests or grants itself that role, and onboarding now says
+  that message-history access stays paused when another app is default.
+- A reconciliation that returns Pending while AuroraSMS still owns the role and
+  remains foreground-readable receives a 500 ms continuation, bounded to four
+  retries per initiating signal. A new foreground, provider-change, or periodic
+  signal resets that budget; role loss, backgrounding, close, completion, or
+  failure cancels it.
+- The Telephony synchronizer remains serialized, checkpointed, and resumable.
+  No background busy loop, provider authority change, new permission, content
+  log, or copy of message data is introduced.
+- A large synthetic acceptance fixture proves cursor pagination returns 153
+  conversations and all 151 messages in one long thread exactly once.
+
+This closes a code-side continuation and pagination regression gate. It does not
+claim a complete personal-device index while AuroraSMS is not the default SMS
+app; Android denies that provider read, and the owner must explicitly choose the
+role before the final physical history-completeness check can run.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls

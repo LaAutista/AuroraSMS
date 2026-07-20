@@ -292,6 +292,10 @@ class AppContainer(
             outcome
         },
         markPendingChanges = { awaitIndexRuntime().synchronizer.markPendingChanges() },
+        shouldContinuePending = {
+            defaultSmsRoleState.isRoleHeld() &&
+                foregroundIndexReadGate.isProviderReadPermitted()
+        },
     )
 
     private val _indexStorageStatus = MutableStateFlow<IndexStorageStatus>(IndexStorageStatus.Opening)

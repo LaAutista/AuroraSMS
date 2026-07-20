@@ -740,6 +740,16 @@ reboot, wall-clock/timezone changes, role loss, setting changes, and opening the
 conversation fail closed. Reminder state is excluded from backup, and no exact-
 alarm permission, repeating wakeup, sender, address, or body is introduced.
 
+Phase 6 history-completeness hardening preserves the same role and foreground
+read boundary during resumable index work. A Pending result may schedule only
+one delayed continuation at a time, only while role ownership and foreground
+read permission remain true, and only four times per initiating signal. Explicit
+foreground, provider-change, and periodic signals may renew that finite budget;
+role loss, backgrounding, completion, failure, and shutdown cancel it. This
+prevents a stalled partial index from depending on incidental user navigation
+without introducing a background provider-read loop or weakening Android's
+default-SMS authority boundary.
+
 ## Open security decisions
 
 These do not block Phase 1 foundation unless explicitly named, but block their

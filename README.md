@@ -9,23 +9,27 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
-The 2026-07-19 Phase 6C source identifies as `0.6.2-phase6` (`versionCode` 13)
-and adds ADR 0017's local content-free notification reminders. Reminders are
-off by default; explicit 15-minute, one-hour, and three-hour choices create at
-most one private ID-only, one-shot reminder per conversation after a successful
-incoming notification and provider acknowledgement. Fire-time handling posts
-only a generic alert after an exact unread-provider recheck and fails closed on
-role, clock, reboot, setting, provider, and conversation-open boundaries. No
-exact-alarm access, repeating alarm, sender, address, or body is added to
-durable state. ADR 0016's selected-text copy/details and ADR 0015's conservative
-reaction presentation remain unchanged. The complete host gate and API 26/API
-36 connected matrices pass with zero failures or errors; exact counts and
-artifact hashes are in `docs/TEST_MATRIX.md`. The exact debug APK was installed
-and hash-matched on the Pixel 8 and API 36 emulator without changing either
-default-SMS role. The Pixel retained a non-Aurora role holder, so Android denied
-Aurora provider reads and its existing partial index correctly remained paused.
-Phase 6 and the broader release matrix remain incomplete, so AuroraSMS is not
-gold.
+The 2026-07-19 Phase 6 history-completeness source identifies as
+`0.6.3-phase6` (`versionCode` 14). It retains Phase 6C's local content-free
+notification reminders and hardens resumable Telephony indexing after a real
+Pixel exposed a paused partial-history view. Android permits AuroraSMS to read
+message history only while AuroraSMS owns the default-SMS role. The onboarding
+copy now states that boundary directly. While the role remains held and the app
+is foreground-readable, a pending reconciliation receives bounded short
+continuations; explicit foreground, provider, and periodic signals renew that
+bounded budget. Role loss, backgrounding, failure, and close still stop work.
+A large synthetic regression pages 153 conversations and 151 messages from one
+thread exactly once. The complete host gate and API 26/API 36 connected matrices
+pass with zero failures or errors; exact counts and artifact hashes are in
+`docs/TEST_MATRIX.md`.
+
+The exact debug APK was installed, copied, and hash-matched on the Pixel 8 and
+API 36 emulator without launching AuroraSMS or changing either default-SMS
+role. The Pixel retained a non-Aurora role holder and denied Aurora provider
+reads, so its personal history cannot yet complete. That final on-device check
+requires the owner to explicitly choose AuroraSMS as default and keep it in the
+foreground for reconciliation. Phase 6 and the broader release matrix remain
+incomplete, so AuroraSMS is not gold.
 
 The 2026-07-19 Phase 5G source identifies as `0.5.6-phase5` (`versionCode` 10)
 and implements ADR 0014's shared no-group-SMS boundary. Every `SmsSendRequest`

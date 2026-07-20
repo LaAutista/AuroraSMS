@@ -3206,6 +3206,64 @@ without exposing message, address, participant, or screenshot data. No role or
 permission was changed, no live content was read, and no carrier SMS/MMS was
 submitted.
 
+### Phase 6 history-completeness hardening acceptance — 2026-07-19
+
+This source identifies as `0.6.3-phase6` (`versionCode` 14), retains Room schema
+10, and adds no permission. Content-free Pixel inspection found a non-Aurora
+default-SMS role, denied Aurora SMS-read access, and a retained index generation
+paused before verified completion. That explains the observed partial-history
+view without implying provider row loss. The app now states the role boundary in
+onboarding and boundedly continues Pending foreground reconciliation while role
+and foreground-read eligibility remain true. Each initiating signal permits at
+most four 500 ms retries; close, role loss, background loss, completion, and
+failure stop continuation.
+
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m20s across 886 tasks. All 568 host JUnit results passed with
+zero failures, errors, or skips: app 272, design system 11, index 69, model 19,
+notifications 21, state 51, telephony 82, testing 24, and conversations 19.
+Debug, R8 release, and benchmark assembly; debug/release/benchmark lint;
+clean-room/private-art scans; dependency locks; permission and APK-content
+ledgers; and license gates passed.
+
+The first combined `bundleRelease cyclonedxBom` invocation stopped during
+configuration because CycloneDX attempted to mutate an already-resolved release
+configuration. The gates passed when invoked separately immediately afterward:
+`bundleRelease` passed 269 tasks in 7s, and CycloneDX 1.6 passed 15 tasks in 7s
+with 441 components and 442 dependencies. This was an invocation-order tooling
+failure, not a source or test failure.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m36s
+across 456 tasks. Authoritative XML reports 321 tests with 10 intentional
+assumption skips, 311 executed, and zero failures/errors: app 136/9 skips,
+benchmark 3/1, index 32/0, notifications 31/0, state 61/0, telephony 35/0, and
+conversations 23/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m02s
+across 456 tasks. Authoritative XML reports 324 tests with 13 intentional
+assumption skips, 311 executed, and zero failures/errors: app 139/12 skips,
+benchmark 3/1, index 32/0, notifications 31/0, state 61/0, telephony 35/0, and
+conversations 23/0. Before these green matrices, the focused large-history test
+fixture failed during construction because two synthetic fingerprint seeds were
+not hexadecimal. Correcting those non-production fixture values produced 3/3
+focused passes on both APIs and the green full matrices above.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,818,018 | `f0a4e8ac419b61e1f2af841f00523f089d4482edc1d87861a0d826c18b39353e` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,881,981 | `0451ac52f4c0d302a19979dae75aa47bbcda9904983fb4ade63e393662d4ee25` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,742,809 | `6298472a377a84d672db21c4b5c7b239349b9c10d480c773adff521b8e493d8b` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,854,960 | `620c261a61acaeb3ae2e6490cb8526eff7b1a83a1e629c8d005cb8215d5d05d0` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed successfully on the Pixel 8 and API 36 emulator,
+was copied to each Download directory, and hash-matched the host artifact. Both
+devices report version code 14/name `0.6.3-phase6`; neither role holder changed.
+The Pixel still denies Aurora SMS permissions because another app remains
+default, so no claim is made that its personal index has completed. No app was
+launched, no live message/address/content was read, and no carrier SMS/MMS was
+submitted.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,

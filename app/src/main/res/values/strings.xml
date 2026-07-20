@@ -6,10 +6,10 @@
     <string name="notification_permission_explanation">Messages remain usable and readable in AuroraSMS, but background and new-message alerts are off while notifications are disabled.</string>
     <string name="enable_notifications">Enable message notifications</string>
     <string name="open_diagnostics">Open local diagnostics</string>
-    <string name="role_ready">AuroraSMS needs your explicit approval before it can become the default SMS app.</string>
+    <string name="role_ready">AuroraSMS is not the default SMS app. Android pauses message-history access until you explicitly approve AuroraSMS.</string>
     <string name="role_requesting">Waiting for the Android role decision.</string>
     <string name="role_held">AuroraSMS is the current default SMS app.</string>
-    <string name="role_cancelled">The role request was cancelled. Messaging remains unchanged.</string>
+    <string name="role_cancelled">The role request was cancelled. Your current SMS app remains unchanged, and AuroraSMS history sync stays paused.</string>
     <string name="telephony_missing">This device does not report SMS telephony support.</string>
     <string name="messaging_missing">This Android build does not report the required messaging capability.</string>
     <string name="role_unavailable">Android does not currently offer the SMS role on this device.</string>

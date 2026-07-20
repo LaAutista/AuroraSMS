@@ -84,6 +84,96 @@ class AppIndexCoordinatorTest {
         coordinator.close()
     }
 
+    @Test
+    fun pendingReconciliationContinuesWhileForegroundUntilComplete() = runTest {
+        var runs = 0
+        val coordinator = AppIndexCoordinator(
+            applicationScope = backgroundScope,
+            markPendingChanges = {},
+            synchronize = { _ ->
+                runs += 1
+                if (runs < 3) {
+                    IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
+                } else {
+                    IndexSyncOutcome.Complete(COMPLETE_COVERAGE, deletedStaleRows = 0)
+                }
+            },
+            shouldContinuePending = { true },
+            pendingRetryDelayMillis = 100L,
+        )
+
+        coordinator.start()
+        runCurrent()
+        assertEquals(1, runs)
+        advanceTimeBy(100L)
+        runCurrent()
+        assertEquals(2, runs)
+        advanceTimeBy(100L)
+        runCurrent()
+
+        assertEquals(3, runs)
+        assertEquals(
+            IndexSyncOutcome.Complete(COMPLETE_COVERAGE, deletedStaleRows = 0),
+            coordinator.lastOutcome.value,
+        )
+        coordinator.close()
+    }
+
+    @Test
+    fun pendingReconciliationDoesNotContinueWithoutForegroundRoleEligibility() = runTest {
+        var runs = 0
+        val coordinator = AppIndexCoordinator(
+            applicationScope = backgroundScope,
+            markPendingChanges = {},
+            synchronize = { _ ->
+                runs += 1
+                IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
+            },
+            shouldContinuePending = { false },
+            pendingRetryDelayMillis = 100L,
+        )
+
+        coordinator.start()
+        runCurrent()
+        advanceTimeBy(10_000L)
+        runCurrent()
+
+        assertEquals(1, runs)
+        coordinator.close()
+    }
+
+    @Test
+    fun pendingContinuationIsBoundedUntilANewExplicitSignal() = runTest {
+        var runs = 0
+        val coordinator = AppIndexCoordinator(
+            applicationScope = backgroundScope,
+            markPendingChanges = {},
+            synchronize = { _ ->
+                runs += 1
+                IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
+            },
+            shouldContinuePending = { true },
+            pendingRetryDelayMillis = 100L,
+            maximumPendingRetries = 2,
+        )
+
+        coordinator.start()
+        runCurrent()
+        repeat(4) {
+            advanceTimeBy(100L)
+            runCurrent()
+        }
+        assertEquals(3, runs)
+
+        assertTrue(coordinator.signal(IndexSignal.EXTERNAL_PROVIDER_CHANGE))
+        runCurrent()
+        assertEquals(4, runs)
+        advanceTimeBy(100L)
+        runCurrent()
+        assertEquals(5, runs)
+        coordinator.close()
+    }
+
     private companion object {
         val PARTIAL_COVERAGE = IndexCoverage(
             generationId = 1L,
@@ -92,6 +182,11 @@ class AppIndexCoordinatorTest {
             smsExhausted = false,
             mmsExhausted = false,
             pendingChanges = false,
+        )
+        val COMPLETE_COVERAGE = PARTIAL_COVERAGE.copy(
+            state = IndexRunState.COMPLETE,
+            smsExhausted = true,
+            mmsExhausted = true,
         )
     }
 }

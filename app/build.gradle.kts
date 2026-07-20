@@ -17,8 +17,8 @@ android {
         applicationId = "org.aurorasms.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.6.2-phase6"
+        versionCode = 14
+        versionName = "0.6.3-phase6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
