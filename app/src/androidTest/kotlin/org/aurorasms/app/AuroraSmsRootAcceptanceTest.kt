@@ -169,11 +169,14 @@ import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
 import org.aurorasms.core.state.ConversationSubscriptionRevision
 import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.state.Draft
+import org.aurorasms.core.state.DraftAttachment
+import org.aurorasms.core.state.DraftAttachmentRepository
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.core.state.DraftRepository
 import org.aurorasms.core.state.DraftRepositoryResult
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.DraftStorageOperation
 import org.aurorasms.core.state.NewAppearanceProfile
 import org.aurorasms.core.state.NewDraft
 import org.aurorasms.core.telephony.ActiveSubscription
@@ -184,6 +187,7 @@ import org.aurorasms.core.telephony.MmsAttachmentId
 import org.aurorasms.core.telephony.MmsAttachmentListResult
 import org.aurorasms.core.telephony.MmsAttachmentReadResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
+import org.aurorasms.core.telephony.OutgoingMmsAttachment
 import org.aurorasms.core.telephony.ResolvedContact
 import org.aurorasms.core.telephony.SubscriptionRepository
 import org.aurorasms.core.telephony.SubscriptionSnapshot
@@ -192,6 +196,7 @@ import org.aurorasms.feature.conversations.BoundedPreviewLoader
 import org.aurorasms.feature.conversations.COMPOSER_SEND_TEST_TAG
 import org.aurorasms.feature.conversations.COMPOSER_SCHEDULE_TEST_TAG
 import org.aurorasms.feature.conversations.COMPOSER_TEST_TAG
+import org.aurorasms.feature.conversations.COMPOSER_ATTACHMENT_TEST_TAG_PREFIX
 import org.aurorasms.feature.conversations.CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_MORE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_LIST_TEST_TAG
@@ -419,6 +424,103 @@ class AuroraSmsRootAcceptanceTest {
             sendController.releaseAsSubmissionUnknown()
             waitForDisplayedText("Send status unknown. Check the conversation before trying again.")
             assertEquals(1, sendController.sendCount)
+        }
+    }
+
+    @Test
+    fun durableImageAttachmentRestoresAcrossActivityRecreationAndRoutesOneMms() = runBlocking {
+        val sendController = RecordingUnknownThreadSmsSendController()
+        val fixture = SyntheticFixture(
+            threadSummary = syntheticThreadSummary(
+                participants = SYNTHETIC_SEND_PARTICIPANTS,
+                latestSubscriptionId = SYNTHETIC_SEND_SUBSCRIPTION.id,
+            ),
+            verifiedIdentity = SYNTHETIC_SEND_VERIFIED_IDENTITY,
+            subscriptionRepository = FixedSubscriptionRepository(SYNTHETIC_SEND_SUBSCRIPTION),
+            threadSmsSendController = sendController,
+        )
+        val draft = fixture.drafts.create(
+            NewDraft(
+                identity = DraftIdentity.ProviderThread(SYNTHETIC_THREAD_ID),
+                body = "Synthetic restored image caption",
+                subject = null,
+                createdTimestampMillis = 29_000L,
+                updatedTimestampMillis = 29_000L,
+            ),
+        ).successValue()
+        val durableAttachment = validDraftAttachment(
+            DraftAttachment.IMAGE_PNG,
+            byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47),
+        )
+        fixture.draftAttachments
+            .replace(draft.id, draft.revision, listOf(durableAttachment))
+            .successValue()
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+            openSyntheticThread()
+            waitForTag("$COMPOSER_ATTACHMENT_TEST_TAG_PREFIX-0")
+            waitForDisplayedText("Draft saved locally · MMS")
+            compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).assertIsNotEnabled()
+
+            scenario.recreate()
+
+            waitForTag(THREAD_SCREEN_TEST_TAG)
+            waitForTag("$COMPOSER_ATTACHMENT_TEST_TAG_PREFIX-0")
+            waitForDisplayedText("Draft saved locally · MMS")
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsEnabled().performClick()
+
+            compose.waitUntil(TIMEOUT_MILLIS) { sendController.sendCount == 1 }
+            val command = sendController.commandsSnapshot().single()
+            assertEquals(MessageTransportKind.MMS, command.transport)
+            assertEquals(SYNTHETIC_SEND_VERIFIED_IDENTITY, command.identity)
+            assertEquals(1, command.attachments.size)
+            assertEquals(
+                validOutgoingAttachment(
+                    OutgoingMmsAttachment.IMAGE_PNG,
+                    durableAttachment.copyBytes(),
+                ),
+                command.attachments.single(),
+            )
+
+            sendController.releaseAsSubmissionUnknown()
+            waitForDisplayedText("Send status unknown. Check the conversation before trying again.")
+            assertEquals(1, sendController.sendCount)
+        }
+    }
+
+    @Test
+    fun unavailableDraftAttachmentStorageBlocksSendWithoutTransportAttempt() = runBlocking {
+        val sendController = RecordingUnknownThreadSmsSendController()
+        val fixture = SyntheticFixture(
+            threadSummary = syntheticThreadSummary(
+                participants = SYNTHETIC_SEND_PARTICIPANTS,
+                latestSubscriptionId = SYNTHETIC_SEND_SUBSCRIPTION.id,
+            ),
+            verifiedIdentity = SYNTHETIC_SEND_VERIFIED_IDENTITY,
+            subscriptionRepository = FixedSubscriptionRepository(SYNTHETIC_SEND_SUBSCRIPTION),
+            threadSmsSendController = sendController,
+            draftAttachmentRepositoryOverride = UnavailableDraftAttachmentRepository,
+        )
+        fixture.drafts.create(
+            NewDraft(
+                identity = DraftIdentity.ProviderThread(SYNTHETIC_THREAD_ID),
+                body = "Synthetic protected image caption",
+                subject = null,
+                createdTimestampMillis = 30_000L,
+                updatedTimestampMillis = 30_000L,
+            ),
+        ).successValue()
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+            openSyntheticThread()
+            waitForDisplayedText(
+                "Saved image attachments are unavailable. " +
+                    "Sending is disabled to protect your draft.",
+            )
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            assertEquals(0, sendController.sendCount)
         }
     }
 
@@ -1676,6 +1778,7 @@ private class SyntheticFixture(
     subscriptionRepository: SubscriptionRepository = SyntheticSubscriptions,
     threadSmsSendController: ThreadSmsSendController = SyntheticIdleThreadSmsSendController,
     segmentCounter: (String) -> Int? = { body -> body.takeIf(String::isNotBlank)?.let { 1 } },
+    draftAttachmentRepositoryOverride: DraftAttachmentRepository? = null,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val conversations = SyntheticConversationRepository(threadSummary, verifiedIdentity)
@@ -1685,6 +1788,8 @@ private class SyntheticFixture(
     val wallpapers = InMemoryWallpaperRepository()
     val wallpaperStore = SyntheticWallpaperMediaStore()
     val drafts = InMemoryDraftRepository()
+    val draftAttachments = InMemoryDraftAttachmentRepository(drafts)
+    private val rootDraftAttachments = draftAttachmentRepositoryOverride ?: draftAttachments
     private val wallpaperController = wallpaperControllerOverride
         ?: WallpaperController(wallpapers, wallpaperStore)
     private val services = SyntheticRootServices(
@@ -1694,6 +1799,7 @@ private class SyntheticFixture(
         timeline = timeline,
         wallpaperController = wallpaperController,
         drafts = drafts,
+        draftAttachmentRepository = rootDraftAttachments,
         subscriptionRepository = subscriptionRepository,
         threadSmsSendController = threadSmsSendController,
         segmentCounter = segmentCounter,
@@ -1718,6 +1824,7 @@ private class SyntheticRootServices(
     timeline: RejectingTimelineRepository,
     override val wallpaperController: WallpaperController,
     private val drafts: InMemoryDraftRepository,
+    override val draftAttachmentRepository: DraftAttachmentRepository,
     override val subscriptionRepository: SubscriptionRepository,
     override val threadSmsSendController: ThreadSmsSendController,
     private val segmentCounter: (String) -> Int?,
@@ -2301,6 +2408,67 @@ private class InMemoryDraftRepository : DraftRepository {
         drafts.remove(entry.key)
         DraftRepositoryResult.Success(Unit)
     }
+}
+
+private class InMemoryDraftAttachmentRepository(
+    private val drafts: InMemoryDraftRepository,
+) : DraftAttachmentRepository {
+    private val lock = Any()
+    private val stored = HashMap<DraftId, List<DraftAttachment>>()
+
+    override suspend fun read(
+        draftId: DraftId,
+    ): DraftRepositoryResult<List<DraftAttachment>> = when (drafts.read(draftId)) {
+        is DraftRepositoryResult.Success -> DraftRepositoryResult.Success(
+            synchronized(lock) { stored[draftId].orEmpty().toList() },
+        )
+        else -> {
+            synchronized(lock) { stored.remove(draftId) }
+            DraftRepositoryResult.NotFound
+        }
+    }
+
+    override suspend fun replace(
+        draftId: DraftId,
+        expectedRevision: DraftRevision,
+        attachments: List<DraftAttachment>,
+    ): DraftRepositoryResult<List<DraftAttachment>> {
+        if (!DraftAttachment.isValidSet(attachments)) return DraftRepositoryResult.CorruptData
+        val draft = when (val result = drafts.read(draftId)) {
+            is DraftRepositoryResult.Success -> result.value
+            else -> return DraftRepositoryResult.NotFound
+        }
+        if (draft.revision != expectedRevision) return DraftRepositoryResult.StaleWrite
+        val frozen = attachments.toList()
+        synchronized(lock) { stored[draftId] = frozen }
+        return DraftRepositoryResult.Success(frozen)
+    }
+}
+
+private object UnavailableDraftAttachmentRepository : DraftAttachmentRepository {
+    override suspend fun read(
+        draftId: DraftId,
+    ): DraftRepositoryResult<List<DraftAttachment>> =
+        DraftRepositoryResult.StorageFailure(DraftStorageOperation.READ)
+
+    override suspend fun replace(
+        draftId: DraftId,
+        expectedRevision: DraftRevision,
+        attachments: List<DraftAttachment>,
+    ): DraftRepositoryResult<List<DraftAttachment>> =
+        DraftRepositoryResult.StorageFailure(DraftStorageOperation.UPDATE)
+}
+
+private fun validDraftAttachment(contentType: String, bytes: ByteArray): DraftAttachment =
+    (DraftAttachment.create(contentType, bytes) as DraftAttachment.CreationResult.Valid).attachment
+
+private fun validOutgoingAttachment(contentType: String, bytes: ByteArray): OutgoingMmsAttachment =
+    (OutgoingMmsAttachment.create(contentType, bytes) as
+        OutgoingMmsAttachment.CreationResult.Valid).attachment
+
+private fun <T> DraftRepositoryResult<T>.successValue(): T {
+    assertTrue("Expected success but was $this", this is DraftRepositoryResult.Success<T>)
+    return (this as DraftRepositoryResult.Success<T>).value
 }
 
 private object SyntheticContactCache : ContactCache {

@@ -5,6 +5,25 @@ package org.aurorasms.core.state.storage
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+val STATE_MIGRATION_13_14: Migration = object : Migration(13, 14) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `draft_attachments` (
+                `draft_id` INTEGER NOT NULL,
+                `attachment_index` INTEGER NOT NULL,
+                `content_type` TEXT NOT NULL,
+                `content_bytes` BLOB NOT NULL,
+                PRIMARY KEY(`draft_id`, `attachment_index`),
+                FOREIGN KEY(`draft_id`) REFERENCES `drafts`(`draft_id`)
+                    ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent(),
+        )
+        DraftAttachmentEnforcement.install(db)
+    }
+}
+
 val STATE_MIGRATION_12_13: Migration = object : Migration(12, 13) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(

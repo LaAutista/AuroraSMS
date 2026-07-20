@@ -119,6 +119,7 @@
     <string name="image_attachment_unsupported">That file is not a supported image. Your draft is unchanged.</string>
     <string name="image_attachment_too_large">That image could not fit within the MMS size limit.</string>
     <string name="image_attachment_limit_reached">An MMS can include up to 10 images.</string>
+    <string name="image_attachment_storage_unavailable">Saved image attachments are unavailable. Sending is disabled to protect your draft.</string>
     <string name="record_voice_memo">Record voice memo</string>
     <string name="stop_voice_memo">Stop voice recording</string>
     <string name="preparing_voice_memo">Preparing microphone…</string>

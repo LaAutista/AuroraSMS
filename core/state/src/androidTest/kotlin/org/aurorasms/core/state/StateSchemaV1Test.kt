@@ -15,6 +15,7 @@ import org.aurorasms.core.state.storage.AppearanceSelectionEnforcement
 import org.aurorasms.core.state.storage.AppearanceOverrideSequenceEnforcement
 import org.aurorasms.core.state.storage.ComposerSmsOperationEnforcement
 import org.aurorasms.core.state.storage.ConversationSubscriptionPreferenceEnforcement
+import org.aurorasms.core.state.storage.DraftAttachmentEnforcement
 import org.aurorasms.core.state.storage.DraftIdentityEnforcement
 import org.aurorasms.core.state.storage.ScheduledSmsEnforcement
 import org.aurorasms.core.state.storage.SendDelayEnforcement
@@ -56,11 +57,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionThirteen_hasBoundedStateTablesAndComposerTransportOwnership() {
+    fun schemaVersionFourteen_hasBoundedStateTablesAndComposerTransportOwnership() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(13, AuroraStateDatabase.VERSION)
+            assertEquals(14, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -89,6 +90,10 @@ class StateSchemaCurrentTest {
             assertTrue(indices.contains("index_drafts_provider_thread_id"))
             assertTrue(indices.contains("index_drafts_participant_set_key"))
             assertTrue(indices.contains("index_drafts_updated_timestamp_ms_draft_id"))
+            assertEquals(
+                setOf("draft_id", "attachment_index", "content_type", "content_bytes"),
+                sqlite.tableColumns("draft_attachments"),
+            )
             assertTrue(
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
@@ -403,12 +408,18 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun exportedVersionTwelveStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedCurrentStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'drafts'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'draft_attachments'",
                 ).use { it.moveToFirst() },
             )
             assertTrue(
@@ -491,6 +502,7 @@ class StateSchemaCurrentTest {
             MIGRATION_DATABASE_NAME,
         )
             .addCallback(DraftIdentityEnforcement.callback)
+            .addCallback(DraftAttachmentEnforcement.callback)
             .addCallback(AppearanceSelectionEnforcement.callback)
             .addCallback(AppearanceOverrideSequenceEnforcement.callback)
             .addCallback(ComposerSmsOperationEnforcement.callback)
@@ -530,6 +542,8 @@ class StateSchemaCurrentTest {
         var sqlite = database.openHelper.writableDatabase
         assertTriggerExists(sqlite, DraftIdentityEnforcement.INSERT_TRIGGER_NAME)
         assertTriggerExists(sqlite, DraftIdentityEnforcement.UPDATE_TRIGGER_NAME)
+        assertTriggerExists(sqlite, DraftAttachmentEnforcement.INSERT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, DraftAttachmentEnforcement.UPDATE_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME)
@@ -573,6 +587,8 @@ class StateSchemaCurrentTest {
 
         sqlite.execSQL("DROP TRIGGER ${DraftIdentityEnforcement.INSERT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${DraftIdentityEnforcement.UPDATE_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${DraftAttachmentEnforcement.INSERT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${DraftAttachmentEnforcement.UPDATE_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME}")
@@ -605,6 +621,8 @@ class StateSchemaCurrentTest {
             sqlite = database.openHelper.writableDatabase
             assertTriggerExists(sqlite, DraftIdentityEnforcement.INSERT_TRIGGER_NAME)
             assertTriggerExists(sqlite, DraftIdentityEnforcement.UPDATE_TRIGGER_NAME)
+            assertTriggerExists(sqlite, DraftAttachmentEnforcement.INSERT_TRIGGER_NAME)
+            assertTriggerExists(sqlite, DraftAttachmentEnforcement.UPDATE_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME)

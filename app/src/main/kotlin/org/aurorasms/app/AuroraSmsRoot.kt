@@ -73,6 +73,7 @@ import org.aurorasms.app.drafts.DraftRestorationToken
 import org.aurorasms.app.drafts.DraftUnfreezeReason
 import org.aurorasms.app.drafts.DraftWriteStatus
 import org.aurorasms.app.drafts.FrozenDraftSnapshot
+import org.aurorasms.app.drafts.SerializedDraftWriter
 import org.aurorasms.app.message.ThreadSmsSendAttempt
 import org.aurorasms.app.message.ThreadSmsSendCommand
 import org.aurorasms.app.message.ThreadSmsSendObservation
@@ -115,6 +116,10 @@ import org.aurorasms.core.designsystem.AuroraMaterialTheme
 import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.DraftAttachment
+import org.aurorasms.core.state.DraftAttachmentRepository
+import org.aurorasms.core.state.DraftRepositoryResult
+import org.aurorasms.core.state.DraftStorageOperation
 import org.aurorasms.core.state.AppearanceParticipantSetKey
 import org.aurorasms.core.state.AppearanceScope
 import org.aurorasms.core.state.AppearanceScreenScope
@@ -1035,6 +1040,68 @@ private fun ThreadRoute(
     var attachmentFailure by remember(route.providerThreadId) {
         mutableStateOf<ComposerAttachmentFailure?>(null)
     }
+    var attachmentStorageBlocked by remember(route.providerThreadId) { mutableStateOf(false) }
+    LaunchedEffect(sendObservation.completionEpoch) {
+        if (sendObservation.completionEpoch > observedCompletionEpoch) {
+            observedCompletionEpoch = sendObservation.completionEpoch
+            savedDraftRestoration = SavedDraftRestoration()
+            composerAttachments = emptyList()
+            attachmentStorageBlocked = false
+            attachmentFailure = null
+            writerGeneration += 1L
+        }
+    }
+    val writerCreationGeneration = writerGeneration
+    val writer = remember(services, route.providerThreadId, writerCreationGeneration) {
+        services.createDraftWriter(
+            identity = DraftIdentity.ProviderThread(route.providerThreadId),
+            restorationToken = savedDraftRestoration.token,
+        )
+    }
+    DisposableEffect(writer) { onDispose { services.releaseDraftWriter(writer) } }
+    val draftStatus by writer.status.collectAsStateWithLifecycle()
+    LaunchedEffect(writer, draftStatus) {
+        if (writerCreationGeneration != writerGeneration) return@LaunchedEffect
+        when (val status = draftStatus) {
+            DraftWriteStatus.Loading -> Unit
+            is DraftWriteStatus.Active -> {
+                savedDraftRestoration = SavedDraftRestoration(status.toRestorationToken())
+            }
+            is DraftWriteStatus.Failed -> {
+                savedDraftRestoration = SavedDraftRestoration(status.toRestorationToken())
+            }
+        }
+    }
+    var attachmentAuthorityLoaded by remember(writer) { mutableStateOf(false) }
+    LaunchedEffect(writer, draftStatus) {
+        if (attachmentAuthorityLoaded) return@LaunchedEffect
+        val active = draftStatus as? DraftWriteStatus.Active ?: return@LaunchedEffect
+        if (!active.initialized || active.saving) return@LaunchedEffect
+        val draftId = active.acknowledgedDraftId
+        if (draftId == null) {
+            composerAttachments = emptyList()
+            attachmentStorageBlocked = false
+            attachmentAuthorityLoaded = true
+            return@LaunchedEffect
+        }
+        when (val result = safeReadDraftAttachments(services.draftAttachmentRepository, draftId)) {
+            is DraftRepositoryResult.Success -> {
+                val restored = result.value.toOutgoingMmsAttachmentsOrNull()
+                if (restored == null) {
+                    attachmentStorageBlocked = true
+                    attachmentFailure = ComposerAttachmentFailure.STORAGE
+                } else {
+                    composerAttachments = restored
+                    attachmentStorageBlocked = false
+                }
+            }
+            else -> {
+                attachmentStorageBlocked = true
+                attachmentFailure = ComposerAttachmentFailure.STORAGE
+            }
+        }
+        attachmentAuthorityLoaded = true
+    }
     val imageAttachmentPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(
             OutgoingMmsPayload.Message.MAX_ATTACHMENTS,
@@ -1077,52 +1144,26 @@ private fun ThreadRoute(
                         }
                     }
                 }
-                composerAttachments = admitted.toList()
-                attachmentFailure = firstFailure
+                if (admitted != composerAttachments) {
+                    if (
+                        replaceDurableComposerAttachments(
+                            writer = writer,
+                            repository = services.draftAttachmentRepository,
+                            attachments = admitted,
+                        )
+                    ) {
+                        composerAttachments = admitted.toList()
+                        attachmentStorageBlocked = false
+                        attachmentFailure = firstFailure
+                    } else {
+                        attachmentStorageBlocked = true
+                        attachmentFailure = ComposerAttachmentFailure.STORAGE
+                    }
+                } else {
+                    attachmentFailure = firstFailure
+                }
             } finally {
                 attachmentImporting = false
-            }
-        }
-    }
-    LaunchedEffect(sendObservation.completionEpoch) {
-        if (sendObservation.completionEpoch > observedCompletionEpoch) {
-            observedCompletionEpoch = sendObservation.completionEpoch
-            savedDraftRestoration = SavedDraftRestoration()
-            composerAttachments = emptyList()
-            attachmentFailure = null
-            writerGeneration += 1L
-        }
-    }
-    val writerCreationGeneration = writerGeneration
-    val writer = remember(services, route.providerThreadId, writerCreationGeneration) {
-        services.createDraftWriter(
-            identity = DraftIdentity.ProviderThread(route.providerThreadId),
-            restorationToken = savedDraftRestoration.token,
-        )
-    }
-    DisposableEffect(writer) { onDispose { services.releaseDraftWriter(writer) } }
-    val draftStatus by writer.status.collectAsStateWithLifecycle()
-    LaunchedEffect(writer, composerAttachments.isNotEmpty(), draftStatus) {
-        val active = draftStatus as? DraftWriteStatus.Active
-        if (
-            composerAttachments.isNotEmpty() &&
-            active != null &&
-            !active.saving &&
-            active.acknowledgedRevision == null &&
-            active.latest == DraftEditorContent.EMPTY
-        ) {
-            writer.submit(DraftEditorContent.EMPTY)
-        }
-    }
-    LaunchedEffect(writer, draftStatus) {
-        if (writerCreationGeneration != writerGeneration) return@LaunchedEffect
-        when (val status = draftStatus) {
-            DraftWriteStatus.Loading -> Unit
-            is DraftWriteStatus.Active -> {
-                savedDraftRestoration = SavedDraftRestoration(status.toRestorationToken())
-            }
-            is DraftWriteStatus.Failed -> {
-                savedDraftRestoration = SavedDraftRestoration(status.toRestorationToken())
             }
         }
     }
@@ -1184,7 +1225,9 @@ private fun ThreadRoute(
                 sizeBytes = attachment.size,
             )
         },
-        attachmentImporting = attachmentPickerOpen || attachmentImporting,
+        attachmentImporting =
+            attachmentPickerOpen || attachmentImporting || !attachmentAuthorityLoaded,
+        attachmentStorageAvailable = !attachmentStorageBlocked,
         attachmentFailure = attachmentFailure,
     )
     val voiceMemoController = services.voiceMemoController
@@ -1418,6 +1461,8 @@ private fun ThreadRoute(
                 if (
                     !attachmentPickerOpen &&
                     !attachmentImporting &&
+                    attachmentAuthorityLoaded &&
+                    !attachmentStorageBlocked &&
                     composerAttachments.size < OutgoingMmsPayload.Message.MAX_ATTACHMENTS
                 ) {
                     attachmentPickerOpen = true
@@ -1433,11 +1478,36 @@ private fun ThreadRoute(
                 }
             },
             onRemoveAttachment = { index ->
-                if (!attachmentPickerOpen && !attachmentImporting) {
-                    composerAttachments = composerAttachments.filterIndexed { current, _ ->
+                if (
+                    !attachmentPickerOpen &&
+                    !attachmentImporting &&
+                    attachmentAuthorityLoaded &&
+                    !attachmentStorageBlocked
+                ) {
+                    val retained = composerAttachments.filterIndexed { current, _ ->
                         current != index
                     }
+                    attachmentImporting = true
                     attachmentFailure = null
+                    scope.launch {
+                        try {
+                            if (
+                                replaceDurableComposerAttachments(
+                                    writer = writer,
+                                    repository = services.draftAttachmentRepository,
+                                    attachments = retained,
+                                )
+                            ) {
+                                composerAttachments = retained
+                                attachmentStorageBlocked = false
+                            } else {
+                                attachmentStorageBlocked = true
+                                attachmentFailure = ComposerAttachmentFailure.STORAGE
+                            }
+                        } finally {
+                            attachmentImporting = false
+                        }
+                    }
                 }
             },
             voiceMemo = voiceMemoUiState,
@@ -1475,13 +1545,27 @@ private fun ThreadRoute(
                         var sendDelayEntered = false
                         var sendDelayAttempt: SendDelayAttempt? = null
                         try {
-                            val frozenAttachments = composerAttachments.toList()
                             val frozen = writer.freezeForSend() ?: return@launch
                             // Close the base-free SavedState ABA window before
                             // the durable coordinator can clear this revision.
                             savedDraftRestoration = SavedDraftRestoration(
                                 frozen.toExactRestorationToken(),
                             )
+                            val frozenAttachments = when (
+                                val result = safeReadDraftAttachments(
+                                    services.draftAttachmentRepository,
+                                    frozen.draftId,
+                                )
+                            ) {
+                                is DraftRepositoryResult.Success ->
+                                    result.value.toOutgoingMmsAttachmentsOrNull()
+                                else -> null
+                            }
+                            if (frozenAttachments == null) {
+                                attachmentStorageBlocked = true
+                                attachmentFailure = ComposerAttachmentFailure.STORAGE
+                                return@launch
+                            }
                             val frozenBody = frozen.content.body?.takeIf(String::isNotBlank)
                             if (frozenBody == null && frozenAttachments.isEmpty()) return@launch
                             val ready = threadState as? ThreadUiState.Ready ?: return@launch
@@ -2336,6 +2420,7 @@ private fun DraftWriteStatus.toComposerUiState(
     permanentDeletionActive: Boolean = false,
     attachments: List<ComposerAttachmentUiItem> = emptyList(),
     attachmentImporting: Boolean = false,
+    attachmentStorageAvailable: Boolean = true,
     attachmentFailure: ComposerAttachmentFailure? = null,
 ): ComposerUiState {
     val body = when (this) {
@@ -2366,6 +2451,8 @@ private fun DraftWriteStatus.toComposerUiState(
             ComposerUnavailableReason.RECOVERY_PENDING
         permanentDeletionActive -> ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE
         attachmentImporting -> ComposerUnavailableReason.ATTACHMENT_PROCESSING
+        !attachmentStorageAvailable ->
+            ComposerUnavailableReason.ATTACHMENT_STORAGE_UNAVAILABLE
         failed || saving ->
             ComposerUnavailableReason.DRAFT_NOT_DURABLE
         body.isBlank() && attachments.isEmpty() -> ComposerUnavailableReason.EMPTY_MESSAGE
@@ -2512,6 +2599,87 @@ internal fun shouldUnfreezeComposerAsRefused(
     coordinatorEntered: Boolean,
     attempt: ThreadSmsSendAttempt?,
 ): Boolean = !coordinatorEntered || attempt == ThreadSmsSendAttempt.REFUSED
+
+private suspend fun replaceDurableComposerAttachments(
+    writer: SerializedDraftWriter,
+    repository: DraftAttachmentRepository,
+    attachments: List<OutgoingMmsAttachment>,
+): Boolean {
+    val durable = attachments.map { attachment ->
+        when (
+            val result = DraftAttachment.create(
+                attachment.contentType,
+                attachment.copyBytes(),
+            )
+        ) {
+            is DraftAttachment.CreationResult.Valid -> result.attachment
+            is DraftAttachment.CreationResult.Rejected -> return false
+        }
+    }
+    if (!DraftAttachment.isValidSet(durable)) return false
+    repeat(MAXIMUM_ATTACHMENT_REPLACE_ATTEMPTS) {
+        var active = writer.status.value as? DraftWriteStatus.Active ?: return false
+        if (!active.initialized) return false
+        if (active.acknowledgedDraftId == null && !active.saving) {
+            if (!writer.submit(active.latest)) return false
+        }
+        if (!writer.flush()) return false
+        active = writer.status.value as? DraftWriteStatus.Active ?: return false
+        val draftId = active.acknowledgedDraftId ?: return false
+        val revision = active.acknowledgedRevision ?: return false
+        when (safeReplaceDraftAttachments(repository, draftId, revision, durable)) {
+            is DraftRepositoryResult.Success -> return true
+            DraftRepositoryResult.StaleWrite -> Unit
+            else -> return false
+        }
+    }
+    return false
+}
+
+private suspend fun safeReadDraftAttachments(
+    repository: DraftAttachmentRepository,
+    draftId: DraftId,
+): DraftRepositoryResult<List<DraftAttachment>> = try {
+    repository.read(draftId)
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: RuntimeException) {
+    DraftRepositoryResult.StorageFailure(DraftStorageOperation.READ)
+}
+
+private suspend fun safeReplaceDraftAttachments(
+    repository: DraftAttachmentRepository,
+    draftId: DraftId,
+    revision: DraftRevision,
+    attachments: List<DraftAttachment>,
+): DraftRepositoryResult<List<DraftAttachment>> = try {
+    repository.replace(draftId, revision, attachments)
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: RuntimeException) {
+    DraftRepositoryResult.StorageFailure(DraftStorageOperation.UPDATE)
+}
+
+private fun List<DraftAttachment>.toOutgoingMmsAttachmentsOrNull():
+    List<OutgoingMmsAttachment>? {
+    if (!DraftAttachment.isValidSet(this)) return null
+    val converted = map { attachment ->
+        when (
+            val result = OutgoingMmsAttachment.create(
+                attachment.contentType,
+                attachment.copyBytes(),
+            )
+        ) {
+            is OutgoingMmsAttachment.CreationResult.Valid -> result.attachment
+            is OutgoingMmsAttachment.CreationResult.Rejected -> return null
+        }
+    }
+    return converted.takeIf { attachments ->
+        attachments.size <= OutgoingMmsPayload.Message.MAX_ATTACHMENTS &&
+            attachments.sumOf { it.size.toLong() } <=
+            OutgoingMmsPayload.Message.MAX_ATTACHMENT_BYTES_TOTAL
+    }
+}
 
 private fun isConservativeDialAddress(address: ParticipantAddress): Boolean {
     val value = address.value
@@ -2667,6 +2835,7 @@ private fun restoreRoute(bundle: Bundle): AppRoute? = try {
 private val DIAL_PUNCTUATION: Set<Char> = setOf('+', '*', '#', '(', ')', '-', '.', ' ')
 private const val MAXIMUM_DIAL_ADDRESS_CHARACTERS: Int = 64
 private const val MAXIMUM_RETAINED_ROUTES: Int = 16
+private const val MAXIMUM_ATTACHMENT_REPLACE_ATTEMPTS: Int = 3
 private const val ROUTES_KEY: String = "routes"
 private const val ROUTE_TYPE_KEY: String = "type"
 private const val ROUTE_QUERY_KEY: String = "query"

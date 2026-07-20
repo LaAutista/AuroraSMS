@@ -1912,6 +1912,8 @@ private fun Composer(
             stringResource(R.string.image_attachment_too_large)
         state.attachmentFailure == ComposerAttachmentFailure.LIMIT_REACHED ->
             stringResource(R.string.image_attachment_limit_reached)
+        state.attachmentFailure == ComposerAttachmentFailure.STORAGE ->
+            stringResource(R.string.image_attachment_storage_unavailable)
         state.scheduleState is ComposerScheduleState.Loading ->
             stringResource(R.string.checking_scheduled_message)
         state.scheduleState is ComposerScheduleState.Pending -> {
@@ -1972,6 +1974,8 @@ private fun Composer(
             stringResource(R.string.messaging_send_unavailable)
         state.unavailableReason == ComposerUnavailableReason.SIGNATURE_STATE_UNAVAILABLE ->
             stringResource(R.string.signature_state_unavailable)
+        state.unavailableReason == ComposerUnavailableReason.ATTACHMENT_STORAGE_UNAVAILABLE ->
+            stringResource(R.string.image_attachment_storage_unavailable)
         state.unavailableReason == ComposerUnavailableReason.EMPTY_MESSAGE ->
             stringResource(R.string.type_message_to_send)
         state.unavailableReason == ComposerUnavailableReason.DRAFT_NOT_DURABLE ->

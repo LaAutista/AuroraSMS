@@ -24,6 +24,11 @@ import org.aurorasms.core.index.MessageIndex
 import org.aurorasms.core.index.conversation.ConversationRepository
 import org.aurorasms.core.index.timeline.ThreadTimelineRepository
 import org.aurorasms.core.state.DraftIdentity
+import org.aurorasms.core.state.DraftAttachment
+import org.aurorasms.core.state.DraftAttachmentRepository
+import org.aurorasms.core.state.DraftId
+import org.aurorasms.core.state.DraftRepositoryResult
+import org.aurorasms.core.state.DraftRevision
 import org.aurorasms.core.state.ConversationSubscriptionPreferenceRepository
 import org.aurorasms.core.state.SpamSafetyRepository
 import org.aurorasms.core.state.SpamClassification
@@ -52,6 +57,8 @@ internal interface AuroraSmsRootServices {
     val subscriptionRepository: SubscriptionRepository
     val conversationSubscriptionPreferenceRepository:
         ConversationSubscriptionPreferenceRepository
+    val draftAttachmentRepository: DraftAttachmentRepository
+        get() = EmptyRootDraftAttachmentRepository
     val spamSafetyRepository: SpamSafetyRepository
         get() = UnavailableRootSpamSafetyRepository
     val mmsAttachmentRepository: MmsAttachmentRepository
@@ -87,6 +94,18 @@ internal interface AuroraSmsRootServices {
     ): SerializedDraftWriter
 
     fun releaseDraftWriter(writer: SerializedDraftWriter)
+}
+
+private object EmptyRootDraftAttachmentRepository : DraftAttachmentRepository {
+    override suspend fun read(
+        draftId: DraftId,
+    ): DraftRepositoryResult<List<DraftAttachment>> = DraftRepositoryResult.Success(emptyList())
+
+    override suspend fun replace(
+        draftId: DraftId,
+        expectedRevision: DraftRevision,
+        attachments: List<DraftAttachment>,
+    ): DraftRepositoryResult<List<DraftAttachment>> = DraftRepositoryResult.Success(attachments)
 }
 
 private object UnavailableRootSpamSafetyRepository : SpamSafetyRepository {
@@ -129,6 +148,8 @@ internal class AppContainerAuroraSmsRootServices(
     override val conversationSubscriptionPreferenceRepository:
         ConversationSubscriptionPreferenceRepository
         get() = container.conversationSubscriptionPreferenceRepository
+    override val draftAttachmentRepository: DraftAttachmentRepository
+        get() = container.draftAttachmentRepository
     override val spamSafetyRepository: SpamSafetyRepository
         get() = container.spamSafetyRepository
     override val mmsAttachmentRepository: MmsAttachmentRepository

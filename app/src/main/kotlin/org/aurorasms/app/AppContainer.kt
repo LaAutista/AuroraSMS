@@ -191,6 +191,8 @@ import org.aurorasms.core.state.ConversationSubscriptionRevision
 import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.state.ConversationSubscriptionStorageOperation
 import org.aurorasms.core.state.Draft
+import org.aurorasms.core.state.DraftAttachment
+import org.aurorasms.core.state.DraftAttachmentRepository
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.core.state.DraftRepository
@@ -203,6 +205,7 @@ import org.aurorasms.core.state.storage.RoomAppearanceProfileRepository
 import org.aurorasms.core.state.storage.RoomComposerSmsOperationRepository
 import org.aurorasms.core.state.storage.RoomConversationSubscriptionPreferenceRepository
 import org.aurorasms.core.state.storage.RoomDraftRepository
+import org.aurorasms.core.state.storage.RoomDraftAttachmentRepository
 import org.aurorasms.core.state.storage.RoomScheduledSmsRepository
 import org.aurorasms.core.state.storage.RoomSendDelayRepository
 import org.aurorasms.core.state.storage.RoomPermanentDeletionRepository
@@ -328,6 +331,8 @@ class AppContainer(
     val stateStorageStatus: StateFlow<StateStorageStatus> = _stateStorageStatus.asStateFlow()
     private val stateRuntimeState = MutableStateFlow<StateRuntimeState>(StateRuntimeState.Opening)
     val draftRepository: DraftRepository = DeferredDraftRepository(stateRuntimeState)
+    val draftAttachmentRepository: DraftAttachmentRepository =
+        DeferredDraftAttachmentRepository(stateRuntimeState)
     val appearanceProfileRepository: AppearanceProfileRepository =
         DeferredAppearanceProfileRepository(stateRuntimeState)
     private val appearanceWallpaperRepository: AppearanceWallpaperRepository =
@@ -502,6 +507,7 @@ class AppContainer(
             deferredPermanentDeletionController.install(UnavailablePermanentDeletionController)
             stateRuntimeState.value = StateRuntimeState.Ready(
                 draftRepository = EmptyBenchmarkDraftRepository,
+                draftAttachmentRepository = EmptyBenchmarkDraftAttachmentRepository,
                 appearanceProfileRepository = EmptyBenchmarkAppearanceProfileRepository,
                 appearanceWallpaperRepository = EmptyBenchmarkAppearanceWallpaperRepository,
                 conversationSubscriptionPreferenceRepository =
@@ -568,6 +574,8 @@ class AppContainer(
                         )
                         stateRuntimeState.value = StateRuntimeState.Ready(
                             draftRepository = RoomDraftRepository(result.database),
+                            draftAttachmentRepository =
+                                RoomDraftAttachmentRepository(result.database),
                             appearanceProfileRepository = appearanceRepository,
                             appearanceWallpaperRepository = appearanceRepository,
                             conversationSubscriptionPreferenceRepository =
@@ -1313,6 +1321,19 @@ private object EmptyBenchmarkDraftRepository : DraftRepository {
         DraftRepositoryResult.StorageFailure(DraftStorageOperation.DELETE)
 }
 
+private object EmptyBenchmarkDraftAttachmentRepository : DraftAttachmentRepository {
+    override suspend fun read(
+        draftId: DraftId,
+    ): DraftRepositoryResult<List<DraftAttachment>> = DraftRepositoryResult.NotFound
+
+    override suspend fun replace(
+        draftId: DraftId,
+        expectedRevision: DraftRevision,
+        attachments: List<DraftAttachment>,
+    ): DraftRepositoryResult<List<DraftAttachment>> =
+        DraftRepositoryResult.StorageFailure(DraftStorageOperation.UPDATE)
+}
+
 private object EmptyBenchmarkAppearanceProfileRepository : AppearanceProfileRepository {
     override val snapshots: Flow<AppearanceSnapshot> = flowOf(AppearanceSnapshot.Empty)
 
@@ -1525,6 +1546,7 @@ private sealed interface StateRuntimeState {
     data object Opening : StateRuntimeState
     data class Ready(
         val draftRepository: DraftRepository,
+        val draftAttachmentRepository: DraftAttachmentRepository,
         val appearanceProfileRepository: AppearanceProfileRepository,
         val appearanceWallpaperRepository: AppearanceWallpaperRepository,
         val conversationSubscriptionPreferenceRepository:
@@ -1555,6 +1577,25 @@ private class DeferredDraftRepository(
         runtimeState.awaitReadyDraftRepository().delete(id)
 
     override fun toString(): String = "DeferredDraftRepository(content=REDACTED)"
+}
+
+private class DeferredDraftAttachmentRepository(
+    private val runtimeState: StateFlow<StateRuntimeState>,
+) : DraftAttachmentRepository {
+    override suspend fun read(
+        draftId: DraftId,
+    ): DraftRepositoryResult<List<DraftAttachment>> =
+        runtimeState.awaitReadyDraftAttachmentRepository().read(draftId)
+
+    override suspend fun replace(
+        draftId: DraftId,
+        expectedRevision: DraftRevision,
+        attachments: List<DraftAttachment>,
+    ): DraftRepositoryResult<List<DraftAttachment>> =
+        runtimeState.awaitReadyDraftAttachmentRepository()
+            .replace(draftId, expectedRevision, attachments)
+
+    override fun toString(): String = "DeferredDraftAttachmentRepository(content=REDACTED)"
 }
 
 private class DeferredConversationSubscriptionPreferenceRepository(
@@ -1872,6 +1913,19 @@ private suspend fun StateFlow<StateRuntimeState>.awaitReadyDraftRepository(): Dr
     }
     return when (state) {
         is StateRuntimeState.Ready -> state.draftRepository
+        is StateRuntimeState.Failed -> throw StateStorageUnavailableException()
+        StateRuntimeState.Opening -> error("State runtime did not leave opening state")
+    }
+}
+
+private suspend fun StateFlow<StateRuntimeState>.awaitReadyDraftAttachmentRepository():
+    DraftAttachmentRepository {
+    val state = when (val current = value) {
+        StateRuntimeState.Opening -> first { it !is StateRuntimeState.Opening }
+        else -> current
+    }
+    return when (state) {
+        is StateRuntimeState.Ready -> state.draftAttachmentRepository
         is StateRuntimeState.Failed -> throw StateStorageUnavailableException()
         StateRuntimeState.Opening -> error("State runtime did not leave opening state")
     }

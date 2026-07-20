@@ -203,6 +203,7 @@ enum class ComposerAttachmentFailure {
     UNSUPPORTED,
     TOO_LARGE,
     LIMIT_REACHED,
+    STORAGE,
 }
 
 sealed interface ComposerScheduleState {
@@ -271,6 +272,7 @@ enum class ComposerUnavailableReason {
     MESSAGING_UNAVAILABLE,
     SIGNATURE_STATE_UNAVAILABLE,
     ATTACHMENT_PROCESSING,
+    ATTACHMENT_STORAGE_UNAVAILABLE,
 }
 
 data class VoiceMemoUiState(

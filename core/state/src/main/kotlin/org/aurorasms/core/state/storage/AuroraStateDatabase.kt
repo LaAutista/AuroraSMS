@@ -8,6 +8,7 @@ import androidx.room.RoomDatabase
 @Database(
     entities = [
         DraftEntity::class,
+        DraftAttachmentEntity::class,
         AppearanceProfileEntity::class,
         AppearanceSelectionEntity::class,
         AppearanceScreenOverrideEntity::class,
@@ -29,6 +30,8 @@ import androidx.room.RoomDatabase
 abstract class AuroraStateDatabase : RoomDatabase() {
     internal abstract fun draftDao(): DraftDao
 
+    internal abstract fun draftAttachmentDao(): DraftAttachmentDao
+
     internal abstract fun appearanceProfileDao(): AppearanceProfileDao
 
     internal abstract fun appearanceOverrideDao(): AppearanceOverrideDao
@@ -47,6 +50,6 @@ abstract class AuroraStateDatabase : RoomDatabase() {
     internal abstract fun spamSafetyDecisionDao(): SpamSafetyDecisionDao
 
     companion object {
-        const val VERSION: Int = 13
+        const val VERSION: Int = 14
     }
 }
