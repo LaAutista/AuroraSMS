@@ -7,11 +7,12 @@ import android.content.Context
 import android.content.SharedPreferences
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
-import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
+import org.aurorasms.core.model.PendingOperationNamespace
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
+import org.aurorasms.core.model.pendingOperationNamespaceOrNull
 
 /** Content-free crash-ordering owner for the outgoing MMS provider/platform boundary. */
 @SuppressLint("ApplySharedPref", "UseKtx")
@@ -300,6 +301,9 @@ internal class OutgoingMmsSubmissionJournal(
 }
 
 private fun MessageId.isValid(): Boolean =
-    kind == ProviderKind.PENDING_OPERATION && value in 1L until COMPOSER_OPERATION_ID_BOUNDARY
+    pendingOperationNamespaceOrNull() in setOf(
+        PendingOperationNamespace.RESPOND_VIA,
+        PendingOperationNamespace.COMPOSER,
+    )
 
 private fun String.ascii(): ByteArray = toByteArray(StandardCharsets.US_ASCII)

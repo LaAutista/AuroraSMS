@@ -8,6 +8,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.util.UUID
 import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.INCOMING_MMS_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
@@ -96,6 +97,22 @@ class OutgoingMmsSubmissionJournalTest {
         assertFalse((stored as String).contains("recipient", ignoreCase = true))
         assertFalse(stored.contains("audio", ignoreCase = true))
         assertTrue(journal.recoverySnapshot().toString().contains("REDACTED"))
+    }
+
+    @Test
+    fun outgoingJournalAcceptsRespondAndComposerButRejectsIncomingNamespace() = withStore { name ->
+        val journal = journal(name)
+        val composer = MessageId(
+            ProviderKind.PENDING_OPERATION,
+            COMPOSER_OPERATION_ID_BOUNDARY + 1L,
+        )
+        val incoming = MessageId(
+            ProviderKind.PENDING_OPERATION,
+            INCOMING_MMS_OPERATION_ID_BOUNDARY + 1L,
+        )
+
+        assertTrue(journal.reserve(composer, CONVERSATION, "mms-composer"))
+        assertFalse(journal.reserve(incoming, CONVERSATION, "mms-incoming"))
     }
 
     private fun journal(

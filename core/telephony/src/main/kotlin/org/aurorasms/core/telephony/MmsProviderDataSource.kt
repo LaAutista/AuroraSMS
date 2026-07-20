@@ -223,6 +223,30 @@ data class OutgoingVoiceMemoProviderRecord(
             "encodedSize=$encodedSize, REDACTED)"
 }
 
+/** Exact provider projection for one bounded ordinary direct or group MMS. */
+data class OutgoingMmsProviderRecord(
+    val operationId: MessageId,
+    val providerThreadId: ProviderThreadId,
+    val recipients: RecipientSet,
+    val payload: OutgoingMmsPayload.Message,
+    val encodedSize: Int,
+    val transactionId: String,
+    val timestampMillis: Long,
+    val subscriptionId: AuroraSubscriptionId,
+) {
+    init {
+        require(operationId.kind == ProviderKind.PENDING_OPERATION && operationId.value > 0L)
+        require(recipients.size in 1..MmsProviderMessage.MAX_MMS_PARTICIPANTS)
+        require(encodedSize in 1..EncodedMmsPdu.MAX_ENCODED_BYTES)
+        require(transactionId.matches(Regex("[A-Za-z0-9._-]{1,64}")))
+        require(timestampMillis >= 0L)
+    }
+
+    override fun toString(): String =
+        "OutgoingMmsProviderRecord(recipientCount=${recipients.size}, payload=$payload, " +
+            "encodedSize=$encodedSize, REDACTED)"
+}
+
 enum class OutgoingMmsProviderStatus {
     FAILED,
     OUTBOX,
@@ -252,6 +276,11 @@ interface MmsProviderDataSource {
         message: OutgoingVoiceMemoProviderRecord,
     ): ProviderAccessResult<ProviderStoredMessage> =
         ProviderAccessResult.Unsupported("insert outgoing voice memo")
+
+    suspend fun insertOutgoing(
+        message: OutgoingMmsProviderRecord,
+    ): ProviderAccessResult<ProviderStoredMessage> =
+        ProviderAccessResult.Unsupported("insert outgoing MMS")
 
     suspend fun updateOutgoingStatus(
         id: ProviderMessageId,

@@ -224,6 +224,67 @@ class OutgoingVoiceMemo private constructor(
     }
 }
 
+/** One bounded, metadata-stripped attachment selected for an explicit MMS send. */
+class OutgoingMmsAttachment private constructor(
+    val contentType: String,
+    bytes: ByteArray,
+) {
+    private val bytes: ByteArray = bytes.copyOf()
+
+    val size: Int
+        get() = bytes.size
+
+    fun copyBytes(): ByteArray = bytes.copyOf()
+
+    override fun equals(other: Any?): Boolean =
+        other is OutgoingMmsAttachment &&
+            contentType == other.contentType &&
+            Arrays.equals(bytes, other.bytes)
+
+    override fun hashCode(): Int = 31 * contentType.hashCode() + Arrays.hashCode(bytes)
+
+    override fun toString(): String =
+        "OutgoingMmsAttachment(contentType=$contentType, size=$size, content=REDACTED)"
+
+    companion object {
+        const val MAX_BYTES: Int = 786_432
+        const val IMAGE_JPEG: String = "image/jpeg"
+        const val IMAGE_PNG: String = "image/png"
+        const val IMAGE_GIF: String = "image/gif"
+        const val IMAGE_WEBP: String = "image/webp"
+        const val AUDIO_MP4: String = "audio/mp4"
+        const val VIDEO_MP4: String = "video/mp4"
+
+        val SUPPORTED_CONTENT_TYPES: Set<String> = setOf(
+            IMAGE_JPEG,
+            IMAGE_PNG,
+            IMAGE_GIF,
+            IMAGE_WEBP,
+            AUDIO_MP4,
+            VIDEO_MP4,
+        )
+
+        fun create(contentType: String, bytes: ByteArray): CreationResult = when {
+            contentType !in SUPPORTED_CONTENT_TYPES ->
+                CreationResult.Rejected(CreationResult.Reason.UNSUPPORTED_CONTENT_TYPE)
+            bytes.isEmpty() -> CreationResult.Rejected(CreationResult.Reason.EMPTY)
+            bytes.size > MAX_BYTES -> CreationResult.Rejected(CreationResult.Reason.TOO_LARGE)
+            else -> CreationResult.Valid(OutgoingMmsAttachment(contentType, bytes))
+        }
+    }
+
+    sealed interface CreationResult {
+        data class Valid(val attachment: OutgoingMmsAttachment) : CreationResult
+        data class Rejected(val reason: Reason) : CreationResult
+
+        enum class Reason {
+            EMPTY,
+            TOO_LARGE,
+            UNSUPPORTED_CONTENT_TYPE,
+        }
+    }
+}
+
 sealed interface OutgoingMmsPayload {
     data class Encoded(val pdu: EncodedMmsPdu) : OutgoingMmsPayload
 
@@ -251,6 +312,56 @@ sealed interface OutgoingMmsPayload {
         override fun toString(): String =
             "OutgoingMmsPayload.VoiceMemo(textLength=${text?.length ?: 0}, " +
                 "hasSubject=${subject != null}, memo=$memo)"
+    }
+
+    /** General one-person or group MMS content after attachment sanitization. */
+    class Message(
+        val text: String?,
+        val subject: String?,
+        attachments: List<OutgoingMmsAttachment>,
+    ) : OutgoingMmsPayload {
+        val attachments: List<OutgoingMmsAttachment> = attachments.toList()
+
+        init {
+            require(text == null || text.length <= SmsSendRequest.MAX_OUTGOING_TEXT_CHARACTERS) {
+                "MMS text is too large"
+            }
+            require(subject == null || subject.length <= MmsProviderMessage.MAX_MMS_SUBJECT_CHARACTERS) {
+                "MMS subject is too large"
+            }
+            require(text?.all { !it.isISOControl() || it == '\n' || it == '\r' || it == '\t' } != false) {
+                "MMS text contains an unsupported control character"
+            }
+            require(subject?.any(Char::isISOControl) != true) {
+                "MMS subject contains a control character"
+            }
+            require(text == null || text.isNotBlank()) { "MMS text cannot be blank" }
+            require(subject == null || subject.isNotBlank()) { "MMS subject cannot be blank" }
+            require(this.attachments.size <= MAX_ATTACHMENTS) { "MMS attachment count is invalid" }
+            require(this.attachments.sumOf { it.size.toLong() } <= MAX_ATTACHMENT_BYTES_TOTAL) {
+                "MMS attachment aggregate is too large"
+            }
+            require(text != null || this.attachments.isNotEmpty()) {
+                "An MMS needs text or an attachment"
+            }
+        }
+
+        override fun equals(other: Any?): Boolean =
+            other is Message &&
+                text == other.text &&
+                subject == other.subject &&
+                attachments == other.attachments
+
+        override fun hashCode(): Int = 31 * (31 * text.hashCode() + subject.hashCode()) + attachments.hashCode()
+
+        override fun toString(): String =
+            "OutgoingMmsPayload.Message(textLength=${text?.length ?: 0}, " +
+                "hasSubject=${subject != null}, attachmentCount=${attachments.size}, REDACTED)"
+
+        companion object {
+            const val MAX_ATTACHMENTS: Int = 10
+            const val MAX_ATTACHMENT_BYTES_TOTAL: Long = 917_504L
+        }
     }
 
     /** High-level content that cannot be sent until an audited codec exists. */
@@ -290,14 +401,18 @@ data class MmsSendRequest(
         require(operationId.kind == ProviderKind.PENDING_OPERATION) {
             "Transport operations need a pending-operation ID"
         }
-        require(payload !is OutgoingMmsPayload.VoiceMemo || providerThreadId != null) {
-            "Voice memos require one verified provider thread identity"
+        require(
+            (payload !is OutgoingMmsPayload.VoiceMemo && payload !is OutgoingMmsPayload.Message) ||
+                providerThreadId != null,
+        ) {
+            "High-level MMS content requires one verified provider thread identity"
         }
     }
 
     override fun toString(): String {
         val payloadKind = when (payload) {
             is OutgoingMmsPayload.Encoded -> "Encoded"
+            is OutgoingMmsPayload.Message -> "Message"
             is OutgoingMmsPayload.RequiresEncoding -> "RequiresEncoding"
             is OutgoingMmsPayload.VoiceMemo -> "VoiceMemo"
         }

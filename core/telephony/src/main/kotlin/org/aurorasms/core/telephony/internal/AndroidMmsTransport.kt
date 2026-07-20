@@ -31,6 +31,7 @@ import org.aurorasms.core.telephony.MmsProviderDataSource
 import org.aurorasms.core.telephony.MmsStagedPduDisposition
 import org.aurorasms.core.telephony.MmsSendRequest
 import org.aurorasms.core.telephony.OutgoingMmsPayload
+import org.aurorasms.core.telephony.OutgoingMmsProviderRecord
 import org.aurorasms.core.telephony.OutgoingMmsProviderStatus
 import org.aurorasms.core.telephony.OutgoingMmsRecoveryResult
 import org.aurorasms.core.telephony.OutgoingMmsStatusUpdateOutcome
@@ -48,11 +49,13 @@ class AndroidMmsTransport(
     private val subscriptions: SubscriptionRepository,
     private val stagingStore: MmsPduStagingStore,
     private val provider: MmsProviderDataSource,
+    private val sendSubmitter: ((MmsSendRequest, StagedMmsPdu, PendingIntent) -> Unit)? = null,
     private val downloadSubmitter: ((MmsDownloadRequest, StagedMmsPdu, PendingIntent) -> Unit)? = null,
     private val ownAddressResolver: ((org.aurorasms.core.model.AuroraSubscriptionId) -> ParticipantAddress?)? = null,
 ) {
     private val appContext = context.applicationContext
     private val voiceMemoEncoder = VoiceMemoMmsEncoder(appContext)
+    private val generalMmsEncoder = GeneralMmsEncoder(appContext)
     private val submissionJournal = OutgoingMmsSubmissionJournal(appContext)
     private val submissionMutex = Mutex()
     private val incomingDownloadJournal = IncomingMmsDownloadJournal(appContext)
@@ -60,7 +63,10 @@ class AndroidMmsTransport(
     private val incomingDecoder = BoundedMmsPduDecoder()
 
     suspend fun sendMms(request: MmsSendRequest): TransportResult =
-        if (request.payload is OutgoingMmsPayload.VoiceMemo) {
+        if (
+            request.payload is OutgoingMmsPayload.VoiceMemo ||
+            request.payload is OutgoingMmsPayload.Message
+        ) {
             submissionMutex.withLock {
                 if (!recoverOutgoingSubmissionsLocked().acceptsNewSubmissions) {
                     request.failed(
@@ -130,6 +136,7 @@ class AndroidMmsTransport(
         if (rejection != null) return request.rejected(rejection)
         val encodedVoiceMemo = when (val payload = request.payload) {
             is OutgoingMmsPayload.Encoded -> null
+            is OutgoingMmsPayload.Message -> null
             is OutgoingMmsPayload.VoiceMemo -> when (
                 val result = voiceMemoEncoder.encode(request.recipients, payload)
             ) {
@@ -151,12 +158,43 @@ class AndroidMmsTransport(
                 return request.rejected(TransportResult.FailureReason.CODEC_UNAVAILABLE)
             }
         }
-        val encoded = encodedVoiceMemo?.pdu ?: (request.payload as OutgoingMmsPayload.Encoded).pdu
-        val stored = if (encodedVoiceMemo != null) {
-            prepareVoiceMemoProviderRow(request, request.payload as OutgoingMmsPayload.VoiceMemo, encodedVoiceMemo)
-                ?: return request.rejected(TransportResult.FailureReason.PROVIDER_UNAVAILABLE)
-        } else {
-            null
+        val encodedGeneral = when (val payload = request.payload) {
+            is OutgoingMmsPayload.Message -> when (val result = generalMmsEncoder.encode(request.recipients, payload)) {
+                is GeneralMmsEncodingResult.Encoded -> result
+                is GeneralMmsEncodingResult.Rejected -> return request.rejected(
+                    when (result.reason) {
+                        GeneralMmsEncodingFailure.INVALID_METADATA ->
+                            TransportResult.FailureReason.PLATFORM_REJECTED
+                        GeneralMmsEncodingFailure.PAYLOAD_TOO_LARGE ->
+                            TransportResult.FailureReason.PAYLOAD_TOO_LARGE
+                        GeneralMmsEncodingFailure.COMPOSITION_FAILED ->
+                            TransportResult.FailureReason.INTERNAL_ERROR
+                    },
+                )
+            }
+            is OutgoingMmsPayload.Encoded,
+            is OutgoingMmsPayload.RequiresEncoding,
+            is OutgoingMmsPayload.VoiceMemo,
+            -> null
+        }
+        val encoded = encodedVoiceMemo?.pdu
+            ?: encodedGeneral?.pdu
+            ?: (request.payload as OutgoingMmsPayload.Encoded).pdu
+        val stored = when {
+            encodedVoiceMemo != null -> prepareVoiceMemoProviderRow(
+                request,
+                request.payload as OutgoingMmsPayload.VoiceMemo,
+                encodedVoiceMemo,
+            )
+            encodedGeneral != null -> prepareGeneralMmsProviderRow(
+                request,
+                request.payload as OutgoingMmsPayload.Message,
+                encodedGeneral,
+            )
+            else -> null
+        }
+        if ((encodedVoiceMemo != null || encodedGeneral != null) && stored == null) {
+            return request.rejected(TransportResult.FailureReason.PROVIDER_UNAVAILABLE)
         }
         val staged = when (val result = stagingStore.stageSend(request.operationId, encoded)) {
             is MmsStagingResult.Ready -> result.staged
@@ -172,7 +210,7 @@ class AndroidMmsTransport(
             }
         }
         val resultIntent: PendingIntent
-        val manager: SmsManager
+        val manager: SmsManager?
         try {
             resultIntent = PendingIntent.getBroadcast(
                 appContext,
@@ -186,7 +224,7 @@ class AndroidMmsTransport(
                 ),
                 CALLBACK_FLAGS,
             )
-            manager = smsManager(request.subscriptionId.value)
+            manager = if (sendSubmitter == null) smsManager(request.subscriptionId.value) else null
         } catch (_: SecurityException) {
             stagingStore.cleanup(staged.uri, MmsPduDirection.SEND_SOURCE)
             stored?.let { terminalizeKnownUnsent(request, it) }
@@ -223,8 +261,11 @@ class AndroidMmsTransport(
             }
         }
         return try {
-            if (Build.VERSION.SDK_INT >= 31) {
-                manager.sendMultimediaMessage(
+            val submitter = sendSubmitter
+            if (submitter != null) {
+                submitter(request, staged, resultIntent)
+            } else if (Build.VERSION.SDK_INT >= 31) {
+                checkNotNull(manager).sendMultimediaMessage(
                     appContext,
                     staged.uri,
                     null,
@@ -233,7 +274,7 @@ class AndroidMmsTransport(
                     request.operationId.value,
                 )
             } else {
-                manager.sendMultimediaMessage(appContext, staged.uri, null, null, resultIntent)
+                checkNotNull(manager).sendMultimediaMessage(appContext, staged.uri, null, null, resultIntent)
             }
             TransportResult.Submitted(
                 operationId = request.operationId,
@@ -283,6 +324,41 @@ class AndroidMmsTransport(
                     text = payload.text,
                     subject = payload.subject,
                     memo = payload.memo,
+                    encodedSize = encoded.pdu.size,
+                    transactionId = encoded.transactionId,
+                    timestampMillis = encoded.timestampMillis,
+                    subscriptionId = request.subscriptionId,
+                ),
+            )
+        ) {
+            is ProviderAccessResult.Success -> inserted.value
+            else -> {
+                rollbackVoiceMemoPreparation(request, conversationId, encoded.transactionId)
+                return null
+            }
+        }
+        if (!submissionJournal.markPrepared(request.operationId, stored.providerId, stored.conversationId)) {
+            rollbackVoiceMemoPreparation(request, stored.conversationId, encoded.transactionId)
+            return null
+        }
+        return stored
+    }
+
+    private suspend fun prepareGeneralMmsProviderRow(
+        request: MmsSendRequest,
+        payload: OutgoingMmsPayload.Message,
+        encoded: GeneralMmsEncodingResult.Encoded,
+    ): ProviderStoredMessage? {
+        val threadId = request.providerThreadId ?: return null
+        val conversationId = threadId.let { org.aurorasms.core.model.ConversationId(it.value) }
+        if (!submissionJournal.reserve(request.operationId, conversationId, encoded.transactionId)) return null
+        val stored = when (
+            val inserted = provider.insertOutgoing(
+                OutgoingMmsProviderRecord(
+                    operationId = request.operationId,
+                    providerThreadId = threadId,
+                    recipients = request.recipients,
+                    payload = payload,
                     encodedSize = encoded.pdu.size,
                     transactionId = encoded.transactionId,
                     timestampMillis = encoded.timestampMillis,

@@ -30,6 +30,9 @@ import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.DecodedIncomingMmsPart
 import org.aurorasms.core.telephony.DecodedIncomingMmsRecord
 import org.aurorasms.core.telephony.IncomingDeliveryDisposition
+import org.aurorasms.core.telephony.OutgoingMmsAttachment
+import org.aurorasms.core.telephony.OutgoingMmsPayload
+import org.aurorasms.core.telephony.OutgoingMmsProviderRecord
 import org.aurorasms.core.telephony.OutgoingMmsProviderStatus
 import org.aurorasms.core.telephony.OutgoingMmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.OutgoingVoiceMemo
@@ -173,6 +176,39 @@ class AndroidMmsProviderDataSourceOutgoingTest {
     }
 
     @Test
+    fun generalGroupMmsPersistsOneOwnedRowWithEveryRecipientAndSanitizedPart() = runBlocking {
+        val record = generalRecord(operation = 108L, transaction = "provider-test-108")
+
+        val stored = dataSource.insertOutgoing(record).successValue()
+
+        assertEquals(ProviderMessageId(ProviderKind.MMS, 41L), stored.providerId)
+        assertEquals(ConversationId(73L), stored.conversationId)
+        assertEquals(0, provider.dummyPartCount(record.operationId.value))
+        assertEquals(4, provider.partCount(41L))
+        assertEquals(2, provider.addressCount(41L))
+        assertArrayEquals(IMAGE_BYTES, provider.partBytes(41L, OutgoingMmsAttachment.IMAGE_PNG))
+        assertArrayEquals(AUDIO_BYTES, provider.partBytes(41L, OutgoingMmsAttachment.AUDIO_MP4))
+        assertEquals(GENERAL_TEXT, provider.partText(41L, "text/plain"))
+        assertEquals("Synthetic general subject", provider.messageValue(41L, Telephony.Mms.SUBJECT))
+        assertEquals(0, provider.messageValue(41L, Telephony.Mms.TEXT_ONLY))
+        assertEquals(Telephony.Mms.MESSAGE_BOX_FAILED, provider.messageBox(41L))
+    }
+
+    @Test
+    fun incompleteGeneralGroupAddressWriteDeletesRowAndAllParts() = runBlocking {
+        provider.failAddressInsert = true
+
+        val result = dataSource.insertOutgoing(
+            generalRecord(operation = 110L, transaction = "provider-test-110"),
+        )
+
+        assertTrue(result is ProviderAccessResult.Unavailable)
+        assertEquals(0, provider.messageCount())
+        assertEquals(0, provider.totalPartCount())
+        assertEquals(0, provider.totalAddressCount())
+    }
+
+    @Test
     fun incomingGroupPartsAddressesAndRowArePersistedThenReplayIsIdempotent() = runBlocking {
         val record = incomingRecord(operation = 109L, transaction = "incoming-provider-109")
 
@@ -306,6 +342,34 @@ class AndroidMmsProviderDataSourceOutgoingTest {
             ),
         )
 
+    private fun generalRecord(operation: Long, transaction: String): OutgoingMmsProviderRecord =
+        OutgoingMmsProviderRecord(
+            operationId = MessageId(ProviderKind.PENDING_OPERATION, operation),
+            providerThreadId = ProviderThreadId(73L),
+            recipients = (
+                RecipientSet.parse(listOf("+15551230000", "+15551230003")) as
+                    RecipientSet.CreationResult.Valid
+                ).recipients,
+            payload = OutgoingMmsPayload.Message(
+                text = GENERAL_TEXT,
+                subject = "Synthetic general subject",
+                attachments = listOf(
+                    outgoingAttachment(OutgoingMmsAttachment.IMAGE_PNG, IMAGE_BYTES),
+                    outgoingAttachment(OutgoingMmsAttachment.AUDIO_MP4, AUDIO_BYTES),
+                ),
+            ),
+            encodedSize = 777,
+            transactionId = transaction,
+            timestampMillis = 1_720_000_000_000L,
+            subscriptionId = AuroraSubscriptionId(2),
+        )
+
+    private fun outgoingAttachment(contentType: String, bytes: ByteArray): OutgoingMmsAttachment =
+        (
+            OutgoingMmsAttachment.create(contentType, bytes) as
+                OutgoingMmsAttachment.CreationResult.Valid
+            ).attachment
+
     private fun incomingPart(
         type: String,
         location: String,
@@ -353,10 +417,12 @@ class AndroidMmsProviderDataSourceOutgoingTest {
     private companion object {
         val MEMO_BYTES = byteArrayOf(0x00, 0x01, 0x7f, 0xff.toByte())
         val IMAGE_BYTES = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x00, 0x01)
+        val AUDIO_BYTES = byteArrayOf(0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70)
         val SENDER = ParticipantAddress("+15551230000")
         val LOCAL_RECIPIENT = ParticipantAddress("+15551230001")
         val GROUP_MEMBER = ParticipantAddress("+15551230002")
         const val INCOMING_TEXT = "Synthetic incoming group body"
+        const val GENERAL_TEXT = "Synthetic outgoing group body"
     }
 }
 
