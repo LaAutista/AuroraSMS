@@ -172,8 +172,12 @@ class AuroraBackupStagingStore internal constructor(
                     ?: return failAndCleanup(files, AuroraBackupFailure.IO_FAILURE)
             }
             if (decryptResult is AuroraBackupDecryptResult.Failed) {
-                pendingIdentity?.let { deleteOwned(files.plaintextPending, it) }
-                cleanupSession(files)
+                val removed = pendingIdentity?.let {
+                    deleteOwned(files.plaintextPending, it) && syncDirectory()
+                } ?: !files.plaintextPending.existsNoFollow()
+                if (!removed) {
+                    return failAndCleanup(files, AuroraBackupFailure.IO_FAILURE)
+                }
                 return AuroraBackupAuthenticateResult.Failed(decryptResult.reason)
             }
 

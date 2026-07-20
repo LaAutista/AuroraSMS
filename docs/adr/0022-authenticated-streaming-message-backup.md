@@ -189,6 +189,16 @@ schema pass. Wrong-passphrase/tamper, invalid-schema, source-failure, size-limit
 cancel, stale-startup, and replaced-path cases remove or reject only the owned
 files. Six focused journeys pass on both API 26 and API 36.
 
+The document workflow retains neither URI nor passphrase and accepts only
+explicit `content` URIs. Export reads the Telephony snapshot only after policy
+checks, streams it to one destination, and attempts to delete that destination
+on every role, permission, provider, source, crypto, or document failure. Restore
+copies and closes the selected source immediately; a wrong passphrase can retry
+against the still-encrypted private copy, while confirmation is impossible until
+an authenticated summary exists. Cancel/background invalidates either staged or
+validated state. Startup performs journal recovery before deleting staging
+residue. Six fake-document/coordinator journeys pass on each boundary API.
+
 ## Consequences
 
 - Portable archives are confidential and tamper-evident but only as strong as

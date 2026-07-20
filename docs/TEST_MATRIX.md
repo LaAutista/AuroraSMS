@@ -3674,6 +3674,14 @@ Together with the provider checkpoint, the complete module suite now passes
 15/15 connected tests on API 26 and 15/15 on API 36 with zero failures, errors,
 or skips.
 
+The single-owner document controller adds six focused connected journeys on
+each API. Fake content documents prove encrypted export, validation of the
+produced archive, incomplete-destination deletion/reporting, rejection of
+non-content URIs, immediate source-copy ownership, wrong-passphrase retry,
+cancel invalidation, restore unreachable before authenticated-summary
+confirmation, one-shot confirmed restore, and provider recovery before startup
+staging cleanup. No test resolves a live document or Telephony URI.
+
 The tests used only canonical synthetic addresses, bodies, metadata, and a
 196,608-byte generated binary part. They did not acquire the SMS role, inspect
 live provider rows, mutate a real Telephony provider, launch a carrier boundary,

@@ -71,7 +71,12 @@ class AuroraBackupStagingStoreTest {
                 ),
                 store.authenticate(first.session, "incorrect secret value".toCharArray()),
             )
-            assertTrue(directory.listFiles()!!.isEmpty())
+            assertEquals(listOf("encrypted.staged"), suffixes(directory))
+            assertTrue(
+                store.authenticate(first.session, passphrase) is
+                    AuroraBackupAuthenticateResult.Success,
+            )
+            assertTrue(store.cleanup(first.session))
 
             val tampered = encrypted.copyOf().also { bytes ->
                 bytes[bytes.lastIndex] = (bytes.last().toInt() xor 1).toByte()
@@ -84,6 +89,8 @@ class AuroraBackupStagingStoreTest {
                 ),
                 store.authenticate(second.session, passphrase),
             )
+            assertEquals(listOf("encrypted.staged"), suffixes(directory))
+            assertTrue(store.cleanup(second.session))
             assertTrue(directory.listFiles()!!.isEmpty())
         }
     }

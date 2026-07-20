@@ -159,9 +159,13 @@ message read/write, or carrier boundary was used. The private restore staging
 lifecycle subsequently passed six focused tests on both APIs: bounded encrypted
 copy, authenticated `.pending` plaintext, full validation before atomic
 `.validated` promotion, owned-file cleanup, startup reconciliation, and
-symlink/path-replacement rejection under `noBackupFilesDir`. SAF/UI integration,
-full aggregate/release evidence, and approved physical/OEM verification remain
-before Phase 6G is complete.
+symlink/path-replacement rejection under `noBackupFilesDir`. A single-owner
+document workflow now streams export to one explicit content URI, deletes failed
+destinations when the provider permits it, stages `OpenDocument` input, and
+makes provider restore reachable only after authenticated-summary confirmation.
+Its six focused fake-document/provider journeys pass on both APIs. Compose SAF
+launchers/UI integration, full aggregate/release evidence, and approved
+physical/OEM verification remain before Phase 6G is complete.
 
 ### Phase 6H — Android Auto and notification completion
 
