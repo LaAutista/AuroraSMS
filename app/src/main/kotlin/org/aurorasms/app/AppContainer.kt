@@ -93,6 +93,7 @@ import org.aurorasms.app.message.NotificationReminderCoordinator
 import org.aurorasms.app.message.NotificationReminderId
 import org.aurorasms.app.message.NotificationReminderRecoveryReason
 import org.aurorasms.app.message.SharedPreferencesNotificationReminderPreferenceStore
+import org.aurorasms.app.message.SharedPreferencesMessageSignaturePreferenceStore
 import org.aurorasms.app.message.SharedPreferencesNotificationReminderStore
 import org.aurorasms.app.message.requiresFollowUp
 import org.aurorasms.core.model.MessageId
@@ -360,6 +361,8 @@ class AppContainer(
     internal val permanentDeletionController: PermanentDeletionController =
         deferredPermanentDeletionController
     internal val sendDelayPreferenceStore = SharedPreferencesSendDelayPreferenceStore(application)
+    internal val messageSignaturePreferenceStore =
+        SharedPreferencesMessageSignaturePreferenceStore(application)
     private val notificationReminderPreferenceStore =
         SharedPreferencesNotificationReminderPreferenceStore(application)
     val messageNotifier: MessageNotifier = AndroidMessageNotifier(

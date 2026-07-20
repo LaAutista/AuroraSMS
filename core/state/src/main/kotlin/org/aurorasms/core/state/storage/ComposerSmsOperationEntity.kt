@@ -19,6 +19,7 @@ import org.aurorasms.core.state.ComposerSmsOperationPhase
 import org.aurorasms.core.state.ComposerSmsProviderBinding
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.MessageSignature
 
 internal const val COMPOSER_SMS_OPERATIONS_TABLE: String = "composer_sms_operations"
 
@@ -55,6 +56,8 @@ internal data class ComposerSmsOperationEntity(
     val createdTimestampMillis: Long,
     @ColumnInfo(name = "updated_timestamp_ms")
     val updatedTimestampMillis: Long,
+    @ColumnInfo(name = "signature_text")
+    val signatureText: String? = null,
 ) {
     override fun toString(): String =
         "ComposerSmsOperationEntity(phaseCode=$phaseCode, hasProviderBinding=${providerMessageId != null}, REDACTED)"
@@ -90,6 +93,7 @@ internal fun ComposerSmsOperationEntity.toDomain(): ComposerSmsOperation {
         providerBinding = binding,
         createdTimestampMillis = createdTimestampMillis,
         updatedTimestampMillis = updatedTimestampMillis,
+        frozenSignature = signatureText?.let(MessageSignature::fromStorageValue),
     )
 }
 

@@ -29,12 +29,13 @@ class ScheduledSmsRepositoryInstrumentedTest {
     @After fun cleanDatabase() { context.deleteDatabase(StateDatabaseFactory.DATABASE_NAME) }
 
     @Test
-    fun exactDraftReservationIsContentFreeDurableAndTransitionsWithCas() = runBlocking {
+    fun exactDraftReservationFreezesBoundedSignatureAndTransitionsWithCas() = runBlocking {
         val database = openDatabase()
         try {
             val drafts = RoomDraftRepository(database)
             val repository = RoomScheduledSmsRepository(database)
             val thread = ProviderThreadId(81L)
+            val signature = checkNotNull(MessageSignature.fromUserInput("Synthetic signature"))
             val draft = drafts.create(
                 NewDraft(
                     identity = DraftIdentity.ProviderThread(thread),
@@ -56,9 +57,11 @@ class ScheduledSmsRepositoryInstrumentedTest {
                     dueTimestampMillis = 10_000L,
                     createdTimestampMillis = 200L,
                     armedElapsedRealtimeMillis = 50L,
+                    frozenSignature = signature,
                 ),
             ).success()
             assertEquals("synthetic scheduled body", reservation.authoritativeBody)
+            assertEquals(signature, reservation.schedule.frozenSignature)
             assertEquals(
                 reservation.schedule,
                 repository.observeByThread(thread).first().success(),
@@ -80,6 +83,7 @@ class ScheduledSmsRepositoryInstrumentedTest {
                 updatedTimestampMillis = 201L,
             ).success()
             assertEquals(ScheduledSmsPrecision.EXACT, armed.precision)
+            assertEquals(signature, armed.frozenSignature)
             assertEquals(
                 ScheduledSmsResult.StaleWrite,
                 repository.markDispatching(armed.id, reservation.schedule.revision, 202L),

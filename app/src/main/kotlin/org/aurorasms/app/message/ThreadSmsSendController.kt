@@ -14,12 +14,14 @@ import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.MessageSignature
 
 internal data class ThreadSmsSendCommand(
     val identity: VerifiedConversationIdentity,
     val subscriptionId: AuroraSubscriptionId,
     val draftId: DraftId,
     val draftRevision: DraftRevision,
+    val frozenSignature: MessageSignature? = null,
 ) {
     override fun toString(): String = "ThreadSmsSendCommand(REDACTED)"
 }

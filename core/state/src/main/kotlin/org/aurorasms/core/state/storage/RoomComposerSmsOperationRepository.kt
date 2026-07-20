@@ -88,6 +88,7 @@ class RoomComposerSmsOperationRepository(
                     unitCount = null,
                     createdTimestampMillis = request.createdTimestampMillis,
                     updatedTimestampMillis = request.createdTimestampMillis,
+                    signatureText = request.frozenSignature?.value,
                 ),
             )
             if (localId <= 0L || localId >= COMPOSER_SMS_LOCAL_ID_LIMIT_EXCLUSIVE) {

@@ -52,6 +52,7 @@ import org.aurorasms.core.state.ComposerSmsReservationRequest
 import org.aurorasms.core.state.ComposerSmsSentCompletion
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.MessageSignature
 import org.aurorasms.core.state.ConversationSubscriptionParticipantSetKey
 import org.aurorasms.core.state.ConversationSubscriptionPreference
 import org.aurorasms.core.state.ConversationSubscriptionPreferenceRepository
@@ -201,6 +202,45 @@ class ThreadSmsSendCoordinatorTest {
         assertEquals(TransportResult.OperationOrigin.COMPOSER, fixture.transport.smsRequests.single().operationOrigin)
         assertEquals(BODY, fixture.transport.smsRequests.single().body)
         assertEquals(ComposerSmsOperationPhase.PLATFORM_ACCEPTED, fixture.operations.operation?.phase)
+        assertTrue(fixture.operations.draftPreserved)
+    }
+
+    @Test
+    fun acceptedSignatureIsFrozenWithOwnerAndAppendedOnlyAtTransportBoundary() = runTest {
+        val signature = checkNotNull(MessageSignature.fromUserInput("Aurora"))
+        val fixture = fixture()
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+        assertEquals(
+            ThreadSmsSendAttempt.STARTED,
+            fixture.coordinator.send(COMMAND.copy(frozenSignature = signature)),
+        )
+
+        assertEquals(signature, fixture.operations.operation?.frozenSignature)
+        assertEquals("$BODY\n-- \nAurora", fixture.transport.smsRequests.single().body)
+        assertTrue(fixture.operations.draftPreserved)
+    }
+
+    @Test
+    fun signatureThatChangesPartCountIsKnownUnsentBeforeTransport() = runTest {
+        val signature = checkNotNull(MessageSignature.fromUserInput("Aurora"))
+        var countedBody: String? = null
+        val fixture = fixture(
+            segmentCounter = SmsSegmentCounter { body ->
+                countedBody = body
+                if (body.endsWith("\n-- \nAurora")) 2 else 1
+            },
+        )
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+        assertEquals(
+            ThreadSmsSendAttempt.STARTED,
+            fixture.coordinator.send(COMMAND.copy(frozenSignature = signature)),
+        )
+
+        assertEquals("$BODY\n-- \nAurora", countedBody)
+        assertEquals(ComposerSmsOperationPhase.KNOWN_UNSENT, fixture.operations.operation?.phase)
+        assertTrue(fixture.transport.smsRequests.isEmpty())
         assertTrue(fixture.operations.draftPreserved)
     }
 
@@ -1283,6 +1323,7 @@ private class RecordingComposerRepository(
             providerBinding = null,
             createdTimestampMillis = request.createdTimestampMillis,
             updatedTimestampMillis = request.createdTimestampMillis,
+            frozenSignature = request.frozenSignature,
         )
         publish(created)
         afterReserve()

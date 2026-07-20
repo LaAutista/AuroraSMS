@@ -16,6 +16,7 @@ import org.aurorasms.core.state.DraftRevision
 import org.aurorasms.core.state.ScheduledSmsId
 import org.aurorasms.core.state.ScheduledSmsPrecision
 import org.aurorasms.core.state.ScheduledSmsReviewReason
+import org.aurorasms.core.state.MessageSignature
 
 internal data class ScheduledSmsCommand(
     val identity: VerifiedConversationIdentity,
@@ -23,6 +24,7 @@ internal data class ScheduledSmsCommand(
     val draftId: DraftId,
     val draftRevision: DraftRevision,
     val dueTimestampMillis: Long,
+    val frozenSignature: MessageSignature? = null,
 ) {
     override fun toString(): String = "ScheduledSmsCommand(REDACTED)"
 }

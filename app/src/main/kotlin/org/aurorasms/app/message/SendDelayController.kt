@@ -14,6 +14,7 @@ import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
 import org.aurorasms.core.state.SendDelayId
+import org.aurorasms.core.state.MessageSignature
 
 internal data class SendDelayCommand(
     val identity: VerifiedConversationIdentity,
@@ -21,6 +22,7 @@ internal data class SendDelayCommand(
     val draftId: DraftId,
     val draftRevision: DraftRevision,
     val delayMillis: Long,
+    val frozenSignature: MessageSignature? = null,
 ) {
     override fun toString(): String = "SendDelayCommand(delayMillis=$delayMillis, REDACTED)"
 }

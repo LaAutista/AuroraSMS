@@ -8,12 +8,19 @@ import androidx.sqlite.execSQL
 import androidx.sqlite.db.SupportSQLiteDatabase
 import org.aurorasms.core.state.MAXIMUM_COMPOSER_SMS_OPERATIONS
 import org.aurorasms.core.state.MAXIMUM_COMPOSER_SMS_UNIT_COUNT
+import org.aurorasms.core.state.MessageSignature
 
-/** Physical enforcement for the bounded content-free composer operation table. */
+/** Physical enforcement for bounded composer ownership and its optional frozen signature. */
 internal object ComposerSmsOperationEnforcement {
     const val INSERT_LIMIT_TRIGGER_NAME: String = "composer_sms_operations_enforce_limit_insert"
     const val INSERT_INTEGRITY_TRIGGER_NAME: String = "composer_sms_operations_enforce_integrity_insert"
     const val UPDATE_INTEGRITY_TRIGGER_NAME: String = "composer_sms_operations_enforce_integrity_update"
+
+    private const val SIGNATURE_INSERT_CONDITION: String =
+        "(NEW.signature_text IS NOT NULL AND (length(NEW.signature_text) < 1 OR " +
+            "length(NEW.signature_text) > ${MessageSignature.MAX_CHARACTERS})) OR "
+    private const val SIGNATURE_UPDATE_CONDITION: String =
+        "NEW.signature_text IS NOT OLD.signature_text OR "
 
     const val CREATE_INSERT_LIMIT_TRIGGER: String =
         "CREATE TRIGGER IF NOT EXISTS $INSERT_LIMIT_TRIGGER_NAME " +
@@ -30,6 +37,7 @@ internal object ComposerSmsOperationEnforcement {
             "NEW.phase_code != 'reserved_v1' OR " +
             "NEW.provider_message_id IS NOT NULL OR " +
             "NEW.provider_conversation_id IS NOT NULL OR NEW.unit_count IS NOT NULL OR " +
+            SIGNATURE_INSERT_CONDITION +
             "NEW.created_timestamp_ms < 0 OR " +
             "NEW.updated_timestamp_ms != NEW.created_timestamp_ms " +
             "BEGIN SELECT RAISE(ABORT, 'invalid composer SMS reservation'); END"
@@ -42,6 +50,7 @@ internal object ComposerSmsOperationEnforcement {
             "NEW.draft_id != OLD.draft_id OR " +
             "NEW.draft_revision_ms != OLD.draft_revision_ms OR " +
             "NEW.subscription_id != OLD.subscription_id OR " +
+            SIGNATURE_UPDATE_CONDITION +
             "NEW.created_timestamp_ms != OLD.created_timestamp_ms OR " +
             "NEW.updated_timestamp_ms <= OLD.updated_timestamp_ms OR " +
             "(NEW.provider_message_id IS NULL) != (NEW.provider_conversation_id IS NULL) OR " +
@@ -83,6 +92,14 @@ internal object ComposerSmsOperationEnforcement {
             "NEW.provider_conversation_id = OLD.provider_conversation_id AND " +
             "NEW.unit_count = OLD.unit_count)" +
             ") BEGIN SELECT RAISE(ABORT, 'invalid composer SMS transition'); END"
+
+    /** The version-5 table predates the optional frozen signature column. */
+    val CREATE_INSERT_INTEGRITY_TRIGGER_V5: String =
+        CREATE_INSERT_INTEGRITY_TRIGGER.replace(SIGNATURE_INSERT_CONDITION, "")
+
+    /** The version-5 table predates the optional frozen signature column. */
+    val CREATE_UPDATE_INTEGRITY_TRIGGER_V5: String =
+        CREATE_UPDATE_INTEGRITY_TRIGGER.replace(SIGNATURE_UPDATE_CONDITION, "")
 
     val callback: RoomDatabase.Callback = object : RoomDatabase.Callback() {
         override fun onCreate(db: SupportSQLiteDatabase) = install(db)

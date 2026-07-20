@@ -37,6 +37,7 @@ import org.aurorasms.core.state.SendDelayRepository
 import org.aurorasms.core.state.SendDelayRequest
 import org.aurorasms.core.state.SendDelayResult
 import org.aurorasms.core.state.SendDelayReviewReason
+import org.aurorasms.core.state.resolveOutgoingBody
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.SubscriptionRepository
 
@@ -100,6 +101,7 @@ internal class SendDelayCoordinator(
                 dueTimestampMillis = due,
                 createdTimestampMillis = now,
                 armedElapsedRealtimeMillis = clock.elapsedMillis().coerceAtLeast(0L),
+                frozenSignature = command.frozenSignature,
             ),
         )
         val reservation = (create as? SendDelayResult.Success)?.value
@@ -112,14 +114,21 @@ internal class SendDelayCoordinator(
                         existing.draftRevision == command.draftRevision &&
                         existing.subscriptionId == command.subscriptionId &&
                         existing.dueTimestampMillis == due &&
-                        existing.participantSetKey == key
+                        existing.participantSetKey == key &&
+                        existing.frozenSignature == command.frozenSignature
                 } ?: return@withLock SendDelayAttempt.REFUSED
                 SendDelayResult.NotFound -> return@withLock SendDelayAttempt.REFUSED
                 else -> return@withLock SendDelayAttempt.ACCEPTED
             }
             else -> return@withLock SendDelayAttempt.REFUSED
         }
-        if (reservation != null && segmentCounter.count(reservation.authoritativeBody) != 1) {
+        if (
+            reservation != null &&
+            resolveOutgoingBody(
+                reservation.authoritativeBody,
+                operation.frozenSignature,
+            )?.let(segmentCounter::count) != 1
+        ) {
             repository.remove(operation.id, operation.revision)
             return@withLock SendDelayAttempt.REFUSED
         }
@@ -190,6 +199,7 @@ internal class SendDelayCoordinator(
                         subscriptionId = operation.subscriptionId,
                         draftId = operation.draftId,
                         draftRevision = operation.draftRevision,
+                        frozenSignature = operation.frozenSignature,
                     ),
                 )
             }

@@ -44,6 +44,6 @@ abstract class AuroraStateDatabase : RoomDatabase() {
     internal abstract fun permanentDeletionDao(): PermanentDeletionDao
 
     companion object {
-        const val VERSION: Int = 10
+        const val VERSION: Int = 11
     }
 }

@@ -114,6 +114,8 @@ fun ThreadScreen(
     onOpenSearch: () -> Unit,
     conversationAppearanceAvailable: Boolean,
     onOpenConversationAppearance: () -> Unit,
+    conversationSignatureAvailable: Boolean = false,
+    onOpenConversationSignature: () -> Unit = {},
     isDialable: (ParticipantAddress) -> Boolean,
     onDial: (ParticipantAddress) -> Unit,
     onRetry: () -> Unit,
@@ -284,6 +286,12 @@ fun ThreadScreen(
                     focusManager.clearFocus()
                     keyboard?.hide()
                     onOpenConversationAppearance()
+                },
+                conversationSignatureAvailable = conversationSignatureAvailable,
+                onOpenConversationSignature = {
+                    focusManager.clearFocus()
+                    keyboard?.hide()
+                    onOpenConversationSignature()
                 },
                 isDialable = isDialable,
                 onDial = onDial,
@@ -560,6 +568,8 @@ private fun ThreadHeader(
     onOpenSearch: () -> Unit,
     conversationAppearanceAvailable: Boolean,
     onOpenConversationAppearance: () -> Unit,
+    conversationSignatureAvailable: Boolean,
+    onOpenConversationSignature: () -> Unit,
     isDialable: (ParticipantAddress) -> Boolean,
     onDial: (ParticipantAddress) -> Unit,
     onSelectSubscription: (AuroraSubscriptionId) -> Unit,
@@ -619,6 +629,8 @@ private fun ThreadHeader(
         ThreadMoreMenu(
             conversationAppearanceAvailable = conversationAppearanceAvailable,
             onOpenConversationAppearance = onOpenConversationAppearance,
+            conversationSignatureAvailable = conversationSignatureAvailable,
+            onOpenConversationSignature = onOpenConversationSignature,
             sendDelaySeconds = sendDelaySeconds,
             onSetSendDelaySeconds = onSetSendDelaySeconds,
             deleteConversationAvailable = deleteConversationAvailable,
@@ -706,6 +718,8 @@ private fun subscriptionLabel(subscription: org.aurorasms.core.telephony.ActiveS
 private fun ThreadMoreMenu(
     conversationAppearanceAvailable: Boolean,
     onOpenConversationAppearance: () -> Unit,
+    conversationSignatureAvailable: Boolean,
+    onOpenConversationSignature: () -> Unit,
     sendDelaySeconds: Int,
     onSetSendDelaySeconds: (Int) -> Unit,
     deleteConversationAvailable: Boolean,
@@ -781,6 +795,21 @@ private fun ThreadMoreMenu(
                     onClick = {
                         expanded = false
                         onOpenConversationAppearance()
+                    },
+                )
+            }
+            if (conversationSignatureAvailable) {
+                DropdownMenuItem(
+                    modifier = Modifier.testTag(THREAD_SIGNATURE_ACTION_TEST_TAG),
+                    text = {
+                        Text(
+                            stringResource(R.string.conversation_signature),
+                            color = visualTokens.onIncoming,
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        onOpenConversationSignature()
                     },
                 )
             }
@@ -1734,26 +1763,48 @@ private fun Composer(
         state.unavailableReason == ComposerUnavailableReason.CONVERSATION_UNVERIFIED ->
             stringResource(R.string.verifying_conversation_for_send)
         state.unavailableReason == ComposerUnavailableReason.GROUP_REQUIRES_MMS ->
-            stringResource(R.string.group_send_requires_mms)
+            stringResource(
+                if (state.signatureApplied) {
+                    R.string.group_send_requires_mms_with_signature
+                } else {
+                    R.string.group_send_requires_mms
+                },
+            )
         state.unavailableReason == ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE ->
             stringResource(R.string.conversation_sim_unavailable)
         state.unavailableReason == ComposerUnavailableReason.MULTIPART_UNAVAILABLE ->
-            stringResource(
-                R.string.multipart_send_unavailable,
-                state.segmentCount ?: 2,
-            )
+            if (state.signatureApplied) {
+                stringResource(
+                    R.string.multipart_signature_impact,
+                    state.unsignedSegmentCount ?: state.segmentCount ?: 2,
+                    state.segmentCount ?: 2,
+                )
+            } else {
+                stringResource(
+                    R.string.multipart_send_unavailable,
+                    state.segmentCount ?: 2,
+                )
+            }
         state.unavailableReason == ComposerUnavailableReason.RECOVERY_PENDING ->
             stringResource(R.string.finishing_send_recovery)
         state.unavailableReason == ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE ->
             stringResource(R.string.deletion_in_progress)
         state.unavailableReason == ComposerUnavailableReason.MESSAGING_UNAVAILABLE ->
             stringResource(R.string.messaging_send_unavailable)
+        state.unavailableReason == ComposerUnavailableReason.SIGNATURE_STATE_UNAVAILABLE ->
+            stringResource(R.string.signature_state_unavailable)
         state.unavailableReason == ComposerUnavailableReason.EMPTY_MESSAGE ->
             stringResource(R.string.type_message_to_send)
         state.unavailableReason == ComposerUnavailableReason.DRAFT_NOT_DURABLE ->
             stringResource(R.string.saving_draft)
-        state.sendState == ComposerSendState.READY ->
+        state.sendState == ComposerSendState.READY -> if (state.signatureApplied) {
+            stringResource(
+                R.string.signature_included_sms_segments,
+                state.segmentCount ?: 1,
+            )
+        } else {
             stringResource(R.string.draft_saved_one_sms)
+        }
         else -> stringResource(R.string.draft_saved)
     }
     val actionLabel = stringResource(
@@ -1978,5 +2029,6 @@ const val REVIEW_DELETION_TEST_TAG: String = "aurora-review-deletion"
 
 private val SEND_DELAY_SECOND_OPTIONS = listOf(0, 1, 3, 5, 10)
 const val THREAD_MORE_ACTION_TEST_TAG: String = "aurora-thread-more-action"
+const val THREAD_SIGNATURE_ACTION_TEST_TAG: String = "aurora-thread-signature-action"
 const val THREAD_APPEARANCE_ACTION_TEST_TAG: String = "aurora-thread-appearance-action"
 const val THREAD_SIM_SELECTOR_TEST_TAG: String = "aurora-thread-sim-selector"

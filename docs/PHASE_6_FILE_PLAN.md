@@ -46,12 +46,18 @@ unread/provider state at fire time; cancellation, read state, reboot, clock
 change, and role loss fail closed. Do not wake repeatedly or create an
 unbounded alarm set.
 
-### Phase 6D — global and per-conversation signatures
+### Phase 6D — global and per-conversation signatures — complete
 
 Store bounded signature settings separately from drafts. Show exact segment or
 MMS impact before send, freeze the resolved signature with the durable send
 owner, and never silently turn a group into SMS or a one-part text into an
 unacknowledged multipart submission.
+
+Acceptance passed on 2026-07-19: 578 host tests, the complete 886-task offline
+aggregate, 332 API 36 tests, and 335 API 26 tests all completed with zero
+failures or errors. The exact debug APK was installed and hash-matched on the
+Pixel 8 and API 36 emulator without changing either SMS role, launching the
+app, reading live content, or submitting carrier traffic.
 
 ### Phase 6E — local spam and blocking
 

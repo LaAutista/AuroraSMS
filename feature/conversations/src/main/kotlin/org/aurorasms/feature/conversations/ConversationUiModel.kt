@@ -137,11 +137,19 @@ data class ComposerUiState(
     val sendState: ComposerSendState = ComposerSendState.UNAVAILABLE,
     val unavailableReason: ComposerUnavailableReason? = null,
     val segmentCount: Int? = null,
+    val unsignedSegmentCount: Int? = null,
+    val signatureApplied: Boolean = false,
     val scheduleState: ComposerScheduleState = ComposerScheduleState.None,
     val sendDelayDueTimestampMillis: Long? = null,
 ) {
     init {
         require(segmentCount == null || segmentCount > 0) { "SMS segment count must be positive" }
+        require(unsignedSegmentCount == null || unsignedSegmentCount > 0) {
+            "Unsigned SMS segment count must be positive"
+        }
+        require(!signatureApplied || segmentCount != null) {
+            "An applied signature requires an exact outgoing segment count"
+        }
         require(sendState != ComposerSendState.READY || unavailableReason == null) {
             "A ready composer cannot have an unavailable reason"
         }
@@ -158,7 +166,8 @@ data class ComposerUiState(
     override fun toString(): String =
         "ComposerUiState(bodyLength=${body.length}, saving=$saving, failed=$failed, " +
             "sendState=$sendState, unavailableReason=$unavailableReason, " +
-            "segmentCount=$segmentCount, scheduleState=$scheduleState, " +
+            "segmentCount=$segmentCount, unsignedSegmentCount=$unsignedSegmentCount, " +
+            "signatureApplied=$signatureApplied, scheduleState=$scheduleState, " +
             "hasSendDelay=${sendDelayDueTimestampMillis != null}, REDACTED)"
 }
 
@@ -226,6 +235,7 @@ enum class ComposerUnavailableReason {
     RECOVERY_PENDING,
     PERMANENT_DELETION_ACTIVE,
     MESSAGING_UNAVAILABLE,
+    SIGNATURE_STATE_UNAVAILABLE,
 }
 
 enum class PermanentDeletionTargetUiKind {

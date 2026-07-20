@@ -3,9 +3,9 @@
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
 bounded ADR 0008 Phase 5A source implementation in commit `17fc421`, followed
-by accepted Phase 5B–5G controls and Phase 6A–6C presentation/action controls
-through ADR 0017 and Room schema 10. Local/API 26/API 36 acceptance passed
-through Phase 6C. Safe install/migration and locked-device cold launch passed
+by accepted Phase 5B–5G controls and Phase 6A–6D presentation/action controls
+through ADR 0018 and Room schema 11. Local/API 26/API 36 acceptance passed
+through Phase 6D. Safe install/migration and locked-device cold launch passed
 on a Pixel 8. Real-carrier, radio, billing,
 and invasive physical lifecycle evidence remains open.
 
@@ -186,10 +186,11 @@ Controls:
   exact provider row as `PREPARED` before one conditional arm may consume the
   sentinel and make it `PENDING`, then durably record `SUBMITTING` before the
   irreversible platform call;
-- for the existing-Thread composer, keep one bounded Room schema-5 operation
-  content-free and bind only the exact Thread, draft ID/revision, subscription,
-  phase, prepared provider IDs, one-unit count, and timestamps. The draft remains
-  the sole durable message-content owner until successful completion;
+- for the existing-Thread composer, keep one bounded Room operation and bind
+  only the exact Thread, draft ID/revision, subscription, phase, prepared
+  provider IDs, one-unit count, timestamps, and—after ADR 0018—an optional
+  immutable 160-character frozen signature. The draft remains the sole durable
+  owner of the user-authored message body;
 - treat app-private composer `SavedState` as an untrusted restoration hint rather
   than send authority. Hide its text until Room is read, require its exact base
   draft ID/revision to match (or require Room absence for a base-free hint), and
@@ -749,6 +750,26 @@ role loss, backgrounding, completion, failure, and shutdown cancel it. This
 prevents a stalled partial index from depending on incidental user navigation
 without introducing a background provider-read loop or weakening Android's
 default-SMS authority boundary.
+
+Phase 6D treats a signature as outgoing message content, not decoration. ADR
+0018 stores settings outside drafts, addresses conversation overrides only by a
+purpose-separated hash of a complete verified participant set, and bounds the
+checksummed store without eviction. Corruption blocks overwrite and new sends
+instead of silently omitting content. Exact unsigned and signed SMS segmentation is visible before send;
+groups retain the MMS-only boundary and a signed multipart text remains disabled
+rather than silently changing transport or content. Immediate, delayed, and
+scheduled sends freeze the selected value into their schema-11 durable owner so
+recovery cannot adopt a later preference edit. This is an acknowledged bounded
+content expansion of previously content-free owner rows, but it never includes
+the draft body and is immutable, redacted, app-private, and excluded from backup
+and device transfer. No permission, alarm payload, provider-body rewrite,
+network path, automatic send, or carrier test is introduced.
+
+Phase 6D acceptance passed 578 host tests, the complete offline privacy and
+release aggregate, and 332 API 36 plus 335 API 26 connected tests. Safe install
+and hash-matched Download handoff passed on the Pixel 8 and API 36 emulator with
+their role holders and denied Aurora SMS permissions preserved. No app launch,
+live-content read, or carrier transmission was part of this evidence.
 
 ## Open security decisions
 

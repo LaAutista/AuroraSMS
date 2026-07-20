@@ -27,6 +27,7 @@ import org.aurorasms.core.state.ScheduledSmsRepository
 import org.aurorasms.core.state.ScheduledSmsRequest
 import org.aurorasms.core.state.ScheduledSmsResult
 import org.aurorasms.core.state.ScheduledSmsReviewReason
+import org.aurorasms.core.state.resolveOutgoingBody
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.SubscriptionRepository
 
@@ -88,6 +89,7 @@ internal class ScheduledSmsCoordinator(
                     dueTimestampMillis = command.dueTimestampMillis,
                     createdTimestampMillis = now,
                     armedElapsedRealtimeMillis = clock.elapsedMillis(),
+                    frozenSignature = command.frozenSignature,
                 ),
             )
             val reservation = (createResult as? ScheduledSmsResult.Success)?.value
@@ -100,7 +102,8 @@ internal class ScheduledSmsCoordinator(
                             existing.draftRevision == command.draftRevision &&
                             existing.subscriptionId == command.subscriptionId &&
                             existing.dueTimestampMillis == command.dueTimestampMillis &&
-                            existing.participantSetKey == key
+                            existing.participantSetKey == key &&
+                            existing.frozenSignature == command.frozenSignature
                     } ?: return@withLock ScheduledSmsAttempt.REFUSED
                     ScheduledSmsResult.NotFound -> return@withLock ScheduledSmsAttempt.REFUSED
                     else -> return@withLock ScheduledSmsAttempt.ACCEPTED
@@ -109,7 +112,10 @@ internal class ScheduledSmsCoordinator(
             }
             if (
                 reservation != null &&
-                segmentCounter.count(reservation.authoritativeBody) != 1
+                resolveOutgoingBody(
+                    reservation.authoritativeBody,
+                    schedule.frozenSignature,
+                )?.let(segmentCounter::count) != 1
             ) {
                 repository.remove(schedule.id, schedule.revision)
                 return@withLock ScheduledSmsAttempt.REFUSED
@@ -215,6 +221,7 @@ internal class ScheduledSmsCoordinator(
                 subscriptionId = schedule.subscriptionId,
                 draftId = schedule.draftId,
                 draftRevision = schedule.draftRevision,
+                frozenSignature = schedule.frozenSignature,
             ),
         )
         if (attempt == ThreadSmsSendAttempt.REFUSED) {

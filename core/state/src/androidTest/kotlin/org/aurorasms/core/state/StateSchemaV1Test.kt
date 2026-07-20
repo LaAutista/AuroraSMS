@@ -56,11 +56,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionTen_hasBoundedContentFreeStateTables() {
+    fun schemaVersionEleven_hasBoundedStateTablesAndFrozenSignatures() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(10, AuroraStateDatabase.VERSION)
+            assertEquals(11, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -223,6 +223,7 @@ class StateSchemaCurrentTest {
                     "provider_message_id",
                     "provider_conversation_id",
                     "unit_count",
+                    "signature_text",
                     "created_timestamp_ms",
                     "updated_timestamp_ms",
                 ),
@@ -290,6 +291,7 @@ class StateSchemaCurrentTest {
                     "phase_code",
                     "precision_code",
                     "review_reason_code",
+                    "signature_text",
                     "armed_wall_timestamp_ms",
                     "armed_elapsed_realtime_ms",
                     "created_timestamp_ms",
@@ -324,6 +326,7 @@ class StateSchemaCurrentTest {
                     "due_timestamp_ms",
                     "phase_code",
                     "review_reason_code",
+                    "signature_text",
                     "armed_wall_timestamp_ms",
                     "armed_elapsed_realtime_ms",
                     "created_timestamp_ms",
@@ -381,7 +384,7 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun exportedVersionTenStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedVersionElevenStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(

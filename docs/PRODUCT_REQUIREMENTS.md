@@ -1,7 +1,7 @@
 # AuroraSMS product requirements
 
-Status: Phase 0 product baseline plus implemented Phase 1 durable-message
-hardening through commit `7c9d848`, 2026-07-18
+Status: Phase 0 product baseline plus locally accepted Phase 1 through Phase 6D
+controls, 2026-07-19.
 
 ## Product statement
 
@@ -50,7 +50,10 @@ transport; AuroraSMS's approved runtime scope remains SMS/MMS.
   and full-text search.
 - Drafts, scheduled messages, pending sends/deletes, spam decisions, named
   appearance profiles, the active-profile selection, and scoped profile
-  overrides live in a separate durable Aurora state store. Conversation
+  overrides live in a separate durable Aurora state store. Bounded signature
+  preferences remain separate from drafts; an active send owner may contain
+  only its exact frozen signature in addition to content-free ownership.
+  Conversation
   appearance assignment storage keeps only a versioned participant-set
   fingerprint plus the current provider thread ID, never raw participant
   addresses; the separate private rebuildable index retains its participant
@@ -558,6 +561,37 @@ This closes a code-side continuation and pagination regression gate. It does not
 claim a complete personal-device index while AuroraSMS is not the default SMS
 app; Android denies that provider read, and the owner must explicitly choose the
 role before the final physical history-completeness check can run.
+
+### Phase 6D bounded global and conversation signatures
+
+The `0.6.4-phase6` (`versionCode` 15) 2026-07-19 source implements ADR 0018
+and state schema 11.
+
+- Global signature state is separate from drafts. A verified conversation may
+  inherit it, disable it, or use a custom value through a purpose-separated
+  participant-set hash that stores no raw address.
+- Signatures are normalized only on explicit save, limited to 160 UTF-16
+  characters and four lines, and never truncated. Blank text disables the
+  selected scope; corrupt settings pause new sends and cannot be overwritten.
+- The exact outgoing body uses a visible `\n-- \n` separator. The composer shows
+  Android-calculated unsigned and signed SMS-part impact before send and states
+  that a group signature would be included in MMS text.
+- The existing one-person, one-part transport boundary remains unchanged. If a
+  signature requires multipart SMS, Send is disabled instead of dropping the
+  signature or submitting an unacknowledged multipart message. A group never
+  falls back to individual SMS.
+- Immediate, delayed, and scheduled paths freeze the resolved signature into
+  the durable owner. Schema 11 makes that value immutable for the owner's
+  lifetime, so process recovery cannot pick up a later preference edit.
+- Preferences and active frozen values are app-private and excluded from
+  backup/device transfer. No permission, network path, provider-body rewrite,
+  automatic send, or carrier acceptance claim is added.
+
+Phase 6D acceptance passed 578 host tests, the complete 886-task offline gate,
+332 API 36 tests, and 335 API 26 tests with zero failures or errors. The exact
+debug APK installed and hash-matched on the Pixel 8 and API 36 emulator while
+their existing non-Aurora SMS roles and denied Aurora SMS permissions remained
+unchanged. No live message or address was read and no carrier send was made.
 
 ## AuroraMaterial requirements
 

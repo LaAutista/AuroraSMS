@@ -10,6 +10,7 @@ import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.MessageSignature
 import org.aurorasms.core.state.ScheduledSms
 import org.aurorasms.core.state.ScheduledSmsId
 import org.aurorasms.core.state.ScheduledSmsParticipantSetKey
@@ -43,6 +44,7 @@ internal data class ScheduledSmsEntity(
     @ColumnInfo(name = "armed_elapsed_realtime_ms") val armedElapsedRealtimeMillis: Long,
     @ColumnInfo(name = "created_timestamp_ms") val createdTimestampMillis: Long,
     @ColumnInfo(name = "updated_timestamp_ms") val updatedTimestampMillis: Long,
+    @ColumnInfo(name = "signature_text") val signatureText: String? = null,
 ) {
     override fun toString(): String = "ScheduledSmsEntity(phaseCode=$phaseCode, REDACTED)"
 }
@@ -64,6 +66,7 @@ internal fun ScheduledSmsEntity.toDomain(): ScheduledSms = ScheduledSms(
     armedElapsedRealtimeMillis = armedElapsedRealtimeMillis,
     createdTimestampMillis = createdTimestampMillis,
     updatedTimestampMillis = updatedTimestampMillis,
+    frozenSignature = signatureText?.let(MessageSignature::fromStorageValue),
 )
 
 internal val ScheduledSmsPhase.storageCode: String

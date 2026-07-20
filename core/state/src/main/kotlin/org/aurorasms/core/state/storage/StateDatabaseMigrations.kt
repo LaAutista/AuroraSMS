@@ -5,6 +5,26 @@ package org.aurorasms.core.state.storage
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+val STATE_MIGRATION_10_11: Migration = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `composer_sms_operations` ADD COLUMN `signature_text` TEXT")
+        db.execSQL("ALTER TABLE `scheduled_sms_operations` ADD COLUMN `signature_text` TEXT")
+        db.execSQL("ALTER TABLE `send_delay_operations` ADD COLUMN `signature_text` TEXT")
+        db.execSQL("DROP TRIGGER IF EXISTS ${ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        db.execSQL("DROP TRIGGER IF EXISTS ${ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        db.execSQL("DROP TRIGGER IF EXISTS ${ScheduledSmsEnforcement.INSERT_INTEGRITY_TRIGGER}")
+        db.execSQL("DROP TRIGGER IF EXISTS ${ScheduledSmsEnforcement.UPDATE_INTEGRITY_TRIGGER}")
+        db.execSQL("DROP TRIGGER IF EXISTS ${SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        db.execSQL("DROP TRIGGER IF EXISTS ${SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+        db.execSQL(ScheduledSmsEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(ScheduledSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+        db.execSQL(SendDelayEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(SendDelayEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+    }
+}
+
 val STATE_MIGRATION_1_2: Migration = object : Migration(1, 2) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(
@@ -218,8 +238,8 @@ val STATE_MIGRATION_4_5: Migration = object : Migration(4, 5) {
             """.trimIndent(),
         )
         db.execSQL(ComposerSmsOperationEnforcement.CREATE_INSERT_LIMIT_TRIGGER)
-        db.execSQL(ComposerSmsOperationEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
-        db.execSQL(ComposerSmsOperationEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER_V5)
+        db.execSQL(ComposerSmsOperationEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER_V5)
     }
 }
 
@@ -320,8 +340,8 @@ val STATE_MIGRATION_7_8: Migration = object : Migration(7, 8) {
                 "ON `scheduled_sms_operations` (`due_timestamp_ms`, `schedule_id`)",
         )
         db.execSQL(ScheduledSmsEnforcement.CREATE_INSERT_LIMIT_TRIGGER)
-        db.execSQL(ScheduledSmsEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
-        db.execSQL(ScheduledSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+        db.execSQL(ScheduledSmsEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER_V8)
+        db.execSQL(ScheduledSmsEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER_V8)
     }
 }
 
@@ -359,8 +379,8 @@ val STATE_MIGRATION_8_9: Migration = object : Migration(8, 9) {
                 "ON `send_delay_operations` (`due_timestamp_ms`, `send_delay_id`)",
         )
         db.execSQL(SendDelayEnforcement.CREATE_INSERT_LIMIT_TRIGGER)
-        db.execSQL(SendDelayEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
-        db.execSQL(SendDelayEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+        db.execSQL(SendDelayEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER_V9)
+        db.execSQL(SendDelayEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER_V9)
     }
 }
 

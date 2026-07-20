@@ -13,6 +13,9 @@
         <activity
             android:name="org.aurorasms.app.AuroraSmsRootTestActivity"
             android:exported="false" />
+        <activity
+            android:name="org.aurorasms.app.AuroraComposeTestActivity"
+            android:exported="false" />
 
         <!-- Read-only shell probe used by disposable-emulator owner journeys. -->
         <provider

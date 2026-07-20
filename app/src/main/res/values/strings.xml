@@ -13,6 +13,17 @@
     <string name="telephony_missing">This device does not report SMS telephony support.</string>
     <string name="messaging_missing">This Android build does not report the required messaging capability.</string>
     <string name="role_unavailable">Android does not currently offer the SMS role on this device.</string>
+    <string name="message_signature_title">Message signature</string>
+    <string name="conversation_signature_title">Conversation signature</string>
+    <string name="signature_text">Signature text</string>
+    <string name="message_signature_explanation">Appended with a visible \u002d\u002d separator. The exact SMS-part or MMS impact appears in the composer before send.</string>
+    <string name="use_global_signature">Use the global signature</string>
+    <string name="use_global_signature_off">Use global (currently off)</string>
+    <string name="disable_signature_for_conversation">Off for this conversation</string>
+    <string name="custom_conversation_signature">Use a custom signature</string>
+    <string name="signature_save_failed">Signature was not changed because local storage was unavailable.</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
     <string name="permission_summary">Messaging permissions granted: %1$d of %2$d</string>
     <string name="new_message">New message</string>
     <string name="invalid_compose_request">This compose request is missing a valid SMS or MMS recipient.</string>

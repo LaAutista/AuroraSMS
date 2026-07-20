@@ -33,6 +33,7 @@ import org.aurorasms.core.state.ConversationSubscriptionRevision
 import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.MessageSignature
 import org.aurorasms.core.state.SendDelayDispatchReconciliation
 import org.aurorasms.core.state.SendDelayId
 import org.aurorasms.core.state.SendDelayOperation
@@ -101,6 +102,32 @@ class SendDelayCoordinatorTest {
 
         assertEquals(1, restartedSender.sendCount)
         assertEquals(null, original.repository.operation)
+    }
+
+    @Test
+    fun frozenSignatureSurvivesDelayRestartAndReachesDurableSender() = runTest {
+        val signature = checkNotNull(MessageSignature.fromUserInput("Delayed"))
+        val original = fixture(backgroundScope)
+        assertEquals(
+            SendDelayAttempt.ACCEPTED,
+            original.coordinator.enqueue(command().copy(frozenSignature = signature)),
+        )
+        original.clock.wall = DUE
+        original.clock.elapsed += DELAY
+        val restartedSender = DelayRecordingSender()
+        val restarted = coordinator(
+            scope = backgroundScope,
+            repository = original.repository,
+            alarms = original.alarms,
+            sender = restartedSender,
+            subscriptions = original.subscriptions,
+            role = original.role,
+            clock = original.clock,
+        )
+
+        restarted.handleAlarm(SendDelayId(1L))
+
+        assertEquals(signature, restartedSender.commands.single().frozenSignature)
     }
 
     @Test
@@ -293,10 +320,12 @@ private class DelayRecordingAlarmDriver(private val result: Boolean) : SendDelay
 
 private class DelayRecordingSender : ThreadSmsSendController {
     var sendCount = 0
+    val commands = mutableListOf<ThreadSmsSendCommand>()
     override fun observe(providerThreadId: ProviderThreadId) =
         MutableStateFlow(ThreadSmsSendObservation(ThreadSmsSendPhase.IDLE))
     override suspend fun send(command: ThreadSmsSendCommand): ThreadSmsSendAttempt {
         sendCount += 1
+        commands += command
         return ThreadSmsSendAttempt.STARTED
     }
     override suspend fun acknowledgeSubmissionUnknown(providerThreadId: ProviderThreadId) = false
@@ -326,6 +355,7 @@ private class DelayRecordingRepository : SendDelayRepository {
             armedElapsedRealtimeMillis = request.armedElapsedRealtimeMillis,
             createdTimestampMillis = request.createdTimestampMillis,
             updatedTimestampMillis = request.createdTimestampMillis,
+            frozenSignature = request.frozenSignature,
         )
         publish(created)
         return SendDelayResult.Success(SendDelayReservation(created, "synthetic body"))

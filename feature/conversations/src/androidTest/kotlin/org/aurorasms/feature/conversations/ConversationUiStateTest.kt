@@ -258,6 +258,68 @@ class ConversationUiStateTest {
     }
 
     @Test
+    fun signatureImpactDisclosesExactUnsignedAndOutgoingPartCounts() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic one-part draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.UNAVAILABLE,
+                    unavailableReason = ComposerUnavailableReason.MULTIPART_UNAVAILABLE,
+                    segmentCount = 2,
+                    unsignedSegmentCount = 1,
+                    signatureApplied = true,
+                ),
+            )
+        }
+
+        compose.onNodeWithText(
+            "With the signature, this changes from 1 to 2 SMS parts. " +
+                "Multipart sending is not available yet.",
+        ).assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+    }
+
+    @Test
+    fun signatureStateFailurePausesSendInsteadOfSilentlyDroppingContent() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.UNAVAILABLE,
+                    unavailableReason = ComposerUnavailableReason.SIGNATURE_STATE_UNAVAILABLE,
+                    segmentCount = 1,
+                ),
+            )
+        }
+
+        compose.onNodeWithText(
+            "Signature settings are unavailable. Sending is paused to avoid changing " +
+                "outgoing text.",
+        ).assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+    }
+
+    @Test
+    fun trustedConversationSignatureActionUsesOnlyTheRouteCallback() {
+        var openCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(body = "Synthetic draft", saving = false, failed = false),
+                conversationSignatureAvailable = true,
+                onOpenConversationSignature = { openCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_SIGNATURE_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle { check(openCount == 1) }
+    }
+
+    @Test
     fun scheduleActionAndConfirmedCancellationKeepSendLocked() {
         val composerState = mutableStateOf(
             ComposerUiState(
@@ -395,7 +457,7 @@ class ConversationUiStateTest {
 
         compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
         compose.onNodeWithText(
-            "This text needs 3 SMS parts. Phase 5A sends one part at a time.",
+            "This text needs 3 SMS parts. Multipart sending is not available yet.",
         ).assertIsDisplayed()
     }
 
@@ -798,6 +860,39 @@ class ConversationUiStateTest {
     }
 
     @Test
+    fun inboxSignatureActionUsesOnlyTheRouteCallback() {
+        var openCount = 0
+        compose.setContent {
+            MaterialTheme {
+                InboxScreen(
+                    state = InboxUiState.Loading,
+                    diagnosticsAvailable = false,
+                    contactsPermissionGranted = true,
+                    onOpenConversation = {},
+                    onOpenSearch = {},
+                    onOpenAppearance = {},
+                    onOpenInboxAppearance = {},
+                    onOpenConversationDefaults = {},
+                    onOpenDiagnostics = {},
+                    onRequestContactsPermission = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    signaturesAvailable = true,
+                    onOpenGlobalSignature = { openCount += 1 },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(INBOX_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(INBOX_SIGNATURE_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle { check(openCount == 1) }
+    }
+
+    @Test
     fun inboxReminderDialogShowsCurrentChoiceAndRequiresExplicitSelection() {
         var selectedDelay: Int? = null
         compose.setContent {
@@ -848,6 +943,8 @@ private fun SyntheticThreadScreen(
     onRequestDeleteMessage: (TimelineMessage) -> Unit = {},
     onRequestDeleteThread: () -> Unit = {},
     onUndoDeletion: () -> Unit = {},
+    conversationSignatureAvailable: Boolean = false,
+    onOpenConversationSignature: () -> Unit = {},
 ) {
     MaterialTheme {
         ThreadScreen(
@@ -859,6 +956,8 @@ private fun SyntheticThreadScreen(
             onOpenSearch = {},
             conversationAppearanceAvailable = false,
             onOpenConversationAppearance = {},
+            conversationSignatureAvailable = conversationSignatureAvailable,
+            onOpenConversationSignature = onOpenConversationSignature,
             isDialable = { false },
             onDial = {},
             onRetry = {},

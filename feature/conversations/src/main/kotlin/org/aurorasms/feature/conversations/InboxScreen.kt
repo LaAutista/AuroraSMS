@@ -83,6 +83,8 @@ fun InboxScreen(
     onAnchorRestored: () -> Unit,
     notificationReminderDelayMinutes: Int = 0,
     onSetNotificationReminderDelayMinutes: (Int) -> Unit = {},
+    signaturesAvailable: Boolean = false,
+    onOpenGlobalSignature: () -> Unit = {},
 ) {
     val visuals = LocalAuroraVisualTokens.current
     Box(
@@ -112,6 +114,8 @@ fun InboxScreen(
                             notificationReminderDelayMinutes = notificationReminderDelayMinutes,
                             onSetNotificationReminderDelayMinutes =
                                 onSetNotificationReminderDelayMinutes,
+                            signaturesAvailable = signaturesAvailable,
+                            onOpenGlobalSignature = onOpenGlobalSignature,
                         )
                     },
                 )
@@ -189,6 +193,8 @@ private fun InboxMoreMenu(
     onRequestContactsPermission: () -> Unit,
     notificationReminderDelayMinutes: Int,
     onSetNotificationReminderDelayMinutes: (Int) -> Unit,
+    signaturesAvailable: Boolean,
+    onOpenGlobalSignature: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var reminderDialogOpen by remember { mutableStateOf(false) }
@@ -235,6 +241,16 @@ private fun InboxMoreMenu(
                     onOpenInboxAppearance()
                 },
             )
+            if (signaturesAvailable) {
+                DropdownMenuItem(
+                    modifier = Modifier.testTag(INBOX_SIGNATURE_ACTION_TEST_TAG),
+                    text = { Text(stringResource(R.string.message_signature)) },
+                    onClick = {
+                        expanded = false
+                        onOpenGlobalSignature()
+                    },
+                )
+            }
             DropdownMenuItem(
                 modifier = Modifier.testTag(CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG),
                 text = { Text(stringResource(R.string.conversation_defaults)) },
@@ -527,6 +543,7 @@ internal fun formatTimestamp(timestampMillis: Long): String =
 const val INBOX_SCREEN_TEST_TAG: String = "aurora-inbox-screen"
 const val INBOX_SEARCH_ACTION_TEST_TAG: String = "aurora-inbox-search-action"
 const val INBOX_MORE_ACTION_TEST_TAG: String = "aurora-inbox-more-action"
+const val INBOX_SIGNATURE_ACTION_TEST_TAG: String = "aurora-inbox-signature-action"
 const val INBOX_APPEARANCE_ACTION_TEST_TAG: String = "aurora-inbox-appearance-action"
 const val INBOX_NOTIFICATION_REMINDER_ACTION_TEST_TAG: String =
     "aurora-inbox-notification-reminder-action"

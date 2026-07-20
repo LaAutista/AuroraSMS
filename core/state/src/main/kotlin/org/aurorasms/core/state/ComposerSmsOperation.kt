@@ -69,6 +69,7 @@ data class ComposerSmsOperation(
     val providerBinding: ComposerSmsProviderBinding?,
     val createdTimestampMillis: Long,
     val updatedTimestampMillis: Long,
+    val frozenSignature: MessageSignature? = null,
 ) {
     init {
         require(operationId.isComposerSmsOperationId()) {
@@ -140,6 +141,7 @@ data class ComposerSmsReservationRequest(
     val expectedDraftRevision: DraftRevision,
     val subscriptionId: AuroraSubscriptionId,
     val createdTimestampMillis: Long,
+    val frozenSignature: MessageSignature? = null,
 ) {
     init {
         require(createdTimestampMillis >= 0L) { "Composer SMS creation time cannot be negative" }

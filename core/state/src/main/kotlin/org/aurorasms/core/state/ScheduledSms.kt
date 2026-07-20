@@ -148,6 +148,7 @@ data class ScheduledSms(
     val armedElapsedRealtimeMillis: Long,
     val createdTimestampMillis: Long,
     val updatedTimestampMillis: Long,
+    val frozenSignature: MessageSignature? = null,
 ) {
     init {
         require(dueTimestampMillis > createdTimestampMillis)
@@ -177,6 +178,7 @@ data class ScheduledSmsRequest(
     val dueTimestampMillis: Long,
     val createdTimestampMillis: Long,
     val armedElapsedRealtimeMillis: Long,
+    val frozenSignature: MessageSignature? = null,
 ) {
     init {
         require(dueTimestampMillis > createdTimestampMillis)

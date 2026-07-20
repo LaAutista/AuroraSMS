@@ -29,12 +29,13 @@ class SendDelayRepositoryInstrumentedTest {
     @After fun cleanDatabase() { context.deleteDatabase(StateDatabaseFactory.DATABASE_NAME) }
 
     @Test
-    fun exactDraftReservationIsContentFreeUndoableAndCasProtected() = runBlocking {
+    fun exactDraftReservationFreezesBoundedSignatureAndIsCasProtected() = runBlocking {
         val database = openDatabase()
         try {
             val drafts = RoomDraftRepository(database)
             val repository = RoomSendDelayRepository(database)
             val thread = ProviderThreadId(91L)
+            val signature = checkNotNull(MessageSignature.fromUserInput("Synthetic signature"))
             val draft = drafts.create(
                 NewDraft(
                     identity = DraftIdentity.ProviderThread(thread),
@@ -56,10 +57,12 @@ class SendDelayRepositoryInstrumentedTest {
                     dueTimestampMillis = 5_200L,
                     createdTimestampMillis = 200L,
                     armedElapsedRealtimeMillis = 50L,
+                    frozenSignature = signature,
                 ),
             ).success()
 
             assertEquals("synthetic delayed body", reservation.authoritativeBody)
+            assertEquals(signature, reservation.operation.frozenSignature)
             assertEquals(
                 reservation.operation,
                 repository.observeByThread(thread).first().success(),
@@ -86,6 +89,7 @@ class SendDelayRepositoryInstrumentedTest {
                 201L,
             ).success()
             assertEquals(SendDelayPhase.DISPATCHING, dispatching.phase)
+            assertEquals(signature, dispatching.frozenSignature)
             assertEquals(
                 SendDelayResult.PhaseMismatch,
                 repository.remove(dispatching.id, dispatching.revision),

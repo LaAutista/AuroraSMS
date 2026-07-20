@@ -57,6 +57,7 @@ object StateDatabaseFactory {
                 STATE_MIGRATION_7_8,
                 STATE_MIGRATION_8_9,
                 STATE_MIGRATION_9_10,
+                STATE_MIGRATION_10_11,
             )
             .addCallback(DraftIdentityEnforcement.callback)
             .addCallback(AppearanceSelectionEnforcement.callback)

@@ -46,12 +46,14 @@ class ComposerSmsOperationRepositoryInstrumentedTest {
         try {
             val threadId = ProviderThreadId(42L)
             val draft = drafts.createDraft(threadId, "synthetic authoritative body", 100L)
+            val signature = checkNotNull(MessageSignature.fromUserInput("Synthetic signature"))
             val reserved = operations.reserve(
-                reservationRequest(threadId, draft, 200L),
+                reservationRequest(threadId, draft, 200L).copy(frozenSignature = signature),
             ).successValue()
 
             assertEquals("synthetic authoritative body", reserved.authoritativeBody)
             assertEquals(ComposerSmsOperationPhase.RESERVED, reserved.operation.phase)
+            assertEquals(signature, reserved.operation.frozenSignature)
             assertEquals(null, reserved.operation.providerBinding)
             assertTrue(reserved.operation.operationId.isComposerSmsOperationId())
             assertEquals(

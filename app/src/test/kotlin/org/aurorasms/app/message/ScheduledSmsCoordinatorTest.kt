@@ -32,6 +32,7 @@ import org.aurorasms.core.state.ConversationSubscriptionRevision
 import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.MessageSignature
 import org.aurorasms.core.state.ScheduledSms
 import org.aurorasms.core.state.ScheduledSmsDispatchReconciliation
 import org.aurorasms.core.state.ScheduledSmsId
@@ -100,6 +101,34 @@ class ScheduledSmsCoordinatorTest {
 
         assertEquals(1, restartedSender.sendCount)
         assertEquals(null, original.repository.schedule)
+    }
+
+    @Test
+    fun frozenSignatureSurvivesScheduleRestartAndReachesDurableSender() = runTest {
+        val signature = checkNotNull(MessageSignature.fromUserInput("Scheduled"))
+        val original = fixture()
+        assertEquals(
+            ScheduledSmsAttempt.ACCEPTED,
+            original.coordinator.schedule(command().copy(frozenSignature = signature)),
+        )
+        original.clock.wall = DUE
+        original.clock.elapsed += DUE - START
+        val restartedSender = RecordingSender()
+        val restarted = ScheduledSmsCoordinator(
+            roleState = FakeRoleState(),
+            conversations = FixedConversationRepository,
+            subscriptions = original.subscriptions,
+            subscriptionPreferences = MissingPreferenceRepository,
+            repository = original.repository,
+            alarms = original.alarms,
+            sender = restartedSender,
+            segmentCounter = SmsSegmentCounter { 1 },
+            clock = original.clock,
+        )
+
+        restarted.handleAlarm(ScheduledSmsId(1L))
+
+        assertEquals(signature, restartedSender.commands.single().frozenSignature)
     }
 
     @Test
@@ -243,10 +272,12 @@ private class RecordingAlarmDriver(private val result: ScheduledAlarmArmResult) 
 
 private class RecordingSender : ThreadSmsSendController {
     var sendCount = 0
+    val commands = mutableListOf<ThreadSmsSendCommand>()
     override fun observe(providerThreadId: ProviderThreadId) =
         MutableStateFlow(ThreadSmsSendObservation(ThreadSmsSendPhase.IDLE))
     override suspend fun send(command: ThreadSmsSendCommand): ThreadSmsSendAttempt {
         sendCount += 1
+        commands += command
         return ThreadSmsSendAttempt.STARTED
     }
     override suspend fun acknowledgeSubmissionUnknown(providerThreadId: ProviderThreadId) = false
@@ -277,6 +308,7 @@ private class RecordingScheduleRepository : ScheduledSmsRepository {
             armedElapsedRealtimeMillis = request.armedElapsedRealtimeMillis,
             createdTimestampMillis = request.createdTimestampMillis,
             updatedTimestampMillis = request.createdTimestampMillis,
+            frozenSignature = request.frozenSignature,
         )
         publish(created)
         return ScheduledSmsResult.Success(ScheduledSmsReservation(created, "synthetic body"))

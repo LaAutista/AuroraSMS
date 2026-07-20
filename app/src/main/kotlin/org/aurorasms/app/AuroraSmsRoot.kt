@@ -69,6 +69,10 @@ import org.aurorasms.app.message.ScheduledSmsObservation
 import org.aurorasms.app.message.SendDelayAttempt
 import org.aurorasms.app.message.SendDelayCommand
 import org.aurorasms.app.message.SendDelayObservation
+import org.aurorasms.app.message.ConversationMessageSignatureDialog
+import org.aurorasms.app.message.ConversationSignatureOverride
+import org.aurorasms.app.message.GlobalMessageSignatureDialog
+import org.aurorasms.app.message.MessageSignatureConversationKey
 import org.aurorasms.app.message.PermanentDeletionCommand
 import org.aurorasms.app.message.PermanentDeletionObservation
 import org.aurorasms.app.message.PermanentDeletionRecoveryReason
@@ -96,6 +100,7 @@ import org.aurorasms.core.state.ConversationSubscriptionPreference
 import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
 import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.state.ScheduledSmsPrecision
+import org.aurorasms.core.state.resolveOutgoingBody
 import org.aurorasms.feature.conversations.ComposerScheduleState
 import org.aurorasms.feature.conversations.ComposerUiState
 import org.aurorasms.feature.conversations.ComposerSendState
@@ -336,6 +341,7 @@ private fun InboxRoute(
     onReady: () -> Unit,
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val context = LocalContext.current
     val holder = remember(services, scope) {
         InboxStateHolder(
             repository = services.conversationRepository,
@@ -401,6 +407,9 @@ private fun InboxRoute(
     }.collectAsStateWithLifecycle(
         initialValue = notificationReminderController?.delayMinutes?.value ?: 0,
     )
+    val signatureStore = services.messageSignaturePreferenceStore
+    val signatureSnapshot by signatureStore.snapshot.collectAsStateWithLifecycle()
+    var globalSignatureEditorOpen by rememberSaveable { mutableStateOf(false) }
 
     AuroraMaterialTheme(profile = inboxProfile) {
         InboxScreen(
@@ -432,7 +441,26 @@ private fun InboxRoute(
                     scope.launch { controller.setDelayMinutes(delayMinutes) }
                 }
             },
+            signaturesAvailable = signatureSnapshot.available,
+            onOpenGlobalSignature = { globalSignatureEditorOpen = true },
         )
+        if (globalSignatureEditorOpen && signatureSnapshot.available) {
+            GlobalMessageSignatureDialog(
+                current = signatureSnapshot.global,
+                onSave = { signature ->
+                    signatureStore.setGlobal(signature).also { saved ->
+                        if (!saved) {
+                            Toast.makeText(
+                                context,
+                                R.string.signature_save_failed,
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                },
+                onDismiss = { globalSignatureEditorOpen = false },
+            )
+        }
         editorScope?.let { target ->
             val currentObservation = when (target.screen) {
                 AppearanceScreenScope.INBOX -> inboxOverrideObservation
@@ -602,6 +630,23 @@ private fun ThreadRoute(
     }
     DisposableEffect(holder) { onDispose(holder::close) }
     val threadState by holder.state.collectAsStateWithLifecycle()
+    val signatureStore = services.messageSignaturePreferenceStore
+    val signatureSnapshot by signatureStore.snapshot.collectAsStateWithLifecycle()
+    val signatureConversationKey = remember(route.providerThreadId, threadState) {
+        trustedMessageSignatureConversationKey(route.providerThreadId, threadState)
+    }
+    val effectiveSignature = signatureSnapshot.resolve(signatureConversationKey)
+    val conversationSignatureOverride = signatureConversationKey
+        ?.let(signatureSnapshot.conversations::get)
+        ?: ConversationSignatureOverride.Inherit
+    var conversationSignatureEditorOpen by rememberSaveable(route.providerThreadId.value) {
+        mutableStateOf(false)
+    }
+    LaunchedEffect(signatureConversationKey, signatureSnapshot.available) {
+        if (signatureConversationKey == null || !signatureSnapshot.available) {
+            conversationSignatureEditorOpen = false
+        }
+    }
     val conversationSubscriptionScope = remember(route.providerThreadId, threadState) {
         trustedConversationSubscriptionScope(route.providerThreadId, threadState)
     }
@@ -759,13 +804,20 @@ private fun ThreadRoute(
         is DraftWriteStatus.Active -> status.latest.body.orEmpty()
         is DraftWriteStatus.Failed -> status.latest.body.orEmpty()
     }
-    val segmentCount = visibleBody.takeIf(String::isNotBlank)?.let(services::countSmsSegments)
+    val unsignedSegmentCount = visibleBody.takeIf(String::isNotBlank)
+        ?.let(services::countSmsSegments)
+    val resolvedOutgoingBody = visibleBody.takeIf(String::isNotBlank)
+        ?.let { body -> resolveOutgoingBody(body, effectiveSignature) }
+    val segmentCount = resolvedOutgoingBody?.let(services::countSmsSegments)
     val composer = draftStatus.toComposerUiState(
         restoredBody = "",
         threadState = threadState,
         sendObservation = sendObservation,
         sendAttemptInFlight = sendAttemptInFlight,
         segmentCount = segmentCount,
+        unsignedSegmentCount = unsignedSegmentCount,
+        signatureApplied = effectiveSignature != null && resolvedOutgoingBody != null,
+        signatureStateAllowsSend = signatureSnapshot.sendAllowed,
         selectedSubscriptionAvailable = subscriptionSelection.selected?.smsCapable == true,
         scheduleObservation = scheduleObservation,
         scheduleAttemptInFlight = scheduleAttemptInFlight,
@@ -884,6 +936,9 @@ private fun ThreadRoute(
                 openEditorTarget = privateRestorationKey.takeIf { conversationScope != null }
                 wallpaperEditorOpen = false
             },
+            conversationSignatureAvailable = signatureSnapshot.available &&
+                signatureConversationKey != null,
+            onOpenConversationSignature = { conversationSignatureEditorOpen = true },
             timelineBackground = {
                 wallpaperController?.let { controller ->
                     ManagedWallpaperSurface(
@@ -935,7 +990,10 @@ private fun ThreadRoute(
                             if (
                                 identity.providerThreadId != route.providerThreadId ||
                                 identity.participants.size != 1 ||
-                                services.countSmsSegments(frozen.content.body.orEmpty()) != 1
+                                resolveOutgoingBody(
+                                    frozen.content.body.orEmpty(),
+                                    effectiveSignature,
+                                )?.let(services::countSmsSegments) != 1
                             ) {
                                 return@launch
                             }
@@ -953,6 +1011,7 @@ private fun ThreadRoute(
                                             draftId = frozen.draftId,
                                             draftRevision = frozen.revision,
                                             delayMillis = sendDelaySeconds * 1_000L,
+                                            frozenSignature = effectiveSignature,
                                         ),
                                     )
                                 }
@@ -965,6 +1024,7 @@ private fun ThreadRoute(
                                             subscriptionId = subscription.id,
                                             draftId = frozen.draftId,
                                             draftRevision = frozen.revision,
+                                            frozenSignature = effectiveSignature,
                                         ),
                                     )
                                 }
@@ -1020,7 +1080,10 @@ private fun ThreadRoute(
                                 if (
                                     identity.providerThreadId != route.providerThreadId ||
                                     identity.participants.size != 1 ||
-                                    services.countSmsSegments(frozen.content.body.orEmpty()) != 1
+                                    resolveOutgoingBody(
+                                        frozen.content.body.orEmpty(),
+                                        effectiveSignature,
+                                    )?.let(services::countSmsSegments) != 1
                                 ) {
                                     return@launch
                                 }
@@ -1032,6 +1095,7 @@ private fun ThreadRoute(
                                             draftId = frozen.draftId,
                                             draftRevision = frozen.revision,
                                             dueTimestampMillis = dueTimestampMillis,
+                                            frozenSignature = effectiveSignature,
                                         ),
                                     )
                                 } == ScheduledSmsAttempt.ACCEPTED
@@ -1175,6 +1239,31 @@ private fun ThreadRoute(
                 }
             },
         )
+        if (
+            conversationSignatureEditorOpen &&
+            signatureSnapshot.available &&
+            signatureConversationKey != null
+        ) {
+            ConversationMessageSignatureDialog(
+                inherited = signatureSnapshot.global,
+                current = conversationSignatureOverride,
+                onSave = { override ->
+                    signatureStore.setConversation(
+                        signatureConversationKey,
+                        override,
+                    ).also { saved ->
+                        if (!saved) {
+                            Toast.makeText(
+                                context,
+                                R.string.signature_save_failed,
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                },
+                onDismiss = { conversationSignatureEditorOpen = false },
+            )
+        }
         if (appearanceEditorOpen && !wallpaperEditorOpen) {
             ScopedAppearanceDialog(
                 kind = ScopedAppearanceKind.CONVERSATION,
@@ -1326,6 +1415,23 @@ internal fun trustedConversationSubscriptionScope(
             ),
             providerThreadId = identity.providerThreadId,
         )
+    }.getOrNull()
+}
+
+internal fun trustedMessageSignatureConversationKey(
+    providerThreadId: ProviderThreadId,
+    state: ThreadUiState,
+): MessageSignatureConversationKey? {
+    val ready = state as? ThreadUiState.Ready ?: return null
+    if (!ready.verifiedConversationIdentityResolved) return null
+    val identity = ready.verifiedConversationIdentity ?: return null
+    if (
+        !ready.coverage.verifiedComplete ||
+        identity.providerThreadId != providerThreadId ||
+        identity.generationId != ready.coverage.generationId
+    ) return null
+    return runCatching {
+        MessageSignatureConversationKey.fromParticipants(identity.participants)
     }.getOrNull()
 }
 
@@ -1494,6 +1600,9 @@ private fun DraftWriteStatus.toComposerUiState(
     sendObservation: ThreadSmsSendObservation,
     sendAttemptInFlight: Boolean,
     segmentCount: Int?,
+    unsignedSegmentCount: Int? = segmentCount,
+    signatureApplied: Boolean = false,
+    signatureStateAllowsSend: Boolean = true,
     selectedSubscriptionAvailable: Boolean,
     scheduleObservation: ScheduledSmsObservation = ScheduledSmsObservation.None,
     scheduleAttemptInFlight: Boolean = false,
@@ -1522,6 +1631,7 @@ private fun DraftWriteStatus.toComposerUiState(
         body.isBlank() -> ComposerUnavailableReason.EMPTY_MESSAGE
         (this as? DraftWriteStatus.Active)?.acknowledgedRevision == null ->
             ComposerUnavailableReason.DRAFT_NOT_DURABLE
+        !signatureStateAllowsSend -> ComposerUnavailableReason.SIGNATURE_STATE_UNAVAILABLE
         ready == null || !ready.verifiedConversationIdentityResolved || verifiedIdentity == null ->
             ComposerUnavailableReason.CONVERSATION_UNVERIFIED
         verifiedIdentity.participants.size != 1 ->
@@ -1559,6 +1669,8 @@ private fun DraftWriteStatus.toComposerUiState(
         sendState = sendState,
         unavailableReason = unavailableReason.takeIf { sendState == ComposerSendState.UNAVAILABLE },
         segmentCount = segmentCount,
+        unsignedSegmentCount = unsignedSegmentCount,
+        signatureApplied = signatureApplied,
         scheduleState = scheduleObservation.toComposerScheduleState(),
         sendDelayDueTimestampMillis = when (sendState) {
             ComposerSendState.DELAY_PENDING ->

@@ -3264,6 +3264,60 @@ default, so no claim is made that its personal index has completed. No app was
 launched, no live message/address/content was read, and no carrier SMS/MMS was
 submitted.
 
+### Phase 6D bounded message-signature acceptance — 2026-07-19
+
+This source identifies as `0.6.4-phase6` (`versionCode` 15), uses Room schema
+11, and adds no permission. It provides global and verified-conversation
+signature choices, exact unsigned/signed SMS-part disclosure, an unchanged
+one-person/one-part SMS transport gate, and immutable frozen signature state
+for immediate, delayed, and scheduled recovery. Corrupt preference state pauses
+new sends rather than silently omitting content.
+
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m32s across 886 tasks (92 executed, two from cache, 792
+up-to-date). All 578 host JUnit results passed with zero failures, errors, or
+skips: app 277, design system 11, index 69, model 19, notifications 21, state
+56, telephony 82, testing 24, and conversations 19. Debug, R8 release, and
+benchmark assembly; debug/release/benchmark lint; clean-room/private-art scans;
+dependency locks; permission and APK-content ledgers; and license gates passed.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m56s
+across 456 tasks. Authoritative XML reports 332 tests with 10 intentional
+assumption skips, 322 executed, and zero failures/errors: app 142/9 skips,
+benchmark 3/1, index 32/0, notifications 31/0, state 62/0, telephony 35/0, and
+conversations 27/0. Two earlier diagnostic attempts lost the emulator process;
+its quick-boot log showed invalid Vulkan color-buffer restoration. A cold boot
+with snapshot loading disabled and software graphics produced the definitive
+green matrix above; neither interrupted attempt is acceptance evidence.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m09s
+across 456 tasks. Authoritative XML reports 335 tests with 13 intentional
+assumption skips, 322 executed, and zero failures/errors: app 145/12 skips,
+benchmark 3/1, index 32/0, notifications 31/0, state 62/0, telephony 35/0, and
+conversations 27/0.
+
+The focused schema suite passed all 62 tests after separating historical
+version-5, version-8, and version-9 SQLite triggers from schema 11's
+signature-aware triggers. `bundleRelease` passed 269 tasks in 7s. CycloneDX 1.6
+passed 15 tasks in 7s with 441 components, 442 dependency nodes, and no random
+serial number.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 15,826,882 | `42d6210e4d89b7e777e8fbd1fa96320173a78ffe05bbaa3b4e1fd00ab9a5acad` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,889,069 | `400226f8e1e0d017533bab3bbc5e745c65006f7dbdd6ea693010b6c8540682e9` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,749,901 | `cf996b07af95aae5f6c960fb433768481e97fd8bcf8fbcdee712fabb824be8c6` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,886,034 | `7ef95ff255e8bffafc408d0f4b868d9eaf6ceb545ebc31a2160034babb1c2d60` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed with data preserved on the Pixel 8 and API 36
+emulator and was copied to each Download directory. Both copies hash-match the
+host artifact and both packages report version code 15/name `0.6.4-phase6`.
+The Pixel retained `org.fossify.messages.debug` as its SMS role holder; API 36
+retained `com.android.messaging`. Aurora's SMS and notification permissions
+remain denied on both. AuroraSMS was not launched, no live message/address/body
+was read, and no carrier SMS/MMS was submitted.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
@@ -3307,7 +3361,9 @@ submitted.
 - [x] Selected-text copy exposes only the selected content. Invalid/collapsed
   selections fail closed, truncated previews are labeled, and details excludes
   bodies, addresses, provider IDs, and attachment paths.
-- [ ] Global/per-thread signatures show segment/MMS impact before send.
+- [x] Global/per-thread signatures show segment/MMS impact before send. Exact
+  signed text is frozen across immediate, delayed, and scheduled recovery;
+  multipart and group transport continue to fail closed.
 - [ ] Spam rules are bounded, explainable, contacts-trusting by default, and
   support unspam/unblock; suspected spam is never silently deleted.
 - [ ] Versioned streaming backup validates limits, paths, checksums,

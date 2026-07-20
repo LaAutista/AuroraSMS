@@ -10,6 +10,7 @@ import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.MessageSignature
 import org.aurorasms.core.state.SendDelayId
 import org.aurorasms.core.state.SendDelayOperation
 import org.aurorasms.core.state.SendDelayParticipantSetKey
@@ -41,6 +42,7 @@ internal data class SendDelayEntity(
     @ColumnInfo(name = "armed_elapsed_realtime_ms") val armedElapsedRealtimeMillis: Long,
     @ColumnInfo(name = "created_timestamp_ms") val createdTimestampMillis: Long,
     @ColumnInfo(name = "updated_timestamp_ms") val updatedTimestampMillis: Long,
+    @ColumnInfo(name = "signature_text") val signatureText: String? = null,
 ) {
     override fun toString(): String = "SendDelayEntity(phaseCode=$phaseCode, REDACTED)"
 }
@@ -61,6 +63,7 @@ internal fun SendDelayEntity.toDomain(): SendDelayOperation = SendDelayOperation
     armedElapsedRealtimeMillis = armedElapsedRealtimeMillis,
     createdTimestampMillis = createdTimestampMillis,
     updatedTimestampMillis = updatedTimestampMillis,
+    frozenSignature = signatureText?.let(MessageSignature::fromStorageValue),
 )
 
 internal val SendDelayPhase.storageCode: String

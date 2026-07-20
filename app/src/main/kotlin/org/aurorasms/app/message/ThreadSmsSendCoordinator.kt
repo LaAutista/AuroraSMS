@@ -33,6 +33,7 @@ import org.aurorasms.core.state.ComposerSmsOperationRepository
 import org.aurorasms.core.state.ComposerSmsOperationResult
 import org.aurorasms.core.state.ComposerSmsProviderBinding
 import org.aurorasms.core.state.ComposerSmsReservationRequest
+import org.aurorasms.core.state.resolveOutgoingBody
 import org.aurorasms.core.state.ConversationSubscriptionParticipantSetKey
 import org.aurorasms.core.state.ConversationSubscriptionPreference
 import org.aurorasms.core.state.ConversationSubscriptionPreferenceRepository
@@ -123,6 +124,7 @@ internal class ThreadSmsSendCoordinator(
                             expectedDraftRevision = command.draftRevision,
                             subscriptionId = command.subscriptionId,
                             createdTimestampMillis = safeNow(),
+                            frozenSignature = command.frozenSignature,
                         ),
                     )
                 ) {
@@ -137,7 +139,14 @@ internal class ThreadSmsSendCoordinator(
                 reservationAccepted = true
                 var ownedOperation = reservation.operation
                 try {
-                    if (segmentCounter.count(reservation.authoritativeBody) != REQUIRED_SMS_UNIT_COUNT) {
+                    val outgoingBody = resolveOutgoingBody(
+                        reservation.authoritativeBody,
+                        ownedOperation.frozenSignature,
+                    )
+                    if (
+                        outgoingBody == null ||
+                        segmentCounter.count(outgoingBody) != REQUIRED_SMS_UNIT_COUNT
+                    ) {
                         if (markKnownUnsent(ownedOperation) == null) requestClassificationRecovery()
                         return@withLock ThreadSmsSendAttempt.STARTED
                     }
@@ -211,7 +220,7 @@ internal class ThreadSmsSendCoordinator(
                         request = SmsSendRequest(
                             operationId = ownedOperation.operationId,
                             recipients = recipients,
-                            body = reservation.authoritativeBody,
+                            body = outgoingBody,
                             subscriptionId = command.subscriptionId,
                             requestDeliveryReport = false,
                             operationOrigin = TransportResult.OperationOrigin.COMPOSER,

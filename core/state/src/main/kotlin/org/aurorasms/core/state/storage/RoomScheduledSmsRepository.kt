@@ -67,6 +67,7 @@ class RoomScheduledSmsRepository(
                         armedElapsedRealtimeMillis = request.armedElapsedRealtimeMillis,
                         createdTimestampMillis = request.createdTimestampMillis,
                         updatedTimestampMillis = request.createdTimestampMillis,
+                        signatureText = request.frozenSignature?.value,
                     ),
                 )
                 when (val stored = dao.findById(id).toScheduledResult()) {

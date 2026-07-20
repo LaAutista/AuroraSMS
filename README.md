@@ -9,27 +9,25 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
-The 2026-07-19 Phase 6 history-completeness source identifies as
-`0.6.3-phase6` (`versionCode` 14). It retains Phase 6C's local content-free
-notification reminders and hardens resumable Telephony indexing after a real
-Pixel exposed a paused partial-history view. Android permits AuroraSMS to read
-message history only while AuroraSMS owns the default-SMS role. The onboarding
-copy now states that boundary directly. While the role remains held and the app
-is foreground-readable, a pending reconciliation receives bounded short
-continuations; explicit foreground, provider, and periodic signals renew that
-bounded budget. Role loss, backgrounding, failure, and close still stop work.
-A large synthetic regression pages 153 conversations and 151 messages from one
-thread exactly once. The complete host gate and API 26/API 36 connected matrices
-pass with zero failures or errors; exact counts and artifact hashes are in
-`docs/TEST_MATRIX.md`.
+The 2026-07-19 Phase 6D source identifies as `0.6.4-phase6` (`versionCode` 15)
+and implements bounded global and verified-conversation message signatures.
+The signed text, exact SMS-part impact, and group-MMS boundary are visible
+before Send. Immediate, delayed, and scheduled sends freeze the reviewed
+signature in Room schema 11, and corrupt signature settings pause new sends
+instead of silently changing outgoing content. A signature can never turn a
+group into individual SMS messages or bypass the existing one-person,
+one-part transport gate.
 
-The exact debug APK was installed, copied, and hash-matched on the Pixel 8 and
-API 36 emulator without launching AuroraSMS or changing either default-SMS
-role. The Pixel retained a non-Aurora role holder and denied Aurora provider
-reads, so its personal history cannot yet complete. That final on-device check
-requires the owner to explicitly choose AuroraSMS as default and keep it in the
-foreground for reconciliation. Phase 6 and the broader release matrix remain
-incomplete, so AuroraSMS is not gold.
+All 578 host tests passed inside the complete 886-task offline host, lint,
+R8-release, benchmark, privacy, dependency, APK-content, and license aggregate.
+The complete API 36 matrix passed 332 tests with 10 intentional skips; API 26
+passed 335 with 13. The exact debug APK installed and hash-matched on the Pixel
+8 and API 36 emulator without launching AuroraSMS or changing either SMS role.
+The Pixel retained Fossify as default and denied Aurora provider reads, so its
+personal history still cannot complete until the owner explicitly grants
+AuroraSMS the default-SMS role and keeps it foreground-readable. No carrier
+message was sent. Phase 6E and later release work remain, so AuroraSMS is not
+gold.
 
 The 2026-07-19 Phase 5G source identifies as `0.5.6-phase5` (`versionCode` 10)
 and implements ADR 0014's shared no-group-SMS boundary. Every `SmsSendRequest`
