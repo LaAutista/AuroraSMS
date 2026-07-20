@@ -760,8 +760,10 @@ not retained, and no broad media/storage or network permission is added.
 Focused encoder/provider/coordinator tests, the state-13 repository/migration
 suite, sanitizer tests on API 26/API 36, and the API 36 composer UI suite pass
 without live provider access or carrier submission. Physical carrier/OEM,
-billing/roaming, dual-SIM, complete process-death, and pre-send attachment
-restoration remain release gates.
+billing/roaming, dual-SIM, and complete process-death acceptance remain release
+gates. Schema 14 now retains only the sanitized JPEG/PNG bytes under the exact
+draft, restores them across Room close/reopen and Activity recreation, and
+fails closed if that attachment authority is unavailable.
 
 ## AuroraMaterial requirements
 

@@ -58,7 +58,7 @@ not an indexing delay.
 ## Workstream 7C: data completeness and migrations
 
 - [x] Export every shipped Room schema and retain an explicit test for every
-  adjacent migration: index 1 through 3 and durable state 1 through 12.
+  adjacent migration: index 1 through 3 and durable state 1 through 14.
 - [ ] Complete and verify a nonempty physical-provider generation with both SMS
   and MMS checkpoints exhausted and provider counts reconciled.
 - [ ] Prove Inbox, Thread, search, and exact old-result jump across that
@@ -91,9 +91,11 @@ journal, authenticated callback, atomic provider transaction, notification
 acknowledgement, and no-resubmission startup recovery. ADR 0026 and commits
 `7a45033`, `a71c623`, `0b27160`, and `1e2344b` add the bounded general/group
 composer, one-operation durable ownership, subject/long-text routing, and the
-metadata-stripping JPEG/PNG picker surface. This synthetic evidence is not
-physical carrier behavior, and pre-send attachment restoration after process
-death remains open.
+metadata-stripping JPEG/PNG picker surface. Commit `0d93626` adds schema-14
+draft-owned sanitized attachment persistence, close/reopen restoration,
+Activity-recreation acceptance, and fail-closed Send gating when that authority
+cannot be read. This synthetic evidence is not physical carrier behavior; an
+explicit host-force-stop/process-relaunch attachment journey remains open.
 
 ## Workstream 7E: physical and platform hardening
 

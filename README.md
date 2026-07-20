@@ -27,7 +27,9 @@ acceptance, and the final F-Droid build recipe remain open. AuroraSMS is not
 gold.
 
 Outgoing MMS implementation commits `7a45033`, `a71c623`, `0b27160`, and
-`1e2344b` complete ADR 0026's synthetic direct/group vertical. Exact groups,
+`1e2344b` complete ADR 0026's synthetic direct/group vertical. Commit
+`0d93626` adds schema-14 app-private persistence for the sanitized attachment
+bytes owned by each exact draft. Exact groups,
 multi-unit text, subjects, captions, images, and image-only drafts submit as one
 MMS operation and can never fan out as SMS. Photo Picker sources are bounded,
 decoded defensively, and re-encoded as metadata-free JPEG/PNG without retaining
@@ -35,13 +37,16 @@ their URI, filename, grant, or metadata. The existing durable draft,
 provider-first preparation, submission journal, and authenticated callback
 protocol now owns SMS or MMS explicitly. Focused host, Room, sanitizer, and UI
 tests pass on API 26/API 36 where applicable without a live provider, role
-change, or carrier send. All 650 host tests and the complete 978-task governed
+change, or carrier send. Attachment sets survive Room close/reopen and Activity
+recreation; a missing, corrupt, or unavailable attachment authority disables
+Send rather than silently downgrading the intended MMS. All 652 host tests and
+the complete 978-task governed
 host/lint/R8/benchmark/privacy/dependency/license aggregate pass; standalone
 release AAB and CycloneDX 1.6 generation pass as well. At source commit
-`1eb7e57`, the complete connected matrices passed on API 36 and API 26 with
-443 and 437 enumerated tests, respectively, 10 and 13 intentional protocol
+`0d93626`, the complete connected matrices passed on API 36 and API 26 with
+448 and 442 enumerated tests, respectively, 10 and 13 intentional protocol
 skips, and zero failures or errors. Physical carrier/OEM interoperability and
-pre-send attachment restoration after process death remain open.
+the explicit host-force-stop/process-relaunch attachment journey remain open.
 
 Incoming MMS implementation commit
 `260fd18522a31b7bce4c4e6dbfbac99c9c83fecd` completes ADR 0025's

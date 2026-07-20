@@ -902,6 +902,20 @@ from Thread identity, and diagnostics redact all carrier/message identity and
 content. Physical carrier/OEM, SIM-number availability, roaming/billing, and
 malicious-carrier acceptance remain open.
 
+Phase 7D ADR 0026 routes exact direct/group, long-text, subject, and sanitized
+image drafts through one MMS operation without SMS fan-out or fallback. Picker
+input is read under source/dimension/pixel limits and re-encoded as bounded JPEG
+or PNG, discarding its URI, grant, filename, EXIF, color profile, and container
+metadata. State schema 14 retains only those sanitized bytes in app-private
+storage under the exact draft; physical triggers cap each part, count, type, and
+aggregate, while draft deletion cascades cleanup. UI attachment mutation commits
+durably before publication, and Send freezes the text draft then rereads the
+attachment authority. Missing, stale, corrupt, or unavailable state blocks
+transport rather than dropping an image or downgrading. Room close/reopen and
+Activity-recreation acceptance pass on API 26/API 36; explicit host force-stop,
+physical carrier/OEM, size/APN, billing/roaming, and dual-SIM acceptance remain
+open.
+
 ## Open security decisions
 
 These do not block Phase 1 foundation unless explicitly named, but block their

@@ -3977,7 +3977,8 @@ open. AuroraSMS is not gold.
 
 ### Phase 7D bounded general outgoing MMS — 2026-07-20
 
-Implementation commits `7a45033`, `a71c623`, `0b27160`, and `1e2344b`
+Implementation commits `7a45033`, `a71c623`, `0b27160`, `1e2344b`, and
+`0d93626`
 complete ADR 0026's synthetic outgoing path. One direct/group payload owns
 bounded text, optional subject, and at most 10 defensively copied attachments;
 the aggregate is capped before PDU overhead. The AOSP-derived encoder closure
@@ -3990,7 +3991,8 @@ downgrade. Selected images are copied under source/dimension/pixel limits and
 re-encoded as bounded JPEG/PNG; the source URI, filename, grant, and metadata do
 not survive admission. State schema 13 and caller-owned transport observation
 bind the exact draft, provider preparation, platform submission, and private
-callback to SMS or MMS explicitly.
+callback to SMS or MMS explicitly. Schema 14 retains only the sanitized,
+bounded attachment bytes under the exact draft until it is deleted.
 
 Acceptance evidence:
 
@@ -3999,26 +4001,33 @@ Acceptance evidence:
 - the six-case composer-operation repository suite, including attachment-only
   reservation, passes on API 26 and API 36;
 - three sanitizer tests pass on API 26 and API 36;
+- schema 13-to-14 migration, bounded repository close/reopen, stale-revision,
+  cascade-cleanup, current-schema, and trigger-reinstallation checks pass on API
+  26 and API 36;
 - the 36-case API 36 Compose suite passes, including generic image metadata,
   add/remove callbacks, MMS status, disabled scheduling, and image-only Send;
-- at source commit `1eb7e57`, the complete `connectedDebugAndroidTest` matrix
-  passed on `AuroraSMS_API36` in 2m34s with 443 enumerated tests, 10 intentional
+- root acceptance restores an exact persisted image across Activity recreation,
+  routes one MMS with the identical bytes, and proves unavailable attachment
+  storage disables Send without a transport attempt;
+- at source commit `0d93626`, the complete `connectedDebugAndroidTest` matrix
+  passed on `AuroraSMS_API36` in 2m40s with 448 enumerated tests, 10 intentional
   protocol-gated skips, and zero failures/errors; the complete
-  `AuroraSMS_API26` matrix passed in 2m46s with 437 tests, 13 intentional skips,
-  and zero failures/errors. The first API 36 aggregate exposed and replaced one
-  obsolete SMS-only group-composer assertion; the replacement verifies one MMS
-  command for the exact group/subscription, disabled scheduling, and no second
-  send request;
+  `AuroraSMS_API26` matrix passed in 2m49s with 442 tests, 13 intentional skips,
+  and zero failures/errors. The first API 36 aggregate exposed one obsolete
+  schema-13 current-version assertion after the expected migration; its
+  corrected schema-14 table/trigger audit and focused migration rerun pass;
 - relevant app/state/telephony/conversations lint gates pass;
-- all 650 host tests and the complete 978-task governed host/lint/R8/benchmark/
-  privacy/dependency/license aggregate pass in 1m59s; standalone release AAB
-  and CycloneDX 1.6 generation pass; and
+- all 652 host tests and the complete 978-task governed host/lint/R8/benchmark/
+  privacy/dependency/license aggregate pass in the initial 1m59s run and the
+  exact-source cached revalidation in 18s; standalone release AAB and CycloneDX
+  1.6 generation pass; and
 - no live provider read, SMS-role change, carrier send, message-content
   capture, attachment export, or broad log was used.
 
 Physical carrier/OEM interoperability, carrier size/APN behavior,
-billing/roaming, dual-SIM, process death at every checkpoint, and pre-send
-attachment restoration remain open. AuroraSMS is not gold.
+billing/roaming, dual-SIM, process death at every checkpoint, and an explicit
+host-force-stop/process-relaunch attachment journey remain open. AuroraSMS is
+not gold.
 
 ## Release gate
 
