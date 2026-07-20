@@ -39,7 +39,7 @@ actions accessible. Copy only the selected range, never the whole conversation,
 sender metadata, hidden subject, or attachment path. Details remain local and
 bounded.
 
-### Phase 6C — local notification reminders
+### Phase 6C — local notification reminders — complete
 
 Use a content-free durable reminder owner and private ID-only alarm. Revalidate
 unread/provider state at fire time; cancellation, read state, reboot, clock

@@ -3,9 +3,9 @@
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
 bounded ADR 0008 Phase 5A source implementation in commit `17fc421`, followed
-by accepted Phase 5B–5G controls and Phase 6A–6B presentation/action controls
-through ADR 0016 and Room schema 10. Local/API 26/API 36 acceptance passed
-through Phase 6B. Safe install/migration and locked-device cold launch passed
+by accepted Phase 5B–5G controls and Phase 6A–6C presentation/action controls
+through ADR 0017 and Room schema 10. Local/API 26/API 36 acceptance passed
+through Phase 6C. Safe install/migration and locked-device cold launch passed
 on a Pixel 8. Real-carrier, radio, billing,
 and invasive physical lifecycle evidence remains open.
 
@@ -729,6 +729,16 @@ Transient selection is not saved or logged. Message details is a body-free,
 address-free projection with no provider/thread IDs or attachment paths.
 Permanent deletion remains a separate choice and retains ADR 0013's confirmation
 and Undo protocol.
+
+Phase 6C treats later notification timing as durable action metadata. ADR 0017
+stores one bounded, checksummed, content-free owner per conversation and places
+only a monotonic local ID in a private one-shot inexact alarm. Fire-time logic
+requires role ownership and an exact successful provider read proving the same
+incoming SMS is unread; the resulting notification is generic. Ownership is
+consumed before posting, provider failure cannot fabricate read state, and
+reboot, wall-clock/timezone changes, role loss, setting changes, and opening the
+conversation fail closed. Reminder state is excluded from backup, and no exact-
+alarm permission, repeating wakeup, sender, address, or body is introduced.
 
 ## Open security decisions
 

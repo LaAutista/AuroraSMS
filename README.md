@@ -9,18 +9,21 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
-The 2026-07-19 Phase 6B source identifies as `0.6.1-phase6` (`versionCode` 12)
-and adds ADR 0016's explicit selected-text copy and bounded message details.
-Long press opens Message actions; copy remains disabled until the user
-highlights a range and exports exactly that range to Android's clipboard. A
-truncated preview is labeled. Details exclude message content, addresses,
-provider IDs, and attachment paths. Permanent deletion remains a separate
-choice with its existing confirmation and Undo protocol. ADR 0015's conservative
-reaction-fallback presentation remains unchanged. The complete host gate and
-API 26/API 36 connected matrices pass with zero failures or errors; exact
-counts and artifact hashes are in `docs/TEST_MATRIX.md`. Pixel 8 installation
-of this exact checkpoint remains pending because the physical device was not
-enumerated by ADB during acceptance.
+The 2026-07-19 Phase 6C source identifies as `0.6.2-phase6` (`versionCode` 13)
+and adds ADR 0017's local content-free notification reminders. Reminders are
+off by default; explicit 15-minute, one-hour, and three-hour choices create at
+most one private ID-only, one-shot reminder per conversation after a successful
+incoming notification and provider acknowledgement. Fire-time handling posts
+only a generic alert after an exact unread-provider recheck and fails closed on
+role, clock, reboot, setting, provider, and conversation-open boundaries. No
+exact-alarm access, repeating alarm, sender, address, or body is added to
+durable state. ADR 0016's selected-text copy/details and ADR 0015's conservative
+reaction presentation remain unchanged. The complete host gate and API 26/API
+36 connected matrices pass with zero failures or errors; exact counts and
+artifact hashes are in `docs/TEST_MATRIX.md`. The exact debug APK was installed
+and hash-matched on the Pixel 8 and API 36 emulator without changing either
+default-SMS role. The Pixel retained a non-Aurora role holder, so Android denied
+Aurora provider reads and its existing partial index correctly remained paused.
 Phase 6 and the broader release matrix remain incomplete, so AuroraSMS is not
 gold.
 

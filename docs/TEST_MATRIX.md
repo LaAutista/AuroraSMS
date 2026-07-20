@@ -3156,6 +3156,56 @@ pending. Clipboard checks used only `Synthetic message` and reset the emulator
 clipboard afterward. No live message content was read or copied, no default-SMS
 role changed, and no carrier SMS/MMS was submitted.
 
+### Phase 6C local content-free notification-reminder acceptance — 2026-07-19
+
+This source identifies as `0.6.2-phase6` (`versionCode` 13), Room schema 10,
+and ADR 0017. Reminders are off by default and offer explicit 15-minute,
+one-hour, and three-hour choices. One checksummed content-free owner per
+conversation is bounded to 64 total entries and drives a private ID-only,
+one-shot inexact alarm. Fire-time handling requires role ownership and an exact
+successful unread-SMS provider recheck before posting generic text. Read,
+missing, and mismatched rows cancel the exact incoming generation; provider
+failure consumes only the reminder and cannot fabricate read state or cancel
+the original alert. Opening the conversation, setting changes, role loss,
+reboot, wall-clock change, and timezone change fail closed.
+
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m31s across 886 tasks. All 565 host JUnit results passed with
+zero failures, errors, or skips: app 269, design system 11, index 69, model 19,
+notifications 21, state 51, telephony 82, testing 24, and conversations 19.
+Debug, R8 release, and benchmark assembly; debug/release/benchmark lint;
+clean-room/private-art scans; dependency locks; permission and APK-content
+ledgers; and license gates passed. `bundleRelease` passed 269 tasks in 8s, and
+CycloneDX 1.6 passed 15 tasks in 8s with 441 components and 442 dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m40s
+across 456 tasks. It passed 320 tests with 10 intentional assumption skips,
+310 executed, and zero failures/errors: app 136/9 skips, benchmark 3/1, index
+31/0, notifications 31/0, state 61/0, telephony 35/0, and conversations 23/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m03s
+across 456 tasks. Authoritative XML reports 323 tests with 13 intentional
+assumption skips, 310 executed, and zero failures/errors: app 139/12 skips,
+benchmark 3/1, index 31/0, notifications 31/0, state 61/0, telephony 35/0, and
+conversations 23/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,817,930 | `b197f321d66d8d17ebf20de95258f146b1f9865e3d43c9d6a0d15f0cb04734c3` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,881,893 | `89a79b47af3b5937d91e4cde83b6f7ff62d1b529e00958c20719ca7242132789` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,742,725 | `9b769bb2c6d1ce0479493e8a4a31ece22767041e85fc34bbfbf52cb3e952e54d` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,851,179 | `d153bb13fc21af671780d05930fd3ee33b85e98a6fd0e7725a7a0ff8ce3f5d97` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed on the Pixel 8 and API 36 emulator, was copied
+to each device's Download directory, and hash-matched the host artifact. The
+Pixel's non-Aurora default-SMS role holder and denied Aurora SMS-read permission
+were preserved. Content-free inspection confirmed its retained index was
+paused rather than verified complete, which explains a partial-history view
+without exposing message, address, participant, or screenshot data. No role or
+permission was changed, no live content was read, and no carrier SMS/MMS was
+submitted.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
@@ -3187,7 +3237,10 @@ role changed, and no carrier SMS/MMS was submitted.
 
 ## Phase 6 feature/privacy matrix
 
-- [ ] Notification reminder scheduling is local and battery-conscious.
+- [x] Notification reminder scheduling is local and battery-conscious. It is
+  off by default, bounded to one one-shot inexact alarm per conversation and 64
+  content-free owners total, revalidates exact unread provider state, and fails
+  closed across role, setting, reboot, and clock boundaries.
 - [x] Reaction fallback parsing never mutates stored SMS and handles ambiguity.
   Exact bounded whole-message forms render locally; all ambiguous or incomplete
   forms fail open to the original raw text.

@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -28,6 +29,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -79,6 +81,8 @@ fun InboxScreen(
     onAcceptPending: () -> Unit,
     onViewportChanged: (List<ConversationSummary>) -> Unit,
     onAnchorRestored: () -> Unit,
+    notificationReminderDelayMinutes: Int = 0,
+    onSetNotificationReminderDelayMinutes: (Int) -> Unit = {},
 ) {
     val visuals = LocalAuroraVisualTokens.current
     Box(
@@ -105,6 +109,9 @@ fun InboxScreen(
                             onOpenConversationDefaults = onOpenConversationDefaults,
                             onOpenDiagnostics = onOpenDiagnostics,
                             onRequestContactsPermission = onRequestContactsPermission,
+                            notificationReminderDelayMinutes = notificationReminderDelayMinutes,
+                            onSetNotificationReminderDelayMinutes =
+                                onSetNotificationReminderDelayMinutes,
                         )
                     },
                 )
@@ -180,8 +187,11 @@ private fun InboxMoreMenu(
     onOpenConversationDefaults: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onRequestContactsPermission: () -> Unit,
+    notificationReminderDelayMinutes: Int,
+    onSetNotificationReminderDelayMinutes: (Int) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var reminderDialogOpen by remember { mutableStateOf(false) }
     val visuals = LocalAuroraVisualTokens.current
     val moreLabel = stringResource(R.string.more)
     Box {
@@ -203,6 +213,18 @@ private fun InboxMoreMenu(
                 onClick = {
                     expanded = false
                     onOpenAppearance()
+                },
+            )
+            DropdownMenuItem(
+                modifier = Modifier.testTag(INBOX_NOTIFICATION_REMINDER_ACTION_TEST_TAG),
+                text = {
+                    Text(
+                        notificationReminderSummary(notificationReminderDelayMinutes),
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    reminderDialogOpen = true
                 },
             )
             DropdownMenuItem(
@@ -240,7 +262,52 @@ private fun InboxMoreMenu(
                 )
             }
         }
+        if (reminderDialogOpen) {
+            AlertDialog(
+                onDismissRequest = { reminderDialogOpen = false },
+                title = { Text(stringResource(R.string.notification_reminders)) },
+                text = {
+                    Column {
+                        REMINDER_DELAY_MINUTES.forEach { delay ->
+                            TextButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    reminderDialogOpen = false
+                                    onSetNotificationReminderDelayMinutes(delay)
+                                },
+                            ) {
+                                Text(
+                                    notificationReminderOption(delay),
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { reminderDialogOpen = false }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
+        }
     }
+}
+
+@Composable
+private fun notificationReminderSummary(delayMinutes: Int): String = when (delayMinutes) {
+    15 -> stringResource(R.string.notification_reminders_15_minutes)
+    60 -> stringResource(R.string.notification_reminders_1_hour)
+    180 -> stringResource(R.string.notification_reminders_3_hours)
+    else -> stringResource(R.string.notification_reminders_off)
+}
+
+@Composable
+private fun notificationReminderOption(delayMinutes: Int): String = when (delayMinutes) {
+    15 -> stringResource(R.string.remind_after_15_minutes)
+    60 -> stringResource(R.string.remind_after_1_hour)
+    180 -> stringResource(R.string.remind_after_3_hours)
+    else -> stringResource(R.string.reminders_disabled)
 }
 
 @Composable
@@ -461,12 +528,15 @@ const val INBOX_SCREEN_TEST_TAG: String = "aurora-inbox-screen"
 const val INBOX_SEARCH_ACTION_TEST_TAG: String = "aurora-inbox-search-action"
 const val INBOX_MORE_ACTION_TEST_TAG: String = "aurora-inbox-more-action"
 const val INBOX_APPEARANCE_ACTION_TEST_TAG: String = "aurora-inbox-appearance-action"
+const val INBOX_NOTIFICATION_REMINDER_ACTION_TEST_TAG: String =
+    "aurora-inbox-notification-reminder-action"
 const val INBOX_SCOPE_APPEARANCE_ACTION_TEST_TAG: String = "aurora-inbox-scope-appearance-action"
 const val CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG: String =
     "aurora-conversation-defaults-appearance-action"
 const val INBOX_LIST_TEST_TAG: String = "aurora-inbox-list"
 const val INBOX_ROW_TEST_TAG: String = "aurora-inbox-row"
 private const val VIEWPORT_PREFETCH_ROWS: Int = 10
+private val REMINDER_DELAY_MINUTES = listOf(0, 15, 60, 180)
 private val INBOX_SEARCH_BAR_HEIGHT = 56.dp
 private val SEARCH_OUTLINE_WIDTH = 1.5.dp
 private val AVATAR_RING_WIDTH = 2.dp

@@ -796,6 +796,42 @@ class ConversationUiStateTest {
             check(defaultsCount == 1)
         }
     }
+
+    @Test
+    fun inboxReminderDialogShowsCurrentChoiceAndRequiresExplicitSelection() {
+        var selectedDelay: Int? = null
+        compose.setContent {
+            MaterialTheme {
+                InboxScreen(
+                    state = InboxUiState.Loading,
+                    diagnosticsAvailable = false,
+                    contactsPermissionGranted = true,
+                    onOpenConversation = {},
+                    onOpenSearch = {},
+                    onOpenAppearance = {},
+                    onOpenInboxAppearance = {},
+                    onOpenConversationDefaults = {},
+                    onOpenDiagnostics = {},
+                    onRequestContactsPermission = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    notificationReminderDelayMinutes = 15,
+                    onSetNotificationReminderDelayMinutes = { selectedDelay = it },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(INBOX_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithText("Message reminders · 15 minutes").assertIsDisplayed()
+        compose.onNodeWithTag(INBOX_NOTIFICATION_REMINDER_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithText("Remind after 1 hour").assertIsDisplayed().performClick()
+
+        compose.runOnIdle { assertEquals(60, selectedDelay) }
+    }
 }
 
 @Composable

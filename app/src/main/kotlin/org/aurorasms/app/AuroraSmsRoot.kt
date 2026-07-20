@@ -395,6 +395,12 @@ private fun InboxRoute(
     val canonicalName = stringResource(R.string.appearance_default_profile)
     val activeName = appearance.activeProfileName(canonicalName)
     val inboxProfile = appearance.profileFor(inboxOverride, appearance.activeProfile)
+    val notificationReminderController = services.notificationReminderController
+    val notificationReminderDelayMinutes by remember(notificationReminderController) {
+        notificationReminderController?.delayMinutes ?: flowOf(0)
+    }.collectAsStateWithLifecycle(
+        initialValue = notificationReminderController?.delayMinutes?.value ?: 0,
+    )
 
     AuroraMaterialTheme(profile = inboxProfile) {
         InboxScreen(
@@ -420,6 +426,12 @@ private fun InboxRoute(
             onAcceptPending = holder::acceptPendingNewer,
             onViewportChanged = holder::onViewportChanged,
             onAnchorRestored = holder::anchorRestored,
+            notificationReminderDelayMinutes = notificationReminderDelayMinutes,
+            onSetNotificationReminderDelayMinutes = { delayMinutes ->
+                notificationReminderController?.let { controller ->
+                    scope.launch { controller.setDelayMinutes(delayMinutes) }
+                }
+            },
         )
         editorScope?.let { target ->
             val currentObservation = when (target.screen) {

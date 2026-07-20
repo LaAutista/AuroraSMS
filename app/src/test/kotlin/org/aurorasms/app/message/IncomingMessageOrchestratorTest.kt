@@ -42,6 +42,7 @@ class IncomingMessageOrchestratorTest {
         val notifier = FakeMessageNotifier()
         val targets = ReplyTargetRegistry(clockMillis = { NOW })
         var providerInsertSignals = 0
+        val reminderCandidates = mutableListOf<org.aurorasms.core.telephony.ProviderStoredMessage>()
         val orchestrator = IncomingMessageOrchestrator(
             roleState = FakeRoleState(held = true),
             smsProvider = provider,
@@ -49,6 +50,7 @@ class IncomingMessageOrchestratorTest {
             messageNotifier = notifier,
             replyTargets = targets,
             onProviderInsertComplete = { providerInsertSignals += 1 },
+            onIncomingNotificationCommitted = reminderCandidates::add,
         )
 
         val result = orchestrator.persist(incomingSms(address))
@@ -57,6 +59,7 @@ class IncomingMessageOrchestratorTest {
         assertEquals(1, provider.insertedIncoming.size)
         assertEquals(1, notifier.incoming.size)
         assertEquals(1, providerInsertSignals)
+        assertEquals(listOf(persisted.providerId), reminderCandidates.map { it.providerId })
         assertEquals("Aster Vale", notifier.incoming.single().message.senderDisplayName)
         assertFalse(notifier.incoming.single().message.senderPersonKey.contains(address.value))
         assertNotNull(targets.resolve(persisted.conversationId, "SMS:1", NOW))

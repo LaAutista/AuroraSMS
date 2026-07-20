@@ -61,6 +61,15 @@ interface MessageNotifier {
         config: NotificationConfig,
     ): NotificationPostResult
 
+    /**
+     * Re-alerts the exact still-current incoming generation without exposing
+     * sender, address, message text, or attachment metadata.
+     */
+    fun notifyUnreadReminder(
+        conversationId: ConversationId,
+        expectedMessageId: MessageId,
+    ): NotificationPostResult = NotificationPostResult.NotificationsDisabled
+
     fun notifyInlineReplyFailure(key: InlineReplyFailureKey): NotificationPostResult
 
     fun cancelIncomingConversation(

@@ -513,6 +513,28 @@ without a database migration.
 - Delete remains a separate Message actions choice and still requires Phase
   5F's confirmation and durable Undo protocol.
 
+### Phase 6C local content-free notification reminders
+
+The `0.6.2-phase6` (`versionCode` 13) 2026-07-19 source implements ADR 0017
+without a database migration.
+
+- Reminders are off by default, with explicit 15-minute, one-hour, and
+  three-hour choices in the inbox overflow.
+- Only a successfully posted and provider-acknowledged incoming SMS may create
+  one bounded content-free reminder owner for its conversation.
+- A private one-shot inexact alarm carries only a monotonic local ID. No exact-
+  alarm access, repeating alarm, worker, sender, address, or message content is
+  persisted.
+- Fire-time handling requires role ownership and a successful exact-provider
+  read proving the same incoming row remains unread. The reminder itself is
+  generic, and ownership is consumed before posting for at-most-once behavior.
+- A confirmed read, missing, or mismatched row cancels the exact incoming
+  notification generation. Provider failure consumes only the reminder and
+  does not invent a read state or cancel the original alert.
+- Opening a conversation, changing the setting, role loss, reboot, and clock or
+  timezone change cancel or fence pending work. Startup recovery rearms only
+  validated future reminders.
+
 ## AuroraMaterial requirements
 
 AuroraMaterial is one immutable, versioned token/profile engine. It controls

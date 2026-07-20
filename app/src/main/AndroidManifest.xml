@@ -71,6 +71,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".receiver.NotificationReminderAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".receiver.ScheduledSmsRecoveryReceiver"
             android:directBootAware="false"
             android:exported="false">

@@ -199,6 +199,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     onOpenedConversationChanged = { conversationId ->
+                                        appContainer.onConversationOpened(conversationId)
                                         if (pendingConversationId == null) {
                                             openedConversationId = conversationId
                                         }

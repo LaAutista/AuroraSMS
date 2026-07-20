@@ -36,6 +36,7 @@ class IncomingMessageOrchestrator(
     private val replyTargets: ReplyTargetRegistry,
     private val notificationConfig: NotificationConfig = NotificationConfig(),
     private val onProviderInsertComplete: suspend () -> Unit = {},
+    private val onIncomingNotificationCommitted: suspend (ProviderStoredMessage) -> Unit = {},
 ) : IncomingMessageSink {
     private val incomingWorkMutex = Mutex()
 
@@ -262,10 +263,17 @@ class IncomingMessageOrchestrator(
         )
         return when (handled) {
             is ProviderAccessResult.Success -> if (roleState.isRoleHeld()) {
-                IncomingPersistResult.Persisted(
-                    providerId = stored.providerId,
-                    conversationId = stored.conversationId,
-                )
+                if (notificationResult is NotificationPostResult.Posted) {
+                    try {
+                        onIncomingNotificationCommitted(stored)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: RuntimeException) {
+                        // Reminder ownership is optional and must never turn a
+                        // safely persisted incoming SMS into a failed delivery.
+                    }
+                }
+                IncomingPersistResult.Persisted(stored.providerId, stored.conversationId)
             } else {
                 revokePostedNotification(
                     notificationResult = notificationResult,

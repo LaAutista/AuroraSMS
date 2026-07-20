@@ -163,6 +163,78 @@ class AndroidMessageNotifier internal constructor(
         )
     }
 
+    override fun notifyUnreadReminder(
+        conversationId: ConversationId,
+        expectedMessageId: MessageId,
+    ): NotificationPostResult = synchronized(notificationMutationLock) {
+        NotificationChannels.ensureCreated(appContext)
+        if (!notificationsEnabledForChannel(NotificationChannels.MESSAGES)) {
+            return@synchronized NotificationPostResult.NotificationsDisabled
+        }
+        when (val tracked = incomingGenerationTracker.lookup(conversationId)) {
+            is IncomingNotificationGenerationTracker.Lookup.Tracked -> {
+                if (tracked.messageId != expectedMessageId) {
+                    return@synchronized NotificationPostResult.SupersededByNewer
+                }
+            }
+            IncomingNotificationGenerationTracker.Lookup.Corrupt,
+            IncomingNotificationGenerationTracker.Lookup.PersistenceFailure,
+            IncomingNotificationGenerationTracker.Lookup.Untracked,
+            IncomingNotificationGenerationTracker.Lookup.UntrackedAfterOverflow,
+            -> return@synchronized generationStateUnavailable()
+        }
+        val contentIntent = when (val result = contentPendingIntent(conversationId)) {
+            is ContentIntentResult.Accepted -> result.pendingIntent
+            is ContentIntentResult.Rejected -> {
+                return@synchronized NotificationPostResult.Rejected(result.reason)
+            }
+        }
+        val tag = conversationTag(conversationId)
+        val notificationId = notificationIdForConversation(conversationId)
+        val exactActive = try {
+            notificationGateway.activeNotifications().filter { candidate ->
+                candidate.tag == tag && candidate.id == notificationId
+            }
+        } catch (_: RuntimeException) {
+            return@synchronized generationStateUnavailable()
+        }
+        if (exactActive.size > 1) return@synchronized generationStateUnavailable()
+        exactActive.singleOrNull()?.let { active ->
+            val activeMessageId = parseSourceMessageIdMarker(
+                active.notification.extras.getString(SOURCE_MESSAGE_ID_EXTRA),
+            ) ?: return@synchronized generationStateUnavailable()
+            if (activeMessageId != expectedMessageId) {
+                return@synchronized NotificationPostResult.SupersededByNewer
+            }
+        }
+        val builder = NotificationCompat.Builder(appContext, NotificationChannels.MESSAGES)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(appContext.getString(R.string.notification_reminder_title))
+            .setContentText(appContext.getString(R.string.notification_reminder_body))
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(genericPublicNotification(privacyText(), contentIntent))
+            .setContentIntent(contentIntent)
+            .setShowWhen(true)
+            .setWhen(System.currentTimeMillis())
+            .setOnlyAlertOnce(false)
+            .setAutoCancel(true)
+            .addExtras(
+                Bundle().apply {
+                    putString(SOURCE_MESSAGE_ID_EXTRA, sourceMessageIdMarker(expectedMessageId))
+                },
+            )
+        try {
+            notificationGateway.notify(tag, notificationId, builder.build())
+            NotificationPostResult.Posted(notificationId)
+        } catch (_: SecurityException) {
+            NotificationPostResult.Rejected(NotificationPostResult.RejectionReason.PERMISSION_DENIED)
+        } catch (_: RuntimeException) {
+            generationStateUnavailable()
+        }
+    }
+
     override fun cancelIncomingConversation(
         conversationId: ConversationId,
         expectedMessageId: MessageId,

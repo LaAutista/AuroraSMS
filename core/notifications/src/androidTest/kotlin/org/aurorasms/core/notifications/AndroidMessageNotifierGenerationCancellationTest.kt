@@ -854,6 +854,59 @@ class AndroidMessageNotifierGenerationCancellationTest {
         )
     }
 
+    @Test
+    fun unreadReminderRealertsExactTrackedGenerationWithGenericContentOnly() {
+        val gateway = FakeNotificationMutationGateway()
+        val seamNotifier = seamNotifier(gateway)
+        val privateBody = "private reminder body must not reappear"
+        assertTrue(
+            seamNotifier.notifyIncoming(
+                incomingMessage(SEAM_CONVERSATION_ID, MATCHING_MESSAGE_ID, privateBody),
+                VISIBLE_CONFIG,
+            ) is NotificationPostResult.Posted,
+        )
+        gateway.active.clear()
+
+        assertEquals(
+            NotificationPostResult.Posted(notificationIdForConversation(SEAM_CONVERSATION_ID)),
+            seamNotifier.notifyUnreadReminder(SEAM_CONVERSATION_ID, MATCHING_MESSAGE_ID),
+        )
+
+        val reminder = gateway.notifyCalls.last().notification
+        assertEquals(
+            context.getString(R.string.notification_reminder_title),
+            reminder.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+        )
+        assertEquals(
+            context.getString(R.string.notification_reminder_body),
+            reminder.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
+        )
+        assertTrue(!reminder.extras.toString().contains(privateBody))
+        assertEquals(
+            sourceMessageIdMarker(MATCHING_MESSAGE_ID),
+            reminder.extras.getString(SOURCE_MESSAGE_ID_EXTRA),
+        )
+    }
+
+    @Test
+    fun unreadReminderCannotReplaceNewerTrackedGeneration() {
+        val gateway = FakeNotificationMutationGateway()
+        val seamNotifier = seamNotifier(gateway)
+        assertTrue(
+            seamNotifier.notifyIncoming(
+                incomingMessage(SEAM_CONVERSATION_ID, NEWER_MESSAGE_ID, "newer"),
+                VISIBLE_CONFIG,
+            ) is NotificationPostResult.Posted,
+        )
+        val callsBeforeReminder = gateway.notifyCalls.size
+
+        assertSame(
+            NotificationPostResult.SupersededByNewer,
+            seamNotifier.notifyUnreadReminder(SEAM_CONVERSATION_ID, OLDER_MESSAGE_ID),
+        )
+        assertEquals(callsBeforeReminder, gateway.notifyCalls.size)
+    }
+
     private fun seamNotifier(
         gateway: NotificationMutationGateway,
         maximumTrackedConversations: Int = 4_096,

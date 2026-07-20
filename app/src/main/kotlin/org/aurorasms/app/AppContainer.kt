@@ -87,6 +87,13 @@ import org.aurorasms.app.message.PermanentDeletionController
 import org.aurorasms.app.message.PermanentDeletionCoordinator
 import org.aurorasms.app.message.PermanentDeletionRecoveryReason
 import org.aurorasms.app.message.UnavailablePermanentDeletionController
+import org.aurorasms.app.message.AndroidNotificationReminderAlarmDriver
+import org.aurorasms.app.message.NotificationReminderController
+import org.aurorasms.app.message.NotificationReminderCoordinator
+import org.aurorasms.app.message.NotificationReminderId
+import org.aurorasms.app.message.NotificationReminderRecoveryReason
+import org.aurorasms.app.message.SharedPreferencesNotificationReminderPreferenceStore
+import org.aurorasms.app.message.SharedPreferencesNotificationReminderStore
 import org.aurorasms.app.message.requiresFollowUp
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
@@ -349,10 +356,21 @@ class AppContainer(
     internal val permanentDeletionController: PermanentDeletionController =
         deferredPermanentDeletionController
     internal val sendDelayPreferenceStore = SharedPreferencesSendDelayPreferenceStore(application)
+    private val notificationReminderPreferenceStore =
+        SharedPreferencesNotificationReminderPreferenceStore(application)
     val messageNotifier: MessageNotifier = AndroidMessageNotifier(
         context = application,
         intentFactory = AppNotificationIntentFactory(application),
     )
+    internal val notificationReminderController: NotificationReminderController =
+        NotificationReminderCoordinator(
+            roleState = defaultSmsRoleState,
+            smsProvider = smsProviderDataSource,
+            notifier = messageNotifier,
+            preferences = notificationReminderPreferenceStore,
+            store = SharedPreferencesNotificationReminderStore(application),
+            alarms = AndroidNotificationReminderAlarmDriver(application),
+        )
     private val inlineReplyTransportResultHandler = InlineReplyTransportResultHandler(
         replyOperations = replyOperations,
         messageNotifier = messageNotifier,
@@ -372,6 +390,7 @@ class AppContainer(
             enqueueIndexSignal(IndexSignal.INCOMING_INSERT)
             retryPendingInlineReplyOperations()
         },
+        onIncomingNotificationCommitted = notificationReminderController::schedule,
     )
     val incomingMessageSink: IncomingMessageSink = incomingMessageOrchestrator
     val inlineReplyHandler: InlineReplyHandler = InlineReplyOrchestrator(
@@ -396,6 +415,13 @@ class AppContainer(
 
     init {
         retryPendingInlineReplyOperations()
+        if (!syntheticIndexOnly) {
+            applicationScope.launch(Dispatchers.IO) {
+                notificationReminderController.recover(
+                    NotificationReminderRecoveryReason.APP_STARTUP,
+                )
+            }
+        }
         if (!syntheticIndexOnly) {
             applicationScope.launch {
                 for (ignored in indexSignalWakeUps) {
@@ -649,10 +675,22 @@ class AppContainer(
         permanentDeletionController.handleAlarm(id)
     }
 
+    internal suspend fun onNotificationReminderAlarm(id: NotificationReminderId) {
+        notificationReminderController.handleAlarm(id)
+    }
+
+    fun onConversationOpened(conversationId: org.aurorasms.core.model.ConversationId?) {
+        if (conversationId == null) return
+        applicationScope.launch(Dispatchers.IO) {
+            notificationReminderController.cancelConversation(conversationId)
+        }
+    }
+
     internal suspend fun onScheduledSmsRecovery(reason: ScheduledSmsRecoveryReason) {
         scheduledSmsController.recover(reason)
         sendDelayController.recover(reason.toSendDelayRecoveryReason())
         permanentDeletionController.recover(reason.toPermanentDeletionRecoveryReason())
+        notificationReminderController.recover(reason.toNotificationReminderRecoveryReason())
     }
 
     /** Retries observer registration and reconciliation after explicit role/permission UI success. */
@@ -694,6 +732,7 @@ class AppContainer(
             scheduledSmsController.fence()
             sendDelayController.fence()
             permanentDeletionController.fence()
+            notificationReminderController.fence()
             cancelAndJoinPendingMessagingRecovery()
             incomingMessageOrchestrator.onRoleLost()
         }
@@ -1558,6 +1597,21 @@ private fun ScheduledSmsRecoveryReason.toPermanentDeletionRecoveryReason():
     ScheduledSmsRecoveryReason.PACKAGE_REPLACED,
     ScheduledSmsRecoveryReason.EXACT_ACCESS_CHANGED,
     -> PermanentDeletionRecoveryReason.PACKAGE_REPLACED
+}
+
+private fun ScheduledSmsRecoveryReason.toNotificationReminderRecoveryReason():
+    NotificationReminderRecoveryReason = when (this) {
+    ScheduledSmsRecoveryReason.APP_STARTUP -> NotificationReminderRecoveryReason.APP_STARTUP
+    ScheduledSmsRecoveryReason.BOOT_COMPLETED ->
+        NotificationReminderRecoveryReason.BOOT_COMPLETED
+    ScheduledSmsRecoveryReason.WALL_CLOCK_CHANGED ->
+        NotificationReminderRecoveryReason.WALL_CLOCK_CHANGED
+    ScheduledSmsRecoveryReason.TIMEZONE_CHANGED ->
+        NotificationReminderRecoveryReason.TIMEZONE_CHANGED
+    ScheduledSmsRecoveryReason.PACKAGE_REPLACED ->
+        NotificationReminderRecoveryReason.PACKAGE_REPLACED
+    ScheduledSmsRecoveryReason.EXACT_ACCESS_CHANGED ->
+        NotificationReminderRecoveryReason.EXACT_ACCESS_CHANGED
 }
 
 private suspend fun StateFlow<IndexRuntimeState>.awaitReadyRuntime(): IndexRuntime {

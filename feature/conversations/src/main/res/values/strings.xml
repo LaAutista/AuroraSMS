@@ -64,6 +64,15 @@
     <string name="conversation_defaults">Conversation defaults</string>
     <string name="conversation_appearance">Conversation appearance</string>
     <string name="diagnostics">Diagnostics</string>
+    <string name="notification_reminders">Message reminders</string>
+    <string name="notification_reminders_off">Message reminders · Off</string>
+    <string name="notification_reminders_15_minutes">Message reminders · 15 minutes</string>
+    <string name="notification_reminders_1_hour">Message reminders · 1 hour</string>
+    <string name="notification_reminders_3_hours">Message reminders · 3 hours</string>
+    <string name="reminders_disabled">Off</string>
+    <string name="remind_after_15_minutes">Remind after 15 minutes</string>
+    <string name="remind_after_1_hour">Remind after 1 hour</string>
+    <string name="remind_after_3_hours">Remind after 3 hours</string>
     <string name="loading_messages">Loading messages…</string>
     <string name="no_conversations">No conversations are indexed yet.</string>
     <string name="load_failed">Messages are temporarily unavailable.</string>
