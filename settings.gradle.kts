@@ -43,6 +43,7 @@ include(
     ":core:state",
     ":core:telephony",
     ":core:testing",
+    ":feature:backup",
     ":feature:conversations",
     ":macrobenchmark",
 )
