@@ -3663,13 +3663,23 @@ Focused checkpoint evidence on 2026-07-20:
 - 9/9 connected tests passed on API 26 with zero failures/errors/skips; and
 - 9/9 connected tests passed on API 36 with zero failures/errors/skips.
 
+The following private staging slice also passed strict module lint and six of
+six focused connected tests on each API. It proved owner-only regular files in
+`noBackupFilesDir`, bounded source-copy failure cleanup, one combined wrong-
+passphrase/tamper result, rejection of an authenticated but invalid message
+schema, `.pending` to `.validated` promotion only after full validation, startup
+cleanup, cancellation cleanup, and symlink/path-replacement rejection without
+following or deleting the foreign target.
+Together with the provider checkpoint, the complete module suite now passes
+15/15 connected tests on API 26 and 15/15 on API 36 with zero failures, errors,
+or skips.
+
 The tests used only canonical synthetic addresses, bodies, metadata, and a
 196,608-byte generated binary part. They did not acquire the SMS role, inspect
 live provider rows, mutate a real Telephony provider, launch a carrier boundary,
-or install a user-facing backup flow. Phase 6G remains open for private staging
-file ownership/cleanup, SAF controllers and UI confirmation, app integration,
-full aggregate/release gates, and separately approved physical-device/OEM
-verification.
+or install a user-facing backup flow. Phase 6G remains open for SAF controllers
+and UI confirmation, app integration, full aggregate/release gates, and
+separately approved physical-device/OEM verification.
 
 ## Remaining Phase 5 lifecycle/action matrix
 

@@ -155,9 +155,13 @@ staging, local thread reconstruction, and conditional provider commit/rollback
 are implemented. All 26 module host tests and all 9 connected tests passed on
 both API 26 and API 36, alongside strict lint and privacy/dependency gates. All
 provider journeys used a private synthetic `ContentProvider`; no SMS role, live
-message read/write, or carrier boundary was used. Private staging-file lifecycle,
-SAF/UI integration, full aggregate/release evidence, and approved physical/OEM
-verification remain before Phase 6G is complete.
+message read/write, or carrier boundary was used. The private restore staging
+lifecycle subsequently passed six focused tests on both APIs: bounded encrypted
+copy, authenticated `.pending` plaintext, full validation before atomic
+`.validated` promotion, owned-file cleanup, startup reconciliation, and
+symlink/path-replacement rejection under `noBackupFilesDir`. SAF/UI integration,
+full aggregate/release evidence, and approved physical/OEM verification remain
+before Phase 6G is complete.
 
 ### Phase 6H — Android Auto and notification completion
 

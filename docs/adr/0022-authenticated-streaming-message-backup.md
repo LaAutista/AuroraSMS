@@ -179,6 +179,16 @@ restore/replay, role and permission fences, provider normalization, both
 pre-ID/expected-digest recovery windows, and rollback after a later commit
 conflict without touching real Telephony content.
 
+The staging adapter uses a dedicated credential-encrypted `noBackupFilesDir`
+directory and owner-only files. It creates each pending file exclusively without
+following links, verifies owner/regular-file/single-link identity through the
+opened descriptor, `fsync`s bytes before same-directory rename, and `fsync`s the
+directory after rename or cleanup. An encrypted selection can become
+`.plaintext.validated` only after GCM authentication and the complete message
+schema pass. Wrong-passphrase/tamper, invalid-schema, source-failure, size-limit,
+cancel, stale-startup, and replaced-path cases remove or reject only the owned
+files. Six focused journeys pass on both API 26 and API 36.
+
 ## Consequences
 
 - Portable archives are confidential and tamper-evident but only as strong as
@@ -187,5 +197,5 @@ conflict without touching real Telephony content.
   require temporary private disk roughly equal to the plaintext archive.
 - OS/cloud backup remains disabled; the explicit archive is the only backup
   surface.
-- Provider import, exact schemas, UI, cleanup, API matrices, and physical-device
+- SAF/UI integration, the complete aggregate/release matrix, and physical/OEM
   smoke tests remain mandatory before Phase 6G can be called complete.
