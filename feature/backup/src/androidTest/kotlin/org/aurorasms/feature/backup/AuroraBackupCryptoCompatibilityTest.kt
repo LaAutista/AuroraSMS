@@ -9,6 +9,7 @@ import android.net.Uri
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -94,5 +95,34 @@ class AuroraBackupCryptoCompatibilityTest {
             readPermissionGranted = { true },
         )
         assertEquals(AuroraBackupSourceOpenResult.RoleRequired, source.open())
+    }
+
+    @Test
+    fun restoreJournalPersistsCrashOrderingInNoBackupStorage() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val directory = File(context.noBackupFilesDir, "restore-journal-instrumentation").apply {
+            deleteRecursively()
+            check(mkdirs())
+        }
+        try {
+            val sessionValue = "00000000-0000-4000-8000-000000000002"
+            val journal = AuroraRestoreJournal(
+                directory = directory,
+                nowMillis = { 42L },
+                newSession = { sessionValue },
+            )
+            val session = (journal.begin() as AuroraRestoreJournalBeginResult.Success).session
+            assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS))
+            assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 77))
+
+            val recovered = AuroraRestoreJournal(directory)
+            assertEquals(
+                AuroraRestoreJournalRecoveryResult.Active(session, 42L, 1L, false),
+                recovered.recoverySnapshot(),
+            )
+            assertTrue(recovered.clear(session))
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 }

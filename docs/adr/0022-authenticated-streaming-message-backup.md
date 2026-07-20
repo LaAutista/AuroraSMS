@@ -123,6 +123,15 @@ Foreign, changed, or recycled rows cause a fail-closed ownership conflict rather
 than deletion. This provides logical all-or-rollback behavior without claiming a
 cross-provider Android transaction that the public Telephony API does not offer.
 
+The journal is a private `noBackupFilesDir` append-only log. A fresh opaque UUID
+binds every checksummed event. Its strict grammar permits only sequential
+reserve/insert pairs, at most one final pre-ID reservation, and a durable complete
+marker. Each line is flushed and `fsync`ed before the provider boundary advances;
+recovery streams ownership instead of collecting a large import in memory. The
+log stores only session, ordinal, provider kind/ID, event sequence, timestamps,
+and checksums—never addresses, bodies, subjects, MIME metadata, or attachment
+bytes. A malformed log blocks a new restore and cannot be cleared as trusted.
+
 ## Consequences
 
 - Portable archives are confidential and tamper-evident but only as strong as
