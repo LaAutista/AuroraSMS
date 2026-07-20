@@ -11,6 +11,9 @@ import org.aurorasms.core.model.MmsAttachmentSummary
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
+import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ProviderKind
 
 data class MmsProviderMessage(
     val id: ProviderMessageId,
@@ -93,6 +96,47 @@ data class DecodedIncomingMmsRecord(
     }
 }
 
+/** Exact, bounded provider projection for the first outgoing attachment surface. */
+data class OutgoingVoiceMemoProviderRecord(
+    val operationId: MessageId,
+    val providerThreadId: ProviderThreadId,
+    val recipients: RecipientSet,
+    val text: String?,
+    val subject: String?,
+    val memo: OutgoingVoiceMemo,
+    val encodedSize: Int,
+    val transactionId: String,
+    val timestampMillis: Long,
+    val subscriptionId: AuroraSubscriptionId,
+) {
+    init {
+        require(operationId.kind == ProviderKind.PENDING_OPERATION && operationId.value > 0L)
+        require(recipients.size == 1) { "The first voice-memo provider path supports one recipient" }
+        require(text == null || text.length <= MmsProviderMessage.MAX_MMS_TEXT_CHARACTERS)
+        require(subject == null || subject.length <= MmsProviderMessage.MAX_MMS_SUBJECT_CHARACTERS)
+        require(encodedSize in 1..EncodedMmsPdu.MAX_ENCODED_BYTES)
+        require(transactionId.matches(Regex("[A-Za-z0-9._-]{1,64}")))
+        require(timestampMillis >= 0L)
+    }
+
+    override fun toString(): String =
+        "OutgoingVoiceMemoProviderRecord(recipientCount=${recipients.size}, " +
+            "textLength=${text?.length ?: 0}, hasSubject=${subject != null}, memo=$memo, " +
+            "encodedSize=$encodedSize, REDACTED)"
+}
+
+enum class OutgoingMmsProviderStatus {
+    FAILED,
+    OUTBOX,
+    SENT,
+}
+
+enum class OutgoingMmsStatusUpdateOutcome {
+    APPLIED,
+    ROW_ABSENT,
+    OWNERSHIP_CONFLICT,
+}
+
 interface MmsProviderDataSource {
     suspend fun count(): ProviderAccessResult<Long>
 
@@ -105,4 +149,27 @@ interface MmsProviderDataSource {
         ProviderAccessResult.Unsupported("read exact MMS")
 
     suspend fun insertIncoming(message: DecodedIncomingMmsRecord): ProviderAccessResult<ProviderStoredMessage>
+
+    suspend fun insertOutgoingVoiceMemo(
+        message: OutgoingVoiceMemoProviderRecord,
+    ): ProviderAccessResult<ProviderStoredMessage> =
+        ProviderAccessResult.Unsupported("insert outgoing voice memo")
+
+    suspend fun updateOutgoingStatus(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+        status: OutgoingMmsProviderStatus,
+    ): ProviderAccessResult<OutgoingMmsStatusUpdateOutcome> =
+        ProviderAccessResult.Unsupported("update outgoing MMS status")
+
+    /**
+     * Removes only an Aurora-owned, failed provider row (and temporary parts)
+     * whose exact preparation identity never crossed the platform-send boundary.
+     */
+    suspend fun rollbackOutgoingPreparation(
+        operationId: MessageId,
+        conversationId: ConversationId,
+        transactionId: String,
+    ): ProviderAccessResult<OutgoingMmsStatusUpdateOutcome> =
+        ProviderAccessResult.Unsupported("rollback outgoing MMS preparation")
 }

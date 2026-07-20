@@ -63,6 +63,76 @@ class ConversationUiStateTest {
     val compose = createComposeRule()
 
     @Test
+    fun voiceMemoRecordIsExplicitAndRecordingStateStaysVisible() {
+        var recordCount = 0
+        var stopCount = 0
+        var cancelCount = 0
+        val voiceState = mutableStateOf(VoiceMemoUiState(recordEnabled = true))
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "",
+                    saving = false,
+                    failed = false,
+                    unavailableReason = ComposerUnavailableReason.EMPTY_MESSAGE,
+                ),
+                voiceMemo = voiceState.value,
+                onRecordVoiceMemo = {
+                    recordCount += 1
+                    voiceState.value = VoiceMemoUiState(
+                        phase = VoiceMemoUiPhase.RECORDING,
+                        elapsedMillis = 12_000L,
+                    )
+                },
+                onStopVoiceMemo = { stopCount += 1 },
+                onCancelVoiceMemo = { cancelCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_VOICE_MEMO_TEST_TAG).assertIsEnabled().performClick()
+        compose.onNodeWithTag(VOICE_MEMO_PANEL_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("Recording · 0:12 / 1:00").assertIsDisplayed()
+        compose.onNodeWithTag(STOP_VOICE_MEMO_TEST_TAG).performClick()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.runOnIdle {
+            assertEquals(1, recordCount)
+            assertEquals(1, stopCount)
+            assertEquals(1, cancelCount)
+        }
+    }
+
+    @Test
+    fun reviewedVoiceMemoRequiresASeparateSendAction() {
+        var sendCount = 0
+        var discardCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "",
+                    saving = false,
+                    failed = false,
+                    unavailableReason = ComposerUnavailableReason.EMPTY_MESSAGE,
+                ),
+                voiceMemo = VoiceMemoUiState(
+                    phase = VoiceMemoUiPhase.READY,
+                    durationMillis = 4_000L,
+                    sizeBytes = 4_096,
+                ),
+                onCancelVoiceMemo = { discardCount += 1 },
+                onSendVoiceMemo = { sendCount += 1 },
+            )
+        }
+
+        compose.onNodeWithText("Voice memo · 0:04 · 4 KiB").assertIsDisplayed()
+        compose.onNodeWithTag(SEND_VOICE_MEMO_TEST_TAG).performClick()
+        compose.onNodeWithText("Discard").performClick()
+        compose.runOnIdle {
+            assertEquals(1, sendCount)
+            assertEquals(1, discardCount)
+        }
+    }
+
+    @Test
     fun threadExposesStableListAndDisabledSendWithoutLoadingProviderMedia() {
         val repository = RejectingAttachmentRepository()
         compose.setContent {
@@ -1123,6 +1193,11 @@ class ConversationUiStateTest {
 @Composable
 private fun SyntheticThreadScreen(
     composer: ComposerUiState,
+    voiceMemo: VoiceMemoUiState = VoiceMemoUiState(),
+    onRecordVoiceMemo: () -> Unit = {},
+    onStopVoiceMemo: () -> Unit = {},
+    onCancelVoiceMemo: () -> Unit = {},
+    onSendVoiceMemo: () -> Unit = {},
     onSend: () -> Unit = {},
     onUndoSend: () -> Unit = {},
     sendDelaySeconds: Int = 0,
@@ -1160,6 +1235,11 @@ private fun SyntheticThreadScreen(
             onAnchorRestored = {},
             onToggleMessageExpansion = {},
             onDraftChanged = {},
+            voiceMemo = voiceMemo,
+            onRecordVoiceMemo = onRecordVoiceMemo,
+            onStopVoiceMemo = onStopVoiceMemo,
+            onCancelVoiceMemo = onCancelVoiceMemo,
+            onSendVoiceMemo = onSendVoiceMemo,
             onSend = onSend,
             onUndoSend = onUndoSend,
             sendDelaySeconds = sendDelaySeconds,

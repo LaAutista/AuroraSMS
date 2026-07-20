@@ -51,6 +51,7 @@ class DefaultSmsManifestContractTest {
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.RECEIVE_BOOT_COMPLETED,
             Manifest.permission.SCHEDULE_EXACT_ALARM,
+            Manifest.permission.RECORD_AUDIO,
         )
 
         assertTrue(requested.containsAll(required))

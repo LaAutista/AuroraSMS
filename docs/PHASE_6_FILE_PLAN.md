@@ -112,11 +112,33 @@ failures or errors. Release bundle and deterministic CycloneDX 1.6 SBOM
 generation passed. No live message/address/body was inspected and no carrier
 traffic was submitted.
 
-### Phase 6F — voice memo
+### Phase 6F — voice memo — implementation and aggregate acceptance complete
 
 Request microphone permission only after an explicit Record action. Keep a
 visible recording indicator, hard duration/size limits, app-private temporary
 files, cancellation cleanup, and one audited MMS attachment handoff.
+
+ADR 0021 admits a pinned twelve-file Apache-2.0 outgoing `SendReq` composer
+subset from official AOSP and no incoming parser, APN/network client, or
+messaging-app source. `0.6.8-phase6` records MPEG-4/AAC-LC for at most 60 seconds
+and 512 KiB under `noBackupFilesDir`, requires a separate review/Send action,
+and cancels capture or review state on Thread/background lifecycle.
+
+The one-person provider path writes parts first, verifies one exact
+creator/thread/transaction-bound FAILED row, and crosses the platform boundary
+only after an exact applied OUTBOX transition. A checksummed content-free
+journal quarantines ambiguous submission state and authenticates the exact
+callback before provider mutation. Focused golden/corpus, journal/recovery,
+callback, fake-provider, UI, and real virtual-microphone tests pass across API
+26/API 36 where applicable. No live provider content or carrier traffic is part
+of this acceptance; group/general MMS and carrier/OEM verification remain open.
+
+Acceptance passed on 2026-07-19: 601 host tests, the complete 888-task offline
+aggregate, and 362 connected tests on each of API 26 and API 36 completed with
+zero failures or errors. Release bundle and CycloneDX 1.6 SBOM generation
+passed. The exact debug APK installed and hash-matched on both emulators while
+preserving their non-Aurora SMS role. The Pixel was unreachable after the editor
+crash, so the Phase 6F physical install and carrier/OEM journeys remain open.
 
 ### Phase 6G — streaming authenticated backup and restore
 

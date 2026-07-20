@@ -1,7 +1,8 @@
 # Third-party notices
 
 Status: Phase 1 resolved inventory; Phase 2 Room/KSP and Phase 3 performance
-tool additions admitted; Phase 4 foundation adds no new coordinate
+tool additions admitted; Phase 4 foundation adds no new coordinate; Phase 6F
+admits one pinned official-AOSP outgoing composer source subset
 
 AuroraSMS uses independently selected, exact-version build, AndroidX, Kotlin,
 Compose, coroutine, and test dependencies admitted by
@@ -61,6 +62,22 @@ AuroraSMS artwork offered under GPL-3.0-or-later and recorded in
 `docs/ARTWORK_CATALOG.md`. They contain no letter or monogram marks. Other
 artwork may enter the repository only after its per-asset owner approval,
 license boundary, and attribution are recorded there.
+
+## Android Open Source Project MMS composer subset
+
+Phase 6F vendors twelve Java source files from the official AOSP
+`platform/frameworks/opt/mms` repository at immutable revision
+`4bfcd8501f09763c10255442c2b48fad0c796baa`. The files retain the copyright
+notices of Esmertec AG and The Android Open Source Project and are licensed under
+Apache-2.0. The complete license text and exact file/modification inventory are
+in `third_party/aosp-mms/`.
+
+AuroraSMS repackages this selected outgoing `SendReq` composition graph and
+changes malformed first-part handling to fail closed without printing. It does
+not include the AOSP incoming parser, APN/network client, transaction service,
+database, UI, or end-user messaging application. ADR 0021 limits the admitted
+runtime use to one bounded one-person SMIL/text/AAC voice-memo PDU. The wrapper,
+provider/journal policy, UI, and tests are original GPL-3.0-or-later code.
 
 ## Tux
 

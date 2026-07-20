@@ -79,6 +79,7 @@ allowed_permissions = {
     "android.permission.POST_NOTIFICATIONS",
     "android.permission.READ_CONTACTS",
     "android.permission.READ_PHONE_STATE",
+    "android.permission.RECORD_AUDIO",
     "android.permission.READ_SMS",
     "android.permission.RECEIVE_MMS",
     "android.permission.RECEIVE_SMS",

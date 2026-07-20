@@ -58,6 +58,7 @@ class AndroidSmsTransportRolePreflightTest {
                 roleState = roleState,
                 subscriptions = subscriptions,
                 stagingStore = MmsPduStagingStore(context),
+                provider = AndroidMmsProviderDataSource(context, roleState),
             ),
         )
         val recipients = RecipientSet.parse(listOf("+15550100001"))

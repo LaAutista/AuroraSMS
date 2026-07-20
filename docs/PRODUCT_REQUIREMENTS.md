@@ -1,7 +1,7 @@
 # AuroraSMS product requirements
 
 Status: Phase 0 product baseline plus locally accepted Phase 1 through Phase 6E
-controls, 2026-07-19.
+controls and implemented Phase 6F bounded voice-memo controls, 2026-07-19.
 
 ## Product statement
 
@@ -651,6 +651,38 @@ and no carrier traffic was submitted. The exact debug APK installed and
 hash-matched on the Pixel 8 and API 36 emulator with their existing non-Aurora
 SMS roles and denied Aurora messaging/notification permissions preserved; no
 Activity launch was issued and the Pixel was left force-stopped.
+
+### Phase 6F bounded one-person voice memo
+
+The `0.6.8-phase6` (`versionCode` 19) source implements ADR 0021.
+
+- A microphone button appears only for an exact verified one-person Thread with
+  an SMS-capable selected subscription and an otherwise empty/idle composer.
+  `RECORD_AUDIO` is excluded from onboarding and requested only after the user
+  taps Record.
+- Capture is visibly timed, foreground-only, and limited to 60 seconds and
+  524,288 bytes of MPEG-4/AAC-LC under `noBackupFilesDir`. Stop enters a separate
+  review state. Cancel, Thread exit, backgrounding, invalid capture, and startup
+  cleanup delete only owned bounded staging files.
+- Send is a second explicit action. A currently resolved signature is frozen as
+  the optional MMS text part; no draft, schedule, send-delay, group, arbitrary
+  attachment, or background-recording path can enter this first surface.
+- A pinned official-AOSP Apache-2.0 outgoing `SendReq` subset produces exactly
+  one bounded SMIL/optional-text/audio PDU. No incoming parser, general composer,
+  APN/network client, transaction service, database, UI, or end-user messaging
+  app code is admitted.
+- Provider parts are persisted before one exact Aurora-owned FAILED row is
+  completed. Only an exact applied OUTBOX transition permits the platform MMS
+  call. A content-free checksummed journal owns crash recovery; ambiguous
+  submission is never retried, and exact private callbacks authenticate before
+  provider status mutation.
+- Deterministic golden/corpus, crash-ordering, callback-identity, provider,
+  Compose, permission-policy, and real virtual-microphone tests cover API 26 and
+  API 36 as applicable without reading a live provider or invoking a carrier.
+
+This is not a full MMS composer. Group MMS, incoming PDU decoding, arbitrary
+attachments, carrier/OEM acceptance, billing/roaming behavior, and automatic
+retry of ambiguous submissions remain explicitly open.
 
 ## AuroraMaterial requirements
 

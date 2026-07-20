@@ -9,6 +9,7 @@ import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.PendingOperationNamespace
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderKind
+import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.model.pendingOperationNamespaceOrNull
 
@@ -113,6 +114,32 @@ val TransportOwnedSmsRecoveryResult.followUpRequired: Boolean
         TransportOwnedSmsRecoveryResult.JournalBlocked -> true
     }
 
+/** Startup/callback disposition for the content-free outgoing MMS journal. */
+sealed interface OutgoingMmsRecoveryResult {
+    data class Available(
+        val recoveredCount: Int,
+        val deferredCount: Int,
+        val unknownSubmissionCount: Int,
+    ) : OutgoingMmsRecoveryResult {
+        init {
+            require(recoveredCount >= 0)
+            require(deferredCount >= 0)
+            require(unknownSubmissionCount >= 0)
+        }
+    }
+
+    data object JournalBlocked : OutgoingMmsRecoveryResult
+}
+
+val OutgoingMmsRecoveryResult.acceptsNewSubmissions: Boolean
+    get() = this is OutgoingMmsRecoveryResult.Available
+
+val OutgoingMmsRecoveryResult.followUpRequired: Boolean
+    get() = when (this) {
+        is OutgoingMmsRecoveryResult.Available -> deferredCount > 0
+        OutgoingMmsRecoveryResult.JournalBlocked -> true
+    }
+
 class EncodedMmsPdu private constructor(bytes: ByteArray) {
     private val bytes: ByteArray = bytes.copyOf()
 
@@ -150,8 +177,81 @@ class EncodedMmsPdu private constructor(bytes: ByteArray) {
     }
 }
 
+/** Immutable, bounded AAC-LC/MPEG-4 voice-memo content for one explicit MMS send. */
+class OutgoingVoiceMemo private constructor(
+    bytes: ByteArray,
+    val durationMillis: Long,
+) {
+    private val bytes: ByteArray = bytes.copyOf()
+
+    val size: Int
+        get() = bytes.size
+
+    fun copyBytes(): ByteArray = bytes.copyOf()
+
+    override fun equals(other: Any?): Boolean =
+        other is OutgoingVoiceMemo &&
+            durationMillis == other.durationMillis &&
+            Arrays.equals(bytes, other.bytes)
+
+    override fun hashCode(): Int = 31 * Arrays.hashCode(bytes) + durationMillis.hashCode()
+
+    override fun toString(): String =
+        "OutgoingVoiceMemo(size=$size, durationMillis=$durationMillis, content=REDACTED)"
+
+    companion object {
+        const val MAX_BYTES: Int = 524_288
+        const val MAX_DURATION_MILLIS: Long = 60_000L
+
+        fun create(bytes: ByteArray, durationMillis: Long): CreationResult = when {
+            bytes.isEmpty() -> CreationResult.Rejected(CreationResult.Reason.EMPTY)
+            bytes.size > MAX_BYTES -> CreationResult.Rejected(CreationResult.Reason.TOO_LARGE)
+            durationMillis !in 1L..MAX_DURATION_MILLIS ->
+                CreationResult.Rejected(CreationResult.Reason.INVALID_DURATION)
+            else -> CreationResult.Valid(OutgoingVoiceMemo(bytes, durationMillis))
+        }
+    }
+
+    sealed interface CreationResult {
+        data class Valid(val memo: OutgoingVoiceMemo) : CreationResult
+        data class Rejected(val reason: Reason) : CreationResult
+
+        enum class Reason {
+            EMPTY,
+            TOO_LARGE,
+            INVALID_DURATION,
+        }
+    }
+}
+
 sealed interface OutgoingMmsPayload {
     data class Encoded(val pdu: EncodedMmsPdu) : OutgoingMmsPayload
+
+    /** The first admitted high-level send surface: one bounded local voice memo. */
+    data class VoiceMemo(
+        val text: String?,
+        val subject: String?,
+        val memo: OutgoingVoiceMemo,
+    ) : OutgoingMmsPayload {
+        init {
+            require(text == null || text.length <= SmsSendRequest.MAX_OUTGOING_TEXT_CHARACTERS) {
+                "MMS text is too large"
+            }
+            require(subject == null || subject.length <= MmsProviderMessage.MAX_MMS_SUBJECT_CHARACTERS) {
+                "MMS subject is too large"
+            }
+            require(text?.all { !it.isISOControl() || it == '\n' || it == '\r' || it == '\t' } != false) {
+                "MMS text contains an unsupported control character"
+            }
+            require(subject?.any(Char::isISOControl) != true) {
+                "MMS subject contains a control character"
+            }
+        }
+
+        override fun toString(): String =
+            "OutgoingMmsPayload.VoiceMemo(textLength=${text?.length ?: 0}, " +
+                "hasSubject=${subject != null}, memo=$memo)"
+    }
 
     /** High-level content that cannot be sent until an audited codec exists. */
     data class RequiresEncoding(
@@ -172,6 +272,10 @@ sealed interface OutgoingMmsPayload {
         companion object {
             const val MAX_ATTACHMENTS: Int = 25
         }
+
+        override fun toString(): String =
+            "OutgoingMmsPayload.RequiresEncoding(textLength=${text?.length ?: 0}, " +
+                "hasSubject=${subject != null}, attachmentCount=$attachmentCount, REDACTED)"
     }
 }
 
@@ -180,11 +284,25 @@ data class MmsSendRequest(
     val recipients: RecipientSet,
     val payload: OutgoingMmsPayload,
     val subscriptionId: AuroraSubscriptionId,
+    val providerThreadId: ProviderThreadId? = null,
 ) {
     init {
         require(operationId.kind == ProviderKind.PENDING_OPERATION) {
             "Transport operations need a pending-operation ID"
         }
+        require(payload !is OutgoingMmsPayload.VoiceMemo || providerThreadId != null) {
+            "Voice memos require one verified provider thread identity"
+        }
+    }
+
+    override fun toString(): String {
+        val payloadKind = when (payload) {
+            is OutgoingMmsPayload.Encoded -> "Encoded"
+            is OutgoingMmsPayload.RequiresEncoding -> "RequiresEncoding"
+            is OutgoingMmsPayload.VoiceMemo -> "VoiceMemo"
+        }
+        return "MmsSendRequest(recipientCount=${recipients.size}, payload=$payloadKind, " +
+            "hasProviderThread=${providerThreadId != null}, REDACTED)"
     }
 }
 

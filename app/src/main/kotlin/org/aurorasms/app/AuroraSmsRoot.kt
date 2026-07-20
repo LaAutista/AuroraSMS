@@ -2,11 +2,13 @@
 
 package org.aurorasms.app
 
+import android.Manifest
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
@@ -20,6 +22,8 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.util.Locale
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -36,6 +40,10 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CancellationException
@@ -80,6 +88,9 @@ import org.aurorasms.app.message.PermanentDeletionCommand
 import org.aurorasms.app.message.PermanentDeletionObservation
 import org.aurorasms.app.message.PermanentDeletionRecoveryReason
 import org.aurorasms.app.message.PermanentDeletionTargetKind
+import org.aurorasms.app.voice.VoiceMemoCaptureState
+import org.aurorasms.app.voice.VoiceMemoFailure
+import org.aurorasms.app.voice.VoiceMemoTarget
 import org.aurorasms.core.index.SearchAnchor
 import org.aurorasms.core.index.SearchHit
 import org.aurorasms.core.index.conversation.ConversationLookupResult
@@ -115,6 +126,7 @@ import org.aurorasms.core.state.SpamSafetyRepositoryResult
 import org.aurorasms.core.state.SpamSafetyRevision
 import org.aurorasms.core.state.SpamSafetyScope
 import org.aurorasms.core.state.SpamSafetySnapshot
+import org.aurorasms.core.telephony.RecipientSet
 import org.aurorasms.feature.conversations.ComposerScheduleState
 import org.aurorasms.feature.conversations.ComposerUiState
 import org.aurorasms.feature.conversations.ComposerSendState
@@ -137,6 +149,9 @@ import org.aurorasms.feature.conversations.SpamBlockedUiState
 import org.aurorasms.feature.conversations.SpamSafetyIndicator
 import org.aurorasms.feature.conversations.SpamSafetyReason
 import org.aurorasms.feature.conversations.ThreadSpamSafetyUiState
+import org.aurorasms.feature.conversations.VoiceMemoUiFailure
+import org.aurorasms.feature.conversations.VoiceMemoUiPhase
+import org.aurorasms.feature.conversations.VoiceMemoUiState
 
 @Composable
 internal fun AuroraSmsRoot(
@@ -1051,6 +1066,78 @@ private fun ThreadRoute(
         sendDelayAttemptInFlight = sendDelayAttemptInFlight,
         permanentDeletionActive = deletionLocksComposer,
     )
+    val voiceMemoController = services.voiceMemoController
+    val voiceMemoCaptureFlow = remember(voiceMemoController) {
+        voiceMemoController?.state ?: flowOf(VoiceMemoCaptureState.Idle)
+    }
+    val voiceMemoCapture by voiceMemoCaptureFlow.collectAsStateWithLifecycle(
+        initialValue = VoiceMemoCaptureState.Idle,
+    )
+    val voiceMemoTarget = remember(
+        route.providerThreadId,
+        threadState,
+        subscriptionSelection.selected,
+        signatureSnapshot.sendAllowed,
+        effectiveSignature,
+    ) {
+        val ready = threadState as? ThreadUiState.Ready
+        val identity = ready?.verifiedConversationIdentity
+        val subscription = subscriptionSelection.selected?.takeIf { it.smsCapable }
+        val recipients = identity?.participants
+            ?.takeIf { identity.providerThreadId == route.providerThreadId && it.size == 1 }
+            ?.let(RecipientSet::from) as? RecipientSet.CreationResult.Valid
+        if (
+            voiceMemoController != null &&
+            signatureSnapshot.sendAllowed &&
+            subscription != null &&
+            recipients != null
+        ) {
+            VoiceMemoTarget(
+                providerThreadId = route.providerThreadId,
+                recipients = recipients.recipients,
+                subscriptionId = subscription.id,
+                caption = effectiveSignature?.value,
+            )
+        } else {
+            null
+        }
+    }
+    val voiceMemoRecordEligible = voiceMemoTarget != null &&
+        composer.sendState == ComposerSendState.UNAVAILABLE &&
+        composer.unavailableReason == ComposerUnavailableReason.EMPTY_MESSAGE &&
+        scheduleObservation is ScheduledSmsObservation.None &&
+        sendDelayObservation is SendDelayObservation.None &&
+        sendObservation.phase != ThreadSmsSendPhase.SENDING &&
+        !deletionLocksComposer
+    var microphonePermissionDenied by remember(route.providerThreadId) { mutableStateOf(false) }
+    val latestVoiceMemoTarget by rememberUpdatedState(voiceMemoTarget)
+    val microphonePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        microphonePermissionDenied = !granted
+        if (granted) {
+            val target = latestVoiceMemoTarget ?: return@rememberLauncherForActivityResult
+            scope.launch { voiceMemoController?.start(target) }
+        }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, voiceMemoController, route.providerThreadId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                voiceMemoController?.onThreadHiddenAsync(route.providerThreadId)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            voiceMemoController?.onThreadHiddenAsync(route.providerThreadId)
+        }
+    }
+    val voiceMemoUiState = voiceMemoCapture.toVoiceMemoUiState(
+        currentThreadId = route.providerThreadId,
+        recordEligible = voiceMemoRecordEligible,
+        permissionDenied = microphonePermissionDenied,
+    )
     val globalThreadScope = remember { AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD) }
     val globalThreadOverrideObservation by remember(appearanceController, globalThreadScope) {
         appearanceController.observeOverride(globalThreadScope)
@@ -1190,6 +1277,32 @@ private fun ThreadRoute(
                     val token = (writer.status.value as? DraftWriteStatus.Active)
                         ?.toRestorationToken()
                     if (token != null) savedDraftRestoration = SavedDraftRestoration(token)
+                }
+            },
+            voiceMemo = voiceMemoUiState,
+            onRecordVoiceMemo = {
+                voiceMemoTarget?.let { target ->
+                    microphonePermissionDenied = false
+                    if (
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        scope.launch { voiceMemoController?.start(target) }
+                    } else {
+                        microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                }
+            },
+            onStopVoiceMemo = {
+                scope.launch { voiceMemoController?.stop() }
+            },
+            onCancelVoiceMemo = {
+                microphonePermissionDenied = false
+                scope.launch { voiceMemoController?.cancel() }
+            },
+            onSendVoiceMemo = {
+                scope.launch {
+                    withContext(NonCancellable) { voiceMemoController?.send() }
                 }
             },
             onSend = {
@@ -1984,6 +2097,53 @@ internal fun FrozenDraftSnapshot.toExactRestorationToken(): DraftRestorationToke
         expectedDraftId = draftId,
         expectedRevision = revision,
     )
+
+private fun VoiceMemoCaptureState.toVoiceMemoUiState(
+    currentThreadId: ProviderThreadId,
+    recordEligible: Boolean,
+    permissionDenied: Boolean,
+): VoiceMemoUiState {
+    if (permissionDenied && this is VoiceMemoCaptureState.Idle) {
+        return VoiceMemoUiState(
+            phase = VoiceMemoUiPhase.FAILED,
+            failure = VoiceMemoUiFailure.PERMISSION_DENIED,
+        )
+    }
+    if (providerThreadId != null && providerThreadId != currentThreadId) {
+        return VoiceMemoUiState()
+    }
+    return when (this) {
+        VoiceMemoCaptureState.Idle -> VoiceMemoUiState(recordEnabled = recordEligible)
+        is VoiceMemoCaptureState.Preparing -> VoiceMemoUiState(phase = VoiceMemoUiPhase.PREPARING)
+        is VoiceMemoCaptureState.Recording -> VoiceMemoUiState(
+            phase = VoiceMemoUiPhase.RECORDING,
+            elapsedMillis = elapsedMillis,
+        )
+        is VoiceMemoCaptureState.Ready -> VoiceMemoUiState(
+            phase = VoiceMemoUiPhase.READY,
+            durationMillis = durationMillis,
+            sizeBytes = sizeBytes,
+            retryAfterKnownFailure = retryAfterKnownFailure,
+        )
+        is VoiceMemoCaptureState.Sending -> VoiceMemoUiState(phase = VoiceMemoUiPhase.SENDING)
+        is VoiceMemoCaptureState.AwaitingCallback ->
+            VoiceMemoUiState(phase = VoiceMemoUiPhase.AWAITING_RESULT)
+        is VoiceMemoCaptureState.Sent -> VoiceMemoUiState(phase = VoiceMemoUiPhase.SENT)
+        is VoiceMemoCaptureState.Failed -> VoiceMemoUiState(
+            phase = VoiceMemoUiPhase.FAILED,
+            failure = when (reason) {
+                VoiceMemoFailure.PERMISSION_DENIED -> VoiceMemoUiFailure.PERMISSION_DENIED
+                VoiceMemoFailure.CAPTURE_UNAVAILABLE,
+                VoiceMemoFailure.CAPTURE_TOO_SHORT,
+                VoiceMemoFailure.CAPTURE_INVALID,
+                -> VoiceMemoUiFailure.CAPTURE_FAILED
+                VoiceMemoFailure.SEND_REJECTED -> VoiceMemoUiFailure.SEND_REJECTED
+                VoiceMemoFailure.SUBMISSION_UNKNOWN -> VoiceMemoUiFailure.SUBMISSION_UNKNOWN
+                VoiceMemoFailure.SEND_FAILED -> VoiceMemoUiFailure.SEND_FAILED
+            },
+        )
+    }
+}
 
 private fun DraftWriteStatus.toComposerUiState(
     restoredBody: String,

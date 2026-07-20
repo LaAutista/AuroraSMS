@@ -46,6 +46,7 @@ import org.aurorasms.app.drafts.SerializedDraftWriter
 import org.aurorasms.app.index.ForegroundIndexReadGate
 import org.aurorasms.app.preview.AndroidBoundedPreviewLoader
 import org.aurorasms.app.preview.BoundedMediaDecodeGate
+import org.aurorasms.app.voice.VoiceMemoController
 import org.aurorasms.core.index.AnchorWindowResult
 import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.app.index.AppIndexCoordinator
@@ -155,6 +156,7 @@ import org.aurorasms.core.telephony.internal.AndroidSmsProviderDataSource
 import org.aurorasms.core.telephony.internal.AndroidSmsTransport
 import org.aurorasms.core.telephony.internal.AndroidSubscriptionRepository
 import org.aurorasms.core.telephony.internal.MmsPduStagingStore
+import org.aurorasms.core.telephony.internal.OutgoingMmsCallbackDisposition
 import org.aurorasms.core.state.storage.AuroraStateDatabase
 import org.aurorasms.core.state.AppearanceProfile
 import org.aurorasms.core.state.AppearanceProfileEdit
@@ -352,6 +354,7 @@ class AppContainer(
         roleState = defaultSmsRoleState,
         subscriptions = subscriptionRepository,
         stagingStore = mmsStagingStore,
+        provider = mmsProviderDataSource,
     )
     private val androidSmsTransport = AndroidSmsTransport(
         context = application,
@@ -361,6 +364,11 @@ class AppContainer(
         mmsTransport = mmsTransport,
     )
     val messageTransport: MessageTransport = androidSmsTransport
+    internal val voiceMemoController = VoiceMemoController(
+        context = application,
+        transport = messageTransport,
+        scope = applicationScope,
+    )
     private val deferredThreadSmsSendController = DeferredThreadSmsSendController()
     internal val threadSmsSendController: ThreadSmsSendController = deferredThreadSmsSendController
     private val deferredScheduledSmsController = DeferredScheduledSmsController()
@@ -555,6 +563,22 @@ class AppContainer(
 
     suspend fun onTransportResult(result: TransportResult) {
         _lastTransportResult.value = result
+        if (
+            result.transport == MessageTransportKind.MMS &&
+            (result is TransportResult.Sent ||
+                (result is TransportResult.Failed &&
+                    result.stage == TransportResult.FailureStage.SENT_CALLBACK))
+        ) {
+            val disposition = mmsTransport.reconcileTransportResult(result)
+            if (disposition == OutgoingMmsCallbackDisposition.APPLIED) {
+                enqueueIndexSignal(IndexSignal.CONTENT_OBSERVER_CHANGE)
+            }
+            if (disposition.authenticated) voiceMemoController.handleTransportResult(result)
+            // A provider/role failure leaves the authenticated callback in the
+            // content-free journal for the ordinary recovery pass.
+            retryPendingInlineReplyOperations()
+            return
+        }
         if (result.operationOrigin == TransportResult.OperationOrigin.COMPOSER) {
             val composerOwned = threadSmsSendController.handleTransportResult(result)
             if (composerOwned) {
@@ -829,6 +853,7 @@ class AppContainer(
 
         val transportOwnedRecovery =
             androidSmsTransport.recoverTransportOwnedSubmissions()
+        val outgoingMmsRecovery = mmsTransport.recoverOutgoingSubmissions()
         val composerRecovery = threadSmsSendController.recover()
         if (scheduledStartupRecoveryPending) {
             scheduledSmsController.recover(ScheduledSmsRecoveryReason.APP_STARTUP)
@@ -843,6 +868,7 @@ class AppContainer(
         inlineReplyTransportResultHandler.reconcilePendingOperations()
         var retryDelayMillis = INCOMING_NOTIFICATION_RECOVERY_INITIAL_RETRY_MILLIS
         var followUpRequired = transportOwnedRecovery.followUpRequired ||
+            outgoingMmsRecovery.followUpRequired ||
             composerRecovery.requiresFollowUp
         for (attempt in 0 until INCOMING_NOTIFICATION_RECOVERY_MAXIMUM_ATTEMPTS) {
             if (!defaultSmsRoleState.isRoleHeld()) return

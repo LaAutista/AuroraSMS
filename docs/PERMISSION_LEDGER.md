@@ -5,7 +5,8 @@ official Android documentation on 2026-07-12; ADR 0007 records a managed-
 wallpaper decision with no new permission on 2026-07-14; commit `7c9d848`
 adds the ledgered debug snapshot boundary and durable-message hardening on
 2026-07-18; ADR 0011 activates the conditional boot and exact-alarm entries for
-bounded scheduled SMS with a visible inexact fallback on 2026-07-19
+bounded scheduled SMS with a visible inexact fallback; ADR 0021 activates
+just-in-time foreground microphone access for bounded voice memos on 2026-07-19
 
 This ledger is the allowlist enforced against the Phase 1 source manifest,
 merged debug/release manifests, and packaged APKs. A permission not listed
@@ -146,8 +147,9 @@ AuroraSMS's actual default-SMS core purpose.
 ## Approved conditional permissions
 
 Conditional permissions are absent until the named feature is implemented and
-tested. `RECEIVE_BOOT_COMPLETED` and `SCHEDULE_EXACT_ALARM` are now active under
-ADR 0011; the other entries remain conditional.
+tested. `RECEIVE_BOOT_COMPLETED` and `SCHEDULE_EXACT_ALARM` are active under ADR
+0011, and `RECORD_AUDIO` is active under ADR 0021; the other entries remain
+conditional.
 
 | Permission | Phase/feature | Rule |
 |---|---|---|
@@ -157,13 +159,21 @@ ADR 0011; the other entries remain conditional.
 | `VIBRATE` | Notification behavior | Normal permission; honor user/channel settings |
 | `RECEIVE_BOOT_COMPLETED` | Phase 5 durable alarm recovery — active under ADR 0011 | Re-arm only Aurora-owned schedules, send delays, and pending deletion operations; past-due reboot state pauses for review; no message content in alarms or logs. ADR 0013 deletion recovery never blindly replays an ambiguous provider mutation. |
 | `SCHEDULE_EXACT_ALARM` | Phase 5 user-timed operations — active under ADR 0011 | User-facing special-access route; check capability before every exact arm; retain and label the honest inexact scheduled-send fallback. ADR 0012 short-send Undo and ADR 0013 permanent-delete Undo reuse this already-declared capability only when available and remain safe with private ID-only inexact recovery alarms. |
-| `RECORD_AUDIO` | Phase 6 voice memo | Request only after tapping Record; no background recording |
+| `RECORD_AUDIO` | Phase 6F voice memo — active under ADR 0021 | Request only after tapping Record; never include it in messaging onboarding; no background recording |
 | `USE_BIOMETRIC` | Optional app lock | App lock is not database encryption |
 | Foreground-service permission/type | A measured long-running user-visible operation only | Add exact subtype and notification design before use |
 
 Photo Picker and the Storage Access Framework are the default attachment,
 wallpaper, import, and export paths. They do not justify broad media or storage
 permissions.
+
+Phase 6F does not request microphone permission at startup, during role/SMS
+onboarding, or merely by opening a Thread. The enabled Record control is the
+only request origin. Denial leaves ordinary messaging usable and shows a local
+explanation. Capture is visibly indicated and is cancelled with private-file
+cleanup when the Thread leaves the foreground. No microphone foreground service,
+background permission, audio-library dependency, external file, or backup path
+is added.
 
 ADR 0007's first static Thread-wallpaper slice uses the system picker only for
 one user-selected temporary `content:` read. It does not request
@@ -339,6 +349,9 @@ Phase 1 CI/device checks must:
     in debug, exercise its read-only/column boundary, and reject its class or
     authority from every non-debug merged manifest;
 12. record the exact device/API and merged permission list as gate evidence.
+13. prove `RECORD_AUDIO` is excluded from onboarding, requested only by the
+    explicit Record action, and that cancel/background/Thread exit stops capture
+    and removes the app-private temporary file.
 
 ## Official references
 

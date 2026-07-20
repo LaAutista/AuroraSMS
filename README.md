@@ -9,6 +9,28 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+The 2026-07-19 Phase 6F source identifies as `0.6.8-phase6` (`versionCode` 19)
+and implements ADR 0021's bounded one-person voice memo. Microphone access is
+excluded from onboarding and requested only after Record. Capture is visibly
+timed, foreground-only, limited to 60 seconds/512 KiB in private no-backup
+storage, and requires separate Stop/review and Send actions. Cancel,
+backgrounding, and Thread exit remove the owned staging file.
+
+One pinned and noticed Apache-2.0 official-AOSP `SendReq` subset composes only
+SMIL, optional signature text, and MPEG-4/AAC-LC audio. Parts-first provider
+persistence, exact ownership/status transitions, a content-free checksummed
+crash journal, non-retryable ambiguous submission, and authenticated exact
+callbacks guard the carrier boundary. Golden/corpus, host recovery, Compose,
+fake-provider, and real virtual-microphone tests are green across API 26/API 36
+where applicable without reading live provider content or sending carrier
+traffic. All 601 host tests, the complete 888-task offline aggregate, and 362
+connected tests on each of API 26 and API 36 passed with zero failures or
+errors. Release bundle and CycloneDX 1.6 SBOM generation passed. The exact debug
+APK installed and hash-matched on both emulators while preserving their existing
+non-Aurora SMS role. The Pixel was unreachable after the editor crash, so the
+Phase 6F physical handoff remains open. Group/general/incoming MMS and carrier/
+OEM acceptance also remain open, and AuroraSMS is not gold.
+
 The 2026-07-19 interrupted-history repair identifies as `0.6.7-phase6`
 (`versionCode` 18) and implements ADR 0020. When a newer refresh is incomplete,
 Inbox and Thread now present all best-known rows retained across durable index
@@ -916,12 +938,11 @@ real-provider reconciliation and privacy-safe inbox/thread/search reachability;
 release-equivalent physical performance measurements remain pending. Emulator
 timings are not product performance evidence.
 
-End-to-end MMS is not yet claimed. Platform MMS staging and result handling are
-present, but encoding/decoding remains disabled until an independently audited
-codec is admitted and verified on physical carrier hardware. The first composer
-enables only the bounded Phase 5A one-person, one-unit SMS path described above;
-every broader compose, MMS, and carrier claim remains disabled or open. See
-`docs/adr/0001-mms-pdu-strategy.md`, ADR 0008, and the phase gates in
+General end-to-end MMS is not yet claimed. ADR 0021 admits only the bounded
+outgoing one-person voice-memo encoder; incoming decoding, group/general
+composition, arbitrary attachments, and physical carrier/OEM behavior remain
+disabled or open. Platform staging and result handling still fail closed outside
+their admitted payloads. See ADR 0001, ADR 0008, ADR 0021, and the phase gates in
 `docs/TEST_MATRIX.md`.
 
 ## Build

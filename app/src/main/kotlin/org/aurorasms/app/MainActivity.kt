@@ -359,14 +359,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requiredMessagingPermissions(): List<String> = buildList {
-        add(Manifest.permission.READ_SMS)
-        add(Manifest.permission.SEND_SMS)
-        add(Manifest.permission.RECEIVE_SMS)
-        add(Manifest.permission.RECEIVE_MMS)
-        add(Manifest.permission.RECEIVE_WAP_PUSH)
-        add(Manifest.permission.READ_PHONE_STATE)
-    }
+    private fun requiredMessagingPermissions(): List<String> = messagingOnboardingPermissions()
 
     private companion object {
         const val ROOT_STATE_KEY = "aurora.root"
@@ -376,6 +369,16 @@ class MainActivity : ComponentActivity() {
         const val NOTIFICATION_PERMISSION_REQUESTED_BEFORE = "requested_before"
     }
 }
+
+/** Optional capabilities such as microphone access must never enter onboarding. */
+internal fun messagingOnboardingPermissions(): List<String> = listOf(
+    Manifest.permission.READ_SMS,
+    Manifest.permission.SEND_SMS,
+    Manifest.permission.RECEIVE_SMS,
+    Manifest.permission.RECEIVE_MMS,
+    Manifest.permission.RECEIVE_WAP_PUSH,
+    Manifest.permission.READ_PHONE_STATE,
+)
 
 @Composable
 fun AuroraSmsTheme(

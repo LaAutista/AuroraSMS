@@ -238,6 +238,52 @@ enum class ComposerUnavailableReason {
     SIGNATURE_STATE_UNAVAILABLE,
 }
 
+data class VoiceMemoUiState(
+    val phase: VoiceMemoUiPhase = VoiceMemoUiPhase.IDLE,
+    val recordEnabled: Boolean = false,
+    val elapsedMillis: Long = 0L,
+    val durationMillis: Long? = null,
+    val sizeBytes: Int? = null,
+    val retryAfterKnownFailure: Boolean = false,
+    val failure: VoiceMemoUiFailure? = null,
+) {
+    init {
+        require(elapsedMillis in 0L..60_000L)
+        require(durationMillis == null || durationMillis in 1L..60_000L)
+        require(sizeBytes == null || sizeBytes in 1..524_288)
+        require((phase == VoiceMemoUiPhase.READY) == (durationMillis != null && sizeBytes != null))
+        require((phase == VoiceMemoUiPhase.FAILED) == (failure != null))
+        require(!retryAfterKnownFailure || phase == VoiceMemoUiPhase.READY)
+        require(phase == VoiceMemoUiPhase.IDLE || !recordEnabled) {
+            "Only the idle voice-memo phase can start a recording"
+        }
+    }
+
+    override fun toString(): String =
+        "VoiceMemoUiState(phase=$phase, recordEnabled=$recordEnabled, " +
+            "elapsedMillis=$elapsedMillis, hasDuration=${durationMillis != null}, " +
+            "hasSize=${sizeBytes != null}, failure=$failure, REDACTED)"
+}
+
+enum class VoiceMemoUiPhase {
+    IDLE,
+    PREPARING,
+    RECORDING,
+    READY,
+    SENDING,
+    AWAITING_RESULT,
+    SENT,
+    FAILED,
+}
+
+enum class VoiceMemoUiFailure {
+    PERMISSION_DENIED,
+    CAPTURE_FAILED,
+    SEND_REJECTED,
+    SUBMISSION_UNKNOWN,
+    SEND_FAILED,
+}
+
 enum class PermanentDeletionTargetUiKind {
     MESSAGE,
     THREAD,

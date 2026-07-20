@@ -24,6 +24,14 @@ identified separately. Third-party material keeps its original compatible
 license and notices under `THIRD_PARTY_NOTICES.md` and the generated license
 report.
 
+The twelve modified official-AOSP MMS composer source files under
+`core/telephony/src/main/java/org/aurorasms/core/telephony/codec/aosp` retain
+their Apache-2.0 headers and upstream copyright notices. Their immutable source
+revision, exact file list, change notices, and complete Apache-2.0 text are in
+`third_party/aosp-mms/`. They are not relicensed by the default GPL source-file
+rule; the original Aurora wrapper and surrounding policy remain
+GPL-3.0-or-later.
+
 The owner-selected AuroraSMS launcher raster and its launcher XML layers are
 offered under GPL-3.0-or-later. They are first-party project artwork, not a
 restricted distribution exception. The canonical launcher retains the neon SMS

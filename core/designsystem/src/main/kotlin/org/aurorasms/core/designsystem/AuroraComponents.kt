@@ -36,6 +36,8 @@ enum class AuroraGlyph {
     RETRY,
     REVIEW,
     SCHEDULE,
+    MICROPHONE,
+    STOP,
 }
 
 /**
@@ -136,7 +138,7 @@ fun AuroraBackdrop(modifier: Modifier = Modifier) {
 private fun AuroraGlyph.defaultTint(tokens: AuroraVisualTokens): Color = when (this) {
     AuroraGlyph.BACK, AuroraGlyph.MORE, AuroraGlyph.CALL, AuroraGlyph.SEND -> tokens.cyan
     AuroraGlyph.SEARCH, AuroraGlyph.ADD, AuroraGlyph.RETRY, AuroraGlyph.REVIEW,
-    AuroraGlyph.SCHEDULE,
+    AuroraGlyph.SCHEDULE, AuroraGlyph.MICROPHONE, AuroraGlyph.STOP,
     -> tokens.violet
 }
 
@@ -270,6 +272,50 @@ private fun DrawScope.drawAuroraGlyph(glyph: AuroraGlyph, color: Color) {
                 StrokeCap.Round,
             )
         }
+        AuroraGlyph.MICROPHONE -> {
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(width * 0.35f, height * 0.10f),
+                size = Size(width * 0.30f, height * 0.52f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(
+                    width * 0.15f,
+                    width * 0.15f,
+                ),
+                style = stroke,
+            )
+            drawArc(
+                color = color,
+                startAngle = 0f,
+                sweepAngle = 180f,
+                useCenter = false,
+                topLeft = Offset(width * 0.23f, height * 0.34f),
+                size = Size(width * 0.54f, height * 0.42f),
+                style = stroke,
+            )
+            drawLine(
+                color,
+                Offset(width * 0.50f, height * 0.76f),
+                Offset(width * 0.50f, height * 0.90f),
+                strokeWidth,
+                StrokeCap.Round,
+            )
+            drawLine(
+                color,
+                Offset(width * 0.34f, height * 0.90f),
+                Offset(width * 0.66f, height * 0.90f),
+                strokeWidth,
+                StrokeCap.Round,
+            )
+        }
+        AuroraGlyph.STOP -> drawRoundRect(
+            color = color,
+            topLeft = Offset(width * 0.24f, height * 0.24f),
+            size = Size(width * 0.52f, height * 0.52f),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(
+                width * 0.08f,
+                width * 0.08f,
+            ),
+        )
     }
 }
 

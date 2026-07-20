@@ -127,6 +127,11 @@ fun ThreadScreen(
     onAnchorRestored: () -> Unit,
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
     onDraftChanged: (String) -> Unit,
+    voiceMemo: VoiceMemoUiState = VoiceMemoUiState(),
+    onRecordVoiceMemo: () -> Unit = {},
+    onStopVoiceMemo: () -> Unit = {},
+    onCancelVoiceMemo: () -> Unit = {},
+    onSendVoiceMemo: () -> Unit = {},
     onSend: () -> Unit = {},
     onUndoSend: () -> Unit = {},
     sendDelaySeconds: Int = 0,
@@ -370,8 +375,13 @@ fun ThreadScreen(
             }
             Composer(
                 state = composer,
+                voiceMemo = voiceMemo,
                 onBodyChanged = onDraftChanged,
                 onFocusChanged = { composerFocused = it },
+                onRecordVoiceMemo = onRecordVoiceMemo,
+                onStopVoiceMemo = onStopVoiceMemo,
+                onCancelVoiceMemo = onCancelVoiceMemo,
+                onSendVoiceMemo = onSendVoiceMemo,
                 onSend = onSend,
                 onUndoSend = onUndoSend,
                 onSchedule = onSchedule,
@@ -1775,8 +1785,13 @@ private fun AttachmentPreview(
 @Composable
 private fun Composer(
     state: ComposerUiState,
+    voiceMemo: VoiceMemoUiState,
     onBodyChanged: (String) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
+    onRecordVoiceMemo: () -> Unit,
+    onStopVoiceMemo: () -> Unit,
+    onCancelVoiceMemo: () -> Unit,
+    onSendVoiceMemo: () -> Unit,
     onSend: () -> Unit,
     onUndoSend: () -> Unit,
     onSchedule: () -> Unit,
@@ -1981,6 +1996,12 @@ private fun Composer(
             .background(visualTokens.deepNight.copy(alpha = 0.98f)),
     ) {
         HorizontalDivider(color = visualTokens.violet.copy(alpha = 0.5f))
+        VoiceMemoPanel(
+            state = voiceMemo,
+            onStop = onStopVoiceMemo,
+            onCancel = onCancelVoiceMemo,
+            onSend = onSendVoiceMemo,
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2025,6 +2046,20 @@ private fun Composer(
                     unfocusedLabelColor = visualTokens.lilacSecondary,
                     disabledLabelColor = visualTokens.lilacSecondary.copy(alpha = 0.6f),
                 ),
+            )
+            val recording = voiceMemo.phase == VoiceMemoUiPhase.RECORDING
+            val voiceActionLabel = stringResource(
+                if (recording) R.string.stop_voice_memo else R.string.record_voice_memo,
+            )
+            AuroraIconAction(
+                glyph = if (recording) AuroraGlyph.STOP else AuroraGlyph.MICROPHONE,
+                contentDescription = voiceActionLabel,
+                onClick = if (recording) onStopVoiceMemo else onRecordVoiceMemo,
+                enabled = recording || voiceMemo.recordEnabled,
+                modifier = Modifier
+                    .testTag(COMPOSER_VOICE_MEMO_TEST_TAG)
+                    .semantics { text = AnnotatedString(voiceActionLabel) },
+                tint = if (recording) MaterialTheme.colorScheme.error else visualTokens.violet,
             )
             val scheduleLabel = stringResource(
                 if (scheduleActive) R.string.cancel_scheduled_message else R.string.schedule_message,
@@ -2082,6 +2117,116 @@ private fun Composer(
             style = MaterialTheme.typography.bodySmall,
         )
     }
+}
+
+@Composable
+private fun VoiceMemoPanel(
+    state: VoiceMemoUiState,
+    onStop: () -> Unit,
+    onCancel: () -> Unit,
+    onSend: () -> Unit,
+) {
+    if (state.phase == VoiceMemoUiPhase.IDLE) return
+    val visualTokens = LocalAuroraVisualTokens.current
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+            .testTag(VOICE_MEMO_PANEL_TEST_TAG),
+        shape = RoundedCornerShape(18.dp),
+        color = visualTokens.nearBlack.copy(alpha = 0.96f),
+        border = BorderStroke(
+            1.dp,
+            if (state.phase == VoiceMemoUiPhase.RECORDING) {
+                MaterialTheme.colorScheme.error
+            } else {
+                visualTokens.violet.copy(alpha = 0.72f)
+            },
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = when (state.phase) {
+                    VoiceMemoUiPhase.IDLE -> ""
+                    VoiceMemoUiPhase.PREPARING -> stringResource(R.string.preparing_voice_memo)
+                    VoiceMemoUiPhase.RECORDING -> stringResource(
+                        R.string.recording_voice_memo,
+                        formatVoiceMemoDuration(state.elapsedMillis),
+                    )
+                    VoiceMemoUiPhase.READY -> stringResource(
+                        if (state.retryAfterKnownFailure) {
+                            R.string.voice_memo_ready_after_failure
+                        } else {
+                            R.string.voice_memo_ready
+                        },
+                        formatVoiceMemoDuration(checkNotNull(state.durationMillis)),
+                        ((checkNotNull(state.sizeBytes) + 1_023) / 1_024).coerceAtLeast(1),
+                    )
+                    VoiceMemoUiPhase.SENDING -> stringResource(R.string.submitting_voice_memo)
+                    VoiceMemoUiPhase.AWAITING_RESULT -> stringResource(R.string.voice_memo_awaiting_result)
+                    VoiceMemoUiPhase.SENT -> stringResource(R.string.voice_memo_sent)
+                    VoiceMemoUiPhase.FAILED -> stringResource(
+                        when (state.failure) {
+                            VoiceMemoUiFailure.PERMISSION_DENIED -> R.string.microphone_permission_denied
+                            VoiceMemoUiFailure.CAPTURE_FAILED -> R.string.voice_memo_capture_failed
+                            VoiceMemoUiFailure.SEND_REJECTED -> R.string.voice_memo_send_rejected
+                            VoiceMemoUiFailure.SUBMISSION_UNKNOWN -> R.string.voice_memo_submission_unknown
+                            VoiceMemoUiFailure.SEND_FAILED -> R.string.voice_memo_send_failed
+                            null -> R.string.voice_memo_capture_failed
+                        },
+                    )
+                },
+                modifier = Modifier.weight(1f),
+                color = if (
+                    state.phase == VoiceMemoUiPhase.RECORDING ||
+                    state.phase == VoiceMemoUiPhase.FAILED
+                ) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    visualTokens.onIncoming
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+            when (state.phase) {
+                VoiceMemoUiPhase.PREPARING,
+                VoiceMemoUiPhase.RECORDING,
+                -> {
+                    TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+                    if (state.phase == VoiceMemoUiPhase.RECORDING) {
+                        TextButton(
+                            modifier = Modifier.testTag(STOP_VOICE_MEMO_TEST_TAG),
+                            onClick = onStop,
+                        ) { Text(stringResource(R.string.stop)) }
+                    }
+                }
+                VoiceMemoUiPhase.READY -> {
+                    TextButton(onClick = onCancel) { Text(stringResource(R.string.discard)) }
+                    Button(
+                        modifier = Modifier.testTag(SEND_VOICE_MEMO_TEST_TAG),
+                        onClick = onSend,
+                    ) { Text(stringResource(R.string.send_voice_memo)) }
+                }
+                VoiceMemoUiPhase.SENT,
+                VoiceMemoUiPhase.FAILED,
+                -> TextButton(onClick = onCancel) { Text(stringResource(R.string.dismiss)) }
+                VoiceMemoUiPhase.IDLE,
+                VoiceMemoUiPhase.SENDING,
+                VoiceMemoUiPhase.AWAITING_RESULT,
+                -> Unit
+            }
+        }
+    }
+}
+
+private fun formatVoiceMemoDuration(durationMillis: Long): String {
+    val totalSeconds = (durationMillis / 1_000L).coerceIn(0L, 60L)
+    return String.format(Locale.ROOT, "%d:%02d", totalSeconds / 60L, totalSeconds % 60L)
 }
 
 private sealed interface AttachmentUiState {
@@ -2159,6 +2304,10 @@ const val REACTION_FALLBACK_TEST_TAG: String = "aurora-reaction-fallback"
 const val COMPOSER_TEST_TAG: String = "aurora-composer"
 const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"
 const val COMPOSER_SCHEDULE_TEST_TAG: String = "aurora-composer-schedule"
+const val COMPOSER_VOICE_MEMO_TEST_TAG: String = "aurora-composer-voice-memo"
+const val VOICE_MEMO_PANEL_TEST_TAG: String = "aurora-voice-memo-panel"
+const val STOP_VOICE_MEMO_TEST_TAG: String = "aurora-stop-voice-memo"
+const val SEND_VOICE_MEMO_TEST_TAG: String = "aurora-send-voice-memo"
 const val THREAD_SEND_DELAY_ACTION_TEST_TAG: String = "aurora-thread-send-delay"
 const val THREAD_DELETE_ACTION_TEST_TAG: String = "aurora-thread-delete"
 const val THREAD_SPAM_ACTION_TEST_TAG: String = "aurora-thread-spam-action"

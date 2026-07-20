@@ -16,6 +16,7 @@ import org.aurorasms.app.message.UnavailableSendDelayController
 import org.aurorasms.app.message.UnavailableSendDelayPreferenceStore
 import org.aurorasms.app.message.PermanentDeletionController
 import org.aurorasms.app.message.UnavailablePermanentDeletionController
+import org.aurorasms.app.voice.VoiceMemoController
 import org.aurorasms.app.message.NotificationReminderController
 import org.aurorasms.app.message.MessageSignaturePreferenceStore
 import org.aurorasms.app.message.UnavailableMessageSignaturePreferenceStore
@@ -69,6 +70,8 @@ internal interface AuroraSmsRootServices {
         get() = null
     val messageSignaturePreferenceStore: MessageSignaturePreferenceStore
         get() = UnavailableMessageSignaturePreferenceStore
+    val voiceMemoController: VoiceMemoController?
+        get() = null
 
     fun countSmsSegments(body: String): Int? = null
 
@@ -142,6 +145,8 @@ internal class AppContainerAuroraSmsRootServices(
         get() = container.notificationReminderController
     override val messageSignaturePreferenceStore: MessageSignaturePreferenceStore
         get() = container.messageSignaturePreferenceStore
+    override val voiceMemoController: VoiceMemoController
+        get() = container.voiceMemoController
 
     override fun countSmsSegments(body: String): Int? = AndroidSmsSegmentCounter.count(body)
 

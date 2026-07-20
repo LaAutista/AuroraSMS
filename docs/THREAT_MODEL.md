@@ -3,9 +3,10 @@
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
 bounded ADR 0008 Phase 5A source implementation in commit `17fc421`, followed
-by accepted Phase 5B–5G controls and Phase 6A–6E presentation/action controls
-through ADR 0019 and Room schema 12. Local/API 26/API 36 acceptance passed
-through Phase 6E. Safe install/migration and locked-device cold launch passed
+by accepted Phase 5B–5G controls and Phase 6A–6F presentation/action controls
+through ADR 0021 and Room schema 12. Local/API 26/API 36 focused acceptance
+passes through the Phase 6F implementation. Safe install/migration and
+locked-device cold launch passed
 on a Pixel 8. Real-carrier, radio, billing,
 and invasive physical lifecycle evidence remains open.
 
@@ -283,6 +284,21 @@ Controls:
   conditions;
 - treat MIME and extensions as untrusted, fail closed, and offer recovery;
 - never decode MMS media while text indexing;
+- for ADR 0021 voice memos, request microphone access only from the explicit
+  Record action, show continuous capture state, allow at most one foreground
+  capture, and cancel/delete it on Thread exit, backgrounding, or cancellation;
+- write at most 60 seconds/524,288 bytes to an owned `noBackupFilesDir` file,
+  validate canonical parent and size before one bounded read, never serialize
+  bytes into UI/preferences/Room/alarms/backup/logs, and require a separate
+  reviewed Send action;
+- compose only one-person SMIL/optional-text/`audio/mp4` with the pinned
+  outgoing-only AOSP subset, cap the PDU at 1,048,576 bytes, persist provider
+  parts before one exact owned row, and permit carrier submission only after an
+  exactly applied OUTBOX transition;
+- journal only content-free exact identities; roll back PREPARING state only by
+  creator/Thread/transaction/FAILED identity, quarantine any at-boundary process
+  death or exception as submission-unknown without retry, and authenticate the
+  exact private callback before provider mutation;
 - for ADR 0007 specifically, accept only bounded 8-bit Huffman baseline
   sequential-DCT (`SOF0`) JPEG with at most four components and complete scan
   coverage, or CRC-valid non-APNG PNG with at most 4,096 chunks, no
@@ -591,6 +607,10 @@ Every applicable phase gate includes:
   conversation reply-operation tags, exact late-success cancellation, sibling
   preservation, retryable legacy cleanup, and crash replay between success
   effects and durable acknowledgement;
+- Phase 6F golden/corpus tests, permission-on-tap contract, actual API 26/API 36
+  virtual-microphone capture and foreground cleanup, exact callback identity,
+  crash-ordering/journal recovery, and isolated provider part/status/rollback
+  tests with zero live-provider or carrier access;
 - physical-device SMS/MMS behavior where the phase claims transport support;
 - accessibility/contrast/lifecycle tests for privacy-related UI.
 
@@ -818,6 +838,25 @@ Pixel 8 and API 36 emulator while their non-Aurora role holders and denied
 Aurora messaging/notification permissions remained unchanged. No Activity
 launch was issued and the Pixel was left force-stopped.
 
+Phase 6F treats both microphone capture and the MMS submission boundary as
+critical ownership transitions. ADR 0021 excludes microphone access from
+onboarding, allows only one visible foreground capture, retains a reviewed file
+only before an unambiguous send attempt, and deletes it on cancellation or
+lifecycle exit. The pinned official-AOSP subset is outgoing-only and isolated;
+all incoming decoders, APN/network code, transaction services, and general
+attachment surfaces remain absent. Parts-first provider persistence and exact
+creator/Thread/transaction checks prevent incomplete or foreign rows from
+becoming send authority. A content-free checksummed journal makes process death
+before submission safely reversible and process death at/after SUBMITTING
+permanently non-retryable without an authenticated callback.
+
+Focused acceptance covers a deterministic PDU golden/corpus, pure crash-state
+recovery, exact callback authentication on API 26/API 36, three fake-provider
+persistence/rollback cases on API 36, Compose states, permission policy, and
+three real virtual-microphone lifecycle cases on both API 26 and API 36. No live
+provider content or carrier transmission was used. Full carrier/OEM/group and
+incoming-PDU acceptance remains open.
+
 ## Open security decisions
 
 These do not block Phase 1 foundation unless explicitly named, but block their
@@ -827,6 +866,7 @@ feature's release:
   retention, and corruption policy;
 - physical OEM/Doze exact-alarm timing and revocation acceptance;
 - app-lock and secure-recents defaults/copy;
-- MMS PDU implementation/dependency audit;
+- broader/group/incoming MMS PDU, carrier, OEM, roaming, and billing audit beyond
+  ADR 0021's bounded outgoing one-person voice memo;
 - optional SQLCipher hardened mode after measured FTS/migration impact;
 - artwork license and attribution.

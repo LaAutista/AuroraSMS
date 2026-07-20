@@ -5,17 +5,22 @@ package org.aurorasms.core.telephony.internal
 import android.Manifest
 import android.content.ContentResolver
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.BaseColumns
 import android.provider.Telephony
+import androidx.core.net.toUri
 import androidx.core.content.ContextCompat
+import java.io.IOException
 import java.util.Locale
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
@@ -26,10 +31,14 @@ import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
+import org.aurorasms.core.model.asConversationId
 import org.aurorasms.core.telephony.DecodedIncomingMmsRecord
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.MmsProviderDataSource
 import org.aurorasms.core.telephony.MmsProviderMessage
+import org.aurorasms.core.telephony.OutgoingMmsProviderStatus
+import org.aurorasms.core.telephony.OutgoingMmsStatusUpdateOutcome
+import org.aurorasms.core.telephony.OutgoingVoiceMemoProviderRecord
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderPage
 import org.aurorasms.core.telephony.ProviderPageCursor
@@ -37,13 +46,25 @@ import org.aurorasms.core.telephony.ProviderPageRequest
 import org.aurorasms.core.telephony.ProviderStoredMessage
 import org.aurorasms.core.telephony.buildProviderPageFromRaw
 
-class AndroidMmsProviderDataSource(
+class AndroidMmsProviderDataSource internal constructor(
     context: Context,
     private val roleState: DefaultSmsRoleState,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val ioDispatcher: CoroutineDispatcher,
+    private val resolver: ContentResolver,
 ) : MmsProviderDataSource {
+    constructor(
+        context: Context,
+        roleState: DefaultSmsRoleState,
+        ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    ) : this(
+        context = context,
+        roleState = roleState,
+        ioDispatcher = ioDispatcher,
+        resolver = context.applicationContext.contentResolver,
+    )
+
     private val appContext = context.applicationContext
-    private val resolver = appContext.contentResolver
+    private val outgoingInsertMutex = Mutex()
 
     override suspend fun count(): ProviderAccessResult<Long> = withReadAccess("count MMS") {
         resolver.query(
@@ -376,6 +397,333 @@ class AndroidMmsProviderDataSource(
         }
     }
 
+    override suspend fun insertOutgoingVoiceMemo(
+        message: OutgoingVoiceMemoProviderRecord,
+    ): ProviderAccessResult<ProviderStoredMessage> = outgoingInsertMutex.withLock {
+        withWriteAccess("insert outgoing voice memo") {
+            insertOutgoingVoiceMemoSerialized(message)
+        }
+    }
+
+    override suspend fun updateOutgoingStatus(
+        id: ProviderMessageId,
+        conversationId: org.aurorasms.core.model.ConversationId,
+        status: OutgoingMmsProviderStatus,
+    ): ProviderAccessResult<OutgoingMmsStatusUpdateOutcome> =
+        withWriteAccess("update outgoing MMS status") {
+            if (id.kind != ProviderKind.MMS || conversationId.value <= 0L) {
+                return@withWriteAccess ProviderAccessResult.InvalidInput("provider message identity")
+            }
+            val uri = ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, id.value)
+            val target = status.providerMessageBox()
+            val allowedCurrent = status.allowedCurrentBoxes()
+            val placeholders = allowedCurrent.joinToString(",") { "?" }
+            val arguments = buildList {
+                add(appContext.packageName)
+                add(conversationId.value.toString())
+                allowedCurrent.forEach { add(it.toString()) }
+            }.toTypedArray()
+            val updated = resolver.update(
+                uri,
+                ContentValues().apply { put(Telephony.Mms.MESSAGE_BOX, target) },
+                "${Telephony.Mms.CREATOR} = ? AND ${Telephony.Mms.THREAD_ID} = ? AND " +
+                    "${Telephony.Mms.MESSAGE_BOX} IN ($placeholders)",
+                arguments,
+            )
+            when {
+                updated == 1 -> ProviderAccessResult.Success(OutgoingMmsStatusUpdateOutcome.APPLIED)
+                updated != 0 -> ProviderAccessResult.Unavailable("update outgoing MMS status")
+                else -> when (readOutgoingOwnership(uri)) {
+                    OutgoingMmsOwnershipRow.Absent ->
+                        ProviderAccessResult.Success(OutgoingMmsStatusUpdateOutcome.ROW_ABSENT)
+                    is OutgoingMmsOwnershipRow.Found ->
+                        ProviderAccessResult.Success(OutgoingMmsStatusUpdateOutcome.OWNERSHIP_CONFLICT)
+                    OutgoingMmsOwnershipRow.Unavailable ->
+                        ProviderAccessResult.Unavailable("read outgoing MMS ownership")
+                }
+            }
+        }
+
+    override suspend fun rollbackOutgoingPreparation(
+        operationId: org.aurorasms.core.model.MessageId,
+        conversationId: org.aurorasms.core.model.ConversationId,
+        transactionId: String,
+    ): ProviderAccessResult<OutgoingMmsStatusUpdateOutcome> = outgoingInsertMutex.withLock {
+        withWriteAccess("rollback outgoing MMS preparation") {
+            if (
+                operationId.kind != ProviderKind.PENDING_OPERATION ||
+                operationId.value <= 0L ||
+                conversationId.value <= 0L ||
+                !transactionId.matches(OUTGOING_TRANSACTION_ID)
+            ) {
+                return@withWriteAccess ProviderAccessResult.InvalidInput(
+                    "outgoing MMS preparation identity",
+                )
+            }
+            resolver.delete(
+                "content://mms/${dummyMmsPartOwnerId(operationId.value)}/part".toUri(),
+                null,
+                null,
+            )
+            val selection =
+                "${Telephony.Mms.CREATOR} = ? AND ${Telephony.Mms.THREAD_ID} = ? AND " +
+                    "${Telephony.Mms.TRANSACTION_ID} = ?"
+            val arguments = arrayOf(
+                appContext.packageName,
+                conversationId.value.toString(),
+                transactionId,
+            )
+            val candidates = resolver.query(
+                Telephony.Mms.CONTENT_URI,
+                arrayOf(BaseColumns._ID, Telephony.Mms.MESSAGE_BOX),
+                selection,
+                arguments,
+                null,
+            )?.use { cursor ->
+                buildList<Pair<Long, Int>> {
+                    while (size < 2 && cursor.moveToNext()) {
+                        add(cursor.getLong(0) to cursor.getInt(1))
+                    }
+                    if (cursor.moveToNext()) add(-1L to -1)
+                }
+            } ?: return@withWriteAccess ProviderAccessResult.Unavailable(
+                "read outgoing MMS preparation",
+            )
+            if (candidates.isEmpty()) {
+                return@withWriteAccess ProviderAccessResult.Success(
+                    OutgoingMmsStatusUpdateOutcome.ROW_ABSENT,
+                )
+            }
+            val candidate = candidates.singleOrNull()
+                ?: return@withWriteAccess ProviderAccessResult.Success(
+                    OutgoingMmsStatusUpdateOutcome.OWNERSHIP_CONFLICT,
+                )
+            if (candidate.first <= 0L || candidate.second != Telephony.Mms.MESSAGE_BOX_FAILED) {
+                return@withWriteAccess ProviderAccessResult.Success(
+                    OutgoingMmsStatusUpdateOutcome.OWNERSHIP_CONFLICT,
+                )
+            }
+            val deleted = resolver.delete(
+                ContentUris.withAppendedId(Telephony.Mms.CONTENT_URI, candidate.first),
+                "$selection AND ${Telephony.Mms.MESSAGE_BOX} = ?",
+                arguments + Telephony.Mms.MESSAGE_BOX_FAILED.toString(),
+            )
+            when (deleted) {
+                1 -> ProviderAccessResult.Success(OutgoingMmsStatusUpdateOutcome.APPLIED)
+                0 -> ProviderAccessResult.Success(OutgoingMmsStatusUpdateOutcome.OWNERSHIP_CONFLICT)
+                else -> ProviderAccessResult.Unavailable("delete outgoing MMS preparation")
+            }
+        }
+    }
+
+    private fun insertOutgoingVoiceMemoSerialized(
+        message: OutgoingVoiceMemoProviderRecord,
+    ): ProviderAccessResult<ProviderStoredMessage> {
+        val dummyId = dummyMmsPartOwnerId(message.operationId.value)
+        val dummyPartUri = "content://mms/$dummyId/part".toUri()
+        var messageUri: Uri? = null
+        var rowComplete = false
+        return try {
+            val partCount = persistVoiceMemoParts(dummyPartUri, message)
+            val values = ContentValues().apply {
+                put(Telephony.Mms.THREAD_ID, message.providerThreadId.value)
+                put(Telephony.Mms.DATE, message.timestampMillis / MILLIS_PER_SECOND_VALUE)
+                put(Telephony.Mms.DATE_SENT, 0L)
+                put(Telephony.Mms.MESSAGE_BOX, Telephony.Mms.MESSAGE_BOX_FAILED)
+                put(Telephony.Mms.MESSAGE_TYPE, MMS_SEND_REQUEST_TYPE)
+                put(Telephony.Mms.MMS_VERSION, MMS_VERSION_1_2)
+                put(Telephony.Mms.CONTENT_TYPE, MMS_MULTIPART_RELATED)
+                put(Telephony.Mms.TRANSACTION_ID, message.transactionId)
+                put(Telephony.Mms.MESSAGE_CLASS, MMS_MESSAGE_CLASS_PERSONAL)
+                put(Telephony.Mms.PRIORITY, MMS_PRIORITY_NORMAL)
+                put(Telephony.Mms.DELIVERY_REPORT, MMS_VALUE_NO)
+                put(Telephony.Mms.READ_REPORT, MMS_VALUE_NO)
+                put(Telephony.Mms.MESSAGE_SIZE, message.encodedSize)
+                put(Telephony.Mms.TEXT_ONLY, 0)
+                put(Telephony.Mms.READ, 1)
+                put(Telephony.Mms.SEEN, 1)
+                put(Telephony.Mms.SUBSCRIPTION_ID, message.subscriptionId.value)
+                put(Telephony.Mms.CREATOR, appContext.packageName)
+                message.subject?.let {
+                    put(Telephony.Mms.SUBJECT, it)
+                    put(Telephony.Mms.SUBJECT_CHARSET, MMS_UTF_8_CHARSET)
+                }
+            }
+            messageUri = resolver.insert(Telephony.Mms.CONTENT_URI, values)
+                ?: return ProviderAccessResult.Unavailable("insert outgoing MMS row")
+            val messageId = ContentUris.parseId(messageUri).takeIf { it > 0L }
+                ?: return ProviderAccessResult.Unavailable("read inserted MMS ID")
+            val moved = resolver.update(
+                dummyPartUri,
+                ContentValues().apply { put(MMS_PART_MESSAGE_ID, messageId) },
+                null,
+                null,
+            )
+            if (moved != partCount) {
+                return ProviderAccessResult.Unavailable("attach outgoing MMS parts")
+            }
+            val addressUri = "content://mms/$messageId/addr".toUri()
+            for (recipient in message.recipients.addresses) {
+                val inserted = resolver.insert(
+                    addressUri,
+                    ContentValues().apply {
+                        put(MMS_ADDRESS, recipient.value)
+                        put(MMS_ADDRESS_CHARSET, MMS_UTF_8_CHARSET)
+                        put(MMS_ADDRESS_TYPE, MMS_TO_ADDRESS_TYPE)
+                    },
+                ) ?: return ProviderAccessResult.Unavailable("insert outgoing MMS address")
+                if (ContentUris.parseId(inserted) <= 0L) {
+                    return ProviderAccessResult.Unavailable("read outgoing MMS address ID")
+                }
+            }
+            if (!outgoingMmsRowComplete(messageUri, message.providerThreadId, message.recipients.size)) {
+                return ProviderAccessResult.Unavailable("verify outgoing MMS row")
+            }
+            rowComplete = true
+            ProviderAccessResult.Success(
+                ProviderStoredMessage(
+                    providerId = ProviderMessageId(ProviderKind.MMS, messageId),
+                    conversationId = message.providerThreadId.asConversationId(),
+                ),
+            )
+        } catch (_: IOException) {
+            ProviderAccessResult.Unavailable("write outgoing MMS part")
+        } finally {
+            runCatching { resolver.delete(dummyPartUri, null, null) }
+            messageUri?.takeUnless { rowComplete }?.let { incomplete ->
+                runCatching { resolver.delete(incomplete, null, null) }
+            }
+        }
+    }
+
+    private fun persistVoiceMemoParts(
+        partUri: Uri,
+        message: OutgoingVoiceMemoProviderRecord,
+    ): Int {
+        var count = 0
+        insertTextPart(
+            partUri = partUri,
+            contentType = MMS_SMIL_CONTENT_TYPE,
+            contentId = "<smil>",
+            location = MMS_SMIL_LOCATION,
+            text = voiceMemoSmil(message.memo.durationMillis, message.text?.isNotBlank() == true),
+        )
+        count += 1
+        message.text?.takeIf(String::isNotBlank)?.let { text ->
+            insertTextPart(
+                partUri = partUri,
+                contentType = MMS_TEXT_CONTENT_TYPE,
+                contentId = "<text0>",
+                location = MMS_TEXT_LOCATION,
+                text = text,
+                charset = MMS_UTF_8_CHARSET,
+            )
+            count += 1
+        }
+        val audioUri = resolver.insert(
+            partUri,
+            partValues(
+                contentType = MMS_AUDIO_CONTENT_TYPE,
+                contentId = "<voice0>",
+                location = MMS_AUDIO_LOCATION,
+                disposition = MMS_ATTACHMENT_DISPOSITION,
+            ),
+        ) ?: throw IOException("MMS audio part insert failed")
+        resolver.openOutputStream(audioUri, "w")?.use { output ->
+            output.write(message.memo.copyBytes())
+            output.flush()
+        } ?: throw IOException("MMS audio part stream unavailable")
+        return count + 1
+    }
+
+    private fun insertTextPart(
+        partUri: Uri,
+        contentType: String,
+        contentId: String,
+        location: String,
+        text: String,
+        charset: Int? = null,
+    ) {
+        val values = partValues(
+            contentType = contentType,
+            contentId = contentId,
+            location = location,
+            disposition = MMS_INLINE_DISPOSITION,
+        ).apply {
+            put(Telephony.Mms.Part.TEXT, text)
+            charset?.let { put(Telephony.Mms.Part.CHARSET, it) }
+        }
+        if (resolver.insert(partUri, values) == null) throw IOException("MMS text part insert failed")
+    }
+
+    private fun partValues(
+        contentType: String,
+        contentId: String,
+        location: String,
+        disposition: String,
+    ): ContentValues = ContentValues().apply {
+        put(Telephony.Mms.Part.CONTENT_TYPE, contentType)
+        put(MMS_PART_CONTENT_ID, contentId)
+        put(Telephony.Mms.Part.CONTENT_LOCATION, location)
+        put(Telephony.Mms.Part.NAME, location)
+        put(Telephony.Mms.Part.FILENAME, location)
+        put(MMS_PART_CONTENT_DISPOSITION, disposition)
+    }
+
+    private fun outgoingMmsRowComplete(
+        uri: Uri,
+        providerThreadId: ProviderThreadId,
+        recipientCount: Int,
+    ): Boolean {
+        val messageId = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return false
+        val rowMatches = resolver.query(
+            uri,
+            arrayOf(Telephony.Mms.THREAD_ID, Telephony.Mms.CREATOR, Telephony.Mms.MESSAGE_BOX),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            cursor.moveToFirst() &&
+                cursor.getLong(0) == providerThreadId.value &&
+                cursor.getString(1) == appContext.packageName &&
+                cursor.getInt(2) == Telephony.Mms.MESSAGE_BOX_FAILED
+        } == true
+        if (!rowMatches) return false
+        val partCount = resolver.query(
+            "content://mms/$messageId/part".toUri(),
+            arrayOf(BaseColumns._ID),
+            null,
+            null,
+            null,
+        )?.use { it.count } ?: return false
+        val addressCount = resolver.query(
+            "content://mms/$messageId/addr".toUri(),
+            arrayOf(BaseColumns._ID),
+            "$MMS_ADDRESS_TYPE = ?",
+            arrayOf(MMS_TO_ADDRESS_TYPE.toString()),
+            null,
+        )?.use { it.count } ?: return false
+        return partCount in 2..3 && addressCount == recipientCount
+    }
+
+    private fun readOutgoingOwnership(uri: Uri): OutgoingMmsOwnershipRow = try {
+        resolver.query(
+            uri,
+            arrayOf(Telephony.Mms.THREAD_ID, Telephony.Mms.CREATOR, Telephony.Mms.MESSAGE_BOX),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (!cursor.moveToFirst()) {
+                OutgoingMmsOwnershipRow.Absent
+            } else {
+                OutgoingMmsOwnershipRow.Found(cursor.getLong(0), cursor.getString(1), cursor.getInt(2))
+            }
+        } ?: OutgoingMmsOwnershipRow.Unavailable
+    } catch (_: RuntimeException) {
+        OutgoingMmsOwnershipRow.Unavailable
+    }
+
     private suspend fun <T> withReadAccess(
         operation: String,
         block: () -> ProviderAccessResult<T>,
@@ -384,6 +732,22 @@ class AndroidMmsProviderDataSource(
         if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
             return@withContext ProviderAccessResult.PermissionDenied
         }
+        try {
+            block()
+        } catch (_: SecurityException) {
+            ProviderAccessResult.PermissionDenied
+        } catch (_: IllegalArgumentException) {
+            ProviderAccessResult.InvalidInput(operation)
+        } catch (_: RuntimeException) {
+            ProviderAccessResult.Unavailable(operation)
+        }
+    }
+
+    private suspend fun <T> withWriteAccess(
+        operation: String,
+        block: () -> ProviderAccessResult<T>,
+    ): ProviderAccessResult<T> = withContext(ioDispatcher) {
+        if (!roleState.isRoleHeld()) return@withContext ProviderAccessResult.RoleRequired
         try {
             block()
         } catch (_: SecurityException) {
@@ -417,6 +781,12 @@ private data class RawMmsProviderRow(
         timestampMillis = timestampSeconds.secondsToMillis(),
         providerRowId = id,
     )
+}
+
+private sealed interface OutgoingMmsOwnershipRow {
+    data object Absent : OutgoingMmsOwnershipRow
+    data object Unavailable : OutgoingMmsOwnershipRow
+    data class Found(val threadId: Long, val creator: String?, val messageBox: Int) : OutgoingMmsOwnershipRow
 }
 
 internal data class RawMmsAddress(
@@ -623,6 +993,37 @@ private fun android.database.Cursor.nullableInt(index: Int): Int? =
 private fun Long.secondsToMillis(): Long =
     coerceAtLeast(0L).coerceAtMost(Long.MAX_VALUE / MILLIS_PER_SECOND_VALUE) * MILLIS_PER_SECOND_VALUE
 
+private fun OutgoingMmsProviderStatus.providerMessageBox(): Int = when (this) {
+    OutgoingMmsProviderStatus.FAILED -> Telephony.Mms.MESSAGE_BOX_FAILED
+    OutgoingMmsProviderStatus.OUTBOX -> Telephony.Mms.MESSAGE_BOX_OUTBOX
+    OutgoingMmsProviderStatus.SENT -> Telephony.Mms.MESSAGE_BOX_SENT
+}
+
+private fun OutgoingMmsProviderStatus.allowedCurrentBoxes(): IntArray = when (this) {
+    OutgoingMmsProviderStatus.FAILED ->
+        intArrayOf(Telephony.Mms.MESSAGE_BOX_FAILED, Telephony.Mms.MESSAGE_BOX_OUTBOX)
+    OutgoingMmsProviderStatus.OUTBOX ->
+        intArrayOf(Telephony.Mms.MESSAGE_BOX_FAILED, Telephony.Mms.MESSAGE_BOX_OUTBOX)
+    OutgoingMmsProviderStatus.SENT ->
+        intArrayOf(Telephony.Mms.MESSAGE_BOX_OUTBOX, Telephony.Mms.MESSAGE_BOX_SENT)
+}
+
+internal fun dummyMmsPartOwnerId(operationId: Long): Long {
+    require(operationId > 0L)
+    return Long.MAX_VALUE - operationId
+}
+
+internal fun voiceMemoSmil(durationMillis: Long, hasText: Boolean): String = buildString {
+    append("<smil><head><layout><root-layout width=\"320px\" height=\"480px\"/>")
+    if (hasText) append("<region id=\"Text\" left=\"0\" top=\"0\" width=\"320px\" height=\"480px\"/>")
+    append("</layout></head><body><par dur=\"")
+    append(durationMillis)
+    append("ms\">")
+    if (hasText) append("<text src=\"").append(MMS_TEXT_LOCATION).append("\" region=\"Text\"/>")
+    append("<audio src=\"").append(MMS_AUDIO_LOCATION).append("\"/>")
+    append("</par></body></smil>")
+}
+
 private const val MILLIS_PER_SECOND_VALUE = 1_000L
 private const val MAX_MMS_DATE_SECONDS = Long.MAX_VALUE / MILLIS_PER_SECOND_VALUE
 private const val MAX_INSPECTED_MMS_ADDRESS_ROWS = MmsProviderMessage.MAX_MMS_PARTICIPANTS
@@ -634,3 +1035,26 @@ private const val MMS_PART_PATH = "part"
 private const val TEXT_PLAIN_MIME_TYPE = "text/plain"
 private const val SMIL_MIME_TYPE = "application/smil"
 private const val DEFAULT_BINARY_MIME_TYPE = "application/octet-stream"
+private const val MMS_SEND_REQUEST_TYPE = 128
+private const val MMS_VERSION_1_2 = 0x12
+private const val MMS_PRIORITY_NORMAL = 129
+private const val MMS_VALUE_NO = 129
+private const val MMS_TO_ADDRESS_TYPE = 151
+private const val MMS_UTF_8_CHARSET = 106
+private const val MMS_MULTIPART_RELATED = "application/vnd.wap.multipart.related"
+private const val MMS_MESSAGE_CLASS_PERSONAL = "personal"
+private const val MMS_SMIL_CONTENT_TYPE = "application/smil"
+private const val MMS_TEXT_CONTENT_TYPE = "text/plain"
+private const val MMS_AUDIO_CONTENT_TYPE = "audio/mp4"
+private const val MMS_SMIL_LOCATION = "smil.xml"
+private const val MMS_TEXT_LOCATION = "text_0.txt"
+private const val MMS_AUDIO_LOCATION = "voice_0.m4a"
+private const val MMS_INLINE_DISPOSITION = "inline"
+private const val MMS_ATTACHMENT_DISPOSITION = "attachment"
+private const val MMS_PART_MESSAGE_ID = "mid"
+private const val MMS_PART_CONTENT_ID = "cid"
+private const val MMS_PART_CONTENT_DISPOSITION = "cd"
+private const val MMS_ADDRESS = "address"
+private const val MMS_ADDRESS_CHARSET = "charset"
+private const val MMS_ADDRESS_TYPE = "type"
+private val OUTGOING_TRANSACTION_ID = Regex("[A-Za-z0-9._-]{1,64}")

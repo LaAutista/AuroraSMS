@@ -3525,6 +3525,116 @@ still requires the owner to explicitly make AuroraSMS default and keep it open
 through verified completion; the repair makes the existing private cache useful
 without misrepresenting it as current.
 
+### Phase 6F bounded voice-memo MMS implementation evidence — 2026-07-19
+
+This source identifies as `0.6.8-phase6` (`versionCode` 19), retains index
+schema 3 and durable-state schema 12, and implements ADR 0021. Microphone access
+is absent from messaging onboarding and originates only from the explicit
+Thread Record action. Capture is one visible foreground MPEG-4/AAC-LC session,
+limited to 60 seconds and 524,288 bytes in `noBackupFilesDir`; Stop enters a
+separate review state and cancellation, Thread exit, or backgrounding deletes
+the private file.
+
+The exact official-AOSP composer subset is pinned and noticed under
+`third_party/aosp-mms/`. It emits only one-person SMIL/optional signature-text/
+audio PDUs and has no incoming parser, APN/network client, transaction service,
+database, UI, group, or arbitrary-attachment surface. The deterministic golden
+PDU is 539 bytes with SHA-256
+`e8abd80ab558cc9ba2179519cb928b131889f78d35b7258ba419cc6a0bd87867`;
+the corpus reaches the full 524,288-byte audio limit.
+
+Provider persistence writes parts first, verifies one exact
+creator/Thread/transaction-bound FAILED row, and requires an exactly applied
+OUTBOX transition before the platform call. A checksummed content-free journal
+owns preparation/submission/callback recovery; SUBMITTING process death becomes
+non-retryable submission-unknown, and exact private callback identity is
+authenticated before provider mutation.
+
+Focused evidence is green: the real virtual-microphone controller executes 3/3
+tests on API 26 and 3/3 on API 36; exact MMS callback-intent tests execute 3/3
+on each; authenticated callback reconciliation executes 3/3 on each; the
+encoder/journal/role group executes 10/10 on each; the complete Thread UI class
+executes 33/33 on each; and the API 36 in-process provider fixture executes 3/3
+byte-persistence/status/cleanup/rollback tests. API-independent host tests cover
+bounded values, operation namespaces, onboarding permission exclusion, every
+journal crash state, and the exact carrier-boundary transition. All fixtures use
+synthetic recipients/content and fake transport/provider boundaries. No live
+provider content was read and no carrier MMS was submitted.
+
+The complete offline aggregate passed in 1m47s across all 888 Gradle tasks
+(145 executed, six from cache, 737 up-to-date):
+
+```shell
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease \
+    :app:lintBenchmark :app:assembleBenchmark \
+    :macrobenchmark:check :macrobenchmark:assembleBenchmark \
+    verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions \
+    verifyApkContents checkLicense generateLicenseReport \
+    --offline --no-daemon --no-parallel --console=plain \
+    -Pkotlin.incremental=false
+```
+
+All 601 retained host JUnit results passed with zero failures, errors, or
+skips:
+
+| Module | Tests |
+|---|---:|
+| app | 287 |
+| design system | 11 |
+| index | 69 |
+| model | 19 |
+| notifications | 21 |
+| state | 58 |
+| telephony | 93 |
+| testing | 24 |
+| conversations | 19 |
+| **Total** | **601** |
+
+`bundleRelease` separately passed 270 tasks in 25s. `cyclonedxBom` separately
+passed all 15 tasks in 7s; the generated CycloneDX 1.6 graph contains 441
+components and 442 dependency nodes.
+
+The complete API 36 connected matrix passed 457 tasks in 2m03s. The complete
+API 26 matrix passed 457 tasks in 2m16s. Authoritative XML counts are:
+
+| Module | API 26 tests | API 26 skips | API 36 tests | API 36 skips |
+|---|---:|---:|---:|---:|
+| app | 148 | 12 | 145 | 9 |
+| benchmark guards | 3 | 1 | 3 | 1 |
+| index | 33 | 0 | 33 | 0 |
+| notifications | 31 | 0 | 31 | 0 |
+| state | 65 | 0 | 65 | 0 |
+| telephony | 49 | 0 | 52 | 0 |
+| conversations | 33 | 0 | 33 | 0 |
+| **Total** | **362** | **13** | **362** | **10** |
+
+All executed connected tests passed with zero failures or errors. Skips remain
+explicit opt-in physical/carrier/system-picker journeys; the API 26 provider
+fixture is also SDK-suppressed because its in-process `ContentResolver` harness
+is platform API 29+, while API 26 still executes the encoder, callback, journal,
+UI, and real virtual-microphone contracts.
+
+The accepted artifacts are:
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app-debug.apk` | 15,196,362 | `35b373975865055cead5979d20e8ef6bb0c6225030b3d70be8bae52712b45a47` |
+| `app-release-unsigned.apk` | 2,985,817 | `42f2e0691d8ecd81e0a4a5aba667db4e62cc7608ad3555ff919fa0e4a2003b29` |
+| `app-benchmark.apk` | 2,830,261 | `0d4e475fb3d150127acd861858a45254ef02f462ac70a0e44288e959efd85a8b` |
+| `app-release.aab` | 6,075,309 | `dff0c83488bf35fbddc1c6463eb897e411f1c769100b767b4e0af61426a1ad90` |
+| `bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK was installed and copied to
+`/sdcard/Download/AuroraSMS-debug.apk` on the API 26 and API 36 emulators. Both
+15,196,362-byte copies hash-match the host artifact, report version code 19/name
+`0.6.8-phase6`, remain force-stopped, and retained `com.android.messaging` as
+the default SMS app. The Pixel's prior wireless endpoint was unreachable after
+the editor crash (`No route to host`), so no Phase 6F physical handoff is
+claimed. The acceptance did not request role or permission changes, launch the
+app, inspect live message content, or submit carrier traffic. Carrier/OEM and
+physical-device voice-MMS acceptance remain open and require a separate owner-
+approved protocol.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
@@ -3563,8 +3673,10 @@ without misrepresenting it as current.
 - [x] Reaction fallback parsing never mutates stored SMS and handles ambiguity.
   Exact bounded whole-message forms render locally; all ambiguous or incomplete
   forms fail open to the original raw text.
-- [ ] Voice memo requests microphone only from explicit Record action, indicates
-  recording, limits output, and cleans temporary files.
+- [x] Voice memo requests microphone only from explicit Record action, indicates
+  recording, limits output, requires separate review/Send, and cleans temporary
+  files. Exact provider/journal/callback gates are automated; real carrier/OEM
+  acceptance remains open.
 - [x] Selected-text copy exposes only the selected content. Invalid/collapsed
   selections fail closed, truncated previews are labeled, and details excludes
   bodies, addresses, provider IDs, and attachment paths.
