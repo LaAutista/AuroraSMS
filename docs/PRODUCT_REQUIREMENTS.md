@@ -741,8 +741,13 @@ the exact staged file, and provider parts/message/addresses commit atomically or
 are cleaned. Notification acknowledgement owns final journal/file removal, and
 startup may replay only provider/notification completion. Group MMS never gains
 an SMS quick-reply path. Eight focused end-to-end cases pass on API 26 and API
-36 without live provider or carrier traffic. Physical carrier/OEM incoming
-acceptance remains a release gate.
+36 without live provider or carrier traffic. Implementation commit `f2f4f5c`
+adds a gated isolated-package acceptance that passes independently twice on
+each API: durable `PERSISTED` state and the exact staged PDU survive a host
+force-stop, a fresh process recreates one pending notification handoff without
+another platform download, and a third process acknowledges and removes both
+owners after a second force-stop. Physical carrier/OEM incoming acceptance
+remains a release gate.
 
 ### Phase 7D bounded general outgoing MMS
 

@@ -900,7 +900,14 @@ bounded provider/notification work but never carrier retrieval. Group quick
 reply remains disabled, the active line is used only ephemerally to exclude self
 from Thread identity, and diagnostics redact all carrier/message identity and
 content. Physical carrier/OEM, SIM-number availability, roaming/billing, and
-malicious-carrier acceptance remain open.
+malicious-carrier acceptance remain open. Implementation commit `f2f4f5c`
+exercises the retained `PERSISTED` owner in an isolated package across two real
+host force-stops on API 26 and API 36. The fresh process reconstructs one
+pending notification without invoking the platform download seam; only the
+later exact acknowledgement removes the journal and staged PDU. The runner
+passes twice per API, removes its test package, and preserves the SMS role.
+This is synthetic process-lifecycle evidence, not carrier/OEM callback or
+physical-device evidence.
 
 Phase 7D ADR 0026 routes exact direct/group, long-text, subject, and sanitized
 image drafts through one MMS operation without SMS fan-out or fallback. Picker

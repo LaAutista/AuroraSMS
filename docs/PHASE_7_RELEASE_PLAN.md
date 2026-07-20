@@ -80,7 +80,7 @@ provider access. It does not authorize a carrier send.
   including subject and reviewed attachment types.
 - [x] Keep one group as one MMS operation; never fan out individual SMS messages
   and never silently downgrade after MMS failure.
-- [ ] Add malformed/mutation corpus, provider, process-death, callback, and
+- [x] Add malformed/mutation corpus, provider, process-death, callback, and
   notification tests on API 26 and API 36 before any carrier exercise.
 - [ ] Pass approved physical one-person and group MMS send/receive cases.
 
@@ -99,7 +99,15 @@ journey: a production-Room draft and identical sanitized attachment bytes
 survive into a fresh process, the real root renders them and routes exactly one
 synthetic MMS operation, and a third fresh process proves parent/cascade
 cleanup. This is not physical carrier behavior; in-flight send death, physical
-carrier/OEM, and the broader process-death matrix remain open.
+carrier/OEM, and the broader process-death matrix remain open. Implementation
+commit `f2f4f5c` adds a separate isolated test-package journey on API 26 and API
+36: a completed synthetic incoming PDU/provider owner survives one host
+force-stop, a fresh process reconstructs exactly one pending notification
+without a platform resubmission, and a third process acknowledges and removes
+the exact journal/staged-file owner after another force-stop. It passes twice
+per API and closes the synthetic malformed/provider/callback/notification/
+process-death test row, not physical carrier receipt or death during an actual
+platform callback.
 
 ## Workstream 7E: physical and platform hardening
 

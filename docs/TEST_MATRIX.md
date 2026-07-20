@@ -4092,6 +4092,54 @@ physical/OEM behavior, low-memory eviction, billing/roaming, dual-SIM, or gold
 readiness. No live provider content, role/permission change, carrier operation,
 attachment export, or broad log participated.
 
+#### ADR 0025 API 26/API 36 incoming-MMS notification cold-process evidence — 2026-07-20
+
+Implementation commit `f2f4f5c` adds the gated
+`completedIncomingMmsSurvivesHostForceStopUntilFreshProcessNotificationAcknowledgement`
+method and an isolated preservation-safe runner:
+
+```shell
+./scripts/run-emulator-incoming-mms-cold-restart-smoke.sh --device emulator-5554
+./scripts/run-emulator-incoming-mms-cold-restart-smoke.sh --device emulator-5556
+```
+
+The runner refuses physical devices and any API except 26 or 36, requires its
+standalone telephony instrumentation package to be absent before the run,
+records the SMS-role holder, and installs only that isolated package. A gated
+preflight cleanup runs before mutation. Every phase must report exactly one
+passing test; cleanup is retried from the exit trap after interruption, the test
+package is uninstalled, and the SMS role must match its baseline.
+
+Prepare writes a versioned content-free checkpoint before creating one bounded
+synthetic group RetrieveConf. The production journal and staging store commit
+the exact operation/file through `PERSISTED`, while a fake provider returns one
+fixed synthetic MMS row and no Android carrier API is called. The host launches
+only the test package's empty activity to expose its exact PID, then requires
+`am force-stop` to remove it.
+
+Verification requires a different PID with a later process-start uptime. A
+fresh `AndroidMmsTransport` recovers the same PDU, replays the idempotent fake-
+provider write, and returns exactly one pending notification handoff with zero
+platform submissions, zero deferred work, and zero unknown submissions. The
+journal and file remain owned until notification acknowledgement. After a
+second exact host force-stop, a third process repeats that same handoff,
+acknowledges it, and proves both the journal and staged PDU are absent.
+
+Two independent executions passed all prepare/verify/cleanup phases on each API
+level. API 36 host force-stops removed PIDs 30268/30344 and 30542/30617; API 26
+removed PIDs 27265/27337 and 27561/27630. The complete follow-on API 36 matrix
+passed 450 enumerated tests with 12 intentional protocol skips in 2m39s; API 26
+passed 444 tests with 15 intentional skips in 2m49s. Both matrices had zero
+failures or errors.
+
+This closes the synthetic Phase 7D malformed/mutation, provider, callback,
+notification, and process-death test row across the supported API floor/latest
+pair. It does not prove a carrier download/callback, physical/OEM delivery,
+group self-line discovery, media rendering, low-memory eviction, or death while
+an actual platform operation is in flight. No live provider content, SMS-role
+change, carrier operation, message-content capture, attachment export, or broad
+log participated.
+
 ## Release gate
 
 - [ ] All relevant platform/device/telephony/message/lifecycle/appearance rows

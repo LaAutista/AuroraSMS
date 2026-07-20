@@ -76,6 +76,12 @@ diagnostic string.
   post-checkpoint platform uncertainty, provider runtime deferral, group
   persistence, notification replay after restart, non-resubmission across two
   recovery passes, and cleanup before the platform boundary.
+- Implementation commit `f2f4f5c` adds an explicitly gated host-force-stop
+  journey that passes independently twice on API 26 and twice on API 36. One
+  process commits the synthetic PDU/provider result as `PERSISTED`; after host
+  force-stop, a fresh process produces exactly one pending notification without
+  a platform resubmission; after another force-stop, a third process repeats
+  the durable handoff, acknowledges it, and removes the exact journal and file.
 - ADR 0024's five-test hostile/truncation decoder corpus passes on both API
   levels. The metadata journal/staging suite passes on both API levels, and the
   seven-case atomic fake-provider suite passes on API 36.
@@ -89,6 +95,6 @@ AuroraSMS now has an end-to-end incoming MMS implementation through durable
 provider persistence and notification acknowledgement, with synthetic
 API-floor/latest evidence. This is not carrier acceptance. A physical receive
 still must prove carrier configuration, billing/roaming behavior, OEM callback
-delivery, SIM line resolution for groups, media rendering, and process death.
-General one-person/group outgoing composition also remains open. AuroraSMS is
-not gold.
+delivery, SIM line resolution for groups, media rendering, and physical/in-
+flight process death. General one-person/group outgoing carrier acceptance also
+remains open. AuroraSMS is not gold.

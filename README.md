@@ -50,20 +50,30 @@ explicit API 36 host-force-stop journey that twice restores the production-Room
 draft and identical image bytes in a fresh process, renders the attachment in
 the real root, routes one exact synthetic MMS operation, and proves fresh-
 process parent/cascade cleanup while preserving the APK, SMS role, and
-permissions. The follow-on complete matrices pass 449 API 36 tests with 11
+permissions. The follow-on attachment matrices passed 449 API 36 tests with 11
 intentional skips and 443 API 26 tests with 14 intentional skips, with zero
-failures or errors. Physical carrier/OEM interoperability and broader in-flight
-process-death coverage remain open.
+failures or errors. Implementation commit `f2f4f5c` then adds an isolated,
+preservation-safe incoming-MMS host-force-stop journey on both API 26 and API
+36. A completed synthetic download/provider result survives into a fresh
+process as exactly one pending notification without another platform download;
+a third process acknowledges it and removes the exact journal owner and staged
+PDU. The journey passed independently twice per API. The complete follow-on
+matrices pass 450 API 36 tests with 12 intentional skips and 444 API 26 tests
+with 15 intentional skips, with zero failures or errors. Physical carrier/OEM
+interoperability and broader in-flight process-death coverage remain open.
 
 Incoming MMS implementation commit
 `260fd18522a31b7bce4c4e6dbfbac99c9c83fecd` completes ADR 0025's
 metadata-only crash journal, duplicate WAP suppression, exact staged-file
 callback, bounded RetrieveConf projection, atomic idempotent provider write,
 group-aware notification acknowledgement, and startup replay without carrier
-resubmission. Eight synthetic end-to-end cases pass on both API 26 and API 36;
-provider failure is deferred with the authenticated PDU retained. No live
-provider read, role change, carrier download, or message-content capture was
-used. Physical carrier receive remains open.
+resubmission. Eight ordinary synthetic end-to-end cases pass on both API 26 and
+API 36; provider failure is deferred with the authenticated PDU retained. The
+separately gated `f2f4f5c` cold-process journey additionally proves durable
+provider-to-notification replay and exact acknowledgement cleanup across two
+host force-stops on both API levels. No live provider read, role change,
+carrier download, or message-content capture was used. Physical carrier receive
+remains open.
 
 The 2026-07-20 Phase 6H implementation identifies as `0.6.10-phase6`
 (`versionCode` 21) and implements ADR 0023. AuroraSMS now advertises Android
