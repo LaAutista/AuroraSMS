@@ -2,7 +2,7 @@
 
 package org.aurorasms.core.telephony.service
 
-import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
+import org.aurorasms.core.model.INCOMING_MMS_OPERATION_ID_BOUNDARY
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -14,9 +14,9 @@ class RespondViaMessageOperationIdTest {
 
         val operationId = nextOrdinaryOperationId(values::removeFirst)
 
-        assertEquals(COMPOSER_OPERATION_ID_BOUNDARY - 1L, operationId)
+        assertEquals(INCOMING_MMS_OPERATION_ID_BOUNDARY - 1L, operationId)
         assertTrue(operationId > 0L)
-        assertTrue(operationId < COMPOSER_OPERATION_ID_BOUNDARY)
+        assertTrue(operationId < INCOMING_MMS_OPERATION_ID_BOUNDARY)
     }
 
     @Test
@@ -25,7 +25,7 @@ class RespondViaMessageOperationIdTest {
             val operationId = nextOrdinaryOperationId { randomValue }
 
             assertTrue(operationId > 0L)
-            assertTrue(operationId < COMPOSER_OPERATION_ID_BOUNDARY)
+            assertTrue(operationId < INCOMING_MMS_OPERATION_ID_BOUNDARY)
         }
     }
 }

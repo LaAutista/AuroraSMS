@@ -11,7 +11,9 @@ import org.aurorasms.core.telephony.internal.MmsPduDirection
 import org.aurorasms.core.telephony.internal.MmsPduStagingStore
 import org.aurorasms.core.telephony.internal.MmsStagingResult
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -62,6 +64,22 @@ class MmsPduStagingStoreTest {
 
         assertArrayEquals(byteArrayOf(9, 10, 11), result.pdu.copyBytes())
         assertTrue(store.cleanup(staged.uri, staged.direction))
+    }
+
+    @Test
+    fun journalRecoveryReconstructsOnlyTheExactConfinedExistingDownloadFile() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val store = MmsPduStagingStore(context)
+        val operation = operation(5)
+        val staged = store.createDownloadTarget(operation).ready()
+
+        val recovered = requireNotNull(store.recoverDownloadTarget(operation, staged.fileName))
+
+        assertEquals(staged, recovered)
+        assertNull(store.recoverDownloadTarget(operation, "../${staged.fileName}"))
+        assertNull(store.recoverDownloadTarget(operation, "11111111-1111-4111-8111-111111111111.pdu"))
+        assertTrue(store.cleanup(staged.uri, staged.direction))
+        assertNull(store.recoverDownloadTarget(operation, staged.fileName))
     }
 
     private fun operation(value: Long) = MessageId(ProviderKind.PENDING_OPERATION, value)

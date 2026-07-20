@@ -6,6 +6,7 @@ import android.Manifest
 import org.aurorasms.app.messagingOnboardingPermissions
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
+import org.aurorasms.core.model.INCOMING_MMS_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.RecipientSet
 import org.junit.Assert.assertEquals
@@ -29,7 +30,7 @@ class VoiceMemoControllerPolicyTest {
         val result = nextVoiceMemoOperationId { candidates.removeFirst() }
 
         assertEquals(17L, result)
-        assertTrue(result in 1L until COMPOSER_OPERATION_ID_BOUNDARY)
+        assertTrue(result in 1L until INCOMING_MMS_OPERATION_ID_BOUNDARY)
     }
 
     @Test

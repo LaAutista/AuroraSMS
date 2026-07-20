@@ -12,8 +12,16 @@ class PendingOperationNamespaceTest {
     fun futureAllocationRegionsArePositiveDisjointAndBoundaryExact() {
         assertNamespace(1L, PendingOperationNamespace.RESPOND_VIA)
         assertNamespace(
-            COMPOSER_OPERATION_ID_BOUNDARY - 1L,
+            INCOMING_MMS_OPERATION_ID_BOUNDARY - 1L,
             PendingOperationNamespace.RESPOND_VIA,
+        )
+        assertNamespace(
+            INCOMING_MMS_OPERATION_ID_BOUNDARY,
+            PendingOperationNamespace.INCOMING_MMS,
+        )
+        assertNamespace(
+            COMPOSER_OPERATION_ID_BOUNDARY - 1L,
+            PendingOperationNamespace.INCOMING_MMS,
         )
         assertNamespace(
             COMPOSER_OPERATION_ID_BOUNDARY,

@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.aurorasms.core.model.AuroraSubscriptionId
-import org.aurorasms.core.model.COMPOSER_OPERATION_ID_BOUNDARY
+import org.aurorasms.core.model.INCOMING_MMS_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderThreadId
@@ -507,7 +507,7 @@ internal class VoiceMemoController(
 internal fun nextVoiceMemoOperationId(nextLong: () -> Long): Long {
     var candidate: Long
     do {
-        candidate = nextLong() and (COMPOSER_OPERATION_ID_BOUNDARY - 1L)
+        candidate = nextLong() and (INCOMING_MMS_OPERATION_ID_BOUNDARY - 1L)
     } while (candidate == 0L)
     return candidate
 }

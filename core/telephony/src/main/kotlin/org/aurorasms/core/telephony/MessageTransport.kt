@@ -310,19 +310,33 @@ data class MmsDownloadRequest(
     val operationId: MessageId,
     val contentLocation: String,
     val subscriptionId: AuroraSubscriptionId,
+    val notificationTransactionId: String,
+    val expectedSizeBytes: Long,
+    val receivedTimestampMillis: Long,
 ) {
     init {
-        require(operationId.kind == ProviderKind.PENDING_OPERATION) {
-            "Transport operations need a pending-operation ID"
+        require(operationId.pendingOperationNamespaceOrNull() == PendingOperationNamespace.INCOMING_MMS) {
+            "MMS downloads need an incoming-MMS operation ID"
         }
         require(contentLocation.length in 1..MAX_CONTENT_LOCATION_CHARACTERS) {
             "MMS content location is invalid"
         }
         require(contentLocation.none(Char::isISOControl)) { "MMS content location contains a control character" }
+        require(NOTIFICATION_TRANSACTION_ID.matches(notificationTransactionId)) {
+            "MMS notification transaction ID is invalid"
+        }
+        require(expectedSizeBytes in 1L..EncodedMmsPdu.MAX_ENCODED_BYTES.toLong()) {
+            "MMS advertised size is invalid"
+        }
+        require(receivedTimestampMillis >= 0L) { "MMS received timestamp cannot be negative" }
     }
+
+    override fun toString(): String =
+        "MmsDownloadRequest(expectedSizeBytes=$expectedSizeBytes, REDACTED)"
 
     companion object {
         const val MAX_CONTENT_LOCATION_CHARACTERS: Int = 2_048
+        private val NOTIFICATION_TRANSACTION_ID = Regex("[ -~]{1,128}")
     }
 }
 
