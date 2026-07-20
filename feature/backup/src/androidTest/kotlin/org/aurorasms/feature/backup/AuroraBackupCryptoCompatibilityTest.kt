@@ -155,6 +155,15 @@ class AuroraBackupCryptoCompatibilityTest {
             )
             assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 77))
             assertTrue(
+                journal.recordExpected(
+                    session,
+                    1,
+                    AuroraRestoreProviderKind.SMS,
+                    77,
+                    "2".repeat(64),
+                ),
+            )
+            assertTrue(
                 journal.recordPrepared(
                     session,
                     1,

@@ -81,6 +81,24 @@ class AuroraRestoreCoordinatorTest {
     }
 
     @Test
+    fun providerPrepareMismatchRollsBackByTheDurableExpectedDigest() {
+        val fixture = fixture(
+            sequenceOf(AuroraBackupMessageCodec.smsEntry(sms(1, AuroraBackupMessageBox.INBOX))),
+        )
+        fixture.provider.returnWrongSmsPreparedDigest = true
+
+        assertEquals(
+            AuroraRestoreResult.Failed(AuroraRestoreFailure.OWNERSHIP_CONFLICT, rollbackComplete = true),
+            fixture.coordinator.restore(fixture::openPlaintext),
+        )
+        val ownership = fixture.provider.rollbackOwnership.single()
+        assertEquals(1L, ownership.archiveMessageId)
+        assertTrue(ownership.preparedDigest != null)
+        assertTrue(fixture.provider.committedBoxes.isEmpty())
+        assertEquals(AuroraRestoreJournalRecoveryResult.None, fixture.journal.recoverySnapshot())
+    }
+
+    @Test
     fun startupRecoveryFindsTheDeterministicPreIdPlaceholder() {
         val fixture = fixture(emptySequence())
         val session = (fixture.journal.begin() as AuroraRestoreJournalBeginResult.Success).session
@@ -154,9 +172,11 @@ private class FakeRestoreProvider : AuroraRestoreProvider {
     val rollbackOwnership = mutableListOf<AuroraRestoreOwnership>()
     var binaryBytes = 0
     var failPartInsert = false
+    var returnWrongSmsPreparedDigest = false
     var failCommitArchiveId: Long? = null
     var rolledBackPlaceholder: String? = null
     private var nextProviderId = 100L
+    private val mmsDigests = mutableMapOf<Long, AuroraRestoreMmsDigestAccumulator>()
 
     override fun preflight(): AuroraRestoreProviderResult<Unit> = success(Unit)
 
@@ -192,7 +212,13 @@ private class FakeRestoreProvider : AuroraRestoreProvider {
         providerRowId: Long,
         placeholderAddress: String,
         record: AuroraBackupSmsRecord,
-    ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest> = success(digest(providerRowId))
+    ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest> = success(
+        if (returnWrongSmsPreparedDigest) {
+            AuroraRestorePreparedDigest("f".repeat(64))
+        } else {
+            AuroraRestoreCanonicalDigest.sms(record, includeHistoricalBox = false)
+        },
+    )
 
     override fun insertMmsPlaceholder(
         record: AuroraBackupMmsRecord,
@@ -200,7 +226,12 @@ private class FakeRestoreProvider : AuroraRestoreProvider {
     ): AuroraRestoreProviderResult<Long> {
         check(placeholderTransactionId.startsWith("ar1-"))
         insertedArchiveIds += record.archiveMessageId
-        return success(nextProviderId++)
+        val providerId = nextProviderId++
+        mmsDigests[providerId] = AuroraRestoreCanonicalDigest.beginMms(
+            record,
+            includeHistoricalBox = false,
+        )
+        return success(providerId)
     }
 
     override fun insertMmsPart(
@@ -208,21 +239,22 @@ private class FakeRestoreProvider : AuroraRestoreProvider {
         placeholderTransactionId: String,
         record: AuroraBackupDecodedMmsPart,
         payload: AuroraBackupDecodedPartPayload,
-    ): AuroraRestoreProviderResult<Unit> {
+    ): AuroraRestoreProviderResult<AuroraRestoreMmsPartDigest> {
         if (failPartInsert) return AuroraRestoreProviderResult.Unavailable("synthetic part failure")
-        if (payload is AuroraBackupDecodedPartPayload.Binary) {
-            val output = ByteArrayOutputStream()
-            payload.copyTo(output)
-            binaryBytes += output.size()
-        }
-        return success(Unit)
+        val output = if (payload is AuroraBackupDecodedPartPayload.Binary) ByteArrayOutputStream() else null
+        val partDigest = AuroraRestoreCanonicalDigest.mmsPart(record, payload, output)
+        binaryBytes += output?.size() ?: 0
+        mmsDigests.getValue(providerRowId).accept(partDigest)
+        return success(partDigest)
     }
 
     override fun prepareMms(
         providerRowId: Long,
         placeholderTransactionId: String,
         record: AuroraBackupMmsRecord,
-    ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest> = success(digest(providerRowId))
+    ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest> = success(
+        mmsDigests.getValue(providerRowId).finish(),
+    )
 
     override fun commitHistoricalBox(
         ownership: AuroraRestoreOwnership,
@@ -255,10 +287,6 @@ private class FakeRestoreProvider : AuroraRestoreProvider {
 
     private companion object {
         const val TEST_MARKER = "aurora.restore"
-
-        fun digest(providerRowId: Long): AuroraRestorePreparedDigest = AuroraRestorePreparedDigest(
-            providerRowId.toString(16).padStart(64, '0'),
-        )
     }
 }
 

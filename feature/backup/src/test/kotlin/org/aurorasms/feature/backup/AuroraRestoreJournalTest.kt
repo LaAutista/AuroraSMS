@@ -22,6 +22,7 @@ class AuroraRestoreJournalTest {
         val session = (journal.begin() as AuroraRestoreJournalBeginResult.Success).session
         assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS, AuroraBackupMessageBox.INBOX))
         assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 101))
+        assertTrue(journal.recordExpected(session, 1, AuroraRestoreProviderKind.SMS, 101, DIGEST))
         assertTrue(journal.recordPrepared(session, 1, AuroraRestoreProviderKind.SMS, 101, DIGEST))
         assertTrue(journal.reserve(session, 2, AuroraRestoreProviderKind.MMS, AuroraBackupMessageBox.SENT))
 
@@ -67,6 +68,7 @@ class AuroraRestoreJournalTest {
         assertFalse(journal.markComplete(session))
         assertFalse(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 9))
         assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.MMS, 9))
+        assertTrue(journal.recordExpected(session, 1, AuroraRestoreProviderKind.MMS, 9, DIGEST))
         assertTrue(journal.recordPrepared(session, 1, AuroraRestoreProviderKind.MMS, 9, DIGEST))
         assertTrue(journal.markComplete(session))
 
@@ -103,12 +105,43 @@ class AuroraRestoreJournalTest {
     }
 
     @Test
+    fun expectedDigestSurvivesTheProviderPrepareCrashWindow() {
+        val directory = temporaryFolder.newFolder("expected")
+        val journal = newJournal(directory)
+        val session = (journal.begin() as AuroraRestoreJournalBeginResult.Success).session
+        assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS, AuroraBackupMessageBox.SENT))
+        assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 101))
+        assertTrue(journal.recordExpected(session, 1, AuroraRestoreProviderKind.SMS, 101, DIGEST))
+
+        val recovered = newJournal(directory)
+        assertEquals(
+            AuroraRestoreJournalRecoveryResult.Active(session, 1234L, 1L, false, true),
+            recovered.recoverySnapshot(),
+        )
+        val ownership = mutableListOf<AuroraRestoreOwnership>()
+        assertTrue(recovered.forEachOwnership(session, ownership::add))
+        assertEquals(
+            listOf(
+                AuroraRestoreOwnership(
+                    1,
+                    AuroraRestoreProviderKind.SMS,
+                    101,
+                    AuroraBackupMessageBox.SENT,
+                    DIGEST,
+                ),
+            ),
+            ownership,
+        )
+    }
+
+    @Test
     fun trailingCorruptionIsValidatedBeforeAnyOwnershipCallback() {
         val directory = temporaryFolder.newFolder("trailing-corrupt")
         val journal = newJournal(directory)
         val session = (journal.begin() as AuroraRestoreJournalBeginResult.Success).session
         assertTrue(journal.reserve(session, 1, AuroraRestoreProviderKind.SMS, AuroraBackupMessageBox.INBOX))
         assertTrue(journal.recordInserted(session, 1, AuroraRestoreProviderKind.SMS, 101))
+        assertTrue(journal.recordExpected(session, 1, AuroraRestoreProviderKind.SMS, 101, DIGEST))
         assertTrue(journal.recordPrepared(session, 1, AuroraRestoreProviderKind.SMS, 101, DIGEST))
         File(directory, "aurora_restore_journal_v1.log").appendText("corrupt\n")
 

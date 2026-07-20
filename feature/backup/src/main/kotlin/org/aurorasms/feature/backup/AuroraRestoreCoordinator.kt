@@ -69,7 +69,7 @@ interface AuroraRestoreProvider {
         placeholderTransactionId: String,
         record: AuroraBackupDecodedMmsPart,
         payload: AuroraBackupDecodedPartPayload,
-    ): AuroraRestoreProviderResult<Unit>
+    ): AuroraRestoreProviderResult<AuroraRestoreMmsPartDigest>
 
     /** Writes final parent/address metadata while deliberately leaving the provider box FAILED. */
     fun prepareMms(
@@ -312,22 +312,40 @@ class AuroraRestoreCoordinator(
         fun finishMms() {
             val staged = activeMms ?: return
             if (!staged.duplicate) {
-                val prepared = provider.prepareMms(
-                    staged.providerRowId,
-                    staged.placeholder,
-                    staged.record,
-                ).valueOrNull { failure = it }
-                if (
-                    prepared != null &&
-                    !journal.recordPrepared(
+                val expected = staged.digest?.finish() ?: run {
+                    failure = AuroraRestoreFailure.JOURNAL_FAILED
+                    activeMms = null
+                    return
+                }
+                if (!journal.recordExpected(
                         session,
                         staged.record.archiveMessageId,
                         AuroraRestoreProviderKind.MMS,
                         staged.providerRowId,
-                        prepared.value,
+                        expected.value,
                     )
                 ) {
                     failure = AuroraRestoreFailure.JOURNAL_FAILED
+                } else {
+                    val prepared = provider.prepareMms(
+                        staged.providerRowId,
+                        staged.placeholder,
+                        staged.record,
+                    ).valueOrNull { failure = it }
+                    if (prepared != null && prepared != expected) {
+                        failure = AuroraRestoreFailure.OWNERSHIP_CONFLICT
+                    } else if (
+                        prepared != null &&
+                        !journal.recordPrepared(
+                            session,
+                            staged.record.archiveMessageId,
+                            AuroraRestoreProviderKind.MMS,
+                            staged.providerRowId,
+                            prepared.value,
+                        )
+                    ) {
+                        failure = AuroraRestoreFailure.JOURNAL_FAILED
+                    }
                 }
             }
             activeMms = null
@@ -365,8 +383,25 @@ class AuroraRestoreCoordinator(
                             failure = AuroraRestoreFailure.JOURNAL_FAILED
                             throw CoordinatorAbortException()
                         }
+                        val expected = AuroraRestoreCanonicalDigest.sms(record, includeHistoricalBox = false)
+                        if (
+                            !journal.recordExpected(
+                                session,
+                                record.archiveMessageId,
+                                AuroraRestoreProviderKind.SMS,
+                                providerId,
+                                expected.value,
+                            )
+                        ) {
+                            failure = AuroraRestoreFailure.JOURNAL_FAILED
+                            throw CoordinatorAbortException()
+                        }
                         val prepared = provider.prepareSms(providerId, placeholder, record)
                             .valueOrAbort(::setFailure)
+                        if (prepared != expected) {
+                            failure = AuroraRestoreFailure.OWNERSHIP_CONFLICT
+                            throw CoordinatorAbortException()
+                        }
                         if (
                             !journal.recordPrepared(
                                 session,
@@ -385,7 +420,7 @@ class AuroraRestoreCoordinator(
                         finishMms()
                         if (failure != null) throw CoordinatorAbortException()
                         if (duplicates[record.archiveMessageId.toInt()]) {
-                            activeMms = StagedMms(record, true, 0L, "")
+                            activeMms = StagedMms(record, true, 0L, "", null)
                             return
                         }
                         if (
@@ -416,7 +451,13 @@ class AuroraRestoreCoordinator(
                             failure = AuroraRestoreFailure.JOURNAL_FAILED
                             throw CoordinatorAbortException()
                         }
-                        activeMms = StagedMms(record, false, providerId, placeholder)
+                        activeMms = StagedMms(
+                            record,
+                            false,
+                            providerId,
+                            placeholder,
+                            AuroraRestoreCanonicalDigest.beginMms(record, includeHistoricalBox = false),
+                        )
                     }
 
                     override fun onMmsPart(
@@ -431,12 +472,16 @@ class AuroraRestoreCoordinator(
                             if (payload is AuroraBackupDecodedPartPayload.Binary) payload.discard()
                             return
                         }
-                        provider.insertMmsPart(
+                        val partDigest = provider.insertMmsPart(
                             staged.providerRowId,
                             staged.placeholder,
                             record,
                             payload,
-                        ).abortOnFailure(::setFailure)
+                        ).valueOrAbort(::setFailure)
+                        staged.digest?.accept(partDigest) ?: run {
+                            failure = AuroraRestoreFailure.JOURNAL_FAILED
+                            throw CoordinatorAbortException()
+                        }
                     }
 
                     private fun setFailure(reason: AuroraRestoreFailure) {
@@ -492,6 +537,7 @@ class AuroraRestoreCoordinator(
         val duplicate: Boolean,
         val providerRowId: Long,
         val placeholder: String,
+        val digest: AuroraRestoreMmsDigestAccumulator?,
     )
 
     private companion object {
@@ -526,14 +572,6 @@ private fun <T> AuroraRestoreProviderResult<T>.valueOrAbort(
         recordFailure(failureOrNull() ?: AuroraRestoreFailure.PROVIDER_FAILED)
         throw CoordinatorAbortException()
     }
-}
-
-private fun AuroraRestoreProviderResult<Unit>.abortOnFailure(
-    recordFailure: (AuroraRestoreFailure) -> Unit,
-) {
-    if (this is AuroraRestoreProviderResult.Success) return
-    recordFailure(failureOrNull() ?: AuroraRestoreFailure.PROVIDER_FAILED)
-    throw CoordinatorAbortException()
 }
 
 private fun <T> AuroraRestoreProviderResult<T>.valueOrNull(

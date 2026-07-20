@@ -140,10 +140,12 @@ cross-provider Android transaction that the public Telephony API does not offer.
 
 The journal is a private `noBackupFilesDir` append-only log. A fresh opaque UUID
 binds every checksummed event. Its strict grammar permits only sequential
-reserve/insert/prepare triples, at most one unfinished message, and a durable
-complete marker. `PREPARE` is admitted only after the exact forced-FAILED parent,
-addresses, and parts re-read successfully; it adds a redacted SHA-256 ownership
-digest so recovery can reject a changed or recycled provider row. Each line is
+reserve/insert/expect/prepare groups, at most one unfinished message, and a
+durable complete marker. `EXPECT` durably records the redacted canonical SHA-256
+ownership digest before final provider values replace the deterministic
+placeholder. `PREPARE` is admitted only after the exact forced-FAILED parent,
+addresses, and parts re-read to that same digest, so recovery can identify either
+side of the provider-prepare crash window and reject a changed or recycled row. Each line is
 flushed and `fsync`ed before the provider boundary advances;
 recovery streams ownership instead of collecting a large import in memory. The
 log stores only session, ordinal, provider kind/ID, intended historical box,

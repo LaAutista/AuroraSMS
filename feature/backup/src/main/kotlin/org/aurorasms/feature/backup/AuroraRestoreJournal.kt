@@ -77,8 +77,8 @@ sealed interface AuroraRestoreJournalRecoveryResult {
 /**
  * Append-only, content-free restore ownership journal.
  *
- * Grammar is HEADER, then strict RESERVE/INSERT/PREPARE triples, with at most one
- * unfinished message and an optional COMPLETE marker. Every append is synchronously
+ * Grammar is HEADER, then strict RESERVE/INSERT/EXPECT/PREPARE groups, with at most
+ * one unfinished message and an optional COMPLETE marker. Every append is synchronously
  * flushed before the provider boundary may advance.
  */
 class AuroraRestoreJournal internal constructor(
@@ -171,9 +171,9 @@ class AuroraRestoreJournal internal constructor(
         return true
     }
 
-    /** Must succeed after the exact FAILED row and all owned parts re-read successfully. */
+    /** Must succeed before final provider values replace the deterministic placeholder. */
     @Synchronized
-    fun recordPrepared(
+    fun recordExpected(
         session: AuroraRestoreSession,
         archiveMessageId: Long,
         providerKind: AuroraRestoreProviderKind,
@@ -192,7 +192,32 @@ class AuroraRestoreJournal internal constructor(
             return false
         }
         val ownership = expected.copy(preparedDigest = preparedDigest)
-        if (!append(encodeEvent(session, state.nextSequence, EVENT_PREPARE, ownership))) return false
+        if (!append(encodeEvent(session, state.nextSequence, EVENT_EXPECT, ownership))) return false
+        active = state.copy(nextSequence = state.nextSequence + 1L, pending = ownership)
+        return true
+    }
+
+    /** Must succeed after the exact FAILED row and all owned parts re-read successfully. */
+    @Synchronized
+    fun recordPrepared(
+        session: AuroraRestoreSession,
+        archiveMessageId: Long,
+        providerKind: AuroraRestoreProviderKind,
+        providerRowId: Long,
+        preparedDigest: String,
+    ): Boolean {
+        val state = active?.takeIf { it.session == session } ?: return false
+        val expected = state.pending ?: return false
+        if (
+            expected.archiveMessageId != archiveMessageId ||
+            expected.providerKind != providerKind ||
+            expected.providerRowId != providerRowId ||
+            expected.preparedDigest != preparedDigest ||
+            !PREPARED_DIGEST_PATTERN.matches(preparedDigest)
+        ) {
+            return false
+        }
+        if (!append(encodeEvent(session, state.nextSequence, EVENT_PREPARE, expected))) return false
         active = state.copy(nextSequence = state.nextSequence + 1L, pending = null)
         return true
     }
@@ -326,7 +351,7 @@ class AuroraRestoreJournal internal constructor(
                         }
                         pending = event.ownership
                     }
-                    EVENT_PREPARE -> {
+                    EVENT_EXPECT -> {
                         val inserted = pending ?: return ParsedJournal.Corrupt
                         if (
                             inserted.providerRowId == null ||
@@ -336,6 +361,17 @@ class AuroraRestoreJournal internal constructor(
                             event.ownership.providerKind != inserted.providerKind ||
                             event.ownership.targetBox != inserted.targetBox ||
                             event.ownership.preparedDigest == null
+                        ) {
+                            return ParsedJournal.Corrupt
+                        }
+                        pending = event.ownership
+                    }
+                    EVENT_PREPARE -> {
+                        val expected = pending ?: return ParsedJournal.Corrupt
+                        if (
+                            expected.providerRowId == null ||
+                            expected.preparedDigest == null ||
+                            event.ownership != expected
                         ) {
                             return ParsedJournal.Corrupt
                         }
@@ -434,6 +470,7 @@ class AuroraRestoreJournal internal constructor(
         private const val CREATING_FILE = "$JOURNAL_FILE.creating"
         private const val EVENT_RESERVE = "R"
         private const val EVENT_INSERT = "I"
+        private const val EVENT_EXPECT = "E"
         private const val EVENT_PREPARE = "P"
         private const val EVENT_COMPLETE = "C"
         private const val SEPARATOR = "|"
@@ -484,7 +521,8 @@ class AuroraRestoreJournal internal constructor(
             if (!constantEquals(checksum(payload), fields.last())) return null
             val sequence = fields[0].toLongOrNull()?.takeIf { it > 0L } ?: return null
             val type = fields[1].takeIf {
-                it == EVENT_RESERVE || it == EVENT_INSERT || it == EVENT_PREPARE || it == EVENT_COMPLETE
+                it == EVENT_RESERVE || it == EVENT_INSERT || it == EVENT_EXPECT ||
+                    it == EVENT_PREPARE || it == EVENT_COMPLETE
             }
                 ?: return null
             val archiveMessageId = fields[2].toLongOrNull()?.takeIf { it > 0L } ?: return null
