@@ -128,6 +128,8 @@ fun ThreadScreen(
     onToggleMessageExpansion: (ProviderMessageId) -> Unit,
     onDraftChanged: (String) -> Unit,
     onDraftSubjectChanged: (String) -> Unit = {},
+    onAddAttachment: () -> Unit = {},
+    onRemoveAttachment: (Int) -> Unit = {},
     voiceMemo: VoiceMemoUiState = VoiceMemoUiState(),
     onRecordVoiceMemo: () -> Unit = {},
     onStopVoiceMemo: () -> Unit = {},
@@ -379,6 +381,8 @@ fun ThreadScreen(
                 voiceMemo = voiceMemo,
                 onBodyChanged = onDraftChanged,
                 onSubjectChanged = onDraftSubjectChanged,
+                onAddAttachment = onAddAttachment,
+                onRemoveAttachment = onRemoveAttachment,
                 onFocusChanged = { composerFocused = it },
                 onRecordVoiceMemo = onRecordVoiceMemo,
                 onStopVoiceMemo = onStopVoiceMemo,
@@ -1790,6 +1794,8 @@ private fun Composer(
     voiceMemo: VoiceMemoUiState,
     onBodyChanged: (String) -> Unit,
     onSubjectChanged: (String) -> Unit,
+    onAddAttachment: () -> Unit,
+    onRemoveAttachment: (Int) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
     onRecordVoiceMemo: () -> Unit,
     onStopVoiceMemo: () -> Unit,
@@ -1805,6 +1811,7 @@ private fun Composer(
     val visualTokens = LocalAuroraVisualTokens.current
     var showUnknownConfirmation by remember { mutableStateOf(false) }
     var showScheduleDetails by remember { mutableStateOf(false) }
+    var showExtrasMenu by remember { mutableStateOf(false) }
     var showSubject by rememberSaveable { mutableStateOf(state.subject.isNotBlank()) }
     LaunchedEffect(state.subject) {
         if (state.subject.isNotBlank()) showSubject = true
@@ -1896,6 +1903,15 @@ private fun Composer(
         )
     }
     val supportingText = when {
+        state.attachmentImporting -> stringResource(R.string.preparing_image_attachment)
+        state.attachmentFailure == ComposerAttachmentFailure.UNREADABLE ->
+            stringResource(R.string.image_attachment_unreadable)
+        state.attachmentFailure == ComposerAttachmentFailure.UNSUPPORTED ->
+            stringResource(R.string.image_attachment_unsupported)
+        state.attachmentFailure == ComposerAttachmentFailure.TOO_LARGE ->
+            stringResource(R.string.image_attachment_too_large)
+        state.attachmentFailure == ComposerAttachmentFailure.LIMIT_REACHED ->
+            stringResource(R.string.image_attachment_limit_reached)
         state.scheduleState is ComposerScheduleState.Loading ->
             stringResource(R.string.checking_scheduled_message)
         state.scheduleState is ComposerScheduleState.Pending -> {
@@ -1994,7 +2010,8 @@ private fun Composer(
         state.scheduleState is ComposerScheduleState.Dispatching ||
         state.scheduleState is ComposerScheduleState.ReviewRequired
     val scheduleLoading = state.scheduleState is ComposerScheduleState.Loading
-    val actionEnabled = !scheduleActive && (state.sendState == ComposerSendState.READY ||
+    val actionEnabled = !state.attachmentImporting && !scheduleActive &&
+        (state.sendState == ComposerSendState.READY ||
         state.sendState == ComposerSendState.KNOWN_UNSENT ||
         state.sendState == ComposerSendState.DELAY_PENDING ||
         state.sendState == ComposerSendState.DELAY_REVIEW ||
@@ -2006,6 +2023,7 @@ private fun Composer(
         state.sendState != ComposerSendState.DELAY_PENDING &&
         state.sendState != ComposerSendState.DELAY_REVIEW &&
         state.sendState != ComposerSendState.SUBMISSION_UNKNOWN &&
+        !state.attachmentImporting &&
         state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING &&
         state.unavailableReason != ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE
     Column(
@@ -2020,6 +2038,39 @@ private fun Composer(
             onCancel = onCancelVoiceMemo,
             onSend = onSendVoiceMemo,
         )
+        if (state.attachments.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 56.dp, end = 16.dp, top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                state.attachments.forEach { attachment ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("$COMPOSER_ATTACHMENT_TEST_TAG_PREFIX-${attachment.index}"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(
+                                R.string.image_attachment_size,
+                                (attachment.sizeBytes + 1_023) / 1_024,
+                            ),
+                            modifier = Modifier.weight(1f),
+                            color = visualTokens.lilacSecondary,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        TextButton(
+                            enabled = composerEditingEnabled,
+                            onClick = { onRemoveAttachment(attachment.index) },
+                        ) {
+                            Text(stringResource(R.string.remove_attachment))
+                        }
+                    }
+                }
+            }
+        }
         if (showSubject) {
             OutlinedTextField(
                 value = state.subject,
@@ -2057,22 +2108,51 @@ private fun Composer(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val extrasActionLabel = stringResource(R.string.add_to_message)
             val subjectActionLabel = stringResource(
                 if (showSubject) R.string.remove_message_subject else R.string.add_message_subject,
             )
-            AuroraIconAction(
-                glyph = AuroraGlyph.ADD,
-                contentDescription = subjectActionLabel,
-                onClick = {
-                    if (showSubject) onSubjectChanged("")
-                    showSubject = !showSubject
-                },
-                enabled = composerEditingEnabled,
-                modifier = Modifier
-                    .testTag(COMPOSER_SUBJECT_ACTION_TEST_TAG)
-                    .semantics { text = AnnotatedString(subjectActionLabel) },
-                tint = if (showSubject) visualTokens.cyan else visualTokens.violet,
-            )
+            Box {
+                AuroraIconAction(
+                    glyph = AuroraGlyph.ADD,
+                    contentDescription = extrasActionLabel,
+                    onClick = { showExtrasMenu = true },
+                    enabled = composerEditingEnabled,
+                    modifier = Modifier
+                        .testTag(COMPOSER_EXTRAS_ACTION_TEST_TAG)
+                        .semantics { text = AnnotatedString(extrasActionLabel) },
+                    tint = if (showSubject || state.attachments.isNotEmpty()) {
+                        visualTokens.cyan
+                    } else {
+                        visualTokens.violet
+                    },
+                )
+                DropdownMenu(
+                    expanded = showExtrasMenu,
+                    onDismissRequest = { showExtrasMenu = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.add_image_attachment)) },
+                        onClick = {
+                            showExtrasMenu = false
+                            onAddAttachment()
+                        },
+                        enabled = composerEditingEnabled &&
+                            state.attachments.size < MAXIMUM_COMPOSER_ATTACHMENTS,
+                        modifier = Modifier.testTag(COMPOSER_ADD_IMAGE_ACTION_TEST_TAG),
+                    )
+                    DropdownMenuItem(
+                        text = { Text(subjectActionLabel) },
+                        onClick = {
+                            showExtrasMenu = false
+                            if (showSubject) onSubjectChanged("")
+                            showSubject = !showSubject
+                        },
+                        enabled = composerEditingEnabled,
+                        modifier = Modifier.testTag(COMPOSER_SUBJECT_ACTION_TEST_TAG),
+                    )
+                }
+            }
             OutlinedTextField(
                 value = state.body,
                 onValueChange = { value ->
@@ -2163,6 +2243,7 @@ private fun Composer(
             modifier = Modifier.padding(start = 16.dp, end = 64.dp, bottom = 8.dp),
             color = if (
                 state.failed ||
+                state.attachmentFailure != null ||
                 state.sendState == ComposerSendState.KNOWN_UNSENT ||
                 state.sendState == ComposerSendState.DELAY_REVIEW ||
                 state.sendState == ComposerSendState.SUBMISSION_UNKNOWN
@@ -2347,6 +2428,7 @@ private const val THREAD_VIEWPORT_PREFETCH_ROWS: Int = 10
 private const val MAXIMUM_VIEWPORT_THREAD_ROWS: Int = 100
 private const val MAXIMUM_COMPOSER_CHARACTERS: Int = 100_000
 private const val MAXIMUM_COMPOSER_SUBJECT_CHARACTERS: Int = 1_000
+private const val MAXIMUM_COMPOSER_ATTACHMENTS: Int = 10
 const val THREAD_SCREEN_TEST_TAG: String = "aurora-thread-screen"
 const val THREAD_LIST_TEST_TAG: String = "aurora-thread-list"
 const val MESSAGE_BUBBLE_TEST_TAG: String = "aurora-message-bubble"
@@ -2362,6 +2444,9 @@ const val REACTION_FALLBACK_TEST_TAG: String = "aurora-reaction-fallback"
 const val COMPOSER_TEST_TAG: String = "aurora-composer"
 const val COMPOSER_SUBJECT_TEST_TAG: String = "aurora-composer-subject"
 const val COMPOSER_SUBJECT_ACTION_TEST_TAG: String = "aurora-composer-subject-action"
+const val COMPOSER_EXTRAS_ACTION_TEST_TAG: String = "aurora-composer-extras-action"
+const val COMPOSER_ADD_IMAGE_ACTION_TEST_TAG: String = "aurora-composer-add-image-action"
+const val COMPOSER_ATTACHMENT_TEST_TAG_PREFIX: String = "aurora-composer-attachment"
 const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"
 const val COMPOSER_SCHEDULE_TEST_TAG: String = "aurora-composer-schedule"
 const val COMPOSER_VOICE_MEMO_TEST_TAG: String = "aurora-composer-voice-memo"

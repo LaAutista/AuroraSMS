@@ -244,7 +244,7 @@ internal class ThreadSmsSendCoordinator(
                                 payload = OutgoingMmsPayload.Message(
                                     text = outgoingBody,
                                     subject = reservation.authoritativeSubject,
-                                    attachments = emptyList(),
+                                    attachments = command.attachments.toList(),
                                 ),
                                 subscriptionId = command.subscriptionId,
                                 providerThreadId = command.identity.providerThreadId,
@@ -476,7 +476,7 @@ internal class ThreadSmsSendCoordinator(
         }
         if (
             command.transport == MessageTransportKind.SMS &&
-            recipients.singleSmsRecipientOrNull() == null
+            (recipients.singleSmsRecipientOrNull() == null || command.attachments.isNotEmpty())
         ) {
             return null
         }

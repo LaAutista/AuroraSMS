@@ -141,6 +141,9 @@ data class ComposerUiState(
     val unsignedSegmentCount: Int? = null,
     val signatureApplied: Boolean = false,
     val mmsRequired: Boolean = false,
+    val attachments: List<ComposerAttachmentUiItem> = emptyList(),
+    val attachmentImporting: Boolean = false,
+    val attachmentFailure: ComposerAttachmentFailure? = null,
     val scheduleState: ComposerScheduleState = ComposerScheduleState.None,
     val sendDelayDueTimestampMillis: Long? = null,
 ) {
@@ -163,15 +166,43 @@ data class ComposerUiState(
                 sendState == ComposerSendState.DELAY_REVIEW) ==
                 (sendDelayDueTimestampMillis != null),
         ) { "A delayed-send UI phase requires its due timestamp" }
+        require(attachments.size <= 10) { "The composer attachment list is out of bounds" }
+        require(attachments.map(ComposerAttachmentUiItem::index).distinct().size == attachments.size) {
+            "Composer attachment indices must be unique"
+        }
     }
 
     override fun toString(): String =
         "ComposerUiState(bodyLength=${body.length}, saving=$saving, failed=$failed, " +
             "subjectLength=${subject.length}, mmsRequired=$mmsRequired, " +
+            "attachmentCount=${attachments.size}, attachmentImporting=$attachmentImporting, " +
+            "attachmentFailure=$attachmentFailure, " +
             "sendState=$sendState, unavailableReason=$unavailableReason, " +
             "segmentCount=$segmentCount, unsignedSegmentCount=$unsignedSegmentCount, " +
             "signatureApplied=$signatureApplied, scheduleState=$scheduleState, " +
             "hasSendDelay=${sendDelayDueTimestampMillis != null}, REDACTED)"
+}
+
+data class ComposerAttachmentUiItem(
+    val index: Int,
+    val contentType: String,
+    val sizeBytes: Int,
+) {
+    init {
+        require(index >= 0)
+        require(contentType.isNotBlank() && contentType.length <= 127)
+        require(sizeBytes > 0)
+    }
+
+    override fun toString(): String =
+        "ComposerAttachmentUiItem(index=$index, contentType=$contentType, sizeBytes=$sizeBytes)"
+}
+
+enum class ComposerAttachmentFailure {
+    UNREADABLE,
+    UNSUPPORTED,
+    TOO_LARGE,
+    LIMIT_REACHED,
 }
 
 sealed interface ComposerScheduleState {
@@ -239,6 +270,7 @@ enum class ComposerUnavailableReason {
     PERMANENT_DELETION_ACTIVE,
     MESSAGING_UNAVAILABLE,
     SIGNATURE_STATE_UNAVAILABLE,
+    ATTACHMENT_PROCESSING,
 }
 
 data class VoiceMemoUiState(

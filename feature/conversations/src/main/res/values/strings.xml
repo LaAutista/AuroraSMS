@@ -108,8 +108,17 @@
     <string name="conversation">Conversation</string>
     <string name="message_draft">Message draft</string>
     <string name="message_subject">Subject</string>
+    <string name="add_to_message">Add to message</string>
+    <string name="add_image_attachment">Add image</string>
     <string name="add_message_subject">Add subject</string>
     <string name="remove_message_subject">Remove subject</string>
+    <string name="image_attachment_size">Image · %1$d KiB</string>
+    <string name="remove_attachment">Remove</string>
+    <string name="preparing_image_attachment">Preparing image privately…</string>
+    <string name="image_attachment_unreadable">That image could not be read. Your draft is unchanged.</string>
+    <string name="image_attachment_unsupported">That file is not a supported image. Your draft is unchanged.</string>
+    <string name="image_attachment_too_large">That image could not fit within the MMS size limit.</string>
+    <string name="image_attachment_limit_reached">An MMS can include up to 10 images.</string>
     <string name="record_voice_memo">Record voice memo</string>
     <string name="stop_voice_memo">Stop voice recording</string>
     <string name="preparing_voice_memo">Preparing microphone…</string>

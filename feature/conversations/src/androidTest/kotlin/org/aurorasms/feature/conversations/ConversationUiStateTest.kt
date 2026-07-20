@@ -574,9 +574,46 @@ class ConversationUiStateTest {
         }
 
         compose.onNodeWithTag(COMPOSER_SUBJECT_TEST_TAG).assertDoesNotExist()
+        compose.onNodeWithTag(COMPOSER_EXTRAS_ACTION_TEST_TAG).performClick()
         compose.onNodeWithTag(COMPOSER_SUBJECT_ACTION_TEST_TAG).performClick()
         compose.onNodeWithTag(COMPOSER_SUBJECT_TEST_TAG).assertIsDisplayed().performTextInput("Subject")
         compose.runOnIdle { assertEquals("Subject", changedSubject) }
+    }
+
+    @Test
+    fun attachmentExtrasAreGenericAndCallbacksUseOnlyBoundedIndices() {
+        var addCount = 0
+        var removedIndex: Int? = null
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic image draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.READY,
+                    segmentCount = 1,
+                    mmsRequired = true,
+                    attachments = listOf(
+                        ComposerAttachmentUiItem(
+                            index = 0,
+                            contentType = "image/jpeg",
+                            sizeBytes = 1_025,
+                        ),
+                    ),
+                ),
+                onAddAttachment = { addCount += 1 },
+                onRemoveAttachment = { removedIndex = it },
+            )
+        }
+
+        compose.onNodeWithTag("$COMPOSER_ATTACHMENT_TEST_TAG_PREFIX-0").assertIsDisplayed()
+        compose.onNodeWithText("Image · 2 KiB").assertIsDisplayed()
+        compose.onNodeWithText("Remove").performClick()
+        compose.runOnIdle { assertEquals(0, removedIndex) }
+
+        compose.onNodeWithTag(COMPOSER_EXTRAS_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(COMPOSER_ADD_IMAGE_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle { assertEquals(1, addCount) }
     }
 
     @Test
@@ -1257,6 +1294,8 @@ private fun SyntheticThreadScreen(
     conversationSignatureAvailable: Boolean = false,
     onOpenConversationSignature: () -> Unit = {},
     onDraftSubjectChanged: (String) -> Unit = {},
+    onAddAttachment: () -> Unit = {},
+    onRemoveAttachment: (Int) -> Unit = {},
 ) {
     MaterialTheme {
         ThreadScreen(
@@ -1282,6 +1321,8 @@ private fun SyntheticThreadScreen(
             onToggleMessageExpansion = {},
             onDraftChanged = {},
             onDraftSubjectChanged = onDraftSubjectChanged,
+            onAddAttachment = onAddAttachment,
+            onRemoveAttachment = onRemoveAttachment,
             voiceMemo = voiceMemo,
             onRecordVoiceMemo = onRecordVoiceMemo,
             onStopVoiceMemo = onStopVoiceMemo,

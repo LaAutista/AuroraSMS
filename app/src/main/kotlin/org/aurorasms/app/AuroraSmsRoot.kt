@@ -23,6 +23,7 @@ import java.time.ZoneId
 import java.util.Locale
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -83,6 +84,8 @@ import org.aurorasms.app.message.SendDelayAttempt
 import org.aurorasms.app.message.SendDelayCommand
 import org.aurorasms.app.message.SendDelayObservation
 import org.aurorasms.app.message.ConversationMessageSignatureDialog
+import org.aurorasms.app.message.ComposerImageSanitizationResult
+import org.aurorasms.app.message.ComposerImageSanitizer
 import org.aurorasms.app.message.ConversationSignatureOverride
 import org.aurorasms.app.message.GlobalMessageSignatureDialog
 import org.aurorasms.app.message.MessageSignatureConversationKey
@@ -130,6 +133,10 @@ import org.aurorasms.core.state.SpamSafetyRevision
 import org.aurorasms.core.state.SpamSafetyScope
 import org.aurorasms.core.state.SpamSafetySnapshot
 import org.aurorasms.core.telephony.RecipientSet
+import org.aurorasms.core.telephony.OutgoingMmsAttachment
+import org.aurorasms.core.telephony.OutgoingMmsPayload
+import org.aurorasms.feature.conversations.ComposerAttachmentFailure
+import org.aurorasms.feature.conversations.ComposerAttachmentUiItem
 import org.aurorasms.feature.conversations.ComposerScheduleState
 import org.aurorasms.feature.conversations.ComposerUiState
 import org.aurorasms.feature.conversations.ComposerSendState
@@ -1020,10 +1027,69 @@ private fun ThreadRoute(
     var observedUnknownAcknowledgementEpoch by remember(route.providerThreadId) {
         mutableStateOf(0L)
     }
+    var composerAttachments by remember(route.providerThreadId) {
+        mutableStateOf<List<OutgoingMmsAttachment>>(emptyList())
+    }
+    var attachmentPickerOpen by remember(route.providerThreadId) { mutableStateOf(false) }
+    var attachmentImporting by remember(route.providerThreadId) { mutableStateOf(false) }
+    var attachmentFailure by remember(route.providerThreadId) {
+        mutableStateOf<ComposerAttachmentFailure?>(null)
+    }
+    val imageAttachmentPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(
+            OutgoingMmsPayload.Message.MAX_ATTACHMENTS,
+        ),
+    ) { selectedUris ->
+        attachmentPickerOpen = false
+        if (selectedUris.isEmpty()) return@rememberLauncherForActivityResult
+        attachmentImporting = true
+        attachmentFailure = null
+        scope.launch {
+            try {
+                val admitted = composerAttachments.toMutableList()
+                var firstFailure: ComposerAttachmentFailure? = null
+                for (uri in selectedUris) {
+                    if (admitted.size >= OutgoingMmsPayload.Message.MAX_ATTACHMENTS) {
+                        firstFailure = firstFailure ?: ComposerAttachmentFailure.LIMIT_REACHED
+                        break
+                    }
+                    when (val sanitized = ComposerImageSanitizer.sanitize(context.contentResolver, uri)) {
+                        is ComposerImageSanitizationResult.Ready -> {
+                            val aggregateBytes = admitted.sumOf { it.size.toLong() } +
+                                sanitized.attachment.size.toLong()
+                            if (
+                                aggregateBytes <=
+                                OutgoingMmsPayload.Message.MAX_ATTACHMENT_BYTES_TOTAL
+                            ) {
+                                admitted += sanitized.attachment
+                            } else {
+                                firstFailure = firstFailure ?: ComposerAttachmentFailure.TOO_LARGE
+                            }
+                        }
+                        ComposerImageSanitizationResult.Unreadable -> {
+                            firstFailure = firstFailure ?: ComposerAttachmentFailure.UNREADABLE
+                        }
+                        ComposerImageSanitizationResult.Unsupported -> {
+                            firstFailure = firstFailure ?: ComposerAttachmentFailure.UNSUPPORTED
+                        }
+                        ComposerImageSanitizationResult.TooLarge -> {
+                            firstFailure = firstFailure ?: ComposerAttachmentFailure.TOO_LARGE
+                        }
+                    }
+                }
+                composerAttachments = admitted.toList()
+                attachmentFailure = firstFailure
+            } finally {
+                attachmentImporting = false
+            }
+        }
+    }
     LaunchedEffect(sendObservation.completionEpoch) {
         if (sendObservation.completionEpoch > observedCompletionEpoch) {
             observedCompletionEpoch = sendObservation.completionEpoch
             savedDraftRestoration = SavedDraftRestoration()
+            composerAttachments = emptyList()
+            attachmentFailure = null
             writerGeneration += 1L
         }
     }
@@ -1099,6 +1165,15 @@ private fun ThreadRoute(
         sendDelayObservation = sendDelayObservation,
         sendDelayAttemptInFlight = sendDelayAttemptInFlight,
         permanentDeletionActive = deletionLocksComposer,
+        attachments = composerAttachments.mapIndexed { index, attachment ->
+            ComposerAttachmentUiItem(
+                index = index,
+                contentType = attachment.contentType,
+                sizeBytes = attachment.size,
+            )
+        },
+        attachmentImporting = attachmentPickerOpen || attachmentImporting,
+        attachmentFailure = attachmentFailure,
     )
     val voiceMemoController = services.voiceMemoController
     val voiceMemoCaptureFlow = remember(voiceMemoController) {
@@ -1327,6 +1402,32 @@ private fun ThreadRoute(
                     if (token != null) savedDraftRestoration = SavedDraftRestoration(token)
                 }
             },
+            onAddAttachment = {
+                if (
+                    !attachmentPickerOpen &&
+                    !attachmentImporting &&
+                    composerAttachments.size < OutgoingMmsPayload.Message.MAX_ATTACHMENTS
+                ) {
+                    attachmentPickerOpen = true
+                    attachmentFailure = null
+                    try {
+                        imageAttachmentPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    } catch (_: ActivityNotFoundException) {
+                        attachmentPickerOpen = false
+                        attachmentFailure = ComposerAttachmentFailure.UNREADABLE
+                    }
+                }
+            },
+            onRemoveAttachment = { index ->
+                if (!attachmentPickerOpen && !attachmentImporting) {
+                    composerAttachments = composerAttachments.filterIndexed { current, _ ->
+                        current != index
+                    }
+                    attachmentFailure = null
+                }
+            },
             voiceMemo = voiceMemoUiState,
             onRecordVoiceMemo = {
                 voiceMemoTarget?.let { target ->
@@ -1362,6 +1463,7 @@ private fun ThreadRoute(
                         var sendDelayEntered = false
                         var sendDelayAttempt: SendDelayAttempt? = null
                         try {
+                            val frozenAttachments = composerAttachments.toList()
                             val frozen = writer.freezeForSend() ?: return@launch
                             // Close the base-free SavedState ABA window before
                             // the durable coordinator can clear this revision.
@@ -1384,6 +1486,7 @@ private fun ThreadRoute(
                             val transportKind = if (
                                 identity.participants.size > 1 ||
                                 !frozen.content.subject.isNullOrBlank() ||
+                                frozenAttachments.isNotEmpty() ||
                                 outgoingSegmentCount != 1
                             ) {
                                 MessageTransportKind.MMS
@@ -1419,6 +1522,7 @@ private fun ThreadRoute(
                                             draftRevision = frozen.revision,
                                             frozenSignature = effectiveSignature,
                                             transport = transportKind,
+                                            attachments = frozenAttachments,
                                         ),
                                     )
                                 }
@@ -2215,6 +2319,9 @@ private fun DraftWriteStatus.toComposerUiState(
     sendDelayObservation: SendDelayObservation = SendDelayObservation.None,
     sendDelayAttemptInFlight: Boolean = false,
     permanentDeletionActive: Boolean = false,
+    attachments: List<ComposerAttachmentUiItem> = emptyList(),
+    attachmentImporting: Boolean = false,
+    attachmentFailure: ComposerAttachmentFailure? = null,
 ): ComposerUiState {
     val body = when (this) {
         DraftWriteStatus.Loading -> restoredBody
@@ -2232,7 +2339,10 @@ private fun DraftWriteStatus.toComposerUiState(
     val ready = threadState as? ThreadUiState.Ready
     val verifiedIdentity = ready?.verifiedConversationIdentity
     val mmsRequired = verifiedIdentity?.let { identity ->
-        identity.participants.size > 1 || subject.isNotBlank() || (segmentCount ?: 1) != 1
+        identity.participants.size > 1 ||
+            subject.isNotBlank() ||
+            attachments.isNotEmpty() ||
+            (segmentCount ?: 1) != 1
     } ?: false
     val unavailableReason = when {
         sendObservation.phase == ThreadSmsSendPhase.RECOVERY_PENDING ->
@@ -2240,6 +2350,7 @@ private fun DraftWriteStatus.toComposerUiState(
         sendDelayObservation is SendDelayObservation.Loading ->
             ComposerUnavailableReason.RECOVERY_PENDING
         permanentDeletionActive -> ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE
+        attachmentImporting -> ComposerUnavailableReason.ATTACHMENT_PROCESSING
         failed || saving ->
             ComposerUnavailableReason.DRAFT_NOT_DURABLE
         body.isBlank() -> ComposerUnavailableReason.EMPTY_MESSAGE
@@ -2284,6 +2395,9 @@ private fun DraftWriteStatus.toComposerUiState(
         unsignedSegmentCount = unsignedSegmentCount,
         signatureApplied = signatureApplied,
         mmsRequired = mmsRequired,
+        attachments = attachments,
+        attachmentImporting = attachmentImporting,
+        attachmentFailure = attachmentFailure,
         scheduleState = scheduleObservation.toComposerScheduleState(),
         sendDelayDueTimestampMillis = when (sendState) {
             ComposerSendState.DELAY_PENDING ->

@@ -16,6 +16,8 @@ import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
 import org.aurorasms.core.state.MessageSignature
+import org.aurorasms.core.telephony.OutgoingMmsAttachment
+import org.aurorasms.core.telephony.OutgoingMmsPayload
 
 internal data class ThreadSmsSendCommand(
     val identity: VerifiedConversationIdentity,
@@ -24,7 +26,16 @@ internal data class ThreadSmsSendCommand(
     val draftRevision: DraftRevision,
     val frozenSignature: MessageSignature? = null,
     val transport: MessageTransportKind = MessageTransportKind.SMS,
+    val attachments: List<OutgoingMmsAttachment> = emptyList(),
 ) {
+    init {
+        require(attachments.size <= OutgoingMmsPayload.Message.MAX_ATTACHMENTS)
+        require(
+            attachments.sumOf { it.size.toLong() } <=
+                OutgoingMmsPayload.Message.MAX_ATTACHMENT_BYTES_TOTAL,
+        )
+    }
+
     override fun toString(): String = "ThreadSmsSendCommand(REDACTED)"
 }
 

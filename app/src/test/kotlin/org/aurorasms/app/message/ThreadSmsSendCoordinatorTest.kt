@@ -62,6 +62,7 @@ import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.telephony.ActiveSubscription
 import org.aurorasms.core.telephony.IncomingSmsRecord
 import org.aurorasms.core.telephony.OutgoingSmsRecord
+import org.aurorasms.core.telephony.OutgoingMmsAttachment
 import org.aurorasms.core.telephony.OutgoingMmsPayload
 import org.aurorasms.core.telephony.OutgoingMmsProviderStatus
 import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
@@ -144,6 +145,11 @@ class ThreadSmsSendCoordinatorTest {
             ),
         )
         val fixture = fixture(verifiedIdentity = groupIdentity)
+        val attachmentResult = OutgoingMmsAttachment.create(
+            OutgoingMmsAttachment.IMAGE_JPEG,
+            byteArrayOf(1, 2, 3, 4),
+        )
+        val attachment = (attachmentResult as OutgoingMmsAttachment.CreationResult.Valid).attachment
         val mmsProviderId = ProviderMessageId(ProviderKind.MMS, PROVIDER_ID.value)
         fixture.transport.mmsResponderWithObserver = { request, observer ->
             assertTrue(observer.onPrepared(mmsProviderId, CONVERSATION_ID, unitCount = 1))
@@ -162,14 +168,20 @@ class ThreadSmsSendCoordinatorTest {
         assertEquals(
             ThreadSmsSendAttempt.STARTED,
             fixture.coordinator.send(
-                COMMAND.copy(identity = groupIdentity, transport = MessageTransportKind.MMS),
+                COMMAND.copy(
+                    identity = groupIdentity,
+                    transport = MessageTransportKind.MMS,
+                    attachments = listOf(attachment),
+                ),
             ),
         )
 
         val request = fixture.transport.mmsRequests.single()
         assertEquals(2, request.recipients.size)
         assertEquals(TransportResult.OperationOrigin.COMPOSER, request.operationOrigin)
-        assertEquals(BODY, (request.payload as OutgoingMmsPayload.Message).text)
+        val payload = request.payload as OutgoingMmsPayload.Message
+        assertEquals(BODY, payload.text)
+        assertEquals(listOf(attachment), payload.attachments)
         assertEquals(ComposerSmsOperationPhase.PLATFORM_ACCEPTED, fixture.operations.operation?.phase)
         assertTrue(
             fixture.coordinator.handleTransportResult(
