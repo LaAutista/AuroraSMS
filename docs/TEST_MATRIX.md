@@ -3635,6 +3635,42 @@ app, inspect live message content, or submit carrier traffic. Carrier/OEM and
 physical-device voice-MMS acceptance remain open and require a separate owner-
 approved protocol.
 
+## Phase 6G authenticated backup and synthetic provider-restore checkpoint
+
+The version-one envelope, exact SMS/MMS/part schemas, bounded provider export,
+full authenticated visitor, content-free recovery journal, duplicate analysis,
+non-sendable staging, and Android `ContentResolver` restore adapter are now
+implemented. Restore writes every new parent as an exact app-owned `FAILED`
+placeholder, journals reserve/insert/expect/prepare ordering with `fsync`,
+streams binary parts while hashing, re-reads every scalar/address/part, derives a
+new local provider thread from restored participants, and exposes only Inbox,
+Sent, or inert Failed history. Archived Draft/Outbox/Queued rows remain Failed.
+
+Exact duplicate decisions are capped at 200 SMS or eight MMS parent candidates
+and 1,000 parts, use the safe restored box, and re-read the matching row before
+skip. A stateful test-only `ContentProvider` proves role/permission fencing before
+provider access, exact SMS/MMS/text/binary persistence, local thread assignment,
+idempotent full replay including historical Outbox, provider-normalization
+cleanup, pre-ID and expected-digest rollback, changed-row quarantine, and
+rollback of an already committed MMS after a later SMS commit conflict. The
+fixture is private to the test APK and never proxies Telephony content.
+
+Focused checkpoint evidence on 2026-07-20:
+
+- 26/26 `feature:backup` host tests passed;
+- strict module lint, Android-test packaging, clean-room/private-asset scans,
+  and dependency verification passed;
+- 9/9 connected tests passed on API 26 with zero failures/errors/skips; and
+- 9/9 connected tests passed on API 36 with zero failures/errors/skips.
+
+The tests used only canonical synthetic addresses, bodies, metadata, and a
+196,608-byte generated binary part. They did not acquire the SMS role, inspect
+live provider rows, mutate a real Telephony provider, launch a carrier boundary,
+or install a user-facing backup flow. Phase 6G remains open for private staging
+file ownership/cleanup, SAF controllers and UI confirmation, app integration,
+full aggregate/release gates, and separately approved physical-device/OEM
+verification.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,

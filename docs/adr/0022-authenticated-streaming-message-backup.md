@@ -119,6 +119,14 @@ pass then keeps every new parent in `FAILED`; a final journal-driven pass expose
 only safe historical boxes. Imported `DRAFT`, `OUTBOX`, `QUEUED`, and `FAILED`
 rows all remain `FAILED`, so archive data cannot recreate send authority.
 
+The Android adapter bounds one SMS fingerprint query to 200 candidates and one
+MMS fingerprint query to eight candidates and 1,000 parts. Exceeding a bound
+fails the restore rather than guessing. A matching candidate is re-read and
+re-fingerprinted immediately before it is skipped, so a concurrently removed or
+changed row cannot satisfy a stale duplicate decision. Duplicate comparison uses
+the safe restored box, which also makes repeated restores of an archived
+`DRAFT`, `OUTBOX`, or `QUEUED` row idempotent after its first `FAILED` import.
+
 ### Provider staging and crash recovery
 
 Every new provider message begins in a non-sendable placeholder state. The
@@ -129,6 +137,15 @@ unique transaction ID and a draft/failed parent while parts and addresses are
 staged. Original pending/outbox/queued states restore only as failed historical
 rows; restore never invokes `SmsManager`, schedules alarms, or creates pending
 send ownership.
+
+Provider and thread IDs are never portable. During prepare, the Android adapter
+derives a new local thread through `Telephony.Threads` from the restored SMS
+address or bounded MMS address set (excluding the provider's insert-address
+token), and writes that local ID in the same conditional update as the final
+metadata. Every provider call rechecks default-role and read-permission access.
+SMS scalar values, MMS parents and ordered addresses, and every text/empty/binary
+part are then re-read through `ContentResolver` and compared with the canonical
+digest. Binary parts are copied and hashed in one pass.
 
 After all rows and parts are staged and re-read exactly, a bounded commit pass
 makes the historical boxes visible. Any in-process error rolls back every exact
@@ -145,13 +162,22 @@ durable complete marker. `EXPECT` durably records the redacted canonical SHA-256
 ownership digest before final provider values replace the deterministic
 placeholder. `PREPARE` is admitted only after the exact forced-FAILED parent,
 addresses, and parts re-read to that same digest, so recovery can identify either
-side of the provider-prepare crash window and reject a changed or recycled row. Each line is
-flushed and `fsync`ed before the provider boundary advances;
+side of the provider-prepare crash window and reject a changed or recycled row.
+Each line is flushed and `fsync`ed before the provider boundary advances;
 recovery streams ownership instead of collecting a large import in memory. The
 log stores only session, ordinal, provider kind/ID, intended historical box,
 prepared digest, event sequence, timestamps, and checksums—never addresses,
 bodies, subjects, MIME metadata, or attachment bytes. A malformed log blocks a
 new restore and cannot be cleared as trusted.
+
+The expected digest is also passed into the provider prepare boundary. If an OEM
+provider normalizes a just-written row, Aurora conditionally removes only the
+exact row it just re-read before returning an ownership conflict. If that exact
+conditional cleanup no longer matches, recovery remains quarantined instead of
+deleting changed data. Synthetic `ContentProvider` journeys exercise successful
+restore/replay, role and permission fences, provider normalization, both
+pre-ID/expected-digest recovery windows, and rollback after a later commit
+conflict without touching real Telephony content.
 
 ## Consequences
 

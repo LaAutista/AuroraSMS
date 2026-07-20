@@ -56,6 +56,7 @@ interface AuroraRestoreProvider {
         providerRowId: Long,
         placeholderAddress: String,
         record: AuroraBackupSmsRecord,
+        expectedDigest: AuroraRestorePreparedDigest,
     ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest>
 
     /** Inserts one known-unsent FAILED MMS parent with only the opaque transaction identity. */
@@ -76,6 +77,7 @@ interface AuroraRestoreProvider {
         providerRowId: Long,
         placeholderTransactionId: String,
         record: AuroraBackupMmsRecord,
+        expectedDigest: AuroraRestorePreparedDigest,
     ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest>
 
     /** The only operation allowed to expose a staged row in its safe historical box. */
@@ -331,6 +333,7 @@ class AuroraRestoreCoordinator(
                         staged.providerRowId,
                         staged.placeholder,
                         staged.record,
+                        expected,
                     ).valueOrNull { failure = it }
                     if (prepared != null && prepared != expected) {
                         failure = AuroraRestoreFailure.OWNERSHIP_CONFLICT
@@ -396,7 +399,7 @@ class AuroraRestoreCoordinator(
                             failure = AuroraRestoreFailure.JOURNAL_FAILED
                             throw CoordinatorAbortException()
                         }
-                        val prepared = provider.prepareSms(providerId, placeholder, record)
+                        val prepared = provider.prepareSms(providerId, placeholder, record, expected)
                             .valueOrAbort(::setFailure)
                         if (prepared != expected) {
                             failure = AuroraRestoreFailure.OWNERSHIP_CONFLICT
@@ -546,7 +549,7 @@ class AuroraRestoreCoordinator(
     }
 }
 
-private fun AuroraBackupMessageBox.safeRestoredBox(): AuroraBackupMessageBox = when (this) {
+internal fun AuroraBackupMessageBox.safeRestoredBox(): AuroraBackupMessageBox = when (this) {
     AuroraBackupMessageBox.INBOX -> AuroraBackupMessageBox.INBOX
     AuroraBackupMessageBox.SENT -> AuroraBackupMessageBox.SENT
     AuroraBackupMessageBox.DRAFT,

@@ -147,6 +147,18 @@ Validate version, entry count, size, normalized paths, checksums, schema, and
 media before an atomic import. Export/import is explicit and never enables OS
 or cloud backup.
 
+The foundation and provider checkpoint passed on 2026-07-20. AES-256-GCM with
+authenticated framing, PBKDF2-HMAC-SHA-256, canonical SMS/MMS/part schemas,
+bounded Telephony export, full validation/visitor passes, the content-free
+reserve/insert/expect/prepare journal, exact duplicate analysis, non-sendable
+staging, local thread reconstruction, and conditional provider commit/rollback
+are implemented. All 26 module host tests and all 9 connected tests passed on
+both API 26 and API 36, alongside strict lint and privacy/dependency gates. All
+provider journeys used a private synthetic `ContentProvider`; no SMS role, live
+message read/write, or carrier boundary was used. Private staging-file lifecycle,
+SAF/UI integration, full aggregate/release evidence, and approved physical/OEM
+verification remain before Phase 6G is complete.
+
 ### Phase 6H — Android Auto and notification completion
 
 Verify metadata, privacy modes, grouping, direct reply, failure alerts, channel

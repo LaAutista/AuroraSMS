@@ -212,6 +212,7 @@ private class FakeRestoreProvider : AuroraRestoreProvider {
         providerRowId: Long,
         placeholderAddress: String,
         record: AuroraBackupSmsRecord,
+        expectedDigest: AuroraRestorePreparedDigest,
     ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest> = success(
         if (returnWrongSmsPreparedDigest) {
             AuroraRestorePreparedDigest("f".repeat(64))
@@ -252,6 +253,7 @@ private class FakeRestoreProvider : AuroraRestoreProvider {
         providerRowId: Long,
         placeholderTransactionId: String,
         record: AuroraBackupMmsRecord,
+        expectedDigest: AuroraRestorePreparedDigest,
     ): AuroraRestoreProviderResult<AuroraRestorePreparedDigest> = success(
         mmsDigests.getValue(providerRowId).finish(),
     )
