@@ -69,6 +69,11 @@ operation/provider/staging protocol owns crash classification.
 - Three sanitizer tests pass on API 26 and API 36; the API 36 Compose suite
   covers the extras menu, generic attachment row, removal, MMS label, disabled
   scheduling, and image-only Send state.
+- At source commit `1eb7e57`, the complete API 36 and API 26 connected matrices
+  pass 443 and 437 enumerated tests with 10 and 13 intentional protocol skips,
+  respectively, and zero failures or errors. The root group-composer acceptance
+  test verifies one MMS command for the exact group/subscription and no second
+  send request.
 - Relevant app, state, telephony, and conversations lint gates pass. No live
   provider, SMS role change, carrier send, physical message content, or broad
   log participates.

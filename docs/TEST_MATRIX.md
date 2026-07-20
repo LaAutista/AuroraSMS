@@ -4001,6 +4001,14 @@ Acceptance evidence:
 - three sanitizer tests pass on API 26 and API 36;
 - the 36-case API 36 Compose suite passes, including generic image metadata,
   add/remove callbacks, MMS status, disabled scheduling, and image-only Send;
+- at source commit `1eb7e57`, the complete `connectedDebugAndroidTest` matrix
+  passed on `AuroraSMS_API36` in 2m34s with 443 enumerated tests, 10 intentional
+  protocol-gated skips, and zero failures/errors; the complete
+  `AuroraSMS_API26` matrix passed in 2m46s with 437 tests, 13 intentional skips,
+  and zero failures/errors. The first API 36 aggregate exposed and replaced one
+  obsolete SMS-only group-composer assertion; the replacement verifies one MMS
+  command for the exact group/subscription, disabled scheduling, and no second
+  send request;
 - relevant app/state/telephony/conversations lint gates pass;
 - all 650 host tests and the complete 978-task governed host/lint/R8/benchmark/
   privacy/dependency/license aggregate pass in 1m59s; standalone release AAB
