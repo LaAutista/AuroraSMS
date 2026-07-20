@@ -5,6 +5,37 @@ package org.aurorasms.core.state.storage
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+val STATE_MIGRATION_11_12: Migration = object : Migration(11, 12) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `spam_safety_decisions` (
+                `participant_set_key` TEXT NOT NULL,
+                `provider_thread_id` INTEGER NOT NULL,
+                `single_sender_key` TEXT,
+                `classification_code` TEXT NOT NULL,
+                `blocked` INTEGER NOT NULL,
+                `revision` INTEGER NOT NULL,
+                `updated_timestamp_ms` INTEGER NOT NULL,
+                PRIMARY KEY(`participant_set_key`)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                "`index_spam_safety_decisions_provider_thread_id` " +
+                "ON `spam_safety_decisions` (`provider_thread_id`)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_spam_safety_decisions_single_sender_key` " +
+                "ON `spam_safety_decisions` (`single_sender_key`)",
+        )
+        db.execSQL(SpamSafetyDecisionEnforcement.CREATE_INSERT_LIMIT_TRIGGER)
+        db.execSQL(SpamSafetyDecisionEnforcement.CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(SpamSafetyDecisionEnforcement.CREATE_UPDATE_INTEGRITY_TRIGGER)
+    }
+}
+
 val STATE_MIGRATION_10_11: Migration = object : Migration(10, 11) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `composer_sms_operations` ADD COLUMN `signature_text` TEXT")

@@ -1,6 +1,6 @@
 # AuroraSMS product requirements
 
-Status: Phase 0 product baseline plus locally accepted Phase 1 through Phase 6D
+Status: Phase 0 product baseline plus locally accepted Phase 1 through Phase 6E
 controls, 2026-07-19.
 
 ## Product statement
@@ -604,6 +604,48 @@ Phase 6D acceptance passed 578 host tests, the complete 886-task offline gate,
 debug APK installed and hash-matched on the Pixel 8 and API 36 emulator while
 their existing non-Aurora SMS roles and denied Aurora SMS permissions remained
 unchanged. No live message or address was read and no carrier send was made.
+
+### Phase 6E local explainable spam and blocking
+
+The `0.6.6-phase6` (`versionCode` 17) 2026-07-19 source implements ADR 0019
+and state schema 12.
+
+- Automatic classification is a warning only. It requires an unknown
+  conventional phone sender, the newest incoming snippet, a link, one fixed
+  reviewed urgency term, and one fixed reviewed sensitive-request term. Saved
+  contacts, short codes, alphanumeric senders, groups, outgoing messages, and
+  incomplete participant identities are not automatically warned. Automatic
+  rules pause when contact access is unavailable rather than guessing that an
+  unresolved sender is unknown.
+- Users may independently mark a verified conversation spam/not-spam and
+  block/unblock a verified one-person sender. An explicit not-spam choice
+  overrides automatic warning. Inbox, Thread, and the dedicated Spam & blocked
+  route explain the active reason and expose recovery.
+- No automatic rule hides a conversation. Suspected or blocked messages remain
+  in Android's authoritative provider and normal indexed history. Blocking
+  suppresses only Aurora's notification, reply-target, and reminder effects
+  after the incoming provider row is stored and acknowledged.
+- Room schema 12 stores at most 256 user decisions with purpose-separated
+  participant/sender hashes, Thread ID, classification, block bit, optimistic
+  revision, and timestamp. It stores no raw address, body, snippet, contact,
+  keyword, or score; SQLite triggers physically enforce the bound, legal hash
+  forms, one-person blocks, and monotonic transitions.
+- UI and mutation require a complete exact verified participant identity. The
+  Spam & blocked route re-reads each current conversation and rejects stale or
+  mismatched decisions. Storage corruption makes controls unavailable, while
+  incoming block-lookup failure fails open to the normal notification path.
+- No permission, network/reputation lookup, provider rewrite/deletion,
+  background worker, archive action, carrier send, or backup exposure is added.
+
+Phase 6E acceptance passed 587 host tests in the complete 886-task offline
+host/lint/R8/benchmark/privacy/dependency/license gate, 339 API 36 tests with 10
+intentional skips, and 342 API 26 tests with 13. Both connected matrices
+executed 329 tests with zero failures/errors. Release bundle and deterministic
+CycloneDX 1.6 SBOM generation passed. No live message/address/body was inspected
+and no carrier traffic was submitted. The exact debug APK installed and
+hash-matched on the Pixel 8 and API 36 emulator with their existing non-Aurora
+SMS roles and denied Aurora messaging/notification permissions preserved; no
+Activity launch was issued and the Pixel was left force-stopped.
 
 ## AuroraMaterial requirements
 

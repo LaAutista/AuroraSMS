@@ -201,6 +201,15 @@ import org.aurorasms.core.state.storage.StateDatabaseOpenResult
 import org.aurorasms.core.state.ScheduledSmsId
 import org.aurorasms.core.state.SendDelayId
 import org.aurorasms.core.state.PermanentDeletionId
+import org.aurorasms.core.state.SpamClassification
+import org.aurorasms.core.state.SpamSafetyDecision
+import org.aurorasms.core.state.SpamSafetyRepository
+import org.aurorasms.core.state.SpamSafetyRepositoryResult
+import org.aurorasms.core.state.SpamSafetyRevision
+import org.aurorasms.core.state.SpamSafetyScope
+import org.aurorasms.core.state.SpamSafetySnapshot
+import org.aurorasms.core.state.SpamSafetyStorageOperation
+import org.aurorasms.core.state.storage.RoomSpamSafetyRepository
 import org.aurorasms.core.telephony.internal.AndroidPermanentDeletionProvider
 import org.aurorasms.feature.conversations.BoundedPreviewLoader
 
@@ -313,6 +322,7 @@ class AppContainer(
     val conversationSubscriptionPreferenceRepository:
         ConversationSubscriptionPreferenceRepository =
         DeferredConversationSubscriptionPreferenceRepository(stateRuntimeState)
+    val spamSafetyRepository: SpamSafetyRepository = DeferredSpamSafetyRepository(stateRuntimeState)
     val appearanceController = AppearanceController(
         repository = appearanceProfileRepository,
         scope = applicationScope,
@@ -393,6 +403,10 @@ class AppContainer(
         contactResolver = contactCache,
         messageNotifier = messageNotifier,
         replyTargets = replyTargets,
+        isSenderBlocked = { sender ->
+            (spamSafetyRepository.isSenderBlocked(sender) as? SpamSafetyRepositoryResult.Success)
+                ?.value == true
+        },
         onProviderInsertComplete = {
             enqueueIndexSignal(IndexSignal.INCOMING_INSERT)
             retryPendingInlineReplyOperations()
@@ -454,6 +468,7 @@ class AppContainer(
                 appearanceWallpaperRepository = EmptyBenchmarkAppearanceWallpaperRepository,
                 conversationSubscriptionPreferenceRepository =
                     EmptyBenchmarkConversationSubscriptionPreferenceRepository,
+                spamSafetyRepository = EmptyBenchmarkSpamSafetyRepository,
             )
             _stateStorageStatus.value = StateStorageStatus.Ready
         } else {
@@ -518,6 +533,7 @@ class AppContainer(
                             appearanceWallpaperRepository = appearanceRepository,
                             conversationSubscriptionPreferenceRepository =
                                 RoomConversationSubscriptionPreferenceRepository(result.database),
+                            spamSafetyRepository = RoomSpamSafetyRepository(result.database),
                         )
                         wallpaperController.reconcileManagedFiles()
                         _stateStorageStatus.value = StateStorageStatus.Ready
@@ -1252,6 +1268,27 @@ private object EmptyBenchmarkConversationSubscriptionPreferenceRepository :
         )
 }
 
+private object EmptyBenchmarkSpamSafetyRepository : SpamSafetyRepository {
+    override val snapshots: Flow<SpamSafetySnapshot> = flowOf(SpamSafetySnapshot.Empty)
+
+    override suspend fun read(
+        scope: SpamSafetyScope,
+    ): SpamSafetyRepositoryResult<SpamSafetyDecision> = SpamSafetyRepositoryResult.NotFound
+
+    override suspend fun set(
+        scope: SpamSafetyScope,
+        classification: SpamClassification,
+        blocked: Boolean,
+        expectedRevision: SpamSafetyRevision?,
+        updatedTimestampMillis: Long,
+    ): SpamSafetyRepositoryResult<SpamSafetyDecision?> =
+        SpamSafetyRepositoryResult.StorageFailure(SpamSafetyStorageOperation.WRITE)
+
+    override suspend fun isSenderBlocked(
+        sender: ParticipantAddress,
+    ): SpamSafetyRepositoryResult<Boolean> = SpamSafetyRepositoryResult.Success(false)
+}
+
 sealed interface IndexStorageStatus {
     data object Opening : IndexStorageStatus
     data class Ready(val recovered: Boolean) : IndexStorageStatus
@@ -1340,6 +1377,7 @@ private sealed interface StateRuntimeState {
         val appearanceWallpaperRepository: AppearanceWallpaperRepository,
         val conversationSubscriptionPreferenceRepository:
             ConversationSubscriptionPreferenceRepository,
+        val spamSafetyRepository: SpamSafetyRepository,
     ) : StateRuntimeState
     data class Failed(val reason: StateDatabaseOpenFailureReason) : StateRuntimeState
 }
@@ -1393,6 +1431,48 @@ private class DeferredConversationSubscriptionPreferenceRepository(
 
     override fun toString(): String =
         "DeferredConversationSubscriptionPreferenceRepository(content=REDACTED)"
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+private class DeferredSpamSafetyRepository(
+    private val runtimeState: StateFlow<StateRuntimeState>,
+) : SpamSafetyRepository {
+    override val snapshots: Flow<SpamSafetySnapshot> = runtimeState
+        .flatMapLatest { state ->
+            when (state) {
+                is StateRuntimeState.Ready -> state.spamSafetyRepository.snapshots
+                StateRuntimeState.Opening,
+                is StateRuntimeState.Failed,
+                -> flowOf(SpamSafetySnapshot.Unavailable)
+            }
+        }
+        .conflate()
+
+    override suspend fun read(
+        scope: SpamSafetyScope,
+    ): SpamSafetyRepositoryResult<SpamSafetyDecision> = runtimeState
+        .awaitReadySpamSafetyRepository()
+        ?.read(scope)
+        ?: SpamSafetyRepositoryResult.StorageFailure(SpamSafetyStorageOperation.READ)
+
+    override suspend fun set(
+        scope: SpamSafetyScope,
+        classification: SpamClassification,
+        blocked: Boolean,
+        expectedRevision: SpamSafetyRevision?,
+        updatedTimestampMillis: Long,
+    ): SpamSafetyRepositoryResult<SpamSafetyDecision?> = runtimeState
+        .awaitReadySpamSafetyRepository()
+        ?.set(scope, classification, blocked, expectedRevision, updatedTimestampMillis)
+        ?: SpamSafetyRepositoryResult.StorageFailure(SpamSafetyStorageOperation.WRITE)
+
+    override suspend fun isSenderBlocked(
+        sender: ParticipantAddress,
+    ): SpamSafetyRepositoryResult<Boolean> = runtimeState.awaitReadySpamSafetyRepository()
+        ?.isSenderBlocked(sender)
+        ?: SpamSafetyRepositoryResult.StorageFailure(SpamSafetyStorageOperation.BLOCK_LOOKUP)
+
+    override fun toString(): String = "DeferredSpamSafetyRepository(content=REDACTED)"
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -1670,6 +1750,15 @@ private suspend fun StateFlow<StateRuntimeState>.awaitReadyConversationSubscript
         else -> current
     }
     return (state as? StateRuntimeState.Ready)?.conversationSubscriptionPreferenceRepository
+}
+
+private suspend fun StateFlow<StateRuntimeState>.awaitReadySpamSafetyRepository():
+    SpamSafetyRepository? {
+    val state = when (val current = value) {
+        StateRuntimeState.Opening -> first { it !is StateRuntimeState.Opening }
+        else -> current
+    }
+    return (state as? StateRuntimeState.Ready)?.spamSafetyRepository
 }
 
 private fun AppearanceScope.isUnsupportedWallpaperScreen(): Boolean =

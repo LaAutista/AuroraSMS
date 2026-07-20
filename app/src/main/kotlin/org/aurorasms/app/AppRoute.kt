@@ -10,6 +10,8 @@ internal sealed interface AppRoute {
 
     data object Appearance : AppRoute
 
+    data object SpamBlocked : AppRoute
+
     data class Search(val query: String = "") : AppRoute {
         override fun toString(): String = "AppRoute.Search(queryLength=${query.length}, REDACTED)"
     }

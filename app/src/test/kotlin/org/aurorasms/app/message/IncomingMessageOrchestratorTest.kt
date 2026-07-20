@@ -33,6 +33,54 @@ import org.junit.Test
 
 class IncomingMessageOrchestratorTest {
     @Test
+    fun explicitlyBlockedSenderIsStoredAndAcknowledgedWithoutAuroraAlertOrReminder() = runTest {
+        val address = ParticipantAddress("+12025550901")
+        val provider = FakeSmsProviderDataSource()
+        val notifier = FakeMessageNotifier()
+        val reminders = mutableListOf<org.aurorasms.core.telephony.ProviderStoredMessage>()
+        val targets = ReplyTargetRegistry(clockMillis = { NOW })
+        val contacts = object : ContactResolver {
+            override suspend fun resolve(addresses: List<ParticipantAddress>): List<ResolvedContact> =
+                error("Blocked delivery must not resolve notification contact content")
+        }
+        val orchestrator = IncomingMessageOrchestrator(
+            roleState = FakeRoleState(held = true),
+            smsProvider = provider,
+            contactResolver = contacts,
+            messageNotifier = notifier,
+            replyTargets = targets,
+            isSenderBlocked = { it == address },
+            onIncomingNotificationCommitted = reminders::add,
+        )
+
+        val first = orchestrator.persist(incomingSms(address)) as IncomingPersistResult.Persisted
+        val replay = orchestrator.persist(incomingSms(address))
+
+        assertEquals(IncomingPersistResult.Duplicate(first.providerId, first.conversationId), replay)
+        assertEquals(1, provider.insertedIncoming.size)
+        assertTrue(notifier.incoming.isEmpty())
+        assertTrue(reminders.isEmpty())
+        assertNull(targets.resolve(first.conversationId, "SMS:1", NOW))
+    }
+
+    @Test
+    fun blockLookupFailureFailsOpenAndPostsTheIncomingAlert() = runTest {
+        val address = ParticipantAddress("+12025550902")
+        val notifier = FakeMessageNotifier()
+        val orchestrator = IncomingMessageOrchestrator(
+            roleState = FakeRoleState(held = true),
+            smsProvider = FakeSmsProviderDataSource(),
+            contactResolver = FakeContactResolver(),
+            messageNotifier = notifier,
+            replyTargets = ReplyTargetRegistry(clockMillis = { NOW }),
+            isSenderBlocked = { error("Synthetic unavailable block store") },
+        )
+
+        assertTrue(orchestrator.persist(incomingSms(address)) is IncomingPersistResult.Persisted)
+        assertEquals(1, notifier.incoming.size)
+    }
+
+    @Test
     fun persistedSmsPostsOneNotificationAndRegistersReplyTarget() = runTest {
         val address = ParticipantAddress("+12025550121")
         val contacts = FakeContactResolver().apply {

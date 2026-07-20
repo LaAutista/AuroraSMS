@@ -33,11 +33,13 @@ import kotlin.math.absoluteValue
 import kotlinx.coroutines.delay
 import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.core.index.IndexRunState
+import org.aurorasms.core.index.conversation.ConversationSummary
 import org.aurorasms.core.index.timeline.TimelineMessage
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.MessageSyncFingerprint
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
@@ -48,6 +50,7 @@ import org.aurorasms.core.telephony.MmsAttachmentId
 import org.aurorasms.core.telephony.MmsAttachmentListResult
 import org.aurorasms.core.telephony.MmsAttachmentReadResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
+import org.aurorasms.core.telephony.ResolvedContact
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -975,6 +978,146 @@ class ConversationUiStateTest {
 
         compose.runOnIdle { assertEquals(60, selectedDelay) }
     }
+
+    @Test
+    fun inboxSpamRouteAndWarningAreVisibleButDoNotPreventOpeningTheConversation() {
+        val summary = spamConversationSummary()
+        var spamRouteCount = 0
+        var openCount = 0
+        compose.setContent {
+            MaterialTheme {
+                InboxScreen(
+                    state = InboxUiState.Ready(
+                        window = BoundedInboxWindow(listOf(summary), olderCursor = null),
+                        coverage = completeCoverage(),
+                        contacts = emptyMap(),
+                        loadingOlder = false,
+                    ),
+                    diagnosticsAvailable = false,
+                    contactsPermissionGranted = true,
+                    onOpenConversation = { openCount += 1 },
+                    onOpenSearch = {},
+                    onOpenAppearance = {},
+                    onOpenSpamBlocked = { spamRouteCount += 1 },
+                    onOpenInboxAppearance = {},
+                    onOpenConversationDefaults = {},
+                    onOpenDiagnostics = {},
+                    onRequestContactsPermission = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    spamIndicators = mapOf(
+                        summary.providerThreadId to SpamSafetyIndicator(
+                            SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST,
+                            warning = true,
+                        ),
+                    ),
+                )
+            }
+        }
+
+        compose.onNodeWithText("Caution: unknown sender", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag(INBOX_ROW_TEST_TAG).performClick()
+        compose.onNodeWithTag(INBOX_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(INBOX_SPAM_BLOCKED_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle {
+            assertEquals(1, openCount)
+            assertEquals(1, spamRouteCount)
+        }
+    }
+
+    @Test
+    fun threadSpamAndBlockControlsRequireExplicitActionsAndExplainWarning() {
+        var markSpamCount = 0
+        var blockCount = 0
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = readyThreadState(),
+                    composer = ComposerUiState("", saving = false, failed = false),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                    spamSafety = ThreadSpamSafetyUiState(
+                        storageAvailable = true,
+                        actionsAvailable = true,
+                        blockAvailable = true,
+                        warningReason = SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST,
+                    ),
+                    onMarkSpam = { markSpamCount += 1 },
+                    onBlockSender = { blockCount += 1 },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(THREAD_SPAM_WARNING_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_SPAM_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_BLOCK_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle {
+            assertEquals(1, markSpamCount)
+            assertEquals(0, blockCount)
+        }
+        compose.onNodeWithTag(CONFIRM_BLOCK_SENDER_TEST_TAG).performClick()
+        compose.runOnIdle { assertEquals(1, blockCount) }
+    }
+
+    @Test
+    fun spamBlockedScreenShowsReasonsAndIndependentRecoveryActions() {
+        val summary = spamConversationSummary()
+        val address = summary.participants.single()
+        var notSpamCount = 0
+        var unblockCount = 0
+        compose.setContent {
+            MaterialTheme {
+                SpamBlockedScreen(
+                    state = SpamBlockedUiState.Ready(
+                        listOf(
+                            SpamBlockedRow(
+                                summary = summary,
+                                contacts = mapOf(
+                                    address to ResolvedContact(address, "Synthetic Sender", null),
+                                ),
+                                markedSpam = true,
+                                blocked = true,
+                            ),
+                        ),
+                    ),
+                    onBack = {},
+                    onOpenConversation = {},
+                    onMarkNotSpam = { notSpamCount += 1 },
+                    onUnblock = { unblockCount += 1 },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(SPAM_BLOCKED_SCREEN_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("Synthetic Sender").assertIsDisplayed()
+        compose.onNodeWithText("Not spam").performClick()
+        compose.onNodeWithText("Unblock sender").performClick()
+        compose.runOnIdle {
+            assertEquals(1, notSpamCount)
+            assertEquals(1, unblockCount)
+        }
+    }
 }
 
 @Composable
@@ -1079,6 +1222,42 @@ private fun readyThreadState(
     loadingOlder = false,
     loadingNewer = false,
 )
+
+private fun completeCoverage() = IndexCoverage(
+    generationId = 1L,
+    state = IndexRunState.COMPLETE,
+    indexedMessageCount = 1L,
+    smsExhausted = true,
+    mmsExhausted = true,
+    pendingChanges = false,
+    generationCommittedCount = 1L,
+    smsCheckpointCommittedCount = 1L,
+)
+
+private fun spamConversationSummary(): ConversationSummary {
+    val address = ParticipantAddress("+12025550199")
+    return ConversationSummary(
+        providerThreadId = ProviderThreadId(99L),
+        latestLocalRowId = 99L,
+        latestProviderMessageId = ProviderMessageId(ProviderKind.SMS, 99L),
+        latestTimestampMillis = 99L,
+        latestSentTimestampMillis = 98L,
+        latestDirection = MessageDirection.INCOMING,
+        latestBox = MessageBox.INBOX,
+        latestStatus = MessageStatus.COMPLETE,
+        latestSubscriptionId = null,
+        latestSenderAddress = address,
+        latestSnippet = "Synthetic warning preview",
+        latestAttachmentCount = 0,
+        latestAttachmentTypeSummary = "",
+        latestRead = false,
+        indexedMessageCount = 1L,
+        indexedUnreadCount = 1L,
+        participants = listOf(address),
+        indexedParticipantCount = 1,
+        participantsTruncated = false,
+    )
+}
 
 private class RejectingAttachmentRepository : MmsAttachmentRepository {
     var readAttempts: Int = 0

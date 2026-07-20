@@ -17,6 +17,10 @@ class AppRouteStackTest {
             normalizeRestoredRoutes(listOf(AppRoute.Inbox, AppRoute.Appearance)),
         )
         assertEquals(
+            listOf(AppRoute.Inbox, AppRoute.SpamBlocked),
+            normalizeRestoredRoutes(listOf(AppRoute.Inbox, AppRoute.SpamBlocked)),
+        )
+        assertEquals(
             listOf(AppRoute.Inbox, AppRoute.Thread(ProviderThreadId(4L))),
             normalizeRestoredRoutes(
                 listOf(AppRoute.Inbox, AppRoute.Thread(ProviderThreadId(4L))),

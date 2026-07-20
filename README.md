@@ -9,6 +9,28 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
+The 2026-07-19 Phase 6E source identifies as `0.6.6-phase6` (`versionCode` 17)
+and implements ADR 0019's local explainable spam and provider-preserving
+blocking. Saved contacts, short codes, and alphanumeric senders are trusted by
+the automatic rules. Only an unknown conventional phone sender with a link,
+urgency language, and a sensitive request receives an automatic warning. Users
+can independently mark spam/not-spam and block/unblock; no rule hides or
+deletes provider messages. Explicit blocks suppress only Aurora's incoming
+notification, reply-target, and reminder effects after the provider row is
+stored. Block-store failures fail open.
+
+Room schema 12 retains at most 256 content-free user decisions addressed by
+purpose-separated hashes of exact verified identities. The dedicated Spam &
+blocked route revalidates every row and exposes recovery actions. All 587 host
+tests passed inside the complete 886-task offline host/lint/R8/benchmark/privacy/
+dependency/license aggregate. The complete API 36 matrix passed 339 tests with
+10 intentional skips; API 26 passed 342 with 13. Release bundle and deterministic
+CycloneDX 1.6 SBOM generation passed. The exact debug APK installed and
+hash-matched on the Pixel 8 and API 36 emulator. Both retained their existing
+non-Aurora SMS role and denied Aurora's messaging/notification permissions; no
+Activity launch was issued and the Pixel was left force-stopped. Phase 6F and
+later release work remain, so AuroraSMS is not gold.
+
 The 2026-07-19 large-history follow-up identifies as `0.6.5-phase6`
 (`versionCode` 16). A default-SMS role transition now pauses and resumes the
 same clean, checkpointed initial-history generation instead of falsely marking

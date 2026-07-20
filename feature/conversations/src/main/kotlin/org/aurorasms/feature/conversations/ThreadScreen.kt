@@ -141,6 +141,11 @@ fun ThreadScreen(
     onRequestDeleteThread: () -> Unit = {},
     onUndoDeletion: () -> Unit = {},
     onRetryDeletionStatus: () -> Unit = {},
+    spamSafety: ThreadSpamSafetyUiState = ThreadSpamSafetyUiState(),
+    onMarkSpam: () -> Unit = {},
+    onMarkNotSpam: () -> Unit = {},
+    onBlockSender: () -> Unit = {},
+    onUnblockSender: () -> Unit = {},
     timelineBackground: @Composable BoxScope.() -> Unit = {},
 ) {
     val focusManager = LocalFocusManager.current
@@ -152,6 +157,7 @@ fun ThreadScreen(
     var textSelectionTarget by remember { mutableStateOf<MessageActionTarget?>(null) }
     var messageDetailsTarget by remember { mutableStateOf<TimelineMessage?>(null) }
     var threadConfirmationStep by remember { mutableStateOf(0) }
+    var blockConfirmationOpen by remember { mutableStateOf(false) }
     val deletionActive = deletion !is PermanentDeletionUiState.None
     LaunchedEffect(deletion) {
         if (deletionActive) {
@@ -253,6 +259,27 @@ fun ThreadScreen(
             },
         )
     }
+    if (blockConfirmationOpen) {
+        AlertDialog(
+            onDismissRequest = { blockConfirmationOpen = false },
+            title = { Text(stringResource(R.string.block_sender_title)) },
+            text = { Text(stringResource(R.string.block_sender_explanation)) },
+            confirmButton = {
+                TextButton(
+                    modifier = Modifier.testTag(CONFIRM_BLOCK_SENDER_TEST_TAG),
+                    onClick = {
+                        blockConfirmationOpen = false
+                        onBlockSender()
+                    },
+                ) { Text(stringResource(R.string.block_sender)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { blockConfirmationOpen = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
     BackHandler {
         if (composerFocused) {
             focusManager.clearFocus()
@@ -302,6 +329,11 @@ fun ThreadScreen(
                     state.coverage.verifiedComplete && state.window.items.isNotEmpty() &&
                     !deletionActive,
                 onRequestDeleteConversation = { threadConfirmationStep = 1 },
+                spamSafety = spamSafety,
+                onMarkSpam = onMarkSpam,
+                onMarkNotSpam = onMarkNotSpam,
+                onBlockSender = { blockConfirmationOpen = true },
+                onUnblockSender = onUnblockSender,
             )
             HorizontalDivider(color = visualTokens.violet.copy(alpha = 0.4f))
             PermanentDeletionBanner(
@@ -309,6 +341,7 @@ fun ThreadScreen(
                 onUndo = onUndoDeletion,
                 onRetryStatus = onRetryDeletionStatus,
             )
+            SpamSafetyBanner(spamSafety)
             Box(modifier = Modifier.weight(1f)) {
                 when (state) {
                     ThreadUiState.Loading -> LoadingPane()
@@ -577,6 +610,11 @@ private fun ThreadHeader(
     onSetSendDelaySeconds: (Int) -> Unit,
     deleteConversationAvailable: Boolean,
     onRequestDeleteConversation: () -> Unit,
+    spamSafety: ThreadSpamSafetyUiState,
+    onMarkSpam: () -> Unit,
+    onMarkNotSpam: () -> Unit,
+    onBlockSender: () -> Unit,
+    onUnblockSender: () -> Unit,
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
     val ready = state as? ThreadUiState.Ready
@@ -635,6 +673,11 @@ private fun ThreadHeader(
             onSetSendDelaySeconds = onSetSendDelaySeconds,
             deleteConversationAvailable = deleteConversationAvailable,
             onRequestDeleteConversation = onRequestDeleteConversation,
+            spamSafety = spamSafety,
+            onMarkSpam = onMarkSpam,
+            onMarkNotSpam = onMarkNotSpam,
+            onBlockSender = onBlockSender,
+            onUnblockSender = onUnblockSender,
         )
     }
 }
@@ -724,6 +767,11 @@ private fun ThreadMoreMenu(
     onSetSendDelaySeconds: (Int) -> Unit,
     deleteConversationAvailable: Boolean,
     onRequestDeleteConversation: () -> Unit,
+    spamSafety: ThreadSpamSafetyUiState,
+    onMarkSpam: () -> Unit,
+    onMarkNotSpam: () -> Unit,
+    onBlockSender: () -> Unit,
+    onUnblockSender: () -> Unit,
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
     var expanded by remember { mutableStateOf(false) }
@@ -783,6 +831,47 @@ private fun ThreadMoreMenu(
             onDismissRequest = { expanded = false },
             containerColor = visualTokens.menuSurface,
         ) {
+            if (spamSafety.actionsAvailable) {
+                DropdownMenuItem(
+                    modifier = Modifier.testTag(THREAD_SPAM_ACTION_TEST_TAG),
+                    enabled = !spamSafety.saving,
+                    text = {
+                        Text(
+                            stringResource(
+                                if (spamSafety.classificationSpam) {
+                                    R.string.mark_not_spam
+                                } else {
+                                    R.string.mark_as_spam
+                                },
+                            ),
+                            color = visualTokens.onIncoming,
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        if (spamSafety.classificationSpam) onMarkNotSpam() else onMarkSpam()
+                    },
+                )
+            }
+            if (spamSafety.blockAvailable) {
+                DropdownMenuItem(
+                    modifier = Modifier.testTag(THREAD_BLOCK_ACTION_TEST_TAG),
+                    enabled = !spamSafety.saving,
+                    text = {
+                        Text(
+                            stringResource(
+                                if (spamSafety.blocked) R.string.unblock_sender
+                                else R.string.block_sender,
+                            ),
+                            color = visualTokens.onIncoming,
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        if (spamSafety.blocked) onUnblockSender() else onBlockSender()
+                    },
+                )
+            }
             if (conversationAppearanceAvailable) {
                 DropdownMenuItem(
                     modifier = Modifier.testTag(THREAD_APPEARANCE_ACTION_TEST_TAG),
@@ -853,6 +942,38 @@ private fun ThreadMoreMenu(
                 },
             )
         }
+    }
+}
+
+@Composable
+private fun SpamSafetyBanner(state: ThreadSpamSafetyUiState) {
+    val reason = state.warningReason ?: return
+    val warning = reason == SpamSafetyReason.USER_MARKED_SPAM ||
+        reason == SpamSafetyReason.USER_BLOCKED ||
+        reason == SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST
+    if (!warning) return
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(THREAD_SPAM_WARNING_TEST_TAG),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+    ) {
+        Text(
+            text = when (reason) {
+                SpamSafetyReason.USER_MARKED_SPAM ->
+                    stringResource(R.string.user_marked_spam_reason)
+                SpamSafetyReason.USER_BLOCKED -> stringResource(R.string.user_blocked_reason)
+                SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST ->
+                    stringResource(R.string.suspicious_link_request_reason)
+                SpamSafetyReason.USER_MARKED_NOT_SPAM ->
+                    stringResource(R.string.user_marked_not_spam_reason)
+                SpamSafetyReason.SAVED_CONTACT -> stringResource(R.string.saved_contact_reason)
+            },
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
@@ -2040,6 +2161,10 @@ const val COMPOSER_SEND_TEST_TAG: String = "aurora-composer-send"
 const val COMPOSER_SCHEDULE_TEST_TAG: String = "aurora-composer-schedule"
 const val THREAD_SEND_DELAY_ACTION_TEST_TAG: String = "aurora-thread-send-delay"
 const val THREAD_DELETE_ACTION_TEST_TAG: String = "aurora-thread-delete"
+const val THREAD_SPAM_ACTION_TEST_TAG: String = "aurora-thread-spam-action"
+const val THREAD_BLOCK_ACTION_TEST_TAG: String = "aurora-thread-block-action"
+const val THREAD_SPAM_WARNING_TEST_TAG: String = "aurora-thread-spam-warning"
+const val CONFIRM_BLOCK_SENDER_TEST_TAG: String = "aurora-confirm-block-sender"
 const val CONFIRM_DELETE_MESSAGE_TEST_TAG: String = "aurora-confirm-delete-message"
 const val CONTINUE_DELETE_THREAD_TEST_TAG: String = "aurora-continue-delete-thread"
 const val CONFIRM_DELETE_THREAD_TEST_TAG: String = "aurora-confirm-delete-thread"

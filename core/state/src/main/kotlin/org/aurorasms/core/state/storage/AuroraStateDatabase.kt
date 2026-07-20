@@ -21,6 +21,7 @@ import androidx.room.RoomDatabase
         ScheduledSmsEntity::class,
         SendDelayEntity::class,
         PermanentDeletionEntity::class,
+        SpamSafetyDecisionEntity::class,
     ],
     version = AuroraStateDatabase.VERSION,
     exportSchema = true,
@@ -43,7 +44,9 @@ abstract class AuroraStateDatabase : RoomDatabase() {
 
     internal abstract fun permanentDeletionDao(): PermanentDeletionDao
 
+    internal abstract fun spamSafetyDecisionDao(): SpamSafetyDecisionDao
+
     companion object {
-        const val VERSION: Int = 11
+        const val VERSION: Int = 12
     }
 }

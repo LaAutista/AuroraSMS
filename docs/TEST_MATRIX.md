@@ -3384,6 +3384,78 @@ read, and no carrier SMS/MMS was submitted. Physical completion remains open
 until the owner explicitly grants AuroraSMS the SMS role and leaves it
 foreground-readable through verified completion.
 
+### Phase 6E local spam and provider-preserving blocking — 2026-07-19
+
+This source identifies as `0.6.6-phase6` (`versionCode` 17), retains index
+schema 3, advances durable state from schema 11 to 12, and implements ADR 0019.
+The migration adds one bounded `spam_safety_decisions` table with physical
+SQLite constraints for at most 256 rows, purpose-separated lowercase SHA-256
+keys, verified one-person blocks, meaningful states, and monotonic optimistic
+transitions. It stores no raw sender, participant, contact, body, snippet,
+keyword, or score.
+
+Automatic rules warn only for an unknown conventional phone sender whose newest
+incoming snippet contains a link, a reviewed urgency term, and a reviewed
+sensitive-request term. Contacts, short codes, alphanumeric senders, groups,
+outgoing messages, and incomplete identities are not automatically warned.
+Automatic rules pause when contact access is unavailable rather than treating
+an unresolved sender as unknown.
+User spam/not-spam and block/unblock choices are independent. Inbox and Thread
+show the exact reason, while Spam & blocked revalidates every stored row against
+the complete current index identity and exposes separate Not spam and Unblock
+recovery. Nothing is automatically hidden or deleted.
+
+The incoming blocking test proves the provider row is written and acknowledged
+while Aurora notification posting, contact resolution, reply-target ownership,
+and reminder scheduling are skipped. A lookup exception proves fail-open normal
+notification behavior. Migration/repository tests cover persistence, physical
+constraints, optimistic revisions, classification/block independence, clearing,
+and refusal to block a group. Compose acceptance covers Inbox warnings and
+route entry, Thread actions and explicit block confirmation, dedicated-route
+reasons, and independent recovery actions.
+
+The final complete offline host aggregate was `BUILD SUCCESSFUL` in 1m33s
+across all 886 Gradle tasks (50 executed, 836 up-to-date). All 587 host tests
+passed with zero failures, errors, or skips: app 284, design system 11,
+index 69, model 19, notifications 21, state 58, telephony 82, testing 24, and
+conversations 19. Debug, R8 release, benchmark, all lint variants, clean-room/
+private-art scans, dependency locks, permission and APK-content ledgers, and
+license gates passed.
+
+The complete API 36 matrix was `BUILD SUCCESSFUL` in 2m05s across 456 tasks.
+Authoritative XML reports 339 tests with 10 intentional environment-gated
+skips, 329 executed, and zero failures/errors: app 142/9 skips, benchmark 3/1,
+index 32/0, notifications 31/0, state 65/0, telephony 35/0, and conversations
+31/0. The complete API 26 matrix was `BUILD SUCCESSFUL` in 2m13s across 456
+tasks. It reports 342 tests with 13 intentional skips, 329 executed, and zero
+failures/errors: app 145/12 skips, benchmark 3/1, index 32/0, notifications
+31/0, state 65/0, telephony 35/0, and conversations 31/0. The focused full
+conversation UI class separately passed 31/31 on API 36.
+
+`bundleRelease` passed 269 tasks in 8s. CycloneDX 1.6 passed 15 tasks in 8s
+with 441 components, 442 dependency nodes, and no random serial number. The
+attempt to request bundle and SBOM in one Gradle invocation failed during task
+configuration before either task executed; each independent clean invocation
+then passed and is the acceptance evidence.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 15,216,441 | `a7d388c18af8582622fc8e1d446fd04b7cbc97dc1212f84ed3b7081af29ddb00` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,928,769 | `7eba04af5a1c020e4809094abb4de2523e49b7e662facef7d7df06c2c6127e0d` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,773,213 | `1a864861656911e21523c37b058ab76e07610482f594e482c6a46b704b29b782` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,966,424 | `f529efa8c9418d6dd5be4e3c1ba407b85cb8cd401c3d3b8cf1d21a03dacead91` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed with data preserved on the Pixel 8 and API 36
+emulator and was copied to `/sdcard/Download/AuroraSMS-debug.apk` on both. Both
+copies are 15,216,441 bytes and hash-match the host artifact. Both packages
+report version code 17/name `0.6.6-phase6`. The Pixel retained
+`org.fossify.messages.debug`; API 36 retained `com.android.messaging`.
+Aurora's SMS and notification permissions remain denied on both. No Activity
+launch was issued; both packages were left force-stopped and the final PID
+checks were empty. No live message/address/body was read and no
+carrier SMS/MMS was submitted.
+
 ## Remaining Phase 5 lifecycle/action matrix
 
 - [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
@@ -3430,7 +3502,7 @@ foreground-readable through verified completion.
 - [x] Global/per-thread signatures show segment/MMS impact before send. Exact
   signed text is frozen across immediate, delayed, and scheduled recovery;
   multipart and group transport continue to fail closed.
-- [ ] Spam rules are bounded, explainable, contacts-trusting by default, and
+- [x] Spam rules are bounded, explainable, contacts-trusting by default, and
   support unspam/unblock; suspected spam is never silently deleted.
 - [ ] Versioned streaming backup validates limits, paths, checksums,
   authentication/encryption, schema, and media before atomic import.

@@ -56,11 +56,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionEleven_hasBoundedStateTablesAndFrozenSignatures() {
+    fun schemaVersionTwelve_hasBoundedStateTablesSpamSafetyAndFrozenSignatures() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(11, AuroraStateDatabase.VERSION)
+            assertEquals(12, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -378,18 +378,41 @@ class StateSchemaCurrentTest {
                     "index_permanent_deletion_operations_due_timestamp_ms_deletion_id",
                 ),
             )
+            assertEquals(
+                setOf(
+                    "participant_set_key", "provider_thread_id", "single_sender_key",
+                    "classification_code", "blocked", "revision", "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("spam_safety_decisions"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "spam_safety_decisions",
+                    "index_spam_safety_decisions_provider_thread_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexNames("spam_safety_decisions")
+                    .contains("index_spam_safety_decisions_single_sender_key"),
+            )
         } finally {
             database.close()
         }
     }
 
     @Test
-    fun exportedVersionElevenStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedVersionTwelveStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'drafts'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'spam_safety_decisions'",
                 ).use { it.moveToFirst() },
             )
             assertTrue(

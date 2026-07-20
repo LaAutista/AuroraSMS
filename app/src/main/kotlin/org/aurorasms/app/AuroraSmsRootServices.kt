@@ -24,6 +24,17 @@ import org.aurorasms.core.index.conversation.ConversationRepository
 import org.aurorasms.core.index.timeline.ThreadTimelineRepository
 import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.core.state.ConversationSubscriptionPreferenceRepository
+import org.aurorasms.core.state.SpamSafetyRepository
+import org.aurorasms.core.state.SpamClassification
+import org.aurorasms.core.state.SpamSafetyDecision
+import org.aurorasms.core.state.SpamSafetyRepositoryResult
+import org.aurorasms.core.state.SpamSafetyRevision
+import org.aurorasms.core.state.SpamSafetyScope
+import org.aurorasms.core.state.SpamSafetySnapshot
+import org.aurorasms.core.state.SpamSafetyStorageOperation
+import org.aurorasms.core.model.ParticipantAddress
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import org.aurorasms.core.telephony.ContactCache
 import org.aurorasms.core.telephony.MmsAttachmentRepository
 import org.aurorasms.core.telephony.SubscriptionRepository
@@ -38,6 +49,8 @@ internal interface AuroraSmsRootServices {
     val subscriptionRepository: SubscriptionRepository
     val conversationSubscriptionPreferenceRepository:
         ConversationSubscriptionPreferenceRepository
+    val spamSafetyRepository: SpamSafetyRepository
+        get() = UnavailableRootSpamSafetyRepository
     val mmsAttachmentRepository: MmsAttachmentRepository
     val previewLoader: BoundedPreviewLoader
     val wallpaperController: WallpaperController?
@@ -67,6 +80,29 @@ internal interface AuroraSmsRootServices {
     fun releaseDraftWriter(writer: SerializedDraftWriter)
 }
 
+private object UnavailableRootSpamSafetyRepository : SpamSafetyRepository {
+    override val snapshots: Flow<SpamSafetySnapshot> = flowOf(SpamSafetySnapshot.Unavailable)
+
+    override suspend fun read(
+        scope: SpamSafetyScope,
+    ): SpamSafetyRepositoryResult<SpamSafetyDecision> =
+        SpamSafetyRepositoryResult.StorageFailure(SpamSafetyStorageOperation.READ)
+
+    override suspend fun set(
+        scope: SpamSafetyScope,
+        classification: SpamClassification,
+        blocked: Boolean,
+        expectedRevision: SpamSafetyRevision?,
+        updatedTimestampMillis: Long,
+    ): SpamSafetyRepositoryResult<SpamSafetyDecision?> =
+        SpamSafetyRepositoryResult.StorageFailure(SpamSafetyStorageOperation.WRITE)
+
+    override suspend fun isSenderBlocked(
+        sender: ParticipantAddress,
+    ): SpamSafetyRepositoryResult<Boolean> =
+        SpamSafetyRepositoryResult.StorageFailure(SpamSafetyStorageOperation.BLOCK_LOOKUP)
+}
+
 /** Production adapter; tests can provide bounded synthetic services without constructing [AppContainer]. */
 internal class AppContainerAuroraSmsRootServices(
     private val container: AppContainer,
@@ -84,6 +120,8 @@ internal class AppContainerAuroraSmsRootServices(
     override val conversationSubscriptionPreferenceRepository:
         ConversationSubscriptionPreferenceRepository
         get() = container.conversationSubscriptionPreferenceRepository
+    override val spamSafetyRepository: SpamSafetyRepository
+        get() = container.spamSafetyRepository
     override val mmsAttachmentRepository: MmsAttachmentRepository
         get() = container.mmsAttachmentRepository
     override val previewLoader: BoundedPreviewLoader

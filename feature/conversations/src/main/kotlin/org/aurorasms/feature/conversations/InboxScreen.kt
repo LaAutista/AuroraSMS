@@ -71,6 +71,7 @@ fun InboxScreen(
     onOpenConversation: (ProviderThreadId) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenSpamBlocked: () -> Unit = {},
     onOpenInboxAppearance: () -> Unit,
     onOpenConversationDefaults: () -> Unit,
     onOpenDiagnostics: () -> Unit,
@@ -85,6 +86,7 @@ fun InboxScreen(
     onSetNotificationReminderDelayMinutes: (Int) -> Unit = {},
     signaturesAvailable: Boolean = false,
     onOpenGlobalSignature: () -> Unit = {},
+    spamIndicators: Map<ProviderThreadId, SpamSafetyIndicator> = emptyMap(),
 ) {
     val visuals = LocalAuroraVisualTokens.current
     Box(
@@ -107,6 +109,7 @@ fun InboxScreen(
                             diagnosticsAvailable = diagnosticsAvailable,
                             contactsPermissionGranted = contactsPermissionGranted,
                             onOpenAppearance = onOpenAppearance,
+                            onOpenSpamBlocked = onOpenSpamBlocked,
                             onOpenInboxAppearance = onOpenInboxAppearance,
                             onOpenConversationDefaults = onOpenConversationDefaults,
                             onOpenDiagnostics = onOpenDiagnostics,
@@ -130,6 +133,7 @@ fun InboxScreen(
                         onAcceptPending = onAcceptPending,
                         onViewportChanged = onViewportChanged,
                         onAnchorRestored = onAnchorRestored,
+                        spamIndicators = spamIndicators,
                     )
                 }
             }
@@ -187,6 +191,7 @@ private fun InboxMoreMenu(
     diagnosticsAvailable: Boolean,
     contactsPermissionGranted: Boolean,
     onOpenAppearance: () -> Unit,
+    onOpenSpamBlocked: () -> Unit,
     onOpenInboxAppearance: () -> Unit,
     onOpenConversationDefaults: () -> Unit,
     onOpenDiagnostics: () -> Unit,
@@ -213,6 +218,14 @@ private fun InboxMoreMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
+            DropdownMenuItem(
+                modifier = Modifier.testTag(INBOX_SPAM_BLOCKED_ACTION_TEST_TAG),
+                text = { Text(stringResource(R.string.spam_and_blocked)) },
+                onClick = {
+                    expanded = false
+                    onOpenSpamBlocked()
+                },
+            )
             DropdownMenuItem(
                 modifier = Modifier.testTag(INBOX_APPEARANCE_ACTION_TEST_TAG),
                 text = { Text(stringResource(R.string.appearance)) },
@@ -335,6 +348,7 @@ private fun InboxReady(
     onAcceptPending: () -> Unit,
     onViewportChanged: (List<ConversationSummary>) -> Unit,
     onAnchorRestored: () -> Unit,
+    spamIndicators: Map<ProviderThreadId, SpamSafetyIndicator>,
 ) {
     val listState = rememberLazyListState()
     val items = state.window.items
@@ -427,6 +441,7 @@ private fun InboxReady(
                     ConversationRow(
                         summary = items[index],
                         contacts = state.contacts,
+                        spamIndicator = spamIndicators[items[index].providerThreadId],
                         onClick = { onOpenConversation(items[index].providerThreadId) },
                     )
                 }
@@ -451,6 +466,7 @@ private fun InboxReady(
 private fun ConversationRow(
     summary: ConversationSummary,
     contacts: Map<ParticipantAddress, ResolvedContact>,
+    spamIndicator: SpamSafetyIndicator?,
     onClick: () -> Unit,
 ) {
     val profile = LocalAuroraMaterialProfile.current
@@ -513,6 +529,16 @@ private fun ConversationRow(
                 )
             }
             Spacer(Modifier.height(3.dp))
+            if (spamIndicator?.warning == true) {
+                Text(
+                    text = spamIndicatorLabel(spamIndicator.reason),
+                    modifier = Modifier.testTag(INBOX_SPAM_WARNING_TEST_TAG),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(2.dp))
+            }
             Text(
                 text = summary.latestSnippet.orEmpty().ifBlank {
                     if (summary.latestAttachmentCount > 0) {
@@ -534,6 +560,16 @@ private fun ConversationRow(
             )
         }
     }
+}
+
+@Composable
+private fun spamIndicatorLabel(reason: SpamSafetyReason): String = when (reason) {
+    SpamSafetyReason.USER_MARKED_SPAM -> stringResource(R.string.user_marked_spam_reason)
+    SpamSafetyReason.USER_BLOCKED -> stringResource(R.string.user_blocked_reason)
+    SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST ->
+        stringResource(R.string.suspicious_link_request_reason)
+    SpamSafetyReason.USER_MARKED_NOT_SPAM -> stringResource(R.string.user_marked_not_spam_reason)
+    SpamSafetyReason.SAVED_CONTACT -> stringResource(R.string.saved_contact_reason)
 }
 
 @Composable
@@ -568,6 +604,8 @@ const val INBOX_SEARCH_ACTION_TEST_TAG: String = "aurora-inbox-search-action"
 const val INBOX_MORE_ACTION_TEST_TAG: String = "aurora-inbox-more-action"
 const val INBOX_SIGNATURE_ACTION_TEST_TAG: String = "aurora-inbox-signature-action"
 const val INBOX_APPEARANCE_ACTION_TEST_TAG: String = "aurora-inbox-appearance-action"
+const val INBOX_SPAM_BLOCKED_ACTION_TEST_TAG: String = "aurora-inbox-spam-blocked-action"
+const val INBOX_SPAM_WARNING_TEST_TAG: String = "aurora-inbox-spam-warning"
 const val INBOX_NOTIFICATION_REMINDER_ACTION_TEST_TAG: String =
     "aurora-inbox-notification-reminder-action"
 const val INBOX_SCOPE_APPEARANCE_ACTION_TEST_TAG: String = "aurora-inbox-scope-appearance-action"

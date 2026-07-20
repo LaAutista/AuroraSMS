@@ -34,6 +34,7 @@ class IncomingMessageOrchestrator(
     private val contactResolver: ContactResolver,
     private val messageNotifier: MessageNotifier,
     private val replyTargets: ReplyTargetRegistry,
+    private val isSenderBlocked: suspend (ParticipantAddress) -> Boolean = { false },
     private val notificationConfig: NotificationConfig = NotificationConfig(),
     private val onProviderInsertComplete: suspend () -> Unit = {},
     private val onIncomingNotificationCommitted: suspend (ProviderStoredMessage) -> Unit = {},
@@ -190,6 +191,20 @@ class IncomingMessageOrchestrator(
         subscriptionId: AuroraSubscriptionId?,
         stored: ProviderStoredMessage,
     ): IncomingPersistResult {
+        if (!roleState.isRoleHeld()) {
+            return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        val explicitlyBlocked = try {
+            isSenderBlocked(sender)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            // A block-store failure must fail open; it must not silently hide an incoming message.
+            false
+        }
+        if (explicitlyBlocked) {
+            return acknowledgeBlockedDelivery(deliveryFingerprint, stored)
+        }
         val displayName = contactResolver.resolve(listOf(sender))
             .singleOrNull()
             ?.displayNameOrAddress
@@ -290,6 +305,37 @@ class IncomingMessageOrchestrator(
                 )
                 IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
             }
+            ProviderAccessResult.PermissionDenied ->
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.PERMISSION_DENIED)
+            is ProviderAccessResult.InvalidInput ->
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.MALFORMED_INPUT)
+            is ProviderAccessResult.Unsupported,
+            is ProviderAccessResult.Unavailable ->
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.PROVIDER_UNAVAILABLE)
+        }
+    }
+
+    private suspend fun acknowledgeBlockedDelivery(
+        deliveryFingerprint: MessageDeliveryFingerprint,
+        stored: ProviderStoredMessage,
+    ): IncomingPersistResult {
+        if (!roleState.isRoleHeld()) {
+            return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        return when (
+            smsProvider.markIncomingHandled(
+                deliveryFingerprint = deliveryFingerprint,
+                providerId = stored.providerId,
+                conversationId = stored.conversationId,
+            )
+        ) {
+            is ProviderAccessResult.Success -> if (roleState.isRoleHeld()) {
+                IncomingPersistResult.Persisted(stored.providerId, stored.conversationId)
+            } else {
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+            }
+            ProviderAccessResult.RoleRequired ->
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
             ProviderAccessResult.PermissionDenied ->
                 IncomingPersistResult.Rejected(IncomingPersistResult.Reason.PERMISSION_DENIED)
             is ProviderAccessResult.InvalidInput ->

@@ -2,7 +2,8 @@
 
 # Phase 6 feature and privacy plan
 
-Status: active. Phase 5A through 5G are implemented and locally accepted. This
+Status: active. Phase 5A through 5G and Phase 6A through 6E are implemented and
+locally accepted. This
 plan sequences the remaining user-facing work into reviewable slices; it does
 not declare AuroraSMS complete or gold.
 
@@ -76,11 +77,26 @@ and API 36 emulator without changing either role, launching the app, reading
 live content, or submitting carrier traffic. Physical complete-history evidence
 still requires the owner's explicit default-SMS approval.
 
-### Phase 6E — local spam and blocking
+### Phase 6E — local spam and blocking — complete
 
 Implement bounded explainable rules, trust contacts by default, warn/highlight
 before any auto-hide policy, and provide spam/not-spam plus block/unblock. Never
 delete suspected spam and never use network reputation.
+
+ADR 0019 fixes the first safe policy at warn-only: automatic warnings require
+an unknown conventional phone sender plus a link, urgency term, and sensitive
+request term. Rules pause if contact trust cannot be verified. Explicit blocks
+suppress only Aurora notification/reply/reminder
+effects after provider storage; failures fail open and provider messages remain
+visible. Room schema 12 stores at most 256 purpose-separated, address-free user
+decisions and the Spam & blocked route revalidates exact identities before
+display or recovery.
+
+Acceptance passed on 2026-07-19: 587 host tests, the complete 886-task offline
+aggregate, 339 API 36 tests, and 342 API 26 tests all completed with zero
+failures or errors. Release bundle and deterministic CycloneDX 1.6 SBOM
+generation passed. No live message/address/body was inspected and no carrier
+traffic was submitted.
 
 ### Phase 6F — voice memo
 

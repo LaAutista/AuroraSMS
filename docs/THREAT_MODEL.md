@@ -3,9 +3,9 @@
 Status: Phase 0 baseline plus accepted ADR 0007 managed-wallpaper controls,
 implemented Phase 1 durable-message hardening through commit `7c9d848`, and the
 bounded ADR 0008 Phase 5A source implementation in commit `17fc421`, followed
-by accepted Phase 5B–5G controls and Phase 6A–6D presentation/action controls
-through ADR 0018 and Room schema 11. Local/API 26/API 36 acceptance passed
-through Phase 6D. Safe install/migration and locked-device cold launch passed
+by accepted Phase 5B–5G controls and Phase 6A–6E presentation/action controls
+through ADR 0019 and Room schema 12. Local/API 26/API 36 acceptance passed
+through Phase 6E. Safe install/migration and locked-device cold launch passed
 on a Pixel 8. Real-carrier, radio, billing,
 and invasive physical lifecycle evidence remains open.
 
@@ -402,13 +402,24 @@ denial of service, or unexplained blocking prevents recovery.
 Controls:
 
 - local, explainable, bounded rules; contacts trusted by default;
-- warn/highlight before auto-hide defaults are considered;
+- warn/highlight only; no automatic hide policy;
 - visible classification reasons and explicit spam/not-spam, block/unblock
   recovery;
 - never silently delete suspected spam;
 - normalize sender/rule input safely and test emergency/short/alphanumeric
   senders;
 - no remote reputation or network lookup.
+
+ADR 0019 resolves the Phase 6E defaults: automatic classification only warns
+an unknown conventional phone sender when a link, reviewed urgency term, and
+reviewed sensitive-request term all appear in the newest incoming snippet.
+Saved contacts, short codes, alphanumeric senders, groups, outgoing messages,
+and incomplete identities are not automatically warned. If contact access is
+unavailable, automatic rules pause instead of treating unresolved senders as
+unknown. There is no auto-hide
+policy. Explicit spam/not-spam and block/unblock decisions are independent and
+recoverable, and every dedicated-route row is revalidated against a complete
+exact current identity.
 
 ### T10: appearance/import spoofing and contrast failure
 
@@ -780,6 +791,28 @@ and hash-matched Download handoff passed on the Pixel 8 and API 36 emulator with
 their role holders and denied Aurora SMS permissions preserved. No app launch,
 live-content read, or carrier transmission was part of this evidence.
 
+Phase 6E treats false-positive suppression as the primary spam threat. ADR 0019
+stores at most 256 meaningful user decisions in schema 12 using
+purpose-separated participant/sender hashes and no raw address, body, snippet,
+contact, keyword, or score. Physical SQLite constraints enforce the bound,
+legal one-person blocks, and monotonic optimistic transitions. Incoming sender
+blocks are checked after provider storage and before contact resolution,
+notification, reply-target, or reminder effects. A match acknowledges the
+provider delivery without those Aurora effects; it never deletes or hides the
+provider row. Lookup failure fails open to normal notification, while corrupt
+state disables user controls instead of guessing. The feature adds no network,
+permission, reputation service, background worker, or carrier action.
+
+Phase 6E acceptance passed 587 host tests in the complete offline privacy and
+release aggregate, 339 API 36 connected tests with 10 intentional skips, and
+342 API 26 tests with 13; both connected matrices executed 329 tests with zero
+failures/errors. Release bundle and deterministic CycloneDX 1.6 SBOM generation
+passed. No live message/address/body was inspected and no carrier transmission
+was made. Safe exact-APK install and hash-matched Download handoff passed on the
+Pixel 8 and API 36 emulator while their non-Aurora role holders and denied
+Aurora messaging/notification permissions remained unchanged. No Activity
+launch was issued and the Pixel was left force-stopped.
+
 ## Open security decisions
 
 These do not block Phase 1 foundation unless explicitly named, but block their
@@ -790,6 +823,5 @@ feature's release:
 - physical OEM/Doze exact-alarm timing and revocation acceptance;
 - app-lock and secure-recents defaults/copy;
 - MMS PDU implementation/dependency audit;
-- final local spam rule set and auto-hide default;
 - optional SQLCipher hardened mode after measured FTS/migration impact;
 - artwork license and attribution.

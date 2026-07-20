@@ -18,12 +18,14 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
+import java.util.Locale
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
@@ -36,6 +38,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.net.toUri
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -79,7 +82,10 @@ import org.aurorasms.app.message.PermanentDeletionRecoveryReason
 import org.aurorasms.app.message.PermanentDeletionTargetKind
 import org.aurorasms.core.index.SearchAnchor
 import org.aurorasms.core.index.SearchHit
+import org.aurorasms.core.index.conversation.ConversationLookupResult
+import org.aurorasms.core.index.conversation.ConversationSummary
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
@@ -101,6 +107,14 @@ import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
 import org.aurorasms.core.state.ConversationSubscriptionScope
 import org.aurorasms.core.state.ScheduledSmsPrecision
 import org.aurorasms.core.state.resolveOutgoingBody
+import org.aurorasms.core.state.BlockedSenderKey
+import org.aurorasms.core.state.SpamClassification
+import org.aurorasms.core.state.SpamParticipantSetKey
+import org.aurorasms.core.state.SpamSafetyDecision
+import org.aurorasms.core.state.SpamSafetyRepositoryResult
+import org.aurorasms.core.state.SpamSafetyRevision
+import org.aurorasms.core.state.SpamSafetyScope
+import org.aurorasms.core.state.SpamSafetySnapshot
 import org.aurorasms.feature.conversations.ComposerScheduleState
 import org.aurorasms.feature.conversations.ComposerUiState
 import org.aurorasms.feature.conversations.ComposerSendState
@@ -117,6 +131,12 @@ import org.aurorasms.feature.conversations.ThreadUiState
 import org.aurorasms.feature.conversations.ConversationSubscriptionUiState
 import org.aurorasms.feature.conversations.PermanentDeletionTargetUiKind
 import org.aurorasms.feature.conversations.PermanentDeletionUiState
+import org.aurorasms.feature.conversations.SpamBlockedRow
+import org.aurorasms.feature.conversations.SpamBlockedScreen
+import org.aurorasms.feature.conversations.SpamBlockedUiState
+import org.aurorasms.feature.conversations.SpamSafetyIndicator
+import org.aurorasms.feature.conversations.SpamSafetyReason
+import org.aurorasms.feature.conversations.ThreadSpamSafetyUiState
 
 @Composable
 internal fun AuroraSmsRoot(
@@ -272,6 +292,7 @@ internal fun AuroraSmsRoot(
                 },
                 onOpenSearch = { push(AppRoute.Search()) },
                 onOpenAppearance = { push(AppRoute.Appearance) },
+                onOpenSpamBlocked = { push(AppRoute.SpamBlocked) },
                 onOpenDiagnostics = onOpenDiagnostics,
                 onRequestContactsPermission = onRequestContactsPermission,
                 onReady = {
@@ -289,6 +310,13 @@ internal fun AuroraSmsRoot(
                     saveableScreens.removeState(AppRoute.Appearance.saveableScreenKey())
                     pop()
                 },
+            )
+            AppRoute.SpamBlocked -> SpamBlockedRoute(
+                services = services,
+                appearance = appearance,
+                appearanceController = appearanceController,
+                onOpenConversation = { push(newThreadRoute(it)) },
+                onBack = ::pop,
             )
             is AppRoute.Search -> SearchRoute(
                 services = services,
@@ -317,6 +345,7 @@ internal fun AuroraSmsRoot(
                 scopedEditorDismissalGeneration = scopedEditorDismissalGeneration,
                 route = route,
                 context = context,
+                contactsPermissionGranted = contactsPermissionGranted,
                 onOpenSearch = { push(AppRoute.Search()) },
                 onBack = ::pop,
             )
@@ -336,6 +365,7 @@ private fun InboxRoute(
     onOpenConversation: (ProviderThreadId) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenSpamBlocked: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onRequestContactsPermission: () -> Unit,
     onReady: () -> Unit,
@@ -351,6 +381,9 @@ private fun InboxRoute(
     }
     DisposableEffect(holder) { onDispose(holder::close) }
     val state by holder.state.collectAsStateWithLifecycle()
+    val spamSnapshot by services.spamSafetyRepository.snapshots.collectAsStateWithLifecycle(
+        initialValue = SpamSafetySnapshot.Unavailable,
+    )
     LaunchedEffect(state is InboxUiState.Ready) {
         if (state is InboxUiState.Ready) {
             withFrameNanos { }
@@ -419,6 +452,7 @@ private fun InboxRoute(
             onOpenConversation = onOpenConversation,
             onOpenSearch = onOpenSearch,
             onOpenAppearance = onOpenAppearance,
+            onOpenSpamBlocked = onOpenSpamBlocked,
             onOpenInboxAppearance = {
                 editorScopeCode = AppearanceScreenScope.INBOX.storageCode
                 wallpaperEditorScopeCode = null
@@ -443,6 +477,11 @@ private fun InboxRoute(
             },
             signaturesAvailable = signatureSnapshot.available,
             onOpenGlobalSignature = { globalSignatureEditorOpen = true },
+            spamIndicators = inboxSpamIndicators(
+                state = state,
+                snapshot = spamSnapshot,
+                automaticRulesAllowed = contactsPermissionGranted,
+            ),
         )
         if (globalSignatureEditorOpen && signatureSnapshot.available) {
             GlobalMessageSignatureDialog(
@@ -562,6 +601,134 @@ private fun InboxRoute(
 }
 
 @Composable
+private fun SpamBlockedRoute(
+    services: AuroraSmsRootServices,
+    appearance: AppAppearanceState,
+    appearanceController: AppearanceController,
+    onOpenConversation: (ProviderThreadId) -> Unit,
+    onBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val snapshot by services.spamSafetyRepository.snapshots.collectAsStateWithLifecycle(
+        initialValue = SpamSafetySnapshot.Unavailable,
+    )
+    var invalidationEpoch by remember { mutableStateOf(0L) }
+    LaunchedEffect(services.conversationRepository) {
+        services.conversationRepository.invalidations.collect { invalidationEpoch += 1L }
+    }
+    val screenState by produceState<SpamBlockedUiState>(
+        initialValue = SpamBlockedUiState.Loading,
+        snapshot,
+        invalidationEpoch,
+    ) {
+        if (!snapshot.available) {
+            value = SpamBlockedUiState.Unavailable
+            return@produceState
+        }
+        value = try {
+            val verified = mutableListOf<Pair<SpamSafetyDecision, ConversationSummary>>()
+            for (decision in snapshot.decisions) {
+                if (verified.size >= org.aurorasms.feature.conversations.MAXIMUM_SPAM_BLOCKED_ROWS) break
+                if (decision.classification != SpamClassification.SPAM && !decision.blocked) continue
+                val found = services.conversationRepository
+                    .loadConversation(decision.scope.providerThreadId)
+                    as? ConversationLookupResult.Found
+                    ?: continue
+                val identity = found.verifiedIdentity ?: continue
+                val exactScope = spamSafetyScope(identity.providerThreadId, identity.participants)
+                    ?: continue
+                if (
+                    exactScope.participantSetKey != decision.scope.participantSetKey ||
+                    exactScope.singleSenderKey != decision.scope.singleSenderKey
+                ) {
+                    continue
+                }
+                verified += decision to found.summary
+            }
+            val addresses = verified.flatMap { (_, summary) -> summary.participants }.distinct()
+            val contacts = addresses.chunked(100)
+                .flatMap { services.contactCache.resolve(it) }
+                .associateBy { it.address }
+            SpamBlockedUiState.Ready(
+                verified
+                    .sortedByDescending { (_, summary) -> summary.latestTimestampMillis }
+                    .map { (decision, summary) ->
+                        SpamBlockedRow(
+                            summary = summary,
+                            contacts = summary.participants
+                                .mapNotNull { address -> contacts[address]?.let { address to it } }
+                                .toMap(),
+                            markedSpam = decision.classification == SpamClassification.SPAM,
+                            blocked = decision.blocked,
+                        )
+                    },
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            SpamBlockedUiState.Unavailable
+        }
+    }
+
+    fun mutate(
+        providerThreadId: ProviderThreadId,
+        transform: (SpamSafetyDecision) -> Pair<SpamClassification, Boolean>,
+    ) {
+        scope.launch {
+            val found = services.conversationRepository.loadConversation(providerThreadId)
+                as? ConversationLookupResult.Found
+                ?: return@launch
+            val identity = found.verifiedIdentity ?: return@launch
+            val trustedScope = spamSafetyScope(providerThreadId, identity.participants) ?: return@launch
+            val current = when (val result = services.spamSafetyRepository.read(trustedScope)) {
+                is SpamSafetyRepositoryResult.Success -> result.value
+                else -> {
+                    showSpamSafetySaveFailure(context)
+                    return@launch
+                }
+            }
+            val (classification, blocked) = transform(current)
+            val result = services.spamSafetyRepository.set(
+                scope = trustedScope,
+                classification = classification,
+                blocked = blocked,
+                expectedRevision = current.revision,
+                updatedTimestampMillis = nextSpamSafetyTimestamp(current),
+            )
+            if (result !is SpamSafetyRepositoryResult.Success) {
+                showSpamSafetySaveFailure(context)
+            }
+        }
+    }
+
+    val appearanceScope = remember { AppearanceScope.Screen(AppearanceScreenScope.SPAM_BLOCKED) }
+    val overrideObservation by remember(appearanceController, appearanceScope) {
+        appearanceController.observeOverride(appearanceScope)
+    }.collectAsStateWithLifecycle(
+        initialValue = AppAppearanceOverrideObservation.loading(appearanceScope),
+    )
+    AuroraMaterialTheme(
+        profile = appearance.profileFor(
+            overrideObservation.overrideFor(appearanceScope),
+            appearance.activeProfile,
+        ),
+    ) {
+        SpamBlockedScreen(
+            state = screenState,
+            onBack = onBack,
+            onOpenConversation = onOpenConversation,
+            onMarkNotSpam = { threadId ->
+                mutate(threadId) { decision -> SpamClassification.NOT_SPAM to decision.blocked }
+            },
+            onUnblock = { threadId ->
+                mutate(threadId) { decision -> decision.classification to false }
+            },
+        )
+    }
+}
+
+@Composable
 private fun SearchRoute(
     services: AuroraSmsRootServices,
     route: AppRoute.Search,
@@ -612,6 +779,7 @@ private fun ThreadRoute(
     scopedEditorDismissalGeneration: Long,
     route: AppRoute.Thread,
     context: Context,
+    contactsPermissionGranted: Boolean,
     onOpenSearch: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -630,6 +798,64 @@ private fun ThreadRoute(
     }
     DisposableEffect(holder) { onDispose(holder::close) }
     val threadState by holder.state.collectAsStateWithLifecycle()
+    val spamSnapshot by services.spamSafetyRepository.snapshots.collectAsStateWithLifecycle(
+        initialValue = SpamSafetySnapshot.Unavailable,
+    )
+    val spamScope = remember(route.providerThreadId, threadState) {
+        trustedSpamSafetyScope(route.providerThreadId, threadState)
+    }
+    val spamDecision = spamScope?.let { trustedScope ->
+        spamSnapshot.decisionFor(trustedScope.participantSetKey)?.takeIf { decision ->
+            decision.scope.providerThreadId == trustedScope.providerThreadId &&
+                decision.scope.singleSenderKey == trustedScope.singleSenderKey
+        }
+    }
+    var spamSaving by remember(spamScope) { mutableStateOf(false) }
+    val spamWarningReason = threadSpamSafetyReason(
+        ready = threadState as? ThreadUiState.Ready,
+        decision = spamDecision,
+        automaticRulesAllowed = contactsPermissionGranted,
+    )
+    val spamSafetyUi = ThreadSpamSafetyUiState(
+        storageAvailable = spamSnapshot.available,
+        actionsAvailable = spamSnapshot.available && spamScope != null,
+        blockAvailable = spamSnapshot.available && spamScope?.singleSenderKey != null,
+        classificationSpam = spamDecision?.classification == SpamClassification.SPAM,
+        classificationNotSpam = spamDecision?.classification == SpamClassification.NOT_SPAM,
+        blocked = spamDecision?.blocked == true,
+        warningReason = spamWarningReason,
+        saving = spamSaving,
+    )
+
+    fun updateSpamSafety(classification: SpamClassification, blocked: Boolean) {
+        val trustedScope = spamScope ?: return
+        if (spamSaving || !spamSnapshot.available) return
+        spamSaving = true
+        scope.launch {
+            try {
+                val current = when (val result = services.spamSafetyRepository.read(trustedScope)) {
+                    is SpamSafetyRepositoryResult.Success -> result.value
+                    SpamSafetyRepositoryResult.NotFound -> null
+                    else -> {
+                        showSpamSafetySaveFailure(context)
+                        return@launch
+                    }
+                }
+                val updated = services.spamSafetyRepository.set(
+                    scope = trustedScope,
+                    classification = classification,
+                    blocked = blocked,
+                    expectedRevision = current?.revision,
+                    updatedTimestampMillis = nextSpamSafetyTimestamp(current),
+                )
+                if (updated !is SpamSafetyRepositoryResult.Success) {
+                    showSpamSafetySaveFailure(context)
+                }
+            } finally {
+                spamSaving = false
+            }
+        }
+    }
     val signatureStore = services.messageSignaturePreferenceStore
     val signatureSnapshot by signatureStore.snapshot.collectAsStateWithLifecycle()
     val signatureConversationKey = remember(route.providerThreadId, threadState) {
@@ -1238,6 +1464,31 @@ private fun ThreadRoute(
                     }
                 }
             },
+            spamSafety = spamSafetyUi,
+            onMarkSpam = {
+                updateSpamSafety(
+                    classification = SpamClassification.SPAM,
+                    blocked = spamDecision?.blocked == true,
+                )
+            },
+            onMarkNotSpam = {
+                updateSpamSafety(
+                    classification = SpamClassification.NOT_SPAM,
+                    blocked = spamDecision?.blocked == true,
+                )
+            },
+            onBlockSender = {
+                updateSpamSafety(
+                    classification = spamDecision?.classification ?: SpamClassification.NEUTRAL,
+                    blocked = true,
+                )
+            },
+            onUnblockSender = {
+                updateSpamSafety(
+                    classification = spamDecision?.classification ?: SpamClassification.NEUTRAL,
+                    blocked = false,
+                )
+            },
         )
         if (
             conversationSignatureEditorOpen &&
@@ -1371,6 +1622,146 @@ private fun ThreadRoute(
         }
     }
 }
+
+private fun inboxSpamIndicators(
+    state: InboxUiState,
+    snapshot: SpamSafetySnapshot,
+    automaticRulesAllowed: Boolean,
+): Map<ProviderThreadId, SpamSafetyIndicator> {
+    val ready = state as? InboxUiState.Ready ?: return emptyMap()
+    return ready.window.items.mapNotNull { summary ->
+        val trustedScope = spamSafetyScope(summary, ready.coverage.verifiedComplete)
+            ?: return@mapNotNull null
+        val decision = snapshot.decisionFor(trustedScope.participantSetKey)?.takeIf {
+            it.scope.providerThreadId == trustedScope.providerThreadId &&
+                it.scope.singleSenderKey == trustedScope.singleSenderKey
+        }
+        spamSafetyReason(
+            summary = summary,
+            contacts = ready.contacts,
+            decision = decision,
+            automaticRulesAllowed = automaticRulesAllowed,
+        )?.let { reason ->
+            summary.providerThreadId to SpamSafetyIndicator(
+                reason = reason,
+                warning = reason == SpamSafetyReason.USER_MARKED_SPAM ||
+                    reason == SpamSafetyReason.USER_BLOCKED ||
+                    reason == SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST,
+            )
+        }
+    }.toMap()
+}
+
+private fun threadSpamSafetyReason(
+    ready: ThreadUiState.Ready?,
+    decision: SpamSafetyDecision?,
+    automaticRulesAllowed: Boolean,
+): SpamSafetyReason? {
+    val state = ready ?: return null
+    val summary = state.conversation ?: return null
+    return spamSafetyReason(summary, state.contacts, decision, automaticRulesAllowed)
+}
+
+internal fun spamSafetyReason(
+    summary: ConversationSummary,
+    contacts: Map<ParticipantAddress, org.aurorasms.core.telephony.ResolvedContact>,
+    decision: SpamSafetyDecision?,
+    automaticRulesAllowed: Boolean = true,
+): SpamSafetyReason? {
+    if (decision?.blocked == true) return SpamSafetyReason.USER_BLOCKED
+    when (decision?.classification) {
+        SpamClassification.SPAM -> return SpamSafetyReason.USER_MARKED_SPAM
+        SpamClassification.NOT_SPAM -> return SpamSafetyReason.USER_MARKED_NOT_SPAM
+        SpamClassification.NEUTRAL,
+        null,
+        -> Unit
+    }
+    if (!automaticRulesAllowed) return null
+    val address = summary.participants.singleOrNull() ?: return null
+    val contact = contacts[address] ?: return null
+    if (!contact.displayName.isNullOrBlank()) return SpamSafetyReason.SAVED_CONTACT
+    if (summary.latestDirection != MessageDirection.INCOMING) return null
+    if (address.value.any(Char::isLetter) || address.value.count(Char::isDigit) < 10) return null
+    val body = summary.latestSnippet?.lowercase(Locale.ROOT).orEmpty()
+    val hasLink = body.contains("https://") || body.contains("http://") || body.contains("www.")
+    val urgent = SPAM_URGENCY_TERMS.any(body::contains)
+    val request = SPAM_REQUEST_TERMS.any(body::contains)
+    return SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST.takeIf { hasLink && urgent && request }
+}
+
+private fun trustedSpamSafetyScope(
+    providerThreadId: ProviderThreadId,
+    state: ThreadUiState,
+): SpamSafetyScope? {
+    val ready = state as? ThreadUiState.Ready ?: return null
+    if (!ready.verifiedConversationIdentityResolved) return null
+    val identity = ready.verifiedConversationIdentity ?: return null
+    if (
+        !ready.coverage.verifiedComplete ||
+        identity.providerThreadId != providerThreadId ||
+        identity.generationId != ready.coverage.generationId
+    ) {
+        return null
+    }
+    return spamSafetyScope(identity.providerThreadId, identity.participants)
+}
+
+private fun spamSafetyScope(
+    summary: ConversationSummary,
+    coverageVerifiedComplete: Boolean,
+): SpamSafetyScope? {
+    if (
+        !coverageVerifiedComplete || summary.participantsTruncated ||
+        summary.indexedParticipantCount != summary.participants.size ||
+        summary.participants.isEmpty()
+    ) {
+        return null
+    }
+    return spamSafetyScope(summary.providerThreadId, summary.participants)
+}
+
+private fun spamSafetyScope(
+    providerThreadId: ProviderThreadId,
+    participants: List<ParticipantAddress>,
+): SpamSafetyScope? = runCatching {
+    SpamSafetyScope(
+        participantSetKey = SpamParticipantSetKey.fromParticipants(participants),
+        providerThreadId = providerThreadId,
+        singleSenderKey = participants.singleOrNull()?.let(BlockedSenderKey::fromSender),
+    )
+}.getOrNull()
+
+private fun nextSpamSafetyTimestamp(current: SpamSafetyDecision?): Long =
+    System.currentTimeMillis().coerceAtLeast((current?.updatedTimestampMillis ?: -1L) + 1L)
+
+private fun showSpamSafetySaveFailure(context: Context) {
+    Toast.makeText(
+        context,
+        org.aurorasms.feature.conversations.R.string.spam_setting_save_failed,
+        Toast.LENGTH_LONG,
+    ).show()
+}
+
+private val SPAM_URGENCY_TERMS = listOf(
+    "urgent",
+    "immediately",
+    "act now",
+    "final notice",
+    "suspended",
+    "expires",
+    "verify now",
+)
+private val SPAM_REQUEST_TERMS = listOf(
+    "account",
+    "password",
+    "login",
+    "payment",
+    "bank",
+    "card",
+    "gift card",
+    "security code",
+    "click",
+)
 
 internal fun trustedConversationAppearanceScope(
     providerThreadId: ProviderThreadId,
@@ -1795,6 +2186,7 @@ private fun launchSystemDialer(context: Context, address: ParticipantAddress) {
 private fun AppRoute.saveableScreenKey(): String = when (this) {
     AppRoute.Inbox -> "inbox"
     AppRoute.Appearance -> "appearance"
+    AppRoute.SpamBlocked -> "spam-blocked"
     is AppRoute.Search -> "search"
     is AppRoute.Thread -> "thread-entry-$stateEntryId"
 }
@@ -1861,6 +2253,7 @@ private fun saveRoute(route: AppRoute): Bundle = Bundle().apply {
     when (route) {
         AppRoute.Inbox -> putString(ROUTE_TYPE_KEY, ROUTE_INBOX)
         AppRoute.Appearance -> putString(ROUTE_TYPE_KEY, ROUTE_APPEARANCE)
+        AppRoute.SpamBlocked -> putString(ROUTE_TYPE_KEY, ROUTE_SPAM_BLOCKED)
         is AppRoute.Search -> {
             putString(ROUTE_TYPE_KEY, ROUTE_SEARCH)
             putString(ROUTE_QUERY_KEY, route.query)
@@ -1882,6 +2275,7 @@ private fun restoreRoute(bundle: Bundle): AppRoute? = try {
     when (bundle.getString(ROUTE_TYPE_KEY)) {
         ROUTE_INBOX -> AppRoute.Inbox
         ROUTE_APPEARANCE -> AppRoute.Appearance
+        ROUTE_SPAM_BLOCKED -> AppRoute.SpamBlocked
         ROUTE_SEARCH -> AppRoute.Search(bundle.getString(ROUTE_QUERY_KEY).orEmpty())
         ROUTE_THREAD -> {
             val threadId = ProviderThreadId(bundle.getLong(ROUTE_THREAD_ID_KEY))
@@ -1931,6 +2325,7 @@ private const val SAVED_DRAFT_ID_KEY: String = "draft_id"
 private const val SAVED_DRAFT_REVISION_KEY: String = "draft_revision"
 private const val ROUTE_INBOX: String = "inbox"
 private const val ROUTE_APPEARANCE: String = "appearance"
+private const val ROUTE_SPAM_BLOCKED: String = "spam_blocked"
 private const val ROUTE_SEARCH: String = "search"
 private const val ROUTE_THREAD: String = "thread"
 private const val INVALID_SAVED_ID: Long = -1L
