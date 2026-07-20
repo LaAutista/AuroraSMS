@@ -887,8 +887,20 @@ IDs, subjects, text, or binary data. The wrapper accepts only HTTPS/HTTP
 notification locations and concrete non-DRM part MIME types. It performs no
 network, provider, notification, acknowledgement, or media-decode action.
 Durable download/callback/provider ownership remains a closed gate, so the app
-entry points still reject incoming MMS after this codec-only
-foundation.
+entry points remain closed until a separate durable handoff is accepted.
+
+Phase 7D ADR 0025 opens that handoff through a dedicated incoming-operation
+namespace and a checksummed metadata-only journal. The platform call is preceded
+by a durable `SUBMITTING` checkpoint, and startup converts that checkpoint to
+`SUBMISSION_UNKNOWN` without resubmitting. A private callback must match the
+exact operation and staged filename. Provider persistence is idempotent and
+parts-first with app-owned partial-row cleanup; notification acknowledgement is
+the only successful owner of final journal and file removal. Startup may replay
+bounded provider/notification work but never carrier retrieval. Group quick
+reply remains disabled, the active line is used only ephemerally to exclude self
+from Thread identity, and diagnostics redact all carrier/message identity and
+content. Physical carrier/OEM, SIM-number availability, roaming/billing, and
+malicious-carrier acceptance remain open.
 
 ## Open security decisions
 
@@ -899,8 +911,8 @@ feature's release:
   and user-recovery acceptance for ADR 0022's implemented archive protocol;
 - physical OEM/Doze exact-alarm timing and revocation acceptance;
 - app-lock and secure-recents defaults/copy;
-- incoming MMS download/provider ownership, general/group composition, and
-  carrier/OEM/roaming/billing audit beyond ADR 0021 and ADR 0024's bounded
-  codec-only surfaces;
+- physical incoming MMS carrier/OEM/SIM-line/roaming/billing audit beyond ADR
+  0024/0025's bounded synthetic codec and durable handoff, plus general/group
+  outgoing composition;
 - optional SQLCipher hardened mode after measured FTS/migration impact;
 - artwork license and attribution.

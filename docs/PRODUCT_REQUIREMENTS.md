@@ -731,9 +731,18 @@ The retrieved result preserves bounded sender/TO/CC group identity, subject,
 timestamp, UTF-8 or declared-charset plain text, and defensively copied opaque
 parts without media decode. API 26/API 36 synthetic tests cover complete notification
 and group-retrieve fixtures, every truncation, 1,024 deterministic hostile
-inputs, redaction/immutability, and part/URL/size limits. This foundation does
-not yet authorize download, provider insertion, acknowledgement, notification,
-general/group composition, or carrier traffic; those release gates remain open.
+inputs, redaction/immutability, and part/URL/size limits.
+
+ADR 0025 and implementation commit `260fd18` now authorize the synthetic
+download-to-provider-to-notification handoff behind a dedicated content-free
+operation namespace and bounded metadata journal. `SUBMITTING` is durable before
+the platform call, an uncertain submission is never retried, callbacks must own
+the exact staged file, and provider parts/message/addresses commit atomically or
+are cleaned. Notification acknowledgement owns final journal/file removal, and
+startup may replay only provider/notification completion. Group MMS never gains
+an SMS quick-reply path. Eight focused end-to-end cases pass on API 26 and API
+36 without live provider or carrier traffic. General/group outgoing composition
+and physical carrier/OEM incoming acceptance remain release gates.
 
 ## AuroraMaterial requirements
 

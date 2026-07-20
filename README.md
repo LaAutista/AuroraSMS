@@ -21,9 +21,20 @@ the AAB SHA-256 is
 `349ea4f6a1be6f348cbd54c64bdf06e3fe56f7bc13f1eaef2aa4d807d7a86b1b`.
 All 636 host tests and the 978-task governed aggregate pass. The exact release
 and gold checklist is in [the Phase 7 plan](docs/PHASE_7_RELEASE_PLAN.md).
-Signing, a complete nonempty physical-provider scan, general/incoming/group MMS,
-physical/OEM/carrier/accessibility/performance/Android Auto acceptance, and the
-final F-Droid build recipe remain open. AuroraSMS is not gold.
+Signing, a complete nonempty physical-provider scan, general/group outgoing MMS,
+physical incoming-MMS and OEM/carrier/accessibility/performance/Android Auto
+acceptance, and the final F-Droid build recipe remain open. AuroraSMS is not
+gold.
+
+Incoming MMS implementation commit
+`260fd18522a31b7bce4c4e6dbfbac99c9c83fecd` completes ADR 0025's
+metadata-only crash journal, duplicate WAP suppression, exact staged-file
+callback, bounded RetrieveConf projection, atomic idempotent provider write,
+group-aware notification acknowledgement, and startup replay without carrier
+resubmission. Eight synthetic end-to-end cases pass on both API 26 and API 36;
+provider failure is deferred with the authenticated PDU retained. No live
+provider read, role change, carrier download, or message-content capture was
+used. Physical carrier receive remains open.
 
 The 2026-07-20 Phase 6H implementation identifies as `0.6.10-phase6`
 (`versionCode` 21) and implements ADR 0023. AuroraSMS now advertises Android

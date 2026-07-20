@@ -3934,10 +3934,46 @@ transport scheme, and an over-limit advertisement returned without an uncaught
 exception and failed closed where required. No live provider or message data
 was read, no role or permission changed, and no carrier operation was issued.
 
-This is codec-boundary evidence only. Durable notification/download/callback
-ownership, atomic provider rows/addresses/parts, acknowledgement/notification,
-general/group outgoing composition, and carrier acceptance
-remain open. AuroraSMS is not gold.
+This is codec-boundary evidence only; ADR 0025 records the later durable
+download/provider/notification integration. General/group outgoing composition
+and carrier acceptance remain open. AuroraSMS is not gold.
+
+### Phase 7D crash-safe incoming MMS handoff — 2026-07-20
+
+Implementation commit `260fd18522a31b7bce4c4e6dbfbac99c9c83fecd`
+completes ADR 0025's synthetic incoming receive path. One dedicated pending-
+operation namespace owns a maximum-128-entry checksummed metadata journal; the
+raw carrier URL, addresses, subject, body, and attachment bytes never enter it.
+`SUBMITTING` commits before `SmsManager.downloadMultimediaMessage`, duplicate
+notifications return the existing owner, and startup never reissues an unknown
+platform submission.
+
+The exact private callback and staged filename gate bounded RetrieveConf decode.
+Projection preserves TO/CC provider rows, removes the active line from group
+Thread identity when available, and caps aggregate plain text. Parts, Inbox
+message, FROM/TO/CC addresses, and final validation form one idempotent provider
+transaction with exact app-owned cleanup. Provider success is journaled before
+the app requests indexing and a group-aware notification; group MMS exposes no
+SMS reply action. Exact notification acknowledgement owns journal and staging-
+file removal, while startup can replay only retained provider/notification work.
+
+Acceptance evidence:
+
+- the complete host `testDebugUnitTest` aggregate passed;
+- eight focused synthetic submission/recovery cases passed on both API 26 and
+  API 36, including WAP replay suppression, platform uncertainty, provider
+  exception deferral, group projection, post-persistence restart, two-pass
+  no-resubmission recovery, and pre-platform staged-file cleanup;
+- the previously admitted decoder corpus, journal/staging, and API 36 atomic
+  fake-provider suites remain green;
+- `:core:telephony:lintDebug`, `:app:lintDebug`, `verifyCleanRoom`,
+  `verifyPrivateAssets`, and `verifyDependencies` passed; and
+- no Pixel/live provider read, role or permission change, carrier operation,
+  address/body capture, or broad log was used.
+
+Physical carrier/OEM receive, group self-line behavior where the SIM does not
+publish its number, media presentation, and process-death acceptance remain
+open. General/group outgoing MMS is not implemented. AuroraSMS is not gold.
 
 ## Release gate
 

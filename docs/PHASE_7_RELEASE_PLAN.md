@@ -17,7 +17,8 @@ green. The following boundaries remain open and prevent a gold claim:
 
 - a complete provider scan on the owner's nonempty Pixel history after one
   deliberate Aurora-default, foreground-readable session;
-- general incoming MMS decoding and provider persistence;
+- physical incoming MMS carrier/OEM acceptance, including reliable group
+  self-line resolution;
 - general one-person and group MMS composition/submission without SMS fan-out;
 - physical carrier SMS/MMS, dual-SIM, roaming/billing, OEM notification,
   lockscreen, picker, alarm, backup, and Android Auto/DHU acceptance;
@@ -73,7 +74,7 @@ provider access. It does not authorize a carrier send.
 
 - [x] Admit a bounded incoming WSP/MMS decoder from an approved, immutable,
   noticed source or a separately reviewed original implementation.
-- [ ] Persist notification-indication/download/retrieve results atomically with
+- [x] Persist notification-indication/download/retrieve results atomically with
   bounded addresses, text, SMIL, and supported media parts.
 - [ ] Add a general outgoing `SendReq` composer for one-person and group MMS,
   including subject and reviewed attachment types.
@@ -84,9 +85,11 @@ provider access. It does not authorize a carrier send.
 - [ ] Pass approved physical one-person and group MMS send/receive cases.
 
 The existing ADR 0021 voice-memo path remains a narrow one-person outgoing
-subset. ADR 0024 and its initial API 26/API 36 synthetic corpus admit the incoming
-codec boundary only; they are not evidence for provider/download integration,
-general/group composition, or carrier behavior.
+subset. ADR 0024 admits the incoming codec; ADR 0025 and implementation commit
+`260fd18522a31b7bce4c4e6dbfbac99c9c83fecd` add the metadata-only download
+journal, authenticated callback, atomic provider transaction, notification
+acknowledgement, and no-resubmission startup recovery. This synthetic evidence
+is not general/group outgoing composition or physical carrier behavior.
 
 ## Workstream 7E: physical and platform hardening
 
