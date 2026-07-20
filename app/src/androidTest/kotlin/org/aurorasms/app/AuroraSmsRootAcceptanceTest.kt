@@ -136,6 +136,7 @@ import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
@@ -189,6 +190,7 @@ import org.aurorasms.core.telephony.SubscriptionSnapshot
 import org.aurorasms.feature.conversations.AttachmentPreviewResult
 import org.aurorasms.feature.conversations.BoundedPreviewLoader
 import org.aurorasms.feature.conversations.COMPOSER_SEND_TEST_TAG
+import org.aurorasms.feature.conversations.COMPOSER_SCHEDULE_TEST_TAG
 import org.aurorasms.feature.conversations.COMPOSER_TEST_TAG
 import org.aurorasms.feature.conversations.CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG
 import org.aurorasms.feature.conversations.INBOX_MORE_ACTION_TEST_TAG
@@ -208,6 +210,7 @@ import org.junit.After
 import org.junit.Assume.assumeTrue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -381,7 +384,7 @@ class AuroraSmsRootAcceptanceTest {
     }
 
     @Test
-    fun groupThreadKeepsComposerVisibleButCannotEnterAnySmsSendPath() {
+    fun groupThreadRoutesOneDurablyOwnedMmsWithoutSmsFanout() {
         val groupParticipants = SYNTHETIC_VERIFIED_PARTICIPANTS.take(3)
         val groupIdentity = SYNTHETIC_SEND_VERIFIED_IDENTITY.copy(participants = groupParticipants)
         val sendController = RecordingUnknownThreadSmsSendController()
@@ -400,9 +403,22 @@ class AuroraSmsRootAcceptanceTest {
             openSyntheticThread()
             compose.onNodeWithTag(COMPOSER_TEST_TAG)
                 .performTextReplacement("Synthetic group text")
-            waitForDisplayedText("Group sending requires MMS and is not available yet.")
-            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
-            assertEquals(0, sendController.sendCount)
+            waitForDisplayedText("Draft saved locally · MMS")
+            compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).assertIsNotEnabled()
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG)
+                .assertIsEnabled()
+                .performClick()
+
+            compose.waitUntil(TIMEOUT_MILLIS) { sendController.sendCount == 1 }
+            val command = sendController.commandsSnapshot().single()
+            assertEquals(groupIdentity, command.identity)
+            assertEquals(SYNTHETIC_SEND_SUBSCRIPTION.id, command.subscriptionId)
+            assertEquals(MessageTransportKind.MMS, command.transport)
+            assertTrue(command.attachments.isEmpty())
+
+            sendController.releaseAsSubmissionUnknown()
+            waitForDisplayedText("Send status unknown. Check the conversation before trying again.")
+            assertEquals(1, sendController.sendCount)
         }
     }
 
