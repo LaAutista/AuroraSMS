@@ -25,6 +25,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -54,6 +55,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import org.aurorasms.core.index.conversation.ConversationSummary
 import org.aurorasms.core.designsystem.AuroraBackdrop
 import org.aurorasms.core.designsystem.AuroraGlyph
+import org.aurorasms.core.designsystem.AuroraGlyphIcon
 import org.aurorasms.core.designsystem.AuroraIconAction
 import org.aurorasms.core.designsystem.LocalAuroraMaterialProfile
 import org.aurorasms.core.designsystem.LocalAuroraMaterialTokens
@@ -83,6 +85,7 @@ fun InboxScreen(
     onAcceptPending: () -> Unit,
     onViewportChanged: (List<ConversationSummary>) -> Unit,
     onAnchorRestored: () -> Unit,
+    onOpenNewChat: () -> Unit = {},
     notificationReminderDelayMinutes: Int = 0,
     onSetNotificationReminderDelayMinutes: (Int) -> Unit = {},
     signaturesAvailable: Boolean = false,
@@ -140,6 +143,27 @@ fun InboxScreen(
                 }
             }
         }
+        ExtendedFloatingActionButton(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+                .testTag(INBOX_NEW_CHAT_ACTION_TEST_TAG),
+            onClick = onOpenNewChat,
+            containerColor = visuals.elevatedSurface,
+            contentColor = visuals.onIncoming,
+            icon = {
+                AuroraGlyphIcon(
+                    glyph = AuroraGlyph.ADD,
+                    tint = visuals.cyan,
+                )
+            },
+            text = {
+                Text(
+                    text = stringResource(R.string.new_chat),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            },
+        )
     }
 }
 
@@ -443,7 +467,7 @@ private fun InboxReady(
                     .fillMaxSize()
                     .testTag(INBOX_LIST_TEST_TAG),
                 state = listState,
-                contentPadding = PaddingValues(bottom = 16.dp),
+                contentPadding = PaddingValues(bottom = INBOX_NEW_CHAT_CLEARANCE),
             ) {
                 items(
                     count = items.size,
@@ -625,12 +649,14 @@ const val CONVERSATION_DEFAULTS_APPEARANCE_ACTION_TEST_TAG: String =
     "aurora-conversation-defaults-appearance-action"
 const val INBOX_LIST_TEST_TAG: String = "aurora-inbox-list"
 const val INBOX_ROW_TEST_TAG: String = "aurora-inbox-row"
+const val INBOX_NEW_CHAT_ACTION_TEST_TAG: String = "aurora-inbox-new-chat-action"
 private const val VIEWPORT_PREFETCH_ROWS: Int = 10
 private val REMINDER_DELAY_MINUTES = listOf(0, 15, 60, 180)
 private val INBOX_SEARCH_BAR_HEIGHT = 56.dp
 private val SEARCH_OUTLINE_WIDTH = 1.5.dp
 private val AVATAR_RING_WIDTH = 2.dp
 private val MINIMUM_INBOX_ROW_VERTICAL_PADDING = 8.dp
+private val INBOX_NEW_CHAT_CLEARANCE = 104.dp
 private const val SEARCH_SURFACE_ALPHA: Float = 0.92f
 private const val SEARCH_OUTLINE_ALPHA: Float = 0.92f
 private const val AVATAR_SURFACE_ALPHA: Float = 0.90f

@@ -101,6 +101,8 @@ import org.aurorasms.app.appearance.wallpaper.wallpaperDerivativeFileName
 import org.aurorasms.app.compose.ComposeMessageActivity
 import org.aurorasms.app.drafts.DraftRestorationToken
 import org.aurorasms.app.drafts.SerializedDraftWriter
+import org.aurorasms.app.drafts.SerializedDraftWriterLease
+import org.aurorasms.app.drafts.SerializedDraftWriterPool
 import org.aurorasms.app.message.ThreadSmsRecoveryResult
 import org.aurorasms.app.message.ThreadSmsSendAttempt
 import org.aurorasms.app.message.ThreadSmsSendCommand
@@ -173,6 +175,7 @@ import org.aurorasms.core.state.DraftAttachment
 import org.aurorasms.core.state.DraftAttachmentRepository
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftIdentity
+import org.aurorasms.core.state.DraftParticipantSetKey
 import org.aurorasms.core.state.DraftRepository
 import org.aurorasms.core.state.DraftRepositoryResult
 import org.aurorasms.core.state.DraftRevision
@@ -537,18 +540,637 @@ class AuroraSmsRootAcceptanceTest {
     @Test
     fun externalActionSendToComposeRemainsReviewOnlyWithSendDisabled() {
         val context = ApplicationProvider.getApplicationContext<Context>()
+        val application = context as AuroraSmsApplication
+        val recipient = ParticipantAddress("+15550100001")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(recipient)),
+        )
+        clearDraft(application.container.draftRepository, identity)
         val intent = Intent(context, ComposeMessageActivity::class.java).apply {
             action = Intent.ACTION_SENDTO
-            data = Uri.parse("smsto:+15550100001")
+            data = Uri.parse("smsto:${recipient.value}")
             putExtra("sms_body", SYNTHETIC_EXTERNAL_COMPOSE_BODY)
         }
 
-        ActivityScenario.launch<ComposeMessageActivity>(intent).use {
-            compose.onNodeWithText("+15550100001").assertIsDisplayed()
-            compose.onNodeWithText(SYNTHETIC_EXTERNAL_COMPOSE_BODY).assertIsDisplayed()
-            compose.onNodeWithText("Send unavailable in this foundation build")
-                .assertIsDisplayed()
-                .assertIsNotEnabled()
+        try {
+            ActivityScenario.launch<ComposeMessageActivity>(intent).use {
+                waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+                compose.onNodeWithText(recipient.value).assertIsDisplayed()
+                compose.onNodeWithText(SYNTHETIC_EXTERNAL_COMPOSE_BODY).assertIsDisplayed()
+                compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+                waitForDisplayedText(
+                    context.getString(
+                        org.aurorasms.feature.conversations.R.string.new_message_external_review_only,
+                    ),
+                )
+                assertNull(readDraft(application.container.draftRepository, identity))
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .performTextReplacement(SYNTHETIC_EDITED_EXTERNAL_COMPOSE_BODY)
+                waitForDraftBody(
+                    repository = application.container.draftRepository,
+                    identity = identity,
+                    body = SYNTHETIC_EDITED_EXTERNAL_COMPOSE_BODY,
+                )
+            }
+            assertEquals(
+                SYNTHETIC_EDITED_EXTERNAL_COMPOSE_BODY,
+                readDraft(application.container.draftRepository, identity)?.body,
+            )
+        } finally {
+            clearDraft(application.container.draftRepository, identity)
+        }
+    }
+
+    @Test
+    fun newExternalIntentReplacesTheWholeReviewedRequest() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val application = context as AuroraSmsApplication
+        val firstRecipient = ParticipantAddress("+15550100011")
+        val secondRecipient = ParticipantAddress("+15550100012")
+        val firstIdentity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(firstRecipient)),
+        )
+        val secondIdentity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(secondRecipient)),
+        )
+        clearDraft(application.container.draftRepository, firstIdentity)
+        clearDraft(application.container.draftRepository, secondIdentity)
+        val firstIntent = Intent(context, ComposeMessageActivity::class.java).apply {
+            action = Intent.ACTION_SENDTO
+            data = Uri.parse("smsto:${firstRecipient.value}")
+            putExtra("sms_body", SYNTHETIC_FIRST_REUSED_EXTERNAL_BODY)
+        }
+        try {
+            ActivityScenario.launch<ComposeMessageActivity>(firstIntent).use { scenario ->
+                val firstActivityIdentity = AtomicInteger()
+                scenario.onActivity { activity ->
+                    firstActivityIdentity.set(System.identityHashCode(activity))
+                }
+                waitForDisplayedText(SYNTHETIC_FIRST_REUSED_EXTERNAL_BODY)
+                assertNull(readDraft(application.container.draftRepository, firstIdentity))
+
+                scenario.onActivity { activity ->
+                    val replacementIntent = Intent(activity.intent).apply {
+                        action = Intent.ACTION_SENDTO
+                        data = Uri.parse("smsto:${secondRecipient.value}")
+                        putExtra("sms_body", SYNTHETIC_SECOND_REUSED_EXTERNAL_BODY)
+                    }
+                    ComposeMessageActivity::class.java
+                        .getDeclaredMethod("onNewIntent", Intent::class.java)
+                        .apply { isAccessible = true }
+                        .invoke(activity, replacementIntent)
+                }
+                // ActivityScenario matches recreated instances against its original Intent.
+                // Keep that harness-only copy aligned with the Intent now owned by the Activity.
+                firstIntent.data = Uri.parse("smsto:${secondRecipient.value}")
+
+                waitForDisplayedText(SYNTHETIC_SECOND_REUSED_EXTERNAL_BODY)
+                compose.onNodeWithText(secondRecipient.value).assertIsDisplayed()
+                compose.onNodeWithText(SYNTHETIC_FIRST_REUSED_EXTERNAL_BODY).assertDoesNotExist()
+                compose.onNodeWithText(firstRecipient.value).assertDoesNotExist()
+                compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+                scenario.onActivity { activity ->
+                    assertEquals(
+                        firstActivityIdentity.get(),
+                        System.identityHashCode(activity),
+                    )
+                }
+                assertNull(readDraft(application.container.draftRepository, secondIdentity))
+
+                compose.onNodeWithTag(COMPOSER_TEST_TAG).performTextReplacement("")
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    readDraft(application.container.draftRepository, secondIdentity)?.body == null
+                }
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    runCatching {
+                        compose.onNodeWithTag(
+                            org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                        ).assertIsEnabled()
+                    }.isSuccess
+                }
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                ).performTextReplacement(SYNTHETIC_UNCOMMITTED_REUSED_RECIPIENT)
+
+                scenario.recreate()
+                compose.onNodeWithText(secondRecipient.value).assertIsDisplayed()
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                ).assertTextContains(SYNTHETIC_UNCOMMITTED_REUSED_RECIPIENT)
+                compose.onNodeWithText(SYNTHETIC_FIRST_REUSED_EXTERNAL_BODY).assertDoesNotExist()
+                compose.onNodeWithText(firstRecipient.value).assertDoesNotExist()
+            }
+        } finally {
+            clearDraft(application.container.draftRepository, firstIdentity)
+            clearDraft(application.container.draftRepository, secondIdentity)
+        }
+    }
+
+    @Test
+    fun newChatDraftSurvivesRecreationAndReloadsForTheSameParticipantSet() {
+        val sendController = RecordingUnknownThreadSmsSendController()
+        val fixture = SyntheticFixture(threadSmsSendController = sendController)
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+        val recipient = ParticipantAddress("+15550100002")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(recipient)),
+        )
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+            waitForTag(INBOX_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.INBOX_NEW_CHAT_ACTION_TEST_TAG,
+            ).performClick()
+            waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+            ).performTextReplacement(recipient.value)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+            ).performClick()
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                runCatching {
+                    compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsEnabled()
+                }.isSuccess
+            }
+            compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                .performTextReplacement(SYNTHETIC_NEW_CHAT_DRAFT_BODY)
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.drafts.snapshot(identity)?.body == SYNTHETIC_NEW_CHAT_DRAFT_BODY
+            }
+
+            scenario.recreate()
+            waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+            waitForDisplayedText(SYNTHETIC_NEW_CHAT_DRAFT_BODY)
+            compose.onNodeWithText(recipient.value).assertIsDisplayed()
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_BACK_ACTION_TEST_TAG,
+            ).performClick()
+            waitForTag(INBOX_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.INBOX_NEW_CHAT_ACTION_TEST_TAG,
+            ).performClick()
+            waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+            ).performTextReplacement(recipient.value)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+            ).performClick()
+            waitForDisplayedText(SYNTHETIC_NEW_CHAT_DRAFT_BODY)
+            assertEquals(SYNTHETIC_NEW_CHAT_DRAFT_BODY, fixture.drafts.snapshot(identity)?.body)
+            assertEquals(0, sendController.sendCount)
+        }
+    }
+
+    @Test
+    fun newChatRecreationPreservesAnEditStillWaitingForItsFirstAcknowledgement() {
+        val gatedDrafts = GatedCreateDraftRepository()
+        val fixture = SyntheticFixture(draftRepositoryOverride = gatedDrafts)
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+        val recipient = ParticipantAddress("+15550100014")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(recipient)),
+        )
+
+        try {
+            ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+                waitForTag(INBOX_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.INBOX_NEW_CHAT_ACTION_TEST_TAG,
+                ).performClick()
+                waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                ).performTextReplacement(recipient.value)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+                ).performClick()
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    runCatching {
+                        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsEnabled()
+                    }.isSuccess
+                }
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .performTextReplacement(SYNTHETIC_IN_FLIGHT_NEW_CHAT_DRAFT_BODY)
+                compose.waitUntil(TIMEOUT_MILLIS) { gatedDrafts.createStarted.isCompleted }
+                assertNull(gatedDrafts.snapshot(identity))
+
+                scenario.recreate()
+                waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+                gatedDrafts.allowCreate.complete(Unit)
+
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    gatedDrafts.snapshot(identity)?.body == SYNTHETIC_IN_FLIGHT_NEW_CHAT_DRAFT_BODY
+                }
+                waitForDisplayedText(SYNTHETIC_IN_FLIGHT_NEW_CHAT_DRAFT_BODY)
+                compose.onNodeWithText(recipient.value).assertIsDisplayed()
+                compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            }
+        } finally {
+            gatedDrafts.allowCreate.complete(Unit)
+        }
+    }
+
+    @Test
+    fun newChatRecreationKeepsTheNewestEditAcrossAnIntermediateAcknowledgement() {
+        val gatedDrafts = GatedCreateDraftRepository()
+        val fixture = SyntheticFixture(draftRepositoryOverride = gatedDrafts)
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+        val recipient = ParticipantAddress("+15550100015")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(recipient)),
+        )
+
+        try {
+            ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+                waitForTag(INBOX_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.INBOX_NEW_CHAT_ACTION_TEST_TAG,
+                ).performClick()
+                waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                ).performTextReplacement(recipient.value)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+                ).performClick()
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    runCatching {
+                        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsEnabled()
+                    }.isSuccess
+                }
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .performTextReplacement(SYNTHETIC_INTERMEDIATE_NEW_CHAT_DRAFT_BODY)
+                compose.waitUntil(TIMEOUT_MILLIS) { gatedDrafts.createStarted.isCompleted }
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .performTextReplacement(SYNTHETIC_NEWEST_NEW_CHAT_DRAFT_BODY)
+
+                scenario.recreate()
+                waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .assertTextContains(SYNTHETIC_NEWEST_NEW_CHAT_DRAFT_BODY)
+                gatedDrafts.allowCreate.complete(Unit)
+                compose.waitUntil(TIMEOUT_MILLIS) { gatedDrafts.updateStarted.isCompleted }
+                assertEquals(
+                    SYNTHETIC_INTERMEDIATE_NEW_CHAT_DRAFT_BODY,
+                    gatedDrafts.snapshot(identity)?.body,
+                )
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .assertTextContains(SYNTHETIC_NEWEST_NEW_CHAT_DRAFT_BODY)
+
+                gatedDrafts.allowUpdate.complete(Unit)
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    gatedDrafts.snapshot(identity)?.body == SYNTHETIC_NEWEST_NEW_CHAT_DRAFT_BODY
+                }
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .assertTextContains(SYNTHETIC_NEWEST_NEW_CHAT_DRAFT_BODY)
+            }
+        } finally {
+            gatedDrafts.allowCreate.complete(Unit)
+            gatedDrafts.allowUpdate.complete(Unit)
+        }
+    }
+
+    @Test
+    fun newChatKeepsRecipientsLockedUntilAnEmptyEditIsDurable() {
+        val gatedDrafts = GatedCreateDraftRepository()
+        val fixture = SyntheticFixture(draftRepositoryOverride = gatedDrafts)
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+        val recipient = ParticipantAddress("+15550100016")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(recipient)),
+        )
+
+        try {
+            ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+                waitForTag(INBOX_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.INBOX_NEW_CHAT_ACTION_TEST_TAG,
+                ).performClick()
+                waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                ).performTextReplacement(recipient.value)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+                ).performClick()
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    runCatching {
+                        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsEnabled()
+                    }.isSuccess
+                }
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .performTextReplacement(SYNTHETIC_CLEAR_GATED_NEW_CHAT_DRAFT_BODY)
+                compose.waitUntil(TIMEOUT_MILLIS) { gatedDrafts.createStarted.isCompleted }
+                gatedDrafts.allowCreate.complete(Unit)
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    gatedDrafts.snapshot(identity)?.body == SYNTHETIC_CLEAR_GATED_NEW_CHAT_DRAFT_BODY
+                }
+
+                compose.onNodeWithTag(COMPOSER_TEST_TAG).performTextReplacement("")
+                compose.waitUntil(TIMEOUT_MILLIS) { gatedDrafts.updateStarted.isCompleted }
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                ).assertIsNotEnabled()
+                compose.onNodeWithTag(
+                    "${org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_CHIP_TEST_TAG_PREFIX}-0",
+                ).assertIsNotEnabled()
+
+                gatedDrafts.allowUpdate.complete(Unit)
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    gatedDrafts.snapshot(identity)?.body == null
+                }
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    runCatching {
+                        compose.onNodeWithTag(
+                            org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                        ).assertIsEnabled()
+                    }.isSuccess
+                }
+            }
+        } finally {
+            gatedDrafts.allowCreate.complete(Unit)
+            gatedDrafts.allowUpdate.complete(Unit)
+        }
+    }
+
+    @Test
+    fun newChatConflictKeepsLocalTextDisplayOnlyAcrossRecreation() = runBlocking {
+        val gatedDrafts = GatedCreateDraftRepository()
+        val fixture = SyntheticFixture(draftRepositoryOverride = gatedDrafts)
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val recipient = ParticipantAddress("+15550100017")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(recipient)),
+        )
+        val durableWinnerBody = "Synthetic concurrent durable winner"
+
+        try {
+            ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+                waitForTag(INBOX_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.INBOX_NEW_CHAT_ACTION_TEST_TAG,
+                ).performClick()
+                waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                ).performTextReplacement(recipient.value)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+                ).performClick()
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    runCatching {
+                        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsEnabled()
+                    }.isSuccess
+                }
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .performTextReplacement(SYNTHETIC_CONFLICTED_LOCAL_NEW_CHAT_BODY)
+                compose.waitUntil(TIMEOUT_MILLIS) { gatedDrafts.createStarted.isCompleted }
+
+                assertTrue(
+                    gatedDrafts.createConcurrent(
+                        NewDraft(
+                            identity = identity,
+                            body = durableWinnerBody,
+                            subject = null,
+                            createdTimestampMillis = 60_000L,
+                            updatedTimestampMillis = 60_000L,
+                        ),
+                    ) is DraftRepositoryResult.Success,
+                )
+                gatedDrafts.allowCreate.complete(Unit)
+                waitForDisplayedText(
+                    context.getString(org.aurorasms.feature.conversations.R.string.draft_failed),
+                )
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .assertTextContains(SYNTHETIC_CONFLICTED_LOCAL_NEW_CHAT_BODY)
+                    .assertIsNotEnabled()
+                assertEquals(durableWinnerBody, gatedDrafts.snapshot(identity)?.body)
+
+                scenario.recreate()
+                waitForDisplayedText(
+                    context.getString(org.aurorasms.feature.conversations.R.string.draft_failed),
+                )
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .assertTextContains(SYNTHETIC_CONFLICTED_LOCAL_NEW_CHAT_BODY)
+                    .assertIsNotEnabled()
+                assertEquals(durableWinnerBody, gatedDrafts.snapshot(identity)?.body)
+            }
+        } finally {
+            gatedDrafts.allowCreate.complete(Unit)
+            gatedDrafts.allowUpdate.complete(Unit)
+        }
+    }
+
+    @Test
+    fun newChatStorageFailureRecoversTheExactEditAfterRecreation() {
+        val recoveringDrafts = GatedCreateDraftRepository(failFirstCreate = true)
+        val fixture = SyntheticFixture(draftRepositoryOverride = recoveringDrafts)
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val recipient = ParticipantAddress("+15550100018")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(recipient)),
+        )
+
+        try {
+            ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+                waitForTag(INBOX_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.INBOX_NEW_CHAT_ACTION_TEST_TAG,
+                ).performClick()
+                waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                ).performTextReplacement(recipient.value)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+                ).performClick()
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    runCatching {
+                        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsEnabled()
+                    }.isSuccess
+                }
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .performTextReplacement(SYNTHETIC_RECOVERED_NEW_CHAT_DRAFT_BODY)
+                compose.waitUntil(TIMEOUT_MILLIS) { recoveringDrafts.createStarted.isCompleted }
+                recoveringDrafts.allowCreate.complete(Unit)
+                waitForDisplayedText(
+                    context.getString(org.aurorasms.feature.conversations.R.string.draft_failed),
+                )
+                compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                    .assertTextContains(SYNTHETIC_RECOVERED_NEW_CHAT_DRAFT_BODY)
+                    .assertIsNotEnabled()
+                compose.waitForIdle()
+
+                scenario.recreate()
+                compose.waitUntil(TIMEOUT_MILLIS) {
+                    recoveringDrafts.snapshot(identity)?.body ==
+                        SYNTHETIC_RECOVERED_NEW_CHAT_DRAFT_BODY
+                }
+                waitForDisplayedText(SYNTHETIC_RECOVERED_NEW_CHAT_DRAFT_BODY)
+                compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsEnabled()
+                compose.onNodeWithText(
+                    context.getString(org.aurorasms.feature.conversations.R.string.draft_failed),
+                ).assertDoesNotExist()
+            }
+        } finally {
+            recoveringDrafts.allowCreate.complete(Unit)
+            recoveringDrafts.allowUpdate.complete(Unit)
+        }
+    }
+
+    @Test
+    fun newChatValidatesAndCanonicalizesManualRecipientSetsBeforeDrafting() {
+        val fixture = SyntheticFixture()
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val first = ParticipantAddress("+1 (555) 010-0013")
+        val second = ParticipantAddress("synthetic@example.invalid")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(first, second)),
+        )
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+            waitForTag(INBOX_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.INBOX_NEW_CHAT_ACTION_TEST_TAG,
+            ).performClick()
+            waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+            ).assertIsNotEnabled()
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+            ).performTextReplacement("+")
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+            ).performClick()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_SUPPORT_TEST_TAG,
+            ).assertTextContains(
+                context.getString(
+                    org.aurorasms.feature.conversations.R.string.new_message_recipient_invalid,
+                ),
+            )
+            compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+            assertEquals(0, fixture.drafts.snapshotCount())
+
+            val tooMany = (0..100).joinToString(",") { index -> "recipient-$index" }
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+            ).performTextReplacement(tooMany)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+            ).performClick()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_SUPPORT_TEST_TAG,
+            ).assertTextContains(
+                context.getString(
+                    org.aurorasms.feature.conversations.R.string.new_message_recipient_too_many,
+                ),
+            )
+            assertEquals(0, fixture.drafts.snapshotCount())
+
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+            ).performTextReplacement("${first.value},${second.value}")
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+            ).performClick()
+            compose.onNodeWithTag(
+                "${org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_CHIP_TEST_TAG_PREFIX}-0",
+            ).assertIsDisplayed()
+            compose.onNodeWithTag(
+                "${org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_CHIP_TEST_TAG_PREFIX}-1",
+            ).assertIsDisplayed()
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                runCatching {
+                    compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsEnabled()
+                    compose.onNodeWithTag(
+                        org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+                    ).assertIsEnabled()
+                }.isSuccess
+            }
+
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+            ).performTextReplacement("+15550100013")
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+            ).performClick()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_SUPPORT_TEST_TAG,
+            ).assertTextContains(
+                context.getString(
+                    org.aurorasms.feature.conversations.R.string.new_message_recipient_duplicate,
+                ),
+            )
+
+            compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                .performTextReplacement(SYNTHETIC_MULTI_RECIPIENT_DRAFT_BODY)
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.drafts.snapshot(identity)?.body == SYNTHETIC_MULTI_RECIPIENT_DRAFT_BODY
+            }
+            assertEquals(1, fixture.drafts.snapshotCount())
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+            ).assertIsNotEnabled()
+        }
+    }
+
+    @Test
+    fun externalMmsPrefillCannotOverwriteAnExistingParticipantDraft() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val application = context as AuroraSmsApplication
+        val recipient = ParticipantAddress("+15550100003")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(recipient)),
+        )
+        clearDraft(application.container.draftRepository, identity)
+        val existing = runBlocking {
+            application.container.draftRepository.create(
+                NewDraft(
+                    identity = identity,
+                    body = SYNTHETIC_EXISTING_NEW_CHAT_DRAFT,
+                    subject = SYNTHETIC_EXISTING_NEW_CHAT_SUBJECT,
+                    createdTimestampMillis = 40_000L,
+                    updatedTimestampMillis = 40_000L,
+                ),
+            )
+        }
+        assertTrue(existing is DraftRepositoryResult.Success)
+        val existingDraft = existing.successValue()
+        val intent = Intent(context, ComposeMessageActivity::class.java).apply {
+            action = Intent.ACTION_SENDTO
+            data = Uri.parse("mmsto:${recipient.value}")
+            putExtra("sms_body", SYNTHETIC_CONFLICTING_EXTERNAL_BODY)
+        }
+
+        try {
+            ActivityScenario.launch<ComposeMessageActivity>(intent).use {
+                waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+                waitForDisplayedText(SYNTHETIC_EXISTING_NEW_CHAT_DRAFT)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_EXTERNAL_CONFLICT_TEST_TAG,
+                ).assertIsDisplayed()
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations.NEW_MESSAGE_EXPLICIT_MMS_TEST_TAG,
+                ).assertIsDisplayed()
+                compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+                assertEquals(existingDraft, readDraft(application.container.draftRepository, identity))
+            }
+            val afterClose = readDraft(application.container.draftRepository, identity)
+            assertEquals(existingDraft, afterClose)
+            assertTrue(afterClose?.body?.contains(SYNTHETIC_CONFLICTING_EXTERNAL_BODY) == false)
+        } finally {
+            clearDraft(application.container.draftRepository, identity)
         }
     }
 
@@ -1976,6 +2598,42 @@ class AuroraSmsRootAcceptanceTest {
         waitForDisplayedText(SYNTHETIC_EXACT_ANCHOR)
     }
 
+    private fun clearDraft(
+        repository: DraftRepository,
+        identity: DraftIdentity,
+    ) {
+        runBlocking {
+            when (val current = repository.read(identity)) {
+                is DraftRepositoryResult.Success -> check(
+                    repository.delete(current.value.id) is DraftRepositoryResult.Success,
+                ) { "Synthetic draft cleanup could not delete its identity" }
+                DraftRepositoryResult.NotFound -> Unit
+                else -> throw AssertionError("Synthetic draft cleanup could not read its identity")
+            }
+        }
+    }
+
+    private fun readDraft(
+        repository: DraftRepository,
+        identity: DraftIdentity,
+    ): Draft? = runBlocking {
+        when (val current = repository.read(identity)) {
+            is DraftRepositoryResult.Success -> current.value
+            DraftRepositoryResult.NotFound -> null
+            else -> throw AssertionError("Synthetic draft read failed")
+        }
+    }
+
+    private fun waitForDraftBody(
+        repository: DraftRepository,
+        identity: DraftIdentity,
+        body: String,
+    ) {
+        compose.waitUntil(TIMEOUT_MILLIS) {
+            readDraft(repository, identity)?.body == body
+        }
+    }
+
     private fun scrollThreadRowIntoView(text: String, index: Int) {
         compose.onNodeWithTag(THREAD_LIST_TEST_TAG).performScrollToIndex(index)
         waitForDisplayedThreadRow(text)
@@ -2215,7 +2873,15 @@ private class SyntheticRootServices(
     private val segmentCounter: (String) -> Int?,
 ) : AuroraSmsRootServices, AutoCloseable {
     private val clock = AtomicLong(30_000L)
-    private val writers = ConcurrentHashMap.newKeySet<SerializedDraftWriter>()
+    private val writerPool = SerializedDraftWriterPool(scope) { identity, restorationToken ->
+        SerializedDraftWriter(
+            repository = drafts,
+            identity = identity,
+            scope = scope,
+            restorationToken = restorationToken,
+            nowMillis = clock::incrementAndGet,
+        )
+    }
 
     override val conversationRepository: ConversationRepository = conversations
     override val threadTimelineRepository: ThreadTimelineRepository = timeline
@@ -2229,31 +2895,18 @@ private class SyntheticRootServices(
 
     override fun countSmsSegments(body: String): Int? = segmentCounter(body)
 
-    override fun createDraftWriter(
+    override fun acquireDraftWriter(
         identity: DraftIdentity,
         restorationToken: DraftRestorationToken?,
-    ): SerializedDraftWriter = SerializedDraftWriter(
-        repository = drafts,
-        identity = identity,
-        scope = scope,
-        restorationToken = restorationToken,
-        nowMillis = clock::incrementAndGet,
-    ).also(writers::add)
-
-    override fun releaseDraftWriter(writer: SerializedDraftWriter) {
-        scope.launch {
-            try {
-                writer.flush()
-            } finally {
-                writer.close()
-                writers.remove(writer)
-            }
-        }
-    }
+        participantRouteOwner: String?,
+    ): SerializedDraftWriterLease = writerPool.acquire(
+        identity,
+        restorationToken,
+        participantRouteOwner,
+    )
 
     override fun close() {
-        writers.toList().forEach(SerializedDraftWriter::close)
-        writers.clear()
+        writerPool.close()
     }
 }
 
@@ -2752,6 +3405,8 @@ private class InMemoryDraftRepository : DraftRepository {
 
     fun snapshot(identity: DraftIdentity): Draft? = synchronized(lock) { drafts[identity] }
 
+    fun snapshotCount(): Int = synchronized(lock) { drafts.size }
+
     override suspend fun create(draft: NewDraft): DraftRepositoryResult<Draft> = synchronized(lock) {
         if (drafts.containsKey(draft.identity)) return DraftRepositoryResult.Conflict
         val stored = Draft(
@@ -2793,6 +3448,47 @@ private class InMemoryDraftRepository : DraftRepository {
         drafts.remove(entry.key)
         DraftRepositoryResult.Success(Unit)
     }
+}
+
+private class GatedCreateDraftRepository(
+    private val failFirstCreate: Boolean = false,
+) : DraftRepository {
+    private val delegate = InMemoryDraftRepository()
+    private val createAttempts = AtomicInteger()
+    val createStarted = CompletableDeferred<Unit>()
+    val allowCreate = CompletableDeferred<Unit>()
+    val updateStarted = CompletableDeferred<Unit>()
+    val allowUpdate = CompletableDeferred<Unit>()
+
+    fun snapshot(identity: DraftIdentity): Draft? = delegate.snapshot(identity)
+
+    suspend fun createConcurrent(draft: NewDraft): DraftRepositoryResult<Draft> =
+        delegate.create(draft)
+
+    override suspend fun create(draft: NewDraft): DraftRepositoryResult<Draft> {
+        createStarted.complete(Unit)
+        allowCreate.await()
+        if (failFirstCreate && createAttempts.incrementAndGet() == 1) {
+            return DraftRepositoryResult.StorageFailure(DraftStorageOperation.CREATE)
+        }
+        return delegate.create(draft)
+    }
+
+    override suspend fun read(id: DraftId): DraftRepositoryResult<Draft> = delegate.read(id)
+
+    override suspend fun read(identity: DraftIdentity): DraftRepositoryResult<Draft> =
+        delegate.read(identity)
+
+    override suspend fun update(
+        draft: Draft,
+        expectedRevision: DraftRevision,
+    ): DraftRepositoryResult<Draft> {
+        updateStarted.complete(Unit)
+        allowUpdate.await()
+        return delegate.update(draft, expectedRevision)
+    }
+
+    override suspend fun delete(id: DraftId): DraftRepositoryResult<Unit> = delegate.delete(id)
 }
 
 private class InMemoryDraftAttachmentRepository(
@@ -3032,6 +3728,21 @@ private const val SYNTHETIC_QUERY = "synthetic exact query"
 private const val SYNTHETIC_DRAFT = "Synthetic restored draft"
 private const val SYNTHETIC_SEND_DRAFT = "Synthetic one part send draft"
 private const val SYNTHETIC_EXTERNAL_COMPOSE_BODY = "Synthetic external review body"
+private const val SYNTHETIC_EDITED_EXTERNAL_COMPOSE_BODY = "Synthetic user-edited external review body"
+private const val SYNTHETIC_FIRST_REUSED_EXTERNAL_BODY = "Synthetic first reused request"
+private const val SYNTHETIC_SECOND_REUSED_EXTERNAL_BODY = "Synthetic second reused request"
+private const val SYNTHETIC_UNCOMMITTED_REUSED_RECIPIENT = "+15550100999"
+private const val SYNTHETIC_NEW_CHAT_DRAFT_BODY = "Synthetic durable New chat draft"
+private const val SYNTHETIC_IN_FLIGHT_NEW_CHAT_DRAFT_BODY = "Synthetic in-flight New chat draft"
+private const val SYNTHETIC_INTERMEDIATE_NEW_CHAT_DRAFT_BODY = "Synthetic intermediate New chat draft"
+private const val SYNTHETIC_NEWEST_NEW_CHAT_DRAFT_BODY = "Synthetic newest New chat draft"
+private const val SYNTHETIC_CLEAR_GATED_NEW_CHAT_DRAFT_BODY = "Synthetic clear-gated New chat draft"
+private const val SYNTHETIC_CONFLICTED_LOCAL_NEW_CHAT_BODY = "Synthetic conflicted local New chat draft"
+private const val SYNTHETIC_RECOVERED_NEW_CHAT_DRAFT_BODY = "Synthetic recovered New chat draft"
+private const val SYNTHETIC_MULTI_RECIPIENT_DRAFT_BODY = "Synthetic group draft"
+private const val SYNTHETIC_EXISTING_NEW_CHAT_DRAFT = "Synthetic existing participant draft"
+private const val SYNTHETIC_EXISTING_NEW_CHAT_SUBJECT = "Synthetic preserved subject"
+private const val SYNTHETIC_CONFLICTING_EXTERNAL_BODY = "Synthetic conflicting external prefill"
 private const val SYNTHETIC_EXACT_ANCHOR = "Synthetic exact anchor"
 private const val UPDATED_FOCAL_X = 270
 private const val UPDATED_FOCAL_Y = 830

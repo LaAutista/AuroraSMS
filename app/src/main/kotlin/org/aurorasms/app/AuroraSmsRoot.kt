@@ -21,6 +21,7 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
 import java.util.Locale
+import java.util.UUID
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -67,6 +68,7 @@ import org.aurorasms.app.appearance.wallpaper.WallpaperControllerError
 import org.aurorasms.app.appearance.wallpaper.WallpaperRenderRequestEpoch
 import org.aurorasms.app.appearance.wallpaper.resolveWallpaperCandidates
 import org.aurorasms.app.backup.BackupRestoreScreen
+import org.aurorasms.app.compose.NewMessageRoute
 import org.aurorasms.app.settings.SettingsScreen
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.DraftRestorationToken
@@ -228,6 +230,7 @@ internal fun AuroraSmsRoot(
     var routes by rememberSaveable(stateSaver = APP_ROUTE_STACK_SAVER) {
         mutableStateOf(initialStack)
     }
+    val newMessageDraftWriterRouteOwner = rememberSaveable { UUID.randomUUID().toString() }
     var inboxDrawReported by rememberSaveable { mutableStateOf(false) }
     var previewProfile by remember { mutableStateOf<AuroraMaterialProfile?>(null) }
     var scopedEditorDismissalGeneration by rememberSaveable { mutableStateOf(0L) }
@@ -323,6 +326,7 @@ internal fun AuroraSmsRoot(
                     PresentationTrace.begin(PresentationTrace.THREAD_OPEN)
                     push(newThreadRoute(it))
                 },
+                onOpenNewChat = { push(AppRoute.NewChat) },
                 onOpenSearch = { push(AppRoute.Search()) },
                 onOpenAppearance = { push(AppRoute.Appearance) },
                 onOpenSettings = { push(AppRoute.Settings) },
@@ -335,6 +339,11 @@ internal fun AuroraSmsRoot(
                         onInboxReady()
                     }
                 },
+            )
+            AppRoute.NewChat -> NewMessageRoute(
+                services = services,
+                draftWriterRouteOwner = newMessageDraftWriterRouteOwner,
+                onBack = ::pop,
             )
             AppRoute.Appearance -> ThemeStudioRoute(
                 appearance = appearance,
@@ -417,6 +426,7 @@ private fun InboxRoute(
     diagnosticsAvailable: Boolean,
     contactsPermissionGranted: Boolean,
     onOpenConversation: (ProviderThreadId) -> Unit,
+    onOpenNewChat: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenAppearance: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -505,6 +515,7 @@ private fun InboxRoute(
             diagnosticsAvailable = diagnosticsAvailable,
             contactsPermissionGranted = contactsPermissionGranted,
             onOpenConversation = onOpenConversation,
+            onOpenNewChat = onOpenNewChat,
             onOpenSearch = onOpenSearch,
             onOpenAppearance = onOpenAppearance,
             onOpenSettings = onOpenSettings,
@@ -1053,13 +1064,14 @@ private fun ThreadRoute(
         }
     }
     val writerCreationGeneration = writerGeneration
-    val writer = remember(services, route.providerThreadId, writerCreationGeneration) {
-        services.createDraftWriter(
+    val writerLease = remember(services, route.providerThreadId, writerCreationGeneration) {
+        services.acquireDraftWriter(
             identity = DraftIdentity.ProviderThread(route.providerThreadId),
             restorationToken = savedDraftRestoration.token,
         )
     }
-    DisposableEffect(writer) { onDispose { services.releaseDraftWriter(writer) } }
+    val writer = writerLease.writer
+    DisposableEffect(writerLease) { onDispose(writerLease::close) }
     val draftStatus by writer.status.collectAsStateWithLifecycle()
     LaunchedEffect(writer, draftStatus) {
         if (writerCreationGeneration != writerGeneration) return@LaunchedEffect
@@ -2706,6 +2718,7 @@ private fun launchSystemDialer(context: Context, address: ParticipantAddress) {
 
 private fun AppRoute.saveableScreenKey(): String = when (this) {
     AppRoute.Inbox -> "inbox"
+    AppRoute.NewChat -> "new-chat"
     AppRoute.Appearance -> "appearance"
     AppRoute.Settings -> "settings"
     AppRoute.BackupRestore -> "backup-restore"
@@ -2775,6 +2788,7 @@ internal fun normalizeRestoredRoutes(routes: List<AppRoute>): List<AppRoute>? = 
 private fun saveRoute(route: AppRoute): Bundle = Bundle().apply {
     when (route) {
         AppRoute.Inbox -> putString(ROUTE_TYPE_KEY, ROUTE_INBOX)
+        AppRoute.NewChat -> putString(ROUTE_TYPE_KEY, ROUTE_NEW_CHAT)
         AppRoute.Appearance -> putString(ROUTE_TYPE_KEY, ROUTE_APPEARANCE)
         AppRoute.Settings -> putString(ROUTE_TYPE_KEY, ROUTE_SETTINGS)
         AppRoute.BackupRestore -> putString(ROUTE_TYPE_KEY, ROUTE_BACKUP_RESTORE)
@@ -2799,6 +2813,7 @@ private fun saveRoute(route: AppRoute): Bundle = Bundle().apply {
 private fun restoreRoute(bundle: Bundle): AppRoute? = try {
     when (bundle.getString(ROUTE_TYPE_KEY)) {
         ROUTE_INBOX -> AppRoute.Inbox
+        ROUTE_NEW_CHAT -> AppRoute.NewChat
         ROUTE_APPEARANCE -> AppRoute.Appearance
         ROUTE_SETTINGS -> AppRoute.Settings
         ROUTE_BACKUP_RESTORE -> AppRoute.BackupRestore
@@ -2852,6 +2867,7 @@ private const val SAVED_DRAFT_BASE_PRESENT_KEY: String = "draft_base_present"
 private const val SAVED_DRAFT_ID_KEY: String = "draft_id"
 private const val SAVED_DRAFT_REVISION_KEY: String = "draft_revision"
 private const val ROUTE_INBOX: String = "inbox"
+private const val ROUTE_NEW_CHAT: String = "new-chat"
 private const val ROUTE_APPEARANCE: String = "appearance"
 private const val ROUTE_SETTINGS: String = "settings"
 private const val ROUTE_BACKUP_RESTORE: String = "backup_restore"

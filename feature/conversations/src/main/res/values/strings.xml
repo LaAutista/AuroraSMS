@@ -1,6 +1,28 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <resources>
     <string name="search">Search</string>
+    <string name="new_chat">New chat</string>
+    <string name="new_message_title">New message</string>
+    <string name="new_message_subtitle">Private compose · nothing sends without you</string>
+    <string name="new_message_recipient_label">To</string>
+    <string name="new_message_recipient_placeholder">Phone number or address</string>
+    <string name="new_message_recipient_help">Enter a recipient, then tap Add.</string>
+    <string name="new_message_recipient_locked">Clear the draft text before changing recipients.</string>
+    <string name="add_recipient">Add</string>
+    <string name="remove_new_message_recipient">%1$s, remove recipient</string>
+    <string name="new_message_recipient_empty">Enter a recipient before adding it.</string>
+    <string name="new_message_recipient_invalid">That recipient address isn’t valid.</string>
+    <string name="new_message_recipient_duplicate">That recipient is already included.</string>
+    <string name="new_message_recipient_too_many">This draft has too many recipients.</string>
+    <string name="new_message_external_conflict">Another app supplied different recipients or text. Your saved draft was kept; review it before replacing anything.</string>
+    <string name="new_message_explicit_mms_notice">MMS was explicitly requested for this review session. Aurora will not send it from this screen.</string>
+    <string name="new_message_choose_recipient_hint">Choose who you want to message. Nothing is sent while you prepare this local draft.</string>
+    <string name="new_message_draft_hint">Compose your first message below. Recipient and draft changes stay local.</string>
+    <string name="new_message_send_disabled_notice">Review this first-contact draft. Sending from New chat isn’t available yet.</string>
+    <string name="new_message_draft_waiting_for_recipient">Add a recipient to save this draft locally.</string>
+    <string name="new_message_draft_ready">Type a message to save it locally.</string>
+    <string name="new_message_draft_loading">Loading saved draft…</string>
+    <string name="new_message_external_review_only">Review only · edit to save locally</string>
     <string name="more">More</string>
     <string name="delete_message">Delete message</string>
     <string name="message_actions">Message actions</string>

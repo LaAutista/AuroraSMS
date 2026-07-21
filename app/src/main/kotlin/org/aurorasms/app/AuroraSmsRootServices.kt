@@ -3,7 +3,7 @@
 package org.aurorasms.app
 
 import org.aurorasms.app.drafts.DraftRestorationToken
-import org.aurorasms.app.drafts.SerializedDraftWriter
+import org.aurorasms.app.drafts.SerializedDraftWriterLease
 import org.aurorasms.app.appearance.wallpaper.WallpaperController
 import org.aurorasms.app.message.AndroidSmsSegmentCounter
 import org.aurorasms.app.message.ThreadSmsSendController
@@ -88,12 +88,11 @@ internal interface AuroraSmsRootServices {
 
     fun countSmsSegments(body: String): Int? = null
 
-    fun createDraftWriter(
+    fun acquireDraftWriter(
         identity: DraftIdentity,
         restorationToken: DraftRestorationToken?,
-    ): SerializedDraftWriter
-
-    fun releaseDraftWriter(writer: SerializedDraftWriter)
+        participantRouteOwner: String? = null,
+    ): SerializedDraftWriterLease
 }
 
 private object EmptyRootDraftAttachmentRepository : DraftAttachmentRepository {
@@ -181,12 +180,13 @@ internal class AppContainerAuroraSmsRootServices(
 
     override fun countSmsSegments(body: String): Int? = AndroidSmsSegmentCounter.count(body)
 
-    override fun createDraftWriter(
+    override fun acquireDraftWriter(
         identity: DraftIdentity,
         restorationToken: DraftRestorationToken?,
-    ): SerializedDraftWriter = container.createDraftWriter(identity, restorationToken)
-
-    override fun releaseDraftWriter(writer: SerializedDraftWriter) {
-        container.releaseDraftWriter(writer)
-    }
+        participantRouteOwner: String?,
+    ): SerializedDraftWriterLease = container.acquireDraftWriter(
+        identity,
+        restorationToken,
+        participantRouteOwner,
+    )
 }

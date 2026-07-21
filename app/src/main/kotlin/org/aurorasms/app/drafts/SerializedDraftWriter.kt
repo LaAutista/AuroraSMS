@@ -142,11 +142,22 @@ class SerializedDraftWriter(
         worker = scope.launch { initializeAndWrite() }
     }
 
-    fun submit(content: DraftEditorContent): Boolean = synchronized(lock) {
-        if (terminal || frozenForSend) return false
+    fun submit(content: DraftEditorContent): Boolean =
+        submitWithRestorationToken(content) != null
+
+    /** Admits one edit and captures its exact durable base under the same lock. */
+    internal fun submitWithRestorationToken(
+        content: DraftEditorContent,
+    ): DraftRestorationToken? = synchronized(lock) {
+        if (terminal || frozenForSend) return null
         val edit = QueuedEdit(nextSequence++, content)
         latestAccepted = edit
         val active = _status.value as? DraftWriteStatus.Active
+        val restorationToken = DraftRestorationToken(
+            content = content,
+            expectedDraftId = active?.acknowledgedDraftId,
+            expectedRevision = active?.acknowledgedRevision,
+        )
         _status.value = DraftWriteStatus.Active(
             latest = content,
             acknowledgedDraftId = active?.acknowledgedDraftId,
@@ -163,9 +174,9 @@ class SerializedDraftWriter(
                 acknowledgedDraftId = active?.acknowledgedDraftId,
                 acknowledgedRevision = active?.acknowledgedRevision,
             )
-            false
+            null
         } else {
-            true
+            restorationToken
         }
     }
 
@@ -246,11 +257,19 @@ class SerializedDraftWriter(
 
     suspend fun flush(timeoutMillis: Long = DEFAULT_FLUSH_TIMEOUT_MILLIS): Boolean {
         require(timeoutMillis > 0L) { "Draft flush timeout must be positive" }
-        val target = synchronized(lock) { latestAccepted?.sequence ?: 0L }
         return withTimeoutOrNull(timeoutMillis) {
             status.first {
                 synchronized(lock) {
-                    terminal || (it !is DraftWriteStatus.Loading && acknowledgedSequence >= target)
+                    terminal || (initialized && it is DraftWriteStatus.Active && it.initialized)
+                }
+            }
+            val target = synchronized(lock) {
+                if (terminal) null else latestAccepted?.sequence ?: 0L
+            } ?: return@withTimeoutOrNull false
+            status.first {
+                synchronized(lock) {
+                    terminal ||
+                        (initialized && it is DraftWriteStatus.Active && acknowledgedSequence >= target)
                 }
             }
             synchronized(lock) { !terminal && acknowledgedSequence >= target }
@@ -270,7 +289,7 @@ class SerializedDraftWriter(
             is DraftRepositoryResult.Success -> result.value
             DraftRepositoryResult.NotFound -> null
             else -> {
-                fail(latestContent(), result.toFailure())
+                failInitialization(result.toFailure())
                 return
             }
         }
@@ -278,7 +297,12 @@ class SerializedDraftWriter(
             if (terminal) return
             val persistedContent = currentDraft?.toEditorContent() ?: DraftEditorContent.EMPTY
             if (latestAccepted == null && restorationToken?.matches(currentDraft) == true) {
-                val restored = QueuedEdit(nextSequence++, restorationToken.content)
+                val restored = QueuedEdit(
+                    sequence = nextSequence++,
+                    content = restorationToken.content,
+                    isRestoration = true,
+                    discardIfCreateConflicts = restorationToken.expectedDraftId == null,
+                )
                 latestAccepted = restored
                 if (restored.content == persistedContent) {
                     acknowledgedSequence = restored.sequence
@@ -309,7 +333,7 @@ class SerializedDraftWriter(
 
         for (edit in writes) {
             if (synchronized(lock) { edit.sequence <= acknowledgedSequence }) continue
-            val write = writeWithOneRefresh(currentDraft, edit.content)
+            val write = writeWithOneRefresh(currentDraft, edit)
             when (write) {
                 is WriteOutcome.Success -> {
                     currentDraft = write.draft
@@ -326,8 +350,49 @@ class SerializedDraftWriter(
                         )
                     }
                 }
+                is WriteOutcome.ConcurrentDraftPreserved -> {
+                    currentDraft = write.draft
+                    var stopWriting = false
+                    synchronized(lock) {
+                        acknowledgedSequence = max(acknowledgedSequence, edit.sequence)
+                        val latest = latestAccepted ?: edit
+                        if (
+                            latest.sequence > edit.sequence &&
+                            latest.content == write.draft.toEditorContent()
+                        ) {
+                            acknowledgedSequence = max(acknowledgedSequence, latest.sequence)
+                        } else if (
+                            identity is DraftIdentity.ParticipantSet &&
+                            edit.discardIfCreateConflicts &&
+                            latest.sequence > edit.sequence
+                        ) {
+                            failLocked(
+                                content = latest.content,
+                                failure = DraftWriteFailure.CONFLICT,
+                            )
+                            stopWriting = true
+                        } else if (latestAccepted?.sequence == edit.sequence) {
+                            latestAccepted = edit.copy(
+                                content = write.draft.toEditorContent(),
+                                discardIfCreateConflicts = false,
+                            )
+                        }
+                        if (!stopWriting) {
+                            val reconciledLatest = latestAccepted ?: edit
+                            _status.value = DraftWriteStatus.Active(
+                                latest = reconciledLatest.content,
+                                acknowledgedDraftId = write.draft.id,
+                                acknowledgedRevision = write.draft.revision,
+                                saving = reconciledLatest.sequence > acknowledgedSequence,
+                                frozenForSend = frozenForSend,
+                                initialized = true,
+                            )
+                        }
+                    }
+                    if (stopWriting) return
+                }
                 is WriteOutcome.Failed -> {
-                    fail(latestContent(), write.failure)
+                    failLatest(write.failure)
                     return
                 }
             }
@@ -336,17 +401,18 @@ class SerializedDraftWriter(
 
     private suspend fun writeWithOneRefresh(
         startingDraft: Draft?,
-        content: DraftEditorContent,
+        edit: QueuedEdit,
     ): WriteOutcome {
         var current = startingDraft
         repeat(MAXIMUM_WRITE_ATTEMPTS) {
+            val wasCreateAttempt = current == null
             val result = if (current == null) {
                 val timestamp = nowMillis().coerceAtLeast(0L)
                 safeCreate(
                     NewDraft(
                         identity = identity,
-                        body = content.body,
-                        subject = content.subject,
+                        body = edit.content.body,
+                        subject = edit.content.subject,
                         createdTimestampMillis = timestamp,
                         updatedTimestampMillis = timestamp,
                     ),
@@ -356,8 +422,8 @@ class SerializedDraftWriter(
                     ?: return WriteOutcome.Failed(DraftWriteFailure.INVALID_REVISION)
                 safeUpdate(
                     draft = current.copy(
-                        body = content.body,
-                        subject = content.subject,
+                        body = edit.content.body,
+                        subject = edit.content.subject,
                         updatedTimestampMillis = nextTimestamp,
                     ),
                     expectedRevision = current.revision,
@@ -369,9 +435,48 @@ class SerializedDraftWriter(
                 DraftRepositoryResult.StaleWrite,
                 DraftRepositoryResult.NotFound,
                 -> {
+                    val participantExactRestorationLostBase =
+                        identity is DraftIdentity.ParticipantSet &&
+                            edit.isRestoration &&
+                            !edit.discardIfCreateConflicts
+                    // Participant-set routes can briefly have independent writers. Retry order
+                    // is not user-edit order, so retain the local text and leave Room untouched.
+                    if (
+                        identity is DraftIdentity.ParticipantSet &&
+                        !edit.isRestoration &&
+                        (
+                            result == DraftRepositoryResult.Conflict ||
+                                result == DraftRepositoryResult.StaleWrite
+                            )
+                    ) {
+                        return WriteOutcome.Failed(DraftWriteFailure.CONFLICT)
+                    }
                     current = when (val refreshed = safeRead()) {
-                        is DraftRepositoryResult.Success -> refreshed.value
-                        DraftRepositoryResult.NotFound -> null
+                        is DraftRepositoryResult.Success -> {
+                            // A base-free SavedState hint loses authority once another writer
+                            // creates the durable draft between our read and create attempt.
+                            if (
+                                wasCreateAttempt &&
+                                result == DraftRepositoryResult.Conflict &&
+                                edit.discardIfCreateConflicts
+                            ) {
+                                return WriteOutcome.ConcurrentDraftPreserved(refreshed.value)
+                            }
+                            if (participantExactRestorationLostBase) {
+                                return if (refreshed.value.toEditorContent() == edit.content) {
+                                    WriteOutcome.ConcurrentDraftPreserved(refreshed.value)
+                                } else {
+                                    WriteOutcome.Failed(DraftWriteFailure.CONFLICT)
+                                }
+                            }
+                            refreshed.value
+                        }
+                        DraftRepositoryResult.NotFound -> {
+                            if (participantExactRestorationLostBase) {
+                                return WriteOutcome.Failed(DraftWriteFailure.CONFLICT)
+                            }
+                            null
+                        }
                         else -> return WriteOutcome.Failed(refreshed.toFailure())
                     }
                 }
@@ -413,30 +518,50 @@ class SerializedDraftWriter(
         DraftRepositoryResult.StorageFailure(org.aurorasms.core.state.DraftStorageOperation.UPDATE)
     }
 
-    private fun fail(content: DraftEditorContent, failure: DraftWriteFailure) {
-        synchronized(lock) {
-            terminal = true
-            val active = _status.value as? DraftWriteStatus.Active
-            _status.value = DraftWriteStatus.Failed(
-                latest = content,
-                failure = failure,
-                acknowledgedDraftId = active?.acknowledgedDraftId,
-                acknowledgedRevision = active?.acknowledgedRevision,
-            )
-            writes.close()
-        }
+    private fun failLatest(failure: DraftWriteFailure) = synchronized(lock) {
+        failLocked(
+            content = latestAccepted?.content ?: DraftEditorContent.EMPTY,
+            failure = failure,
+        )
     }
 
-    private fun latestContent(): DraftEditorContent =
-        synchronized(lock) { latestAccepted?.content ?: DraftEditorContent.EMPTY }
+    private fun failInitialization(failure: DraftWriteFailure) = synchronized(lock) {
+        val latest = latestAccepted?.content ?: restorationToken?.content ?: DraftEditorContent.EMPTY
+        failLocked(
+            content = latest,
+            failure = failure,
+            fallbackDraftId = restorationToken?.expectedDraftId,
+            fallbackRevision = restorationToken?.expectedRevision,
+        )
+    }
+
+    private fun failLocked(
+        content: DraftEditorContent,
+        failure: DraftWriteFailure,
+        fallbackDraftId: DraftId? = null,
+        fallbackRevision: DraftRevision? = null,
+    ) {
+        terminal = true
+        val active = _status.value as? DraftWriteStatus.Active
+        _status.value = DraftWriteStatus.Failed(
+            latest = content,
+            failure = failure,
+            acknowledgedDraftId = active?.acknowledgedDraftId ?: fallbackDraftId,
+            acknowledgedRevision = active?.acknowledgedRevision ?: fallbackRevision,
+        )
+        writes.close()
+    }
 
     private data class QueuedEdit(
         val sequence: Long,
         val content: DraftEditorContent,
+        val isRestoration: Boolean = false,
+        val discardIfCreateConflicts: Boolean = false,
     )
 
     private sealed interface WriteOutcome {
         data class Success(val draft: Draft) : WriteOutcome
+        data class ConcurrentDraftPreserved(val draft: Draft) : WriteOutcome
         data class Failed(val failure: DraftWriteFailure) : WriteOutcome
     }
 

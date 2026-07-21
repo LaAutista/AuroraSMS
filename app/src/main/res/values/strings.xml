@@ -25,11 +25,6 @@
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
     <string name="permission_summary">Messaging permissions granted: %1$d of %2$d</string>
-    <string name="new_message">New message</string>
-    <string name="invalid_compose_request">This compose request is missing a valid SMS or MMS recipient.</string>
-    <string name="recipient">Recipient</string>
-    <string name="message_body">Message</string>
-    <string name="send_requires_completed_transport">Send unavailable in this foundation build</string>
     <string name="schedule_time_invalid">Choose an unambiguous local time at least two minutes from now.</string>
     <string name="exact_alarm_settings_unavailable">Android’s exact-alarm settings are unavailable. The message will keep its honest inexact schedule.</string>
     <string name="settings_title">Settings</string>

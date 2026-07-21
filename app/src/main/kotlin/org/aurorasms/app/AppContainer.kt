@@ -44,6 +44,8 @@ import org.aurorasms.app.appearance.wallpaper.ManagedWallpaperStore
 import org.aurorasms.app.appearance.wallpaper.WallpaperController
 import org.aurorasms.app.drafts.DraftRestorationToken
 import org.aurorasms.app.drafts.SerializedDraftWriter
+import org.aurorasms.app.drafts.SerializedDraftWriterLease
+import org.aurorasms.app.drafts.SerializedDraftWriterPool
 import org.aurorasms.app.index.ForegroundIndexReadGate
 import org.aurorasms.app.preview.AndroidBoundedPreviewLoader
 import org.aurorasms.app.preview.BoundedMediaDecodeGate
@@ -331,6 +333,14 @@ class AppContainer(
     val stateStorageStatus: StateFlow<StateStorageStatus> = _stateStorageStatus.asStateFlow()
     private val stateRuntimeState = MutableStateFlow<StateRuntimeState>(StateRuntimeState.Opening)
     val draftRepository: DraftRepository = DeferredDraftRepository(stateRuntimeState)
+    private val draftWriterPool = SerializedDraftWriterPool(applicationScope) { identity, token ->
+        SerializedDraftWriter(
+            repository = draftRepository,
+            identity = identity,
+            scope = applicationScope,
+            restorationToken = token,
+        )
+    }
     val draftAttachmentRepository: DraftAttachmentRepository =
         DeferredDraftAttachmentRepository(stateRuntimeState)
     val appearanceProfileRepository: AppearanceProfileRepository =
@@ -1121,28 +1131,18 @@ class AppContainer(
         jobs.forEach { it.cancel() }
     }
 
-    fun createDraftWriter(
+    internal fun acquireDraftWriter(
         identity: DraftIdentity,
         restorationToken: DraftRestorationToken?,
-    ): SerializedDraftWriter = SerializedDraftWriter(
-        repository = draftRepository,
-        identity = identity,
-        scope = applicationScope,
-        restorationToken = restorationToken,
+        participantRouteOwner: String? = null,
+    ): SerializedDraftWriterLease = draftWriterPool.acquire(
+        identity,
+        restorationToken,
+        participantRouteOwner,
     )
 
-    /** Gives the newest accepted edit a bounded acknowledgement window before release. */
-    fun releaseDraftWriter(writer: SerializedDraftWriter) {
-        applicationScope.launch {
-            try {
-                writer.flush()
-            } finally {
-                writer.close()
-            }
-        }
-    }
-
     fun close() {
+        draftWriterPool.close()
         runCatching { application.contentResolver.unregisterContentObserver(providerObserver) }
         providerObserverRegistered.set(false)
         indexSignalWakeUps.close()

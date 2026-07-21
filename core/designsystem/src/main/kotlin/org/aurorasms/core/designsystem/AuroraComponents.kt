@@ -84,6 +84,36 @@ fun AuroraIconAction(
 }
 
 /**
+ * A non-interactive Aurora glyph for controls that already own their click semantics.
+ * A null [contentDescription] makes the glyph decorative.
+ */
+@Composable
+fun AuroraGlyphIcon(
+    glyph: AuroraGlyph,
+    modifier: Modifier = Modifier,
+    contentDescription: String? = null,
+    tint: Color = Color.Unspecified,
+) {
+    require(contentDescription == null || contentDescription.isNotBlank()) {
+        "An Aurora glyph description cannot be blank"
+    }
+    val visualTokens = LocalAuroraVisualTokens.current
+    val resolvedTint = if (tint == Color.Unspecified) {
+        glyph.defaultTint(visualTokens)
+    } else {
+        tint
+    }
+    val semanticsModifier = if (contentDescription == null) {
+        modifier.clearAndSetSemantics { }
+    } else {
+        modifier.semantics { this.contentDescription = contentDescription }
+    }
+    Canvas(modifier = semanticsModifier.size(ICON_SIZE)) {
+        drawAuroraGlyph(glyph = glyph, color = resolvedTint)
+    }
+}
+
+/**
  * A static, code-only Aurora field suitable beneath a screen scrim or empty state.
  * It deliberately carries no semantics and contains no private or generated image asset.
  */

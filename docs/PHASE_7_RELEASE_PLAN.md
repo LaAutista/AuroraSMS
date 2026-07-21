@@ -12,12 +12,14 @@ or physical-device gate.
 
 ## Current boundary
 
-The Phase 6H source is `0.6.10-phase6` (`versionCode` 21). Host, R8 release,
-benchmark, privacy, dependency, license, and API 26/API 36 connected suites are
-green. The following boundaries remain open and prevent a gold claim:
+The Phase 7 N1 source is `0.7.0-phase7` (`versionCode` 22). It adds the first
+review-only New chat surface while keeping every first-contact transport path
+disabled. Host, R8 release, benchmark, privacy, dependency, and license gates
+remain required for every candidate. The following boundaries remain open and
+prevent a gold claim:
 
-- Inbox New chat and a shared, non-auto-sending first-contact/external-compose
-  path;
+- contact discovery and an explicit first-contact SMS/MMS send path, including
+  provider-thread resolution and write ownership;
 - Archive, pinning, inbox selection/Mark all read, complete Settings/About, and
   a persisted notification-privacy control wired to the notifier;
 - forward and local quote actions, named-profile import/export, bottom/rail
@@ -40,6 +42,29 @@ mutations. Android still requires the default-SMS role for a new authoritative
 provider scan. General incoming and group MMS now have bounded synthetic codec,
 composer, persistence, and recovery coverage; carrier/OEM acceptance remains a
 separate open gate, not an indexing delay.
+
+### N1 New chat review surface
+
+- [x] Add an Inbox New chat entry point with bottom-list clearance.
+- [x] Share one Aurora composer between the internal route and external
+  `SENDTO` activity without exposing Thread-only controls.
+- [x] Validate bounded manual recipient sets and persist body text under the
+  existing participant-set draft identity without a schema migration.
+- [x] Preserve an existing durable draft when external intent text conflicts;
+  never auto-send or persist caller-supplied text merely because an external
+  intent opened the app.
+- [x] Fail closed across overlapping participant-draft writers, preserve an
+  in-flight edit through Activity recreation, and replace reused external
+  request state without carrying recipients or text across intents.
+- [ ] Add explicit contact discovery/selection with a reviewed permission and
+  bounded-query contract.
+- [ ] Resolve or create the provider conversation only after an explicit send
+  action with durable ownership.
+- [ ] Enable and physically verify first-contact SMS/MMS transport.
+
+New chat is a draft-safe review surface only. Send is disabled; recipients are
+entered manually and remain fixed while text is present. This slice performs no
+contact picking, provider-thread creation or mutation, or SMS/MMS transport.
 
 ## Workstream 7A: release truth and governance
 

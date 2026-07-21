@@ -26,7 +26,7 @@ plugins {
 }
 
 group = "org.aurorasms"
-version = "0.6.10-phase6"
+version = "0.7.0-phase7"
 
 allprojects {
     group = "org.aurorasms"

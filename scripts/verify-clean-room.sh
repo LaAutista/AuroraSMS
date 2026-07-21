@@ -96,6 +96,7 @@ done < <(
         -type d \( \
             -name .git -o \
             -name .gradle -o \
+            -name .kotlin -o \
             -name build -o \
             -name "$PRIVATE_ROOT_NAME" \
         \) -prune -o \

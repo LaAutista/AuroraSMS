@@ -376,7 +376,7 @@ fun ThreadScreen(
                     }
                 }
             }
-            Composer(
+            MessageComposer(
                 state = composer,
                 voiceMemo = voiceMemo,
                 onBodyChanged = onDraftChanged,
@@ -1788,25 +1788,56 @@ private fun AttachmentPreview(
     }
 }
 
+/**
+ * Selects which actions surround the shared draft field.
+ *
+ * New-chat flows deliberately begin with a text-only, non-sending surface. Thread conversations
+ * retain every existing composer action through [THREAD].
+ */
+data class MessageComposerControls(
+    val showAttachments: Boolean = true,
+    val showSubject: Boolean = true,
+    val showVoiceMemo: Boolean = true,
+    val showScheduling: Boolean = true,
+    val allowUndoAndRecovery: Boolean = true,
+    val sendEnabled: Boolean = true,
+) {
+    companion object {
+        val THREAD: MessageComposerControls = MessageComposerControls()
+        val NEW_MESSAGE_DRAFT: MessageComposerControls = MessageComposerControls(
+            showAttachments = false,
+            showSubject = false,
+            showVoiceMemo = false,
+            showScheduling = false,
+            allowUndoAndRecovery = false,
+            sendEnabled = false,
+        )
+    }
+}
+
 @Composable
-private fun Composer(
+fun MessageComposer(
     state: ComposerUiState,
-    voiceMemo: VoiceMemoUiState,
     onBodyChanged: (String) -> Unit,
-    onSubjectChanged: (String) -> Unit,
-    onAddAttachment: () -> Unit,
-    onRemoveAttachment: (Int) -> Unit,
-    onFocusChanged: (Boolean) -> Unit,
-    onRecordVoiceMemo: () -> Unit,
-    onStopVoiceMemo: () -> Unit,
-    onCancelVoiceMemo: () -> Unit,
-    onSendVoiceMemo: () -> Unit,
-    onSend: () -> Unit,
-    onUndoSend: () -> Unit,
-    onSchedule: () -> Unit,
-    onCancelSchedule: () -> Unit,
-    onRequestExactAlarmAccess: () -> Unit,
-    onAcknowledgeSubmissionUnknown: () -> Unit,
+    controls: MessageComposerControls = MessageComposerControls.THREAD,
+    editingEnabled: Boolean = true,
+    supportingTextOverride: String? = null,
+    supportingTextIsError: Boolean = false,
+    voiceMemo: VoiceMemoUiState = VoiceMemoUiState(),
+    onSubjectChanged: (String) -> Unit = {},
+    onAddAttachment: () -> Unit = {},
+    onRemoveAttachment: (Int) -> Unit = {},
+    onFocusChanged: (Boolean) -> Unit = {},
+    onRecordVoiceMemo: () -> Unit = {},
+    onStopVoiceMemo: () -> Unit = {},
+    onCancelVoiceMemo: () -> Unit = {},
+    onSendVoiceMemo: () -> Unit = {},
+    onSend: () -> Unit = {},
+    onUndoSend: () -> Unit = {},
+    onSchedule: () -> Unit = {},
+    onCancelSchedule: () -> Unit = {},
+    onRequestExactAlarmAccess: () -> Unit = {},
+    onAcknowledgeSubmissionUnknown: () -> Unit = {},
 ) {
     val visualTokens = LocalAuroraVisualTokens.current
     var showUnknownConfirmation by remember { mutableStateOf(false) }
@@ -1829,7 +1860,7 @@ private fun Composer(
             showScheduleDetails = false
         }
     }
-    if (showUnknownConfirmation) {
+    if (controls.allowUndoAndRecovery && showUnknownConfirmation) {
         AlertDialog(
             onDismissRequest = { showUnknownConfirmation = false },
             title = { Text(stringResource(R.string.send_status_unknown_title)) },
@@ -1850,7 +1881,11 @@ private fun Composer(
         )
     }
     val pendingSchedule = state.scheduleState as? ComposerScheduleState.Pending
-    if (showScheduleDetails && state.scheduleState !is ComposerScheduleState.None) {
+    if (
+        controls.showScheduling &&
+        showScheduleDetails &&
+        state.scheduleState !is ComposerScheduleState.None
+    ) {
         AlertDialog(
             onDismissRequest = { showScheduleDetails = false },
             title = { Text(stringResource(R.string.scheduled_message_title)) },
@@ -1902,7 +1937,7 @@ private fun Composer(
             },
         )
     }
-    val supportingText = when {
+    val supportingText = supportingTextOverride ?: when {
         state.attachmentImporting -> stringResource(R.string.preparing_image_attachment)
         state.attachmentFailure == ComposerAttachmentFailure.UNREADABLE ->
             stringResource(R.string.image_attachment_unreadable)
@@ -1992,8 +2027,16 @@ private fun Composer(
         }
         else -> stringResource(R.string.draft_saved)
     }
+    val actionState = if (
+        !controls.allowUndoAndRecovery &&
+        state.sendState in RECOVERY_ACTION_SEND_STATES
+    ) {
+        ComposerSendState.UNAVAILABLE
+    } else {
+        state.sendState
+    }
     val actionLabel = stringResource(
-        when (state.sendState) {
+        when (actionState) {
             ComposerSendState.READY -> R.string.send
             ComposerSendState.DELAY_PENDING -> R.string.undo_send
             ComposerSendState.DELAY_REVIEW -> R.string.keep_as_draft
@@ -2003,31 +2046,34 @@ private fun Composer(
             ComposerSendState.UNAVAILABLE -> R.string.send_unavailable
         },
     )
-    val actionGlyph = when (state.sendState) {
+    val actionGlyph = when (actionState) {
         ComposerSendState.KNOWN_UNSENT -> AuroraGlyph.RETRY
         ComposerSendState.SUBMISSION_UNKNOWN -> AuroraGlyph.REVIEW
         ComposerSendState.DELAY_PENDING -> AuroraGlyph.BACK
         ComposerSendState.DELAY_REVIEW -> AuroraGlyph.REVIEW
         else -> AuroraGlyph.SEND
     }
-    val scheduleActive = state.scheduleState is ComposerScheduleState.Pending ||
-        state.scheduleState is ComposerScheduleState.Dispatching ||
-        state.scheduleState is ComposerScheduleState.ReviewRequired
-    val scheduleLoading = state.scheduleState is ComposerScheduleState.Loading
-    val actionEnabled = !state.attachmentImporting && !scheduleActive &&
-        (state.sendState == ComposerSendState.READY ||
-        state.sendState == ComposerSendState.KNOWN_UNSENT ||
-        state.sendState == ComposerSendState.DELAY_PENDING ||
-        state.sendState == ComposerSendState.DELAY_REVIEW ||
-        state.sendState == ComposerSendState.SUBMISSION_UNKNOWN)
-    val composerEditingEnabled = !state.failed &&
+    val scheduleActive = controls.showScheduling &&
+        (state.scheduleState is ComposerScheduleState.Pending ||
+            state.scheduleState is ComposerScheduleState.Dispatching ||
+            state.scheduleState is ComposerScheduleState.ReviewRequired)
+    val scheduleLoading = controls.showScheduling &&
+        state.scheduleState is ComposerScheduleState.Loading
+    val actionEnabled = controls.sendEnabled && !state.attachmentImporting && !scheduleActive &&
+        (actionState == ComposerSendState.READY ||
+        actionState == ComposerSendState.KNOWN_UNSENT ||
+        actionState == ComposerSendState.DELAY_PENDING ||
+        actionState == ComposerSendState.DELAY_REVIEW ||
+        actionState == ComposerSendState.SUBMISSION_UNKNOWN)
+    val composerEditingEnabled = editingEnabled &&
+        !state.failed &&
         !scheduleActive &&
         !scheduleLoading &&
-        state.sendState != ComposerSendState.SENDING &&
-        state.sendState != ComposerSendState.DELAY_PENDING &&
-        state.sendState != ComposerSendState.DELAY_REVIEW &&
-        state.sendState != ComposerSendState.SUBMISSION_UNKNOWN &&
-        !state.attachmentImporting &&
+        actionState != ComposerSendState.SENDING &&
+        actionState != ComposerSendState.DELAY_PENDING &&
+        actionState != ComposerSendState.DELAY_REVIEW &&
+        actionState != ComposerSendState.SUBMISSION_UNKNOWN &&
+        !(controls.showAttachments && state.attachmentImporting) &&
         state.unavailableReason != ComposerUnavailableReason.RECOVERY_PENDING &&
         state.unavailableReason != ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE
     Column(
@@ -2036,13 +2082,15 @@ private fun Composer(
             .background(visualTokens.deepNight.copy(alpha = 0.98f)),
     ) {
         HorizontalDivider(color = visualTokens.violet.copy(alpha = 0.5f))
-        VoiceMemoPanel(
-            state = voiceMemo,
-            onStop = onStopVoiceMemo,
-            onCancel = onCancelVoiceMemo,
-            onSend = onSendVoiceMemo,
-        )
-        if (state.attachments.isNotEmpty()) {
+        if (controls.showVoiceMemo) {
+            VoiceMemoPanel(
+                state = voiceMemo,
+                onStop = onStopVoiceMemo,
+                onCancel = onCancelVoiceMemo,
+                onSend = onSendVoiceMemo,
+            )
+        }
+        if (controls.showAttachments && state.attachments.isNotEmpty()) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2075,7 +2123,7 @@ private fun Composer(
                 }
             }
         }
-        if (showSubject) {
+        if (controls.showSubject && showSubject) {
             OutlinedTextField(
                 value = state.subject,
                 onValueChange = { value ->
@@ -2116,7 +2164,7 @@ private fun Composer(
             val subjectActionLabel = stringResource(
                 if (showSubject) R.string.remove_message_subject else R.string.add_message_subject,
             )
-            Box {
+            if (controls.showAttachments || controls.showSubject) Box {
                 AuroraIconAction(
                     glyph = AuroraGlyph.ADD,
                     contentDescription = extrasActionLabel,
@@ -2125,7 +2173,10 @@ private fun Composer(
                     modifier = Modifier
                         .testTag(COMPOSER_EXTRAS_ACTION_TEST_TAG)
                         .semantics { text = AnnotatedString(extrasActionLabel) },
-                    tint = if (showSubject || state.attachments.isNotEmpty()) {
+                    tint = if (
+                        (controls.showSubject && showSubject) ||
+                        (controls.showAttachments && state.attachments.isNotEmpty())
+                    ) {
                         visualTokens.cyan
                     } else {
                         visualTokens.violet
@@ -2135,26 +2186,30 @@ private fun Composer(
                     expanded = showExtrasMenu,
                     onDismissRequest = { showExtrasMenu = false },
                 ) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.add_image_attachment)) },
-                        onClick = {
-                            showExtrasMenu = false
-                            onAddAttachment()
-                        },
-                        enabled = composerEditingEnabled &&
-                            state.attachments.size < MAXIMUM_COMPOSER_ATTACHMENTS,
-                        modifier = Modifier.testTag(COMPOSER_ADD_IMAGE_ACTION_TEST_TAG),
-                    )
-                    DropdownMenuItem(
-                        text = { Text(subjectActionLabel) },
-                        onClick = {
-                            showExtrasMenu = false
-                            if (showSubject) onSubjectChanged("")
-                            showSubject = !showSubject
-                        },
-                        enabled = composerEditingEnabled,
-                        modifier = Modifier.testTag(COMPOSER_SUBJECT_ACTION_TEST_TAG),
-                    )
+                    if (controls.showAttachments) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.add_image_attachment)) },
+                            onClick = {
+                                showExtrasMenu = false
+                                onAddAttachment()
+                            },
+                            enabled = composerEditingEnabled &&
+                                state.attachments.size < MAXIMUM_COMPOSER_ATTACHMENTS,
+                            modifier = Modifier.testTag(COMPOSER_ADD_IMAGE_ACTION_TEST_TAG),
+                        )
+                    }
+                    if (controls.showSubject) {
+                        DropdownMenuItem(
+                            text = { Text(subjectActionLabel) },
+                            onClick = {
+                                showExtrasMenu = false
+                                if (showSubject) onSubjectChanged("")
+                                showSubject = !showSubject
+                            },
+                            enabled = composerEditingEnabled,
+                            modifier = Modifier.testTag(COMPOSER_SUBJECT_ACTION_TEST_TAG),
+                        )
+                    }
                 }
             }
             OutlinedTextField(
@@ -2187,48 +2242,52 @@ private fun Composer(
                     disabledLabelColor = visualTokens.lilacSecondary.copy(alpha = 0.6f),
                 ),
             )
-            val recording = voiceMemo.phase == VoiceMemoUiPhase.RECORDING
-            val voiceActionLabel = stringResource(
-                if (recording) R.string.stop_voice_memo else R.string.record_voice_memo,
-            )
-            AuroraIconAction(
-                glyph = if (recording) AuroraGlyph.STOP else AuroraGlyph.MICROPHONE,
-                contentDescription = voiceActionLabel,
-                onClick = if (recording) onStopVoiceMemo else onRecordVoiceMemo,
-                enabled = recording || voiceMemo.recordEnabled,
-                modifier = Modifier
-                    .testTag(COMPOSER_VOICE_MEMO_TEST_TAG)
-                    .semantics { text = AnnotatedString(voiceActionLabel) },
-                tint = if (recording) MaterialTheme.colorScheme.error else visualTokens.violet,
-            )
-            val scheduleLabel = stringResource(
-                if (scheduleActive) R.string.cancel_scheduled_message else R.string.schedule_message,
-            )
-            AuroraIconAction(
-                glyph = AuroraGlyph.SCHEDULE,
-                contentDescription = scheduleLabel,
-                onClick = if (scheduleActive) {
-                    { showScheduleDetails = true }
-                } else {
-                    onSchedule
-                },
-                enabled = scheduleActive ||
-                    (!state.mmsRequired && !scheduleLoading &&
-                        state.sendState == ComposerSendState.READY),
-                modifier = Modifier
-                    .testTag(COMPOSER_SCHEDULE_TEST_TAG)
-                    .semantics { text = AnnotatedString(scheduleLabel) },
-                tint = if (scheduleActive) MaterialTheme.colorScheme.error else visualTokens.violet,
-            )
+            if (controls.showVoiceMemo) {
+                val recording = voiceMemo.phase == VoiceMemoUiPhase.RECORDING
+                val voiceActionLabel = stringResource(
+                    if (recording) R.string.stop_voice_memo else R.string.record_voice_memo,
+                )
+                AuroraIconAction(
+                    glyph = if (recording) AuroraGlyph.STOP else AuroraGlyph.MICROPHONE,
+                    contentDescription = voiceActionLabel,
+                    onClick = if (recording) onStopVoiceMemo else onRecordVoiceMemo,
+                    enabled = recording || voiceMemo.recordEnabled,
+                    modifier = Modifier
+                        .testTag(COMPOSER_VOICE_MEMO_TEST_TAG)
+                        .semantics { text = AnnotatedString(voiceActionLabel) },
+                    tint = if (recording) MaterialTheme.colorScheme.error else visualTokens.violet,
+                )
+            }
+            if (controls.showScheduling) {
+                val scheduleLabel = stringResource(
+                    if (scheduleActive) R.string.cancel_scheduled_message else R.string.schedule_message,
+                )
+                AuroraIconAction(
+                    glyph = AuroraGlyph.SCHEDULE,
+                    contentDescription = scheduleLabel,
+                    onClick = if (scheduleActive) {
+                        { showScheduleDetails = true }
+                    } else {
+                        onSchedule
+                    },
+                    enabled = scheduleActive ||
+                        (!state.mmsRequired && !scheduleLoading &&
+                            state.sendState == ComposerSendState.READY),
+                    modifier = Modifier
+                        .testTag(COMPOSER_SCHEDULE_TEST_TAG)
+                        .semantics { text = AnnotatedString(scheduleLabel) },
+                    tint = if (scheduleActive) MaterialTheme.colorScheme.error else visualTokens.violet,
+                )
+            }
             AuroraIconAction(
                 glyph = actionGlyph,
                 contentDescription = actionLabel,
                 onClick = {
-                    if (state.sendState == ComposerSendState.SUBMISSION_UNKNOWN) {
+                    if (actionState == ComposerSendState.SUBMISSION_UNKNOWN) {
                         showUnknownConfirmation = true
                     } else if (
-                        state.sendState == ComposerSendState.DELAY_PENDING ||
-                        state.sendState == ComposerSendState.DELAY_REVIEW
+                        actionState == ComposerSendState.DELAY_PENDING ||
+                        actionState == ComposerSendState.DELAY_REVIEW
                     ) {
                         onUndoSend()
                     } else {
@@ -2246,6 +2305,7 @@ private fun Composer(
             text = supportingText,
             modifier = Modifier.padding(start = 16.dp, end = 64.dp, bottom = 8.dp),
             color = if (
+                supportingTextIsError ||
                 state.failed ||
                 state.attachmentFailure != null ||
                 state.sendState == ComposerSendState.KNOWN_UNSENT ||
@@ -2433,6 +2493,12 @@ private const val MAXIMUM_VIEWPORT_THREAD_ROWS: Int = 100
 private const val MAXIMUM_COMPOSER_CHARACTERS: Int = 100_000
 private const val MAXIMUM_COMPOSER_SUBJECT_CHARACTERS: Int = 1_000
 private const val MAXIMUM_COMPOSER_ATTACHMENTS: Int = 10
+private val RECOVERY_ACTION_SEND_STATES = setOf(
+    ComposerSendState.DELAY_PENDING,
+    ComposerSendState.DELAY_REVIEW,
+    ComposerSendState.KNOWN_UNSENT,
+    ComposerSendState.SUBMISSION_UNKNOWN,
+)
 const val THREAD_SCREEN_TEST_TAG: String = "aurora-thread-screen"
 const val THREAD_LIST_TEST_TAG: String = "aurora-thread-list"
 const val MESSAGE_BUBBLE_TEST_TAG: String = "aurora-message-bubble"

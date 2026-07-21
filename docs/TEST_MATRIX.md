@@ -288,8 +288,8 @@ For API 26-28 and API 29+ paths as applicable:
 
 ### Manifest component contracts
 
-- [ ] `SENDTO` activity resolves `sms`, `smsto`, `mms`, and `mmsto`.
-- [ ] External compose input never auto-sends.
+- [x] `SENDTO` activity resolves `sms`, `smsto`, `mms`, and `mmsto`.
+- [x] External compose input never auto-sends.
 - [ ] Respond-via-message service has all four schemes and the official guard.
 - [ ] SMS delivery receiver has the official action and `BROADCAST_SMS` guard.
 - [ ] MMS delivery receiver has the official action, MIME type, and
@@ -4275,6 +4275,46 @@ closes no physical performance budget.
 The API 26 emulator `--smoke` and Pixel `--full` measurement remain pending in
 this evidence record. Raw JSON, metadata, and Perfetto traces remain private
 local evidence and must not be published. AuroraSMS is not gold.
+
+#### Phase 7 N1 New chat review-surface acceptance — 2026-07-21
+
+The `0.7.0-phase7` (`versionCode` 22) N1 candidate passed the complete host
+unit, lint, R8 release/benchmark, APK-content, permission, dependency,
+clean-room, performance-protocol, physical-provider-protocol, and release-
+metadata gate. The aggregate Gradle invocation completed 783 tasks without a
+failure. Focused host verification passed 25 serialized-draft tests, 10 New
+message route-state tests, and 16 external-request parser tests. They cover
+atomic acknowledged-base capture, writer pooling and recreation handoff,
+fail-closed create/update/delete conflicts, restoration after read or storage
+failure, truthful ready/saved state, and bounded, redacted external parsing.
+
+The same source then passed six controlled New message UI tests and ten N1 app-
+route acceptance tests plus the four-scheme manifest contract on each supported
+boundary emulator: API 26 (Android 8.0) and API 36. The route cases cover
+external review text remaining out of Room until an Aurora edit; whole-request
+replacement through `onNewIntent`; durable close/reopen; recreation around
+first and intermediate acknowledgements; recipient locking until an empty edit
+is durable; conflict text remaining display-only across recreation; exact
+recovery after transient storage failure; bounded recipient validation and
+canonicalization; and an existing participant draft winning over external MMS
+prefill. The UI cases cover Inbox entry, every send path disabled, exact-draft
+and unresolved-prefill locks, truthful unsaved ready status, recipient-before-
+body ordering, and recipient-identity locking while text exists. The manifest
+case resolves `sms`, `smsto`, `mms`, and `mmsto` on both platform boundaries.
+
+External prefill is a non-durable review overlay, not restoration authority. It
+is revalidated against settled Room state before editing is admitted, and
+merely opening an external request does not persist caller text. A durable
+participant draft wins every concurrent create or stale-revision race; losing
+local text remains visible in a fail-closed display-only state instead of
+overwriting Room. A reused compose callback drops the prior composition while
+parsing its replacement off the main thread. No test in this record creates or
+mutates a provider thread or invokes SMS/MMS transport.
+
+This closes the review-only N1 acceptance boundary. Contact discovery,
+first-contact provider ownership and transport, physical carrier/OEM cases,
+the wider Phase 7 product surface, signing, and publication remain open.
+AuroraSMS is not gold.
 
 ## Release gate
 

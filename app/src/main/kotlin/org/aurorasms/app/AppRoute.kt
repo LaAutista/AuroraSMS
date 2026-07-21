@@ -8,6 +8,8 @@ import org.aurorasms.core.model.ProviderThreadId
 internal sealed interface AppRoute {
     data object Inbox : AppRoute
 
+    data object NewChat : AppRoute
+
     data object Appearance : AppRoute
 
     data object Settings : AppRoute

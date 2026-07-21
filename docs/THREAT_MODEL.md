@@ -119,6 +119,8 @@ Controls:
 - validate action, role state, scheme, MIME type, recipients, subscription,
   extras, URI authority, grant flags, sizes, and attachment count;
 - never send merely because an external compose intent opened the app;
+- keep externally supplied compose text non-durable until the user edits it
+  inside Aurora;
 - keep dangerous actions behind visible user confirmation and fresh state.
 
 ### T2: role or permission confusion

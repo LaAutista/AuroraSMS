@@ -17,6 +17,10 @@ class AppRouteStackTest {
             normalizeRestoredRoutes(listOf(AppRoute.Inbox, AppRoute.Appearance)),
         )
         assertEquals(
+            listOf(AppRoute.Inbox, AppRoute.NewChat),
+            normalizeRestoredRoutes(listOf(AppRoute.Inbox, AppRoute.NewChat)),
+        )
+        assertEquals(
             listOf(AppRoute.Inbox, AppRoute.SpamBlocked),
             normalizeRestoredRoutes(listOf(AppRoute.Inbox, AppRoute.SpamBlocked)),
         )

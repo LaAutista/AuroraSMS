@@ -9,19 +9,31 @@ Android's Telephony provider as the authority for messages.
 
 ## Current status
 
-Phase 7 release hardening is active. Implementation commit
-`d163811653e69ec8e1ad505a454b51770180ef73` aligns the app and CycloneDX
-version at `0.6.10-phase6`, adds a data-minimizing security policy, deterministic
-checksum/reproducibility helpers, release instructions, localized store copy,
-and valid F-Droid metadata that remains disabled while the app is pre-release.
-Two independent Git clones of that exact commit produced byte-identical R8
-unsigned release APKs and AABs. The reproducible APK SHA-256 is
+Phase 7 product completion is active. The current candidate identifies as
+`0.7.0-phase7` (`versionCode` 22) and adds an Inbox New chat action plus one
+shared internal/external review surface. Manually entered, bounded recipients
+and message text use the existing local participant-set draft authority.
+External `SENDTO` input never auto-sends, and a conflicting prefill cannot
+replace an existing saved draft. Merely opening an external request does not
+persist its text; Aurora saves it only after an in-app edit. New chat is a
+draft-safe review surface only.
+Send is disabled; this slice performs no contact picking, provider-thread
+creation or mutation, or SMS/MMS transport.
+
+The last clean reproducibility proof remains historical evidence for
+implementation commit `d163811653e69ec8e1ad505a454b51770180ef73` and version
+`0.6.10-phase6`. That commit aligned the app and CycloneDX version, added a
+data-minimizing security policy, deterministic checksum/reproducibility helpers,
+release instructions, localized store copy, and valid F-Droid metadata that
+remains disabled while the app is pre-release. Two independent Git clones of
+that exact commit produced byte-identical R8 unsigned release APKs and AABs.
+The reproducible APK SHA-256 for that historical candidate is
 `acd1517b5c01a7c14be6d2fce06cb9dbe44276f6db51693bf2f31253e8d78ee6`;
-the AAB SHA-256 is
+its AAB SHA-256 is
 `349ea4f6a1be6f348cbd54c64bdf06e3fe56f7bc13f1eaef2aa4d807d7a86b1b`.
-All 653 host tests and the 986-task governed aggregate pass. The exact release
-and gold checklist is in [the Phase 7 plan](docs/PHASE_7_RELEASE_PLAN.md).
-Required local product work is also still open: New chat/first-contact compose,
+The exact release and gold checklist is in
+[the Phase 7 plan](docs/PHASE_7_RELEASE_PLAN.md). Required local product work is
+still open: contact discovery and explicit first-contact sending,
 Archive/pin/inbox actions, the complete Settings/About and notification-privacy
 surface, forward/quote, profile interchange/adaptive navigation, and broader
 accessibility/form-factor acceptance. Signing, a complete nonempty physical-
