@@ -134,13 +134,27 @@ val verifyPhysicalProviderProtocol by tasks.registering(Exec::class) {
     )
 }
 
+val verifyPerformanceResultsProtocol by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Self-tests the fail-closed physical performance evidence parser."
+    commandLine(
+        "python3",
+        layout.projectDirectory.file("scripts/verify-performance-results.py").asFile,
+        "--self-test",
+    )
+}
+
 val verifyPermissions by tasks.registering(Exec::class) {
     group = "verification"
     description = "Checks app manifests and built APKs against the permission ledger."
     dependsOn(
+        ":app:assembleBenchmark",
+        ":app:assembleDebug",
+        ":app:assembleRelease",
         ":app:processBenchmarkMainManifest",
         ":app:processDebugMainManifest",
         ":app:processReleaseMainManifest",
+        ":macrobenchmark:assembleBenchmark",
         ":macrobenchmark:processBenchmarkManifest",
     )
     commandLine("bash", layout.projectDirectory.file("scripts/verify-permissions.sh").asFile)
@@ -149,6 +163,12 @@ val verifyPermissions by tasks.registering(Exec::class) {
 val verifyApkContents by tasks.registering(Exec::class) {
     group = "verification"
     description = "Checks APK entries for prohibited material and release-only boundaries."
+    dependsOn(
+        ":app:assembleBenchmark",
+        ":app:assembleDebug",
+        ":app:assembleRelease",
+        ":macrobenchmark:assembleBenchmark",
+    )
     commandLine("bash", layout.projectDirectory.file("scripts/verify-apk-contents.sh").asFile)
 }
 
@@ -280,6 +300,7 @@ tasks.register("verifyGovernance") {
         verifyCleanRoom,
         verifyDependencies,
         verifyPermissions,
+        verifyPerformanceResultsProtocol,
         verifyPhysicalProviderProtocol,
         verifyPrivateAssets,
         verifyApkContents,

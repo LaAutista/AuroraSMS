@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.aurorasms.app.benchmark.BuildVariantBenchmarkPolicy
 import org.aurorasms.app.diagnostics.BuildVariantDiagnosticsLauncher
 import org.aurorasms.app.diagnostics.DiagnosticsLauncher
 import org.aurorasms.app.message.AppNotificationIntentFactory
@@ -151,8 +152,9 @@ class MainActivity : ComponentActivity() {
             val appearance by appContainer.appearanceController.state.collectAsStateWithLifecycle()
             AuroraSmsTheme(profile = appearance.activeProfile) {
                 val savedBranches = rememberSaveableStateHolder()
-                val messagingEligible = roleState == RoleOnboardingState.Held &&
-                    permissionState[Manifest.permission.READ_SMS] == true
+                val messagingEligible = BuildVariantBenchmarkPolicy.syntheticMessagingEligible ||
+                    (roleState == RoleOnboardingState.Held &&
+                        permissionState[Manifest.permission.READ_SMS] == true)
                 if (showDiagnostics && diagnosticsLauncher.available) {
                     diagnosticsLauncher.Content { showDiagnostics = false }
                 } else if (messagingEligible) {
@@ -165,8 +167,14 @@ class MainActivity : ComponentActivity() {
                                 .windowInsetsPadding(WindowInsets.safeDrawing),
                         ) {
                             NotificationPermissionNoticeHost(
-                                notificationPermissionRequired = Build.VERSION.SDK_INT >= 33,
-                                notificationPermissionGranted = notificationPermissionGranted,
+                                notificationPermissionRequired =
+                                    Build.VERSION.SDK_INT >= 33 &&
+                                        !BuildVariantBenchmarkPolicy
+                                            .syntheticNotificationPermissionSatisfied,
+                                notificationPermissionGranted =
+                                    BuildVariantBenchmarkPolicy
+                                        .syntheticNotificationPermissionSatisfied ||
+                                        notificationPermissionGranted,
                                 onRecoverNotificationPermission = ::recoverNotificationPermission,
                             )
                             Box(

@@ -25,7 +25,9 @@ class MemoryBenchmark {
         val samples = LongArray(memoryIterations())
         samples.indices.forEach { index ->
             FixtureController.forceStopTarget()
-            device.executeShellCommand("am start -W -n $TARGET_PACKAGE/.MainActivity")
+            device.executeShellCommand(
+                "am start -W -n $TARGET_PACKAGE/$PRODUCTION_PACKAGE.MainActivity",
+            )
             checkNotNull(
                 device.wait(Until.findObject(By.res(INBOX_SEARCH_ACTION_TAG)), UI_TIMEOUT_MILLIS),
             )
@@ -42,15 +44,23 @@ class MemoryBenchmark {
                 device.executeShellCommand("dumpsys meminfo $TARGET_PACKAGE"),
             )
         }
-        val median = samples.sorted()[samples.size / 2]
+        val orderedSamples = samples.sorted()
+        val median = if (orderedSamples.size % 2 == 0) {
+            val upperIndex = orderedSamples.size / 2
+            (orderedSamples[upperIndex - 1].toDouble() + orderedSamples[upperIndex].toDouble()) /
+                2.0
+        } else {
+            orderedSamples[orderedSamples.size / 2].toDouble()
+        }
         instrumentation.sendStatus(
             STATUS_EVIDENCE,
             Bundle().apply {
-                putLong("auroraPssMedianKiB", median)
+                putString("auroraPssSamplesKiB", samples.joinToString(","))
+                putString("auroraPssMedianKiB", median.toString())
                 putInt("auroraPssSampleCount", samples.size)
             },
         )
-        check(median in 1..MAXIMUM_MEDIAN_PSS_KIB) {
+        check(median > 0.0 && median < MAXIMUM_MEDIAN_PSS_KIB.toDouble()) {
             "Fixed synthetic browse exceeded the Phase 3 median PSS aim"
         }
     }
@@ -72,7 +82,7 @@ class MemoryBenchmark {
         @JvmStatic
         @BeforeClass
         fun seedInboxOnce() {
-            FixtureController.requireMessagingEligibility()
+            FixtureController.requireSyntheticIsolation()
             FixtureController.seed(FixtureShape.INBOX_20K)
         }
     }

@@ -68,7 +68,7 @@ class SearchJumpBenchmark {
         @JvmStatic
         @BeforeClass
         fun seedSearchCorpusOnce() {
-            FixtureController.requireMessagingEligibility()
+            FixtureController.requireSyntheticIsolation()
             FixtureController.seed(FixtureShape.SEARCH_500K)
             query = FixtureController.oldestSearchToken()
         }

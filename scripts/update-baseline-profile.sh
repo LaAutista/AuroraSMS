@@ -38,7 +38,8 @@ done
 
 ROOT="$(git rev-parse --show-toplevel)"
 DESTINATION="$ROOT/app/src/main/baseline-prof.txt"
-APP_PACKAGE="org.aurorasms.app"
+PRODUCTION_PACKAGE="org.aurorasms.app"
+APP_PACKAGE="org.aurorasms.app.benchmark"
 TEST_PACKAGE="org.aurorasms.macrobenchmark"
 TEST_RUNNER="androidx.test.runner.AndroidJUnitRunner"
 APP_APK="$ROOT/app/build/outputs/apk/benchmark/app-benchmark.apk"
@@ -46,6 +47,9 @@ RAW_TEST_APK="$ROOT/macrobenchmark/build/outputs/apk/benchmark/macrobenchmark-be
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 TEST_APK="$WORK/macrobenchmark-benchmark-nonroot.apk"
+DESTINATION_TMP="$DESTINATION.tmp.$$"
+DEVICE_OUTPUT_ROOT="/sdcard/Android/media/$TEST_PACKAGE/aurora-profile-$$"
+INSTRUMENTATION_TIMEOUT_SECONDS=3600
 MINIMUM_CAPTURE_AGREEMENT_PERCENT=99
 
 mapfile -t DEVICES < <(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }')
@@ -76,32 +80,107 @@ if [[ "$DEVICE_SERIAL" == emulator-* || "$IS_EMULATOR" == "1" ]]; then
         "$DEVICE_SERIAL"
 fi
 
-owner_eligible_once() {
-    local role_holders package_dump
-    role_holders="$("${ADB[@]}" shell cmd role get-role-holders android.app.role.SMS | tr -d '\r')"
-    if ! rg --fixed-strings --line-regexp -- "$APP_PACKAGE" <<<"$role_holders" >/dev/null; then
+role_state() {
+    local sdk
+    sdk="$("${ADB[@]}" shell getprop ro.build.version.sdk | tr -d '\r')"
+    if [[ "$sdk" =~ ^[0-9]+$ && "$sdk" -ge 29 ]]; then
+        "${ADB[@]}" shell cmd role get-role-holders android.app.role.SMS \
+            | tr -d '\r' \
+            | sed '/^[[:space:]]*$/d'
+    else
+        "${ADB[@]}" shell settings get secure sms_default_application | tr -d '\r'
+    fi
+}
+
+package_path() {
+    "${ADB[@]}" shell pm path "$1" | tr -d '\r' || true
+}
+
+ORIGINAL_ROLE="$(role_state)"
+ORIGINAL_PRODUCTION_PATH="$(package_path "$PRODUCTION_PACKAGE")"
+if [[ -z "$ORIGINAL_ROLE" || "$ORIGINAL_ROLE" == "$APP_PACKAGE" ]]; then
+    printf 'The isolated benchmark target must not hold the SMS role before capture.\n' >&2
+    exit 1
+fi
+
+cleanup_device() (
+    local cleanup_role
+    set +e
+    "${ADB[@]}" shell am force-stop "$TEST_PACKAGE" >/dev/null 2>&1
+    "${ADB[@]}" shell am force-stop "$APP_PACKAGE" >/dev/null 2>&1
+    "${ADB[@]}" uninstall "$TEST_PACKAGE" >/dev/null 2>&1
+    cleanup_role="$(role_state)"
+    if [[ "$cleanup_role" != "$APP_PACKAGE" ]]; then
+        "${ADB[@]}" uninstall "$APP_PACKAGE" >/dev/null 2>&1
+    fi
+    "${ADB[@]}" shell rm -rf "$DEVICE_OUTPUT_ROOT" >/dev/null 2>&1
+)
+
+cleanup() (
+    set +e
+    cleanup_device
+    rm -f "$DESTINATION_TMP"
+    rm -rf "$WORK"
+)
+trap cleanup EXIT
+
+verify_cleanup() {
+    if [[ -n "$(package_path "$TEST_PACKAGE")" || \
+        -n "$(package_path "$APP_PACKAGE")" ]]; then
+        printf 'Isolated Baseline Profile packages remained installed after cleanup.\n' >&2
         return 1
     fi
-    package_dump="$("${ADB[@]}" shell dumpsys package "$APP_PACKAGE")"
-    if ! rg --quiet 'android[.]permission[.]READ_SMS: granted=true' <<<"$package_dump"; then
+    if [[ "$(role_state)" != "$ORIGINAL_ROLE" || \
+        "$(package_path "$PRODUCTION_PACKAGE")" != "$ORIGINAL_PRODUCTION_PATH" ]]; then
+        printf 'The device role or production package changed during profile cleanup.\n' >&2
+        return 1
+    fi
+    if "${ADB[@]}" shell test -e "$DEVICE_OUTPUT_ROOT"; then
+        printf 'Temporary Baseline Profile artifacts remained on the device.\n' >&2
         return 1
     fi
 }
 
-require_owner_eligibility() {
-    if ! owner_eligible_once; then
-        printf '%s requires owner-granted READ_SMS through normal app UI before capture.\n' \
+synthetic_isolation_once() {
+    local package_dump permission
+    if [[ "$(role_state)" != "$ORIGINAL_ROLE" ]]; then
+        return 1
+    fi
+    if [[ "$(package_path "$PRODUCTION_PACKAGE")" != "$ORIGINAL_PRODUCTION_PATH" ]]; then
+        return 1
+    fi
+    if [[ -z "$(package_path "$APP_PACKAGE")" ]]; then
+        return 1
+    fi
+    package_dump="$("${ADB[@]}" shell dumpsys package "$APP_PACKAGE")"
+    for permission in \
+        android.permission.READ_SMS \
+        android.permission.SEND_SMS \
+        android.permission.RECEIVE_SMS \
+        android.permission.RECEIVE_MMS \
+        android.permission.RECEIVE_WAP_PUSH \
+        android.permission.READ_PHONE_STATE; do
+        if rg --fixed-strings --quiet "$permission: granted=true" <<<"$package_dump"; then
+            return 1
+        fi
+    done
+    [[ "$(role_state)" != "$APP_PACKAGE" ]]
+}
+
+require_synthetic_isolation() {
+    if ! synthetic_isolation_once; then
+        printf '%s must remain package-isolated, messaging-permission-free, and outside the SMS role.\n' \
             "$APP_PACKAGE" >&2
         exit 1
     fi
 }
 
-wait_for_stable_owner_eligibility() {
+wait_for_stable_synthetic_isolation() {
     local consecutive=0
     local deadline=$((SECONDS + 30))
 
     while ((SECONDS < deadline)); do
-        if owner_eligible_once; then
+        if synthetic_isolation_once; then
             consecutive=$((consecutive + 1))
             if ((consecutive >= 3)); then
                 return 0
@@ -112,26 +191,9 @@ wait_for_stable_owner_eligibility() {
         sleep 1
     done
 
-    printf '%s did not retain the owner-selected SMS role and READ_SMS grant after install.\n' \
+    printf '%s did not retain its denied messaging authority after install.\n' \
         "$APP_PACKAGE" >&2
     exit 1
-}
-
-installed_target_matches_build() {
-    local installed_path local_sha256 device_sha256
-    installed_path="$(
-        "${ADB[@]}" shell pm path "$APP_PACKAGE" \
-            | tr -d '\r' \
-            | sed -n 's/^package://p' \
-            | head -n 1
-    )"
-    if [[ -z "$installed_path" ]]; then
-        return 1
-    fi
-
-    local_sha256="$(sha256sum "$APP_APK" | awk '{print $1}')"
-    device_sha256="$("${ADB[@]}" shell sha256sum "$installed_path" | awk '{print $1}')"
-    [[ "$device_sha256" == "$local_sha256" ]]
 }
 
 normalize_profile() {
@@ -160,23 +222,34 @@ normalize_profile() {
 capture_once() {
     local ordinal="$1"
     local run_root="$WORK/run-$ordinal"
-    local device_output="/sdcard/Android/media/$TEST_PACKAGE/additional_test_output/aurora-$ordinal-$$"
-    local instrumentation_status
+    local device_output="$DEVICE_OUTPUT_ROOT/capture-$ordinal"
+    local instrumentation_status tee_status zero_status_count
+    local -a pipeline_status
     mkdir -p "$run_root"
 
     "${ADB[@]}" shell rm -rf "$device_output"
     "${ADB[@]}" shell mkdir -p "$device_output"
     set +e
-    "${ADB[@]}" shell am instrument -w -r \
-        -e additionalTestOutputDir "$device_output" \
-        -e androidx.benchmark.enabledRules BaselineProfile \
-        -e class org.aurorasms.macrobenchmark.BaselineProfileGenerator \
-        "$TEST_PACKAGE/$TEST_RUNNER" | tee "$run_root/instrumentation.txt"
-    instrumentation_status="${PIPESTATUS[0]}"
+    timeout --foreground --kill-after=5s "${INSTRUMENTATION_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell am instrument -w -r \
+            -e additionalTestOutputDir "$device_output" \
+            -e androidx.benchmark.enabledRules BaselineProfile \
+            -e class org.aurorasms.macrobenchmark.BaselineProfileGenerator \
+            "$TEST_PACKAGE/$TEST_RUNNER" | tee "$run_root/instrumentation.txt"
+    pipeline_status=("${PIPESTATUS[@]}")
+    instrumentation_status="${pipeline_status[0]}"
+    tee_status="${pipeline_status[1]}"
     set -e
-    if [[ "$instrumentation_status" -ne 0 ]] || \
-        rg --quiet 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' \
+    zero_status_count="$(
+        rg --count '^INSTRUMENTATION_STATUS_CODE: 0$' \
+            "$run_root/instrumentation.txt" || true
+    )"
+    if [[ "$instrumentation_status" -ne 0 || "$tee_status" -ne 0 ]] || \
+        rg --quiet \
+            'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed|INSTRUMENTATION_STATUS_CODE: -[1-4]' \
             "$run_root/instrumentation.txt" || \
+        [[ "$zero_status_count" -ne 3 ]] || \
+        ! rg --quiet '^OK \(3 tests\)$' "$run_root/instrumentation.txt" || \
         ! rg --quiet '^INSTRUMENTATION_CODE: -1$' "$run_root/instrumentation.txt"; then
         "${ADB[@]}" shell rm -rf "$device_output" || true
         printf 'Baseline Profile instrumentation failed during capture %s.\n' "$ordinal" >&2
@@ -199,22 +272,33 @@ capture_once() {
 }
 
 verify_benchmark_shell() {
-    local device_output="/sdcard/Android/media/$TEST_PACKAGE/additional_test_output/aurora-shell-$$"
-    local instrumentation_status
+    local device_output="$DEVICE_OUTPUT_ROOT/shell-preflight"
+    local instrumentation_status tee_status zero_status_count
+    local -a pipeline_status
 
     "${ADB[@]}" shell rm -rf "$device_output"
     "${ADB[@]}" shell mkdir -p "$device_output"
     set +e
-    "${ADB[@]}" shell am instrument -w -r \
-        -e additionalTestOutputDir "$device_output" \
-        -e class org.aurorasms.macrobenchmark.BenchmarkShellPreflightTest \
-        "$TEST_PACKAGE/$TEST_RUNNER" | tee "$WORK/shell-preflight.txt"
-    instrumentation_status="${PIPESTATUS[0]}"
+    timeout --foreground --kill-after=5s "${INSTRUMENTATION_TIMEOUT_SECONDS}s" \
+        "${ADB[@]}" shell am instrument -w -r \
+            -e additionalTestOutputDir "$device_output" \
+            -e class org.aurorasms.macrobenchmark.BenchmarkShellPreflightTest \
+            "$TEST_PACKAGE/$TEST_RUNNER" | tee "$WORK/shell-preflight.txt"
+    pipeline_status=("${PIPESTATUS[@]}")
+    instrumentation_status="${pipeline_status[0]}"
+    tee_status="${pipeline_status[1]}"
     set -e
     "${ADB[@]}" shell rm -rf "$device_output" || true
-    if [[ "$instrumentation_status" -ne 0 ]] || \
-        rg --quiet 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' \
+    zero_status_count="$(
+        rg --count '^INSTRUMENTATION_STATUS_CODE: 0$' \
+            "$WORK/shell-preflight.txt" || true
+    )"
+    if [[ "$instrumentation_status" -ne 0 || "$tee_status" -ne 0 ]] || \
+        rg --quiet \
+            'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed|INSTRUMENTATION_STATUS_CODE: -[1-4]' \
             "$WORK/shell-preflight.txt" || \
+        [[ "$zero_status_count" -ne 1 ]] || \
+        ! rg --quiet '^OK \(1 test\)$' "$WORK/shell-preflight.txt" || \
         ! rg --quiet '^INSTRUMENTATION_CODE: -1$' "$WORK/shell-preflight.txt"; then
         printf 'Non-root benchmark shell preflight failed.\n' >&2
         exit 1
@@ -224,19 +308,21 @@ verify_benchmark_shell() {
 "$ROOT/gradlew" :app:assembleBenchmark :macrobenchmark:assembleBenchmark \
     -PauroraBaselineProfileCapture=true --no-daemon --no-parallel
 "$ROOT/scripts/prepare-macrobenchmark-apk.sh" "$RAW_TEST_APK" "$TEST_APK"
-if ! installed_target_matches_build; then
-    "${ADB[@]}" install -r "$APP_APK" >/dev/null
-    printf '%s was installed or updated. Select it as the default SMS app through normal UI, then rerun capture.\n' \
-        "$APP_PACKAGE" >&2
+"${ADB[@]}" uninstall "$TEST_PACKAGE" >/dev/null 2>&1 || true
+"${ADB[@]}" uninstall "$APP_PACKAGE" >/dev/null 2>&1 || true
+if [[ "$(role_state)" != "$ORIGINAL_ROLE" || \
+    "$(package_path "$PRODUCTION_PACKAGE")" != "$ORIGINAL_PRODUCTION_PATH" ]]; then
+    printf 'The SMS role or production package changed before isolated capture.\n' >&2
     exit 1
 fi
-"${ADB[@]}" install -r -t "$TEST_APK" >/dev/null
-wait_for_stable_owner_eligibility
+"${ADB[@]}" install "$APP_APK" >/dev/null
+"${ADB[@]}" install -t "$TEST_APK" >/dev/null
+wait_for_stable_synthetic_isolation
 verify_benchmark_shell
 
-wait_for_stable_owner_eligibility
+wait_for_stable_synthetic_isolation
 capture_once first
-wait_for_stable_owner_eligibility
+wait_for_stable_synthetic_isolation
 capture_once second
 
 FIRST_PROFILE="$WORK/run-first/baseline-prof.txt"
@@ -258,7 +344,13 @@ if [[ "$STABLE_RULES" -eq 0 ]] || \
     exit 1
 fi
 
-cp "$STABLE_PROFILE" "$DESTINATION"
+require_synthetic_isolation
+cleanup_device
+verify_cleanup
+cp "$STABLE_PROFILE" "$DESTINATION_TMP"
+mv "$DESTINATION_TMP" "$DESTINATION"
+rm -rf "$WORK"
+trap - EXIT
 printf 'Baseline Profile updated: %s (%s stable rules; captures %s/%s and %s/%s; SHA-256 %s)\n' \
     "$DESTINATION" \
     "$STABLE_RULES" \

@@ -4,10 +4,11 @@
 
 Status: active; AuroraSMS is not gold
 
-Phase 7 converts the implemented pre-release application into an auditable
-release candidate, then proves the remaining messaging behavior on real
-platform and carrier surfaces. Passing packaging checks cannot waive an open
-telephony, data-completeness, accessibility, privacy, or physical-device gate.
+Phase 7 finishes the required pre-release product surfaces, converts the app
+into an auditable release candidate, then proves the remaining messaging
+behavior on real platform and carrier surfaces. Passing packaging checks cannot
+waive an open functional, telephony, data-completeness, accessibility, privacy,
+or physical-device gate.
 
 ## Current boundary
 
@@ -15,6 +16,12 @@ The Phase 6H source is `0.6.10-phase6` (`versionCode` 21). Host, R8 release,
 benchmark, privacy, dependency, license, and API 26/API 36 connected suites are
 green. The following boundaries remain open and prevent a gold claim:
 
+- Inbox New chat and a shared, non-auto-sending first-contact/external-compose
+  path;
+- Archive, pinning, inbox selection/Mark all read, complete Settings/About, and
+  a persisted notification-privacy control wired to the notifier;
+- forward and local quote actions, named-profile import/export, bottom/rail
+  navigation parity, and the remaining accessibility/adaptive-layout surface;
 - a complete provider scan on the owner's nonempty Pixel history after one
   deliberate Aurora-default, foreground-readable session;
 - physical incoming MMS carrier/OEM acceptance, including reliable group
@@ -26,12 +33,13 @@ green. The following boundaries remain open and prevent a gold claim:
 - an owner-controlled release signing identity and signed checksums; and
 - a source-buildable F-Droid recipe tied to a frozen release commit.
 
-The observed missing-history symptom and the missing MMS implementation are
+The observed missing-history symptom and remaining physical MMS acceptance are
 different problems. While provider coverage is incomplete, AuroraSMS presents
 the best-known union of cached index generations and disables exact-identity
 mutations. Android still requires the default-SMS role for a new authoritative
-provider scan. Incoming/group MMS remains a separate codec and carrier feature,
-not an indexing delay.
+provider scan. General incoming and group MMS now have bounded synthetic codec,
+composer, persistence, and recovery coverage; carrier/OEM acceptance remains a
+separate open gate, not an indexing delay.
 
 ## Workstream 7A: release truth and governance
 
@@ -128,7 +136,26 @@ platform callback.
 - [ ] Complete TalkBack, large text, contrast, rotation, narrow/wide layouts,
   hardware keyboard, and reduced-motion checks.
 - [ ] Complete Android Auto/DHU reply and Mark as read.
+- [x] Isolate the R8-enabled synthetic benchmark target from the production
+  package, private index, SMS role, messaging permissions, and carrier/role
+  components.
 - [ ] Meet the physical performance budgets in `PRODUCT_REQUIREMENTS.md`.
+
+The performance runner is `scripts/run-isolated-performance-suite.sh`.
+`--smoke` is restricted to emulators and proves only boundary/journey
+reachability. `--full` refuses emulators and dirty source, uses the 30/10/10
+physical counts, records exact commit/APK/device provenance, retains strictly
+accounted AndroidX JSON and Perfetto artifacts, and fails any documented
+timing, frame, frozen-frame, or PSS budget. Full runs require 8 GiB free on the
+host and device; smoke requires 1 GiB. Smoke substitutes a renderer-independent
+RSS metric for startup/frame reachability and cannot close those budgets. Raw
+instrumentation, JSON, metadata, and traces are message-content-free but
+device-identifying private evidence and must not be published. Both modes
+require the role and production package path to remain unchanged and all
+messaging authority to remain absent; cleanup proves
+`org.aurorasms.app.benchmark`, its same-signed controller, and device-side
+temporary output are gone before reporting success. Passing the runner does
+not waive the separate real-provider responsiveness or carrier/device gates.
 
 No live message body, address, attachment, contact, database, broad log, role
 change, or carrier send is part of an ordinary build/install handoff. Each

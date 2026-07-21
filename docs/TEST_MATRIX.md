@@ -4194,6 +4194,88 @@ participated. The Pixel protocol and the owner's private Inbox, old Thread,
 known local-search, and exact-result-jump confirmation remain required and
 unexecuted. This local acceptance is not a complete-history or gold claim.
 
+#### Phase 7E isolated performance-target boundary — 2026-07-20
+
+The release-equivalent target now has application ID
+`org.aurorasms.app.benchmark`, while production remains `org.aurorasms.app`.
+The target's fixture authority and signature-only control permission are owned
+by that isolated package. Debug and release keep the production role plus
+`READ_SMS` eligibility gate; only benchmark may render its deterministic
+private fixture without messaging authority. Runtime boundary coverage rejects
+a target that owns the SMS role, holds any messaging permission, or resolves a
+default-SMS/carrier entry intent. The benchmark APK declares only `VIBRATE` and
+its AndroidX-generated dynamic-receiver permission; every role, carrier,
+transport callback, scheduling, deletion, and notification-action component is
+disabled. The test controller removes transitive Aurora telephony components.
+
+Fresh benchmark target/test assembly, Kotlin compilation, manifest permission
+ledgers, APK package identities, fixture-marker boundaries, and ordinary
+macrobenchmark JVM checks pass. The packaged target declares
+`org.aurorasms.app.benchmark`. The controller declares
+`org.aurorasms.macrobenchmark`, the isolated signature permission, and the exact
+AndroidX test/benchmark permission ledger (`QUERY_ALL_PACKAGES`, trace-processor
+`INTERNET`, legacy artifact storage, task reordering, and its
+generated dynamic receiver permission); it declares no SMS/MMS permission. The
+transient test APK's unrestricted manifest permission is required by AndroidX's
+local trace processor; the Aurora harness itself makes no network request.
+All 653 host tests pass across 114 suites, and the complete 986-task governed
+host/lint/R8-release/benchmark/privacy/dependency/permission/APK-content/
+license/bundle aggregate passed in 1m33s. The separately required CycloneDX 1.6
+aggregate passed 16 tasks in 8s.
+`scripts/run-isolated-performance-suite.sh` adds the fail-closed device path:
+it records commit, APK, and private device provenance, installs a fresh
+isolated target/test pair without `-g`, requires three stable denied-authority
+samples, runs five control tests, ten Macrobenchmark journeys, an explicit
+baseline-profile preparation, and one PSS journey. AndroidX JSON/Perfetto,
+instrumentation output, metadata, validation output, and hashes are retained
+outside Git. Those raw files contain no message content but do contain device,
+build, and run identifiers; they are private local evidence and must not be
+published. A full run requires 8 GiB free on both host and device, the 5/30
+timing warmup/measurement counts, 10 frame iterations, 10 raw PSS samples, the
+exact expected JSON/Perfetto set, and every documented budget to pass. Smoke
+requires 1 GiB free and substitutes a renderer-independent RSS metric for
+startup/frame reachability. It then force-stops and removes only those packages
+and verifies both package paths and device-side temporary output are absent
+before reporting success.
+
+#### Phase 7E API 36 isolated performance smoke — 2026-07-21
+
+The final-candidate API 36 AOSP emulator run completed with:
+
+```text
+./scripts/run-isolated-performance-suite.sh --device emulator-5554 --smoke
+```
+
+The private ignored evidence directory is
+`build/isolated-performance/20260721T190450Z-1389018-emulator-5554-smoke`.
+Its metadata records smoke mode, API 36, emulator status, the source HEAD and
+dirty-candidate state, both APK digests, and the explicit
+`not-applicable-emulator-smoke` budget disposition. Five boundary tests, all ten
+Macrobenchmark journeys, the separate one-test baseline preparation, and the
+one-test/two-sample PSS reachability run passed. Artifact accounting found
+exactly 26 macro Perfetto traces plus one AndroidX JSON document and exactly
+three preparation traces plus one JSON document. Every entry in `SHA256SUMS`
+verified independently.
+
+An earlier diagnostic smoke exposed an intermittent missing presentation-finish
+marker during the exact-old-message jump. Normal ready-to-ready thread updates
+could cancel a trace-closing effect that was keyed to the entire thread state.
+The final candidate keys that lifecycle to the route instance and the stable
+ready/not-ready boundary, with an additional UI-idle rendezvous in the journey.
+The exact-jump benchmark then passed two independent focused 3/3 reruns and all
+three iterations in the complete ten-journey smoke above.
+
+Post-run ADB verification found neither transient package, confirmed the SMS
+role remained `com.android.messaging`, and confirmed the device-side temporary
+output was absent. The production package, live provider, role/permission
+state, carrier transport, screenshots, and message content were not used or
+mutated. This emulator evidence proves isolated journey reachability only and
+closes no physical performance budget.
+
+The API 26 emulator `--smoke` and Pixel `--full` measurement remain pending in
+this evidence record. Raw JSON, metadata, and Perfetto traces remain private
+local evidence and must not be published. AuroraSMS is not gold.
+
 ## Release gate
 
 - [ ] All relevant platform/device/telephony/message/lifecycle/appearance rows

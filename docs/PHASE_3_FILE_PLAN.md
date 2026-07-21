@@ -403,6 +403,16 @@ The release APK consumes the checked-in HRF through AGP and must contain
 nonempty `baseline.prof` and `baseline.profm` assets.
 
 The normal benchmark target remains R8-enabled for every performance run.
+It uses the separate `org.aurorasms.app.benchmark` application ID, so installing
+the target cannot update `org.aurorasms.app` or open its private index. The
+benchmark variant alone admits its synthetic index without the default-SMS role
+or production messaging permissions; debug and release retain the production
+eligibility rule. The benchmark manifest disables the complete role, carrier,
+send/callback, scheduling, deletion, and notification-action component ledger
+while retaining those release classes as R8 roots. The signature permission and
+fixture authority are derived from the isolated benchmark ID, and the test APK
+asserts at runtime that the target remains outside the SMS role, holds no
+messaging permission, and resolves none of the role/carrier entry intents.
 Because this plan intentionally omits the Baseline Profile Gradle plugin, the
 manual update script sets `auroraBaselineProfileCapture=true` only while
 capturing human-readable rules, which temporarily disables target obfuscation
@@ -467,6 +477,15 @@ data and are never derived from private references.
 | Fixed text browse | 10 fresh-process PSS samples after the fixed journey and 5 s quiescence; median aim below 150 MiB |
 | APK delta | explain every change; unexplained growth <=5% |
 
+The budget-closing timing and frame series use
+`CompilationMode.Partial(BaselineProfileMode.Require, warmupIterations = 5)`.
+Each timing journey retains 30 measurements and each five-second frame journey
+retains 10. Separate `CompilationMode.None` timing tests retain the required
+profile-benefit diagnostic but do not close a latency budget. Before the 10
+fresh-process PSS samples, the runner performs a separate baseline-profile
+preparation invocation so JUnit ordering cannot determine memory compilation
+state.
+
 Warm-inbox timing ends at `reportFullyDrawn()` only after the first bounded
 window is placed and interactive. App trace sections end thread-open when the
 header, first bubbles, and composer are placed; search when the first result
@@ -484,6 +503,21 @@ time are recorded separately. Warm setup uses a verified synthetic index and
 states that coverage explicitly. This never justifies removing
 `PRAGMA quick_check(1)`. Separately, committed partial rows may display with
 truthful incomplete coverage, matching the Phase 2 contract.
+
+The isolated runner refuses physical evidence from an emulator or dirty
+worktree, records the exact commit, APK hashes, and private device/build/
+display/battery/thermal provenance, and pulls one AndroidX JSON plus Perfetto traces
+before uninstall. Its fail-closed parser validates named tests, iteration and
+warmup counts, P50/P95 limits, frame deadline misses, frozen frames, and median
+PSS. Full runs require 8 GiB free on both host and device; smoke requires 1
+GiB. The parser also rejects missing, duplicated, unreferenced, or extra JSON
+and Perfetto artifacts. Cleanup must prove both transient packages and
+device-side output are gone and that the original role and production package
+path are unchanged before a pass is printed. Raw output contains no message
+content but includes device/build provenance, so it is private local evidence
+and must not be published. Emulator smoke replaces renderer-sensitive
+startup/frame metrics with a bounded RSS reachability metric; it cannot serve
+as physical timing or frame evidence.
 
 Pixel 8/API 36 runs the physical warm/profile gates. A low-memory target runs
 window, decode, recreation, and pressure checks. If no suitable target is
@@ -522,9 +556,10 @@ checks debug, release, benchmark target, and macrobenchmark test outputs.
 ./gradlew :core:index:connectedDebugAndroidTest
 ./gradlew :feature:conversations:connectedDebugAndroidTest
 ./gradlew :benchmark:connectedDebugAndroidTest
-./gradlew :macrobenchmark:connectedBenchmarkAndroidTest -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.enabledRules=BaselineProfile
+./scripts/run-isolated-performance-suite.sh --device emulator-SERIAL --smoke
+./scripts/run-isolated-performance-suite.sh --device PHYSICAL-SERIAL --full
 ./scripts/update-baseline-profile.sh --verify-twice --device SERIAL
-./gradlew :app:assembleRelease :macrobenchmark:connectedBenchmarkAndroidTest
+./gradlew :app:assembleRelease :macrobenchmark:assembleBenchmark
 ./gradlew verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions verifyApkContents
 ./gradlew --no-parallel checkLicense generateLicenseReport cyclonedxBom
 ```

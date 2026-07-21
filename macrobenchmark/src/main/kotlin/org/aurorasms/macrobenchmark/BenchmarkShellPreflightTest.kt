@@ -12,12 +12,12 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class BenchmarkShellPreflightTest {
     @Test
-    fun standardShellCanControlTargetWithoutChangingEligibility() {
-        FixtureController.requireMessagingEligibility()
+    fun standardShellCanControlIsolatedTargetWithoutMessagingAuthority() {
+        FixtureController.requireSyntheticIsolation()
         MacrobenchmarkScope(
             packageName = TARGET_PACKAGE,
             launchWithClearTask = true,
         ).killProcess()
-        FixtureController.requireMessagingEligibility()
+        FixtureController.requireSyntheticIsolation()
     }
 }

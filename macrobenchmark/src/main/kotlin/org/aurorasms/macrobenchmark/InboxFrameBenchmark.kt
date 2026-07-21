@@ -21,7 +21,11 @@ class InboxFrameBenchmark {
     fun inboxFlingAtTwentyThousandThreads() {
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
-            metrics = listOf(FrameTimingMetric()),
+            metrics = if (fullPerformanceEvidence()) {
+                listOf(FrameTimingMetric())
+            } else {
+                rendererIndependentReachabilityMetrics()
+            },
             compilationMode = BASELINE_COMPILATION,
             iterations = frameIterations(),
             setupBlock = {
@@ -36,7 +40,7 @@ class InboxFrameBenchmark {
         @JvmStatic
         @BeforeClass
         fun seedInboxOnce() {
-            FixtureController.requireMessagingEligibility()
+            FixtureController.requireSyntheticIsolation()
             FixtureController.seed(FixtureShape.INBOX_20K)
         }
     }

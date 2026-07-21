@@ -3,11 +3,125 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+      The performance target renders only its deterministic private fixture. It
+      must be structurally incapable of reading live messages, becoming the SMS
+      role holder, receiving carrier traffic, or recording user content.
+    -->
+    <uses-permission
+        android:name="android.permission.READ_SMS"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.SEND_SMS"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.RECEIVE_SMS"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.RECEIVE_MMS"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.RECEIVE_WAP_PUSH"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_PHONE_STATE"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_CONTACTS"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.POST_NOTIFICATIONS"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.RECEIVE_BOOT_COMPLETED"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.RECORD_AUDIO"
+        tools:node="remove" />
+
     <permission
-        android:name="org.aurorasms.app.permission.BENCHMARK_CONTROL"
+        android:name="${applicationId}.permission.BENCHMARK_CONTROL"
         android:protectionLevel="signature" />
 
     <application>
+        <!-- Keep these release classes as R8 roots, but make the synthetic APK
+             ineligible for the default-SMS role and carrier entry points. -->
+        <activity
+            android:name=".compose.ComposeMessageActivity"
+            android:enabled="false" />
+
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.SmsDeliverReceiver"
+            android:enabled="false" />
+
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.MmsWapPushReceiver"
+            android:enabled="false" />
+
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.DefaultSmsRoleChangedReceiver"
+            android:enabled="false" />
+
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.ExternalProviderChangedReceiver"
+            android:enabled="false" />
+
+        <service
+            android:name="org.aurorasms.core.telephony.service.RespondViaMessageService"
+            android:enabled="false" />
+
+        <receiver
+            android:name=".receiver.ScheduledSmsAlarmReceiver"
+            android:enabled="false" />
+
+        <receiver
+            android:name=".receiver.SendDelayAlarmReceiver"
+            android:enabled="false" />
+
+        <receiver
+            android:name=".receiver.PermanentDeletionAlarmReceiver"
+            android:enabled="false" />
+
+        <receiver
+            android:name=".receiver.NotificationReminderAlarmReceiver"
+            android:enabled="false" />
+
+        <receiver
+            android:name=".receiver.ScheduledSmsRecoveryReceiver"
+            android:enabled="false" />
+
+        <service
+            android:name="org.aurorasms.core.notifications.MessagingNotificationActionService"
+            android:enabled="false" />
+
+        <receiver
+            android:name="org.aurorasms.core.notifications.InlineReplyReceiver"
+            android:enabled="false"
+            tools:replace="android:enabled" />
+
+        <provider
+            android:name="org.aurorasms.core.telephony.internal.MmsPduFileProvider"
+            android:enabled="false" />
+
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.SmsSentReceiver"
+            android:enabled="false" />
+
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.SmsDeliveredReceiver"
+            android:enabled="false" />
+
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.MmsSendResultReceiver"
+            android:enabled="false" />
+
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.MmsDownloadResultReceiver"
+            android:enabled="false" />
+
         <profileable
             android:shell="true"
             tools:targetApi="q" />
@@ -44,8 +158,8 @@
 
         <provider
             android:name=".benchmark.BenchmarkFixtureProvider"
-            android:authorities="org.aurorasms.app.benchmark.fixture"
+            android:authorities="${applicationId}.fixture"
             android:exported="true"
-            android:permission="org.aurorasms.app.permission.BENCHMARK_CONTROL" />
+            android:permission="${applicationId}.permission.BENCHMARK_CONTROL" />
     </application>
 </manifest>

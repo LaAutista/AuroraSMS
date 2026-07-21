@@ -38,6 +38,9 @@ android {
         }
         create("benchmark") {
             initWith(getByName("release"))
+            // Performance fixtures must never replace or share private state
+            // with the installed messaging app on an owner's device.
+            applicationIdSuffix = ".benchmark"
             // Manual HRF capture must use unobfuscated signatures. Normal
             // benchmark/performance builds remain release-equivalent and R8-enabled.
             isMinifyEnabled = !baselineProfileCapture.get()

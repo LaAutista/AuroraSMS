@@ -64,11 +64,16 @@ for expected in \
     fi
 done
 
-if ! grep -Fiq 'general incoming and group MMS remain unavailable' \
-    fastlane/metadata/android/en-US/full_description.txt; then
-    printf 'Store copy must retain the current MMS limitation.\n' >&2
-    exit 1
-fi
+for limitation in \
+    'bounded synthetic incoming and general/group outgoing MMS paths are implemented' \
+    'physical carrier/OEM acceptance is not complete' \
+    'New chat/first-contact' \
+    'still a pre-release'; do
+    if ! grep -Fiq "$limitation" fastlane/metadata/android/en-US/full_description.txt; then
+        printf 'Store copy is missing current limitation: %s\n' "$limitation" >&2
+        exit 1
+    fi
+done
 
 bash -n scripts/generate-release-checksums.sh
 bash -n scripts/verify-reproducible-release.sh

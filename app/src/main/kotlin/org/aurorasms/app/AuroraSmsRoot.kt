@@ -960,8 +960,9 @@ private fun ThreadRoute(
         preferenceState = subscriptionPreferenceState,
         saving = subscriptionSelectionInFlight,
     )
-    LaunchedEffect(threadState) {
-        if (threadState is ThreadUiState.Ready) {
+    val presentationReady = threadState is ThreadUiState.Ready
+    LaunchedEffect(route.stateEntryId, presentationReady) {
+        if (presentationReady) {
             withFrameNanos { }
             PresentationTrace.end(
                 if (route.anchor == null) PresentationTrace.THREAD_OPEN else PresentationTrace.EXACT_JUMP,

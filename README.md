@@ -21,10 +21,13 @@ the AAB SHA-256 is
 `349ea4f6a1be6f348cbd54c64bdf06e3fe56f7bc13f1eaef2aa4d807d7a86b1b`.
 All 653 host tests and the 986-task governed aggregate pass. The exact release
 and gold checklist is in [the Phase 7 plan](docs/PHASE_7_RELEASE_PLAN.md).
-Signing, a complete nonempty physical-provider scan, physical outgoing/incoming
-MMS and OEM/carrier/accessibility/performance/Android Auto
-acceptance, and the final F-Droid build recipe remain open. AuroraSMS is not
-gold.
+Required local product work is also still open: New chat/first-contact compose,
+Archive/pin/inbox actions, the complete Settings/About and notification-privacy
+surface, forward/quote, profile interchange/adaptive navigation, and broader
+accessibility/form-factor acceptance. Signing, a complete nonempty physical-
+provider scan, physical outgoing/incoming MMS and OEM/carrier/performance/
+Android Auto acceptance, and the final F-Droid build recipe remain external
+gates. AuroraSMS is not gold.
 
 Implementation commit `d052db0` gives the current-candidate Pixel history gate a
 reviewed [physical provider-completion protocol](docs/PHYSICAL_PROVIDER_COMPLETION_PROTOCOL.md)
@@ -40,6 +43,28 @@ is connected and the owner opens that explicit provider-read window.
 The protocol parser, fail-closed emulator refusal, role-recovery host coverage,
 and complete API 36/API 26 connected matrices pass with zero failures or
 errors; those local checks do not substitute for the unexecuted physical gate.
+
+The release-equivalent performance harness now installs as the separate
+`org.aurorasms.app.benchmark` package. It therefore cannot replace the owner's
+installed `org.aurorasms.app` package or share that package's private index.
+Only the benchmark build admits synthetic messaging presentation without the
+default-SMS role; debug and release retain the normal role plus `READ_SMS`
+gate. Its same-signed fixture controller uses a benchmark-package permission,
+while the target declares no messaging, phone, contacts, notification, alarm,
+boot, or audio-recording authority and disables every role, carrier, send,
+callback, and notification-action component. Runtime boundary tests also
+require every messaging permission to remain denied and every role intent to
+remain unresolved. The fail-closed `scripts/run-isolated-performance-suite.sh`
+runner records commit/APK/device provenance, preserves the existing role and
+production package, retains AndroidX JSON/Perfetto evidence, validates the
+physical budgets, and proves the isolated packages and device-side temporary
+files were removed. Full runs require at least 8 GiB free on both host and
+device; smoke runs require 1 GiB. Raw instrumentation, JSON, metadata, and
+Perfetto files contain no message content but do identify the test device, so
+they remain private local evidence and must not be published. Emulator
+`--smoke` runs replace renderer-sensitive startup/frame metrics with a bounded
+RSS reachability metric; only clean-commit physical `--full` runs collect and
+enforce the real timing/frame evidence needed to close the performance gate.
 
 Outgoing MMS implementation commits `7a45033`, `a71c623`, `0b27160`, and
 `1e2344b` complete ADR 0026's synthetic direct/group vertical. Commit
