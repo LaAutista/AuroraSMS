@@ -6,9 +6,7 @@ import org.aurorasms.app.drafts.DraftRestorationToken
 import org.aurorasms.app.drafts.SerializedDraftWriterLease
 import org.aurorasms.app.appearance.wallpaper.WallpaperController
 import org.aurorasms.app.message.AndroidSmsSegmentCounter
-import org.aurorasms.app.message.FirstContactOwnershipController
 import org.aurorasms.app.message.ThreadSmsSendController
-import org.aurorasms.app.message.UnavailableFirstContactOwnershipController
 import org.aurorasms.app.message.UnavailableThreadSmsSendController
 import org.aurorasms.app.message.ScheduledSmsController
 import org.aurorasms.app.message.UnavailableScheduledSmsController
@@ -73,8 +71,6 @@ internal interface AuroraSmsRootServices {
         get() = null
     val threadSmsSendController: ThreadSmsSendController
         get() = UnavailableThreadSmsSendController
-    val firstContactOwnershipController: FirstContactOwnershipController
-        get() = UnavailableFirstContactOwnershipController
     val scheduledSmsController: ScheduledSmsController
         get() = UnavailableScheduledSmsController
     val sendDelayController: SendDelayController
@@ -169,8 +165,6 @@ internal class AppContainerAuroraSmsRootServices(
         get() = container.wallpaperController
     override val threadSmsSendController: ThreadSmsSendController
         get() = container.threadSmsSendController
-    override val firstContactOwnershipController: FirstContactOwnershipController
-        get() = container.firstContactOwnershipController
     override val scheduledSmsController: ScheduledSmsController
         get() = container.scheduledSmsController
     override val sendDelayController: SendDelayController

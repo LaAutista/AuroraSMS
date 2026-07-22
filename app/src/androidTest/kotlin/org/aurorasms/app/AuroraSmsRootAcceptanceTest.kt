@@ -3522,7 +3522,7 @@ private class SyntheticRootServices(
     override val draftAttachmentRepository: DraftAttachmentRepository,
     override val subscriptionRepository: SubscriptionRepository,
     override val threadSmsSendController: ThreadSmsSendController,
-    override val firstContactOwnershipController: FirstContactOwnershipController,
+    val firstContactOwnershipController: FirstContactOwnershipController,
     private val segmentCounter: (String) -> Int?,
 ) : AuroraSmsRootServices, AutoCloseable {
     private val clock = AtomicLong(30_000L)
