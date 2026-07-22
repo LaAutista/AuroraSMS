@@ -101,6 +101,23 @@ internal object FirstContactOperationEnforcement {
     const val CREATE_DELETE_INTEGRITY_TRIGGER: String =
         "CREATE TRIGGER IF NOT EXISTS $DELETE_INTEGRITY_TRIGGER_NAME " +
             "BEFORE DELETE ON $FIRST_CONTACT_OPERATIONS_TABLE " +
+            "WHEN OLD.phase_code != 'known_unsent_v1' AND NOT (" +
+            "OLD.phase_code = 'handoff_reserved_v1' AND " +
+            "EXISTS(SELECT 1 FROM $COMPOSER_SMS_OPERATIONS_TABLE AS composer WHERE " +
+            "composer.provider_thread_id = OLD.provider_thread_id AND " +
+            "composer.draft_id = OLD.draft_id AND " +
+            "composer.draft_revision_ms = OLD.handoff_draft_revision_ms AND " +
+            "composer.subscription_id = OLD.subscription_id AND " +
+            "composer.transport_code = OLD.transport_code AND " +
+            "composer.phase_code = 'reserved_v1' AND " +
+            "composer.provider_message_id IS NULL AND " +
+            "composer.provider_conversation_id IS NULL AND composer.unit_count IS NULL AND " +
+            "composer.signature_text IS OLD.signature_text)) " +
+            "BEGIN SELECT RAISE(ABORT, 'first-contact owner is not releasable'); END"
+
+    const val CREATE_DELETE_INTEGRITY_TRIGGER_V15: String =
+        "CREATE TRIGGER IF NOT EXISTS $DELETE_INTEGRITY_TRIGGER_NAME " +
+            "BEFORE DELETE ON $FIRST_CONTACT_OPERATIONS_TABLE " +
             "WHEN OLD.phase_code != 'known_unsent_v1' " +
             "BEGIN SELECT RAISE(ABORT, 'first-contact owner is not releasable'); END"
 
@@ -116,6 +133,13 @@ internal object FirstContactOperationEnforcement {
         db.execSQL(CREATE_INSERT_INTEGRITY_TRIGGER)
         db.execSQL(CREATE_UPDATE_INTEGRITY_TRIGGER)
         db.execSQL(CREATE_DELETE_INTEGRITY_TRIGGER)
+    }
+
+    fun installV15(db: SupportSQLiteDatabase) {
+        db.execSQL(CREATE_INSERT_LIMIT_TRIGGER)
+        db.execSQL(CREATE_INSERT_INTEGRITY_TRIGGER)
+        db.execSQL(CREATE_UPDATE_INTEGRITY_TRIGGER)
+        db.execSQL(CREATE_DELETE_INTEGRITY_TRIGGER_V15)
     }
 
     private fun install(connection: SQLiteConnection) {

@@ -11,6 +11,7 @@ import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderThreadId
+import org.aurorasms.core.state.storage.RoomComposerSmsOperationRepository
 import org.aurorasms.core.state.storage.RoomDraftAttachmentRepository
 import org.aurorasms.core.state.storage.RoomDraftRepository
 import org.aurorasms.core.state.storage.RoomFirstContactOperationRepository
@@ -278,6 +279,260 @@ class FirstContactOperationRepositoryInstrumentedTest {
             assertEquals(
                 FirstContactOperationResult.PhaseMismatch,
                 repository.release(bridge.operation.id, bridge.operation.revision),
+            )
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun composerReservationAtomicallyConsumesOnlyTheExactHandoffOwner() = runBlocking {
+        val database = openDatabase()
+        try {
+            val participants = listOf(ParticipantAddress("+15550000501"))
+            val draft = createDraft(database, participants, body = "Synthetic transfer")
+            val signature = checkNotNull(MessageSignature.fromUserInput("Synthetic signature"))
+            val firstContacts = RoomFirstContactOperationRepository(database)
+            val reserved = firstContacts.reserve(
+                request(draft, participants, MessageTransportKind.SMS).copy(
+                    frozenSignature = signature,
+                ),
+            ).requireSuccess()
+            val started = firstContacts.markResolutionStarted(
+                reserved.id,
+                reserved.revision,
+                2_001L,
+            ).requireSuccess().operation
+            val bound = firstContacts.bindThread(
+                started.id,
+                started.revision,
+                ProviderThreadId(501L),
+                2_002L,
+            ).requireSuccess()
+            val handoff = firstContacts.bridgeToProviderThread(
+                bound.id,
+                bound.revision,
+                2_003L,
+            ).requireSuccess()
+
+            val composer = RoomComposerSmsOperationRepository(database).reserve(
+                ComposerSmsReservationRequest(
+                    providerThreadId = ProviderThreadId(501L),
+                    draftId = draft.id,
+                    expectedDraftRevision = handoff.providerDraft.revision,
+                    subscriptionId = AuroraSubscriptionId(0),
+                    createdTimestampMillis = 3_000L,
+                    frozenSignature = signature,
+                    firstContactAuthority = ComposerSmsFirstContactAuthority(
+                        operationId = handoff.operation.id,
+                        expectedRevision = handoff.operation.revision,
+                        participantSetKey = handoff.operation.participantSetKey,
+                        attachmentSetEvidence =
+                            FirstContactAttachmentSetEvidence.fromAttachments(emptyList()),
+                    ),
+                ),
+            ).requireComposerSuccess()
+
+            assertEquals("Synthetic transfer", composer.authoritativeBody)
+            assertEquals(ComposerSmsOperationPhase.RESERVED, composer.operation.phase)
+            assertEquals(FirstContactOperationResult.NotFound, firstContacts.read(handoff.operation.id))
+            assertEquals(
+                listOf(composer.operation),
+                RoomComposerSmsOperationRepository(database)
+                    .recoverySnapshot()
+                    .requireComposerSuccess(),
+            )
+            assertEquals(
+                handoff.providerDraft,
+                RoomDraftRepository(database).read(draft.id).requireSuccess(),
+            )
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun composerReservationRejectsMissingStaleOrAttachmentDriftedHandoffAuthority() = runBlocking {
+        val database = openDatabase()
+        try {
+            val participants = listOf(ParticipantAddress("handoff-drift@example.invalid"))
+            val original = attachment(1, 2, 3)
+            val replacement = attachment(4, 5, 6)
+            val draft = createDraft(
+                database,
+                participants,
+                body = "Synthetic MMS transfer",
+                attachments = listOf(original),
+            )
+            val firstContacts = RoomFirstContactOperationRepository(database)
+            val reserved = firstContacts.reserve(
+                request(draft, participants, MessageTransportKind.MMS),
+            ).requireSuccess()
+            val started = firstContacts.markResolutionStarted(
+                reserved.id,
+                reserved.revision,
+                2_001L,
+            ).requireSuccess().operation
+            val bound = firstContacts.bindThread(
+                started.id,
+                started.revision,
+                ProviderThreadId(502L),
+                2_002L,
+            ).requireSuccess()
+            val handoff = firstContacts.bridgeToProviderThread(
+                bound.id,
+                bound.revision,
+                2_003L,
+            ).requireSuccess()
+            val operations = RoomComposerSmsOperationRepository(database)
+            val base = ComposerSmsReservationRequest(
+                providerThreadId = ProviderThreadId(502L),
+                draftId = draft.id,
+                expectedDraftRevision = handoff.providerDraft.revision,
+                subscriptionId = AuroraSubscriptionId(0),
+                createdTimestampMillis = 3_000L,
+                transport = MessageTransportKind.MMS,
+                hasAttachments = true,
+            )
+
+            assertEquals(ComposerSmsOperationResult.Conflict, operations.reserve(base))
+            assertEquals(
+                ComposerSmsOperationResult.Conflict,
+                operations.reserve(
+                    base.copy(
+                        firstContactAuthority = ComposerSmsFirstContactAuthority(
+                            operationId = handoff.operation.id,
+                            expectedRevision = handoff.operation.revision,
+                            participantSetKey = FirstContactParticipantSetKey.fromParticipants(
+                                listOf(ParticipantAddress("different@example.invalid")),
+                            ),
+                            attachmentSetEvidence =
+                                FirstContactAttachmentSetEvidence.fromAttachments(listOf(original)),
+                        ),
+                    ),
+                ),
+            )
+            assertEquals(
+                ComposerSmsOperationResult.StaleWrite,
+                operations.reserve(
+                    base.copy(
+                        firstContactAuthority = ComposerSmsFirstContactAuthority(
+                            operationId = handoff.operation.id,
+                            expectedRevision = FirstContactOperationRevision(2_002L),
+                            participantSetKey = handoff.operation.participantSetKey,
+                            attachmentSetEvidence =
+                                FirstContactAttachmentSetEvidence.fromAttachments(listOf(original)),
+                        ),
+                    ),
+                ),
+            )
+            assertEquals(
+                ComposerSmsOperationResult.Conflict,
+                operations.reserve(
+                    base.copy(
+                        firstContactAuthority = ComposerSmsFirstContactAuthority(
+                            operationId = handoff.operation.id,
+                            expectedRevision = handoff.operation.revision,
+                            participantSetKey = handoff.operation.participantSetKey,
+                            attachmentSetEvidence =
+                                FirstContactAttachmentSetEvidence.fromAttachments(
+                                    listOf(replacement),
+                                ),
+                        ),
+                    ),
+                ),
+            )
+            RoomDraftAttachmentRepository(database).replace(
+                draft.id,
+                handoff.providerDraft.revision,
+                listOf(replacement),
+            ).requireSuccess()
+            assertEquals(
+                ComposerSmsOperationResult.StaleWrite,
+                operations.reserve(
+                    base.copy(
+                        firstContactAuthority = ComposerSmsFirstContactAuthority(
+                            operationId = handoff.operation.id,
+                            expectedRevision = handoff.operation.revision,
+                            participantSetKey = handoff.operation.participantSetKey,
+                            attachmentSetEvidence =
+                                FirstContactAttachmentSetEvidence.fromAttachments(listOf(original)),
+                        ),
+                    ),
+                ),
+            )
+            assertEquals(handoff.operation, firstContacts.read(handoff.operation.id).requireSuccess())
+            assertEquals(emptyList<ComposerSmsOperation>(), operations.recoverySnapshot().requireComposerSuccess())
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun composerReservationRollsBackWhenThreadWorkAppearsAfterHandoff() = runBlocking {
+        val database = openDatabase()
+        try {
+            val participants = listOf(ParticipantAddress("+15550000503"))
+            val draft = createDraft(database, participants, body = "Synthetic conflict")
+            val firstContacts = RoomFirstContactOperationRepository(database)
+            val reserved = firstContacts.reserve(
+                request(draft, participants, MessageTransportKind.SMS),
+            ).requireSuccess()
+            val started = firstContacts.markResolutionStarted(
+                reserved.id,
+                reserved.revision,
+                2_001L,
+            ).requireSuccess().operation
+            val bound = firstContacts.bindThread(
+                started.id,
+                started.revision,
+                ProviderThreadId(503L),
+                2_002L,
+            ).requireSuccess()
+            val handoff = firstContacts.bridgeToProviderThread(
+                bound.id,
+                bound.revision,
+                2_003L,
+            ).requireSuccess()
+            val delayKey = SendDelayParticipantSetKey.fromParticipants(participants)
+                .toStorageValue()
+            database.openHelper.writableDatabase.execSQL(
+                "INSERT INTO send_delay_operations(participant_set_key,provider_thread_id," +
+                    "draft_id,draft_revision_ms,subscription_id,due_timestamp_ms,phase_code," +
+                    "review_reason_code,armed_wall_timestamp_ms,armed_elapsed_realtime_ms," +
+                    "created_timestamp_ms,updated_timestamp_ms,signature_text) " +
+                    "VALUES('$delayKey',503,${draft.id.value}," +
+                    "${handoff.providerDraft.revision.updatedTimestampMillis},0,4000," +
+                    "'pending_v1',NULL,3000,1000,3000,3000,NULL)",
+            )
+            val composer = RoomComposerSmsOperationRepository(database)
+
+            assertEquals(
+                ComposerSmsOperationResult.Conflict,
+                composer.reserve(
+                    ComposerSmsReservationRequest(
+                        providerThreadId = ProviderThreadId(503L),
+                        draftId = draft.id,
+                        expectedDraftRevision = handoff.providerDraft.revision,
+                        subscriptionId = AuroraSubscriptionId(0),
+                        createdTimestampMillis = 5_000L,
+                        firstContactAuthority = ComposerSmsFirstContactAuthority(
+                            operationId = handoff.operation.id,
+                            expectedRevision = handoff.operation.revision,
+                            participantSetKey = handoff.operation.participantSetKey,
+                            attachmentSetEvidence =
+                                FirstContactAttachmentSetEvidence.fromAttachments(emptyList()),
+                        ),
+                    ),
+                ),
+            )
+            assertEquals(
+                handoff.operation,
+                firstContacts.read(handoff.operation.id).requireSuccess(),
+            )
+            assertEquals(
+                emptyList<ComposerSmsOperation>(),
+                composer.recoverySnapshot().requireComposerSuccess(),
             )
         } finally {
             database.close()
@@ -565,3 +820,6 @@ private fun <T> FirstContactOperationResult<T>.requireSuccess(): T =
 
 private fun <T> DraftRepositoryResult<T>.requireSuccess(): T =
     (this as DraftRepositoryResult.Success<T>).value
+
+private fun <T> ComposerSmsOperationResult<T>.requireComposerSuccess(): T =
+    (this as ComposerSmsOperationResult.Success<T>).value

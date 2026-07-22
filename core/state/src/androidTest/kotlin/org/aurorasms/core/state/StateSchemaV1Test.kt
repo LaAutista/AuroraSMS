@@ -62,7 +62,7 @@ class StateSchemaCurrentTest {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(15, AuroraStateDatabase.VERSION)
+            assertEquals(16, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(

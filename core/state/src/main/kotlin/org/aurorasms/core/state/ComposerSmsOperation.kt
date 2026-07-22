@@ -139,6 +139,19 @@ data class AcknowledgedComposerSmsReceipt(
         "AcknowledgedComposerSmsReceipt(callbackProof=$callbackProof, REDACTED)"
 }
 
+/**
+ * Recipient and attachment authority for one exact first-contact Composer handoff.
+ * [attachmentSetEvidence] must come from the exact attachment list passed to transport.
+ */
+data class ComposerSmsFirstContactAuthority(
+    val operationId: FirstContactOperationId,
+    val expectedRevision: FirstContactOperationRevision,
+    val participantSetKey: FirstContactParticipantSetKey,
+    val attachmentSetEvidence: FirstContactAttachmentSetEvidence,
+) {
+    override fun toString(): String = "ComposerSmsFirstContactAuthority(REDACTED)"
+}
+
 /** Exact acknowledged draft revision requested for transactional reservation. */
 data class ComposerSmsReservationRequest(
     val providerThreadId: ProviderThreadId,
@@ -149,6 +162,7 @@ data class ComposerSmsReservationRequest(
     val frozenSignature: MessageSignature? = null,
     val transport: MessageTransportKind = MessageTransportKind.SMS,
     val hasAttachments: Boolean = false,
+    val firstContactAuthority: ComposerSmsFirstContactAuthority? = null,
 ) {
     init {
         require(createdTimestampMillis >= 0L) { "Composer SMS creation time cannot be negative" }

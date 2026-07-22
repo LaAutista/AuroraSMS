@@ -5,6 +5,15 @@ package org.aurorasms.core.state.storage
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+val STATE_MIGRATION_15_16: Migration = object : Migration(15, 16) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "DROP TRIGGER IF EXISTS ${FirstContactOperationEnforcement.DELETE_INTEGRITY_TRIGGER_NAME}",
+        )
+        db.execSQL(FirstContactOperationEnforcement.CREATE_DELETE_INTEGRITY_TRIGGER)
+    }
+}
+
 val STATE_MIGRATION_14_15: Migration = object : Migration(14, 15) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(
@@ -45,7 +54,7 @@ val STATE_MIGRATION_14_15: Migration = object : Migration(14, 15) {
                 "`index_first_contact_operations_updated_timestamp_ms_first_contact_id` " +
                 "ON `first_contact_operations` (`updated_timestamp_ms`, `first_contact_id`)",
         )
-        FirstContactOperationEnforcement.install(db)
+        FirstContactOperationEnforcement.installV15(db)
     }
 }
 

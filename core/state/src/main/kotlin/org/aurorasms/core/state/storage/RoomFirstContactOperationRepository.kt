@@ -534,7 +534,7 @@ private fun String.toParticipantsOrNull(): List<ParticipantAddress>? = try {
     null
 }
 
-private fun List<DraftAttachmentEntity>.toDomainListOrNull(): List<DraftAttachment>? = try {
+internal fun List<DraftAttachmentEntity>.toDomainListOrNull(): List<DraftAttachment>? = try {
     if (size > DraftAttachment.MAX_ATTACHMENTS) return null
     mapIndexed { index, entity -> entity.toDomain(index) }
         .takeIf(DraftAttachment::isValidSet)
@@ -552,7 +552,7 @@ private fun DraftEntity.toDomainOrNull(): Draft? = try {
     null
 }
 
-private fun FirstContactOperationEntity.toDomainOrNull(): FirstContactOperation? = try {
+internal fun FirstContactOperationEntity.toDomainOrNull(): FirstContactOperation? = try {
     toDomain()
 } catch (_: IllegalArgumentException) {
     null

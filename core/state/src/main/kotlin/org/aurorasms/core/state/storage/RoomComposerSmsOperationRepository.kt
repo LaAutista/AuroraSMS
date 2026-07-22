@@ -30,6 +30,9 @@ import org.aurorasms.core.state.ComposerSmsReservationRequest
 import org.aurorasms.core.state.ComposerSmsSentCompletion
 import org.aurorasms.core.state.ComposerSmsStorageOperation
 import org.aurorasms.core.state.DraftIdentity
+import org.aurorasms.core.state.FirstContactAttachmentSetEvidence
+import org.aurorasms.core.state.FirstContactOperation
+import org.aurorasms.core.state.FirstContactOperationPhase
 import org.aurorasms.core.state.MAXIMUM_COMPOSER_SMS_OPERATIONS
 import org.aurorasms.core.state.MAXIMUM_ACKNOWLEDGED_COMPOSER_SMS_RECEIPTS
 import org.aurorasms.core.state.isComposerSmsOperationId
@@ -39,6 +42,7 @@ class RoomComposerSmsOperationRepository(
     private val database: AuroraStateDatabase,
 ) : ComposerSmsOperationRepository {
     private val dao = database.composerSmsOperationDao()
+    private val firstContactDao = database.firstContactOperationDao()
 
     override suspend fun reserve(
         request: ComposerSmsReservationRequest,
@@ -50,6 +54,44 @@ class RoomComposerSmsOperationRepository(
                 } else {
                     ComposerSmsOperationResult.Conflict
                 }
+            }
+            val draftOwner = firstContactDao.findByDraft(request.draftId.value)
+            val threadOwner = firstContactDao.findByProviderThread(request.providerThreadId.value)
+            val authority = request.firstContactAuthority
+            val handoff: FirstContactOperation? = if (authority == null) {
+                if (draftOwner != null || threadOwner != null) {
+                    return@withTransaction ComposerSmsOperationResult.Conflict
+                }
+                null
+            } else {
+                val entity = firstContactDao.findById(authority.operationId.value)
+                    ?: return@withTransaction ComposerSmsOperationResult.StaleWrite
+                val operation = entity.toDomainOrNull()
+                    ?: return@withTransaction ComposerSmsOperationResult.CorruptData
+                if (operation.revision != authority.expectedRevision) {
+                    return@withTransaction ComposerSmsOperationResult.StaleWrite
+                }
+                if (
+                    operation.participantSetKey != authority.participantSetKey ||
+                    operation.attachmentSetEvidence != authority.attachmentSetEvidence ||
+                    draftOwner?.firstContactId != operation.id.value ||
+                    threadOwner?.firstContactId != operation.id.value ||
+                    operation.phase != FirstContactOperationPhase.HANDOFF_RESERVED ||
+                    operation.providerThreadId != request.providerThreadId ||
+                    operation.draftId != request.draftId ||
+                    operation.subscriptionId != request.subscriptionId ||
+                    operation.transport != request.transport ||
+                    operation.frozenSignature != request.frozenSignature
+                ) {
+                    return@withTransaction ComposerSmsOperationResult.Conflict
+                }
+                if (operation.handoffDraftRevision != request.expectedDraftRevision) {
+                    return@withTransaction ComposerSmsOperationResult.StaleWrite
+                }
+                if (firstContactDao.hasConflictingThreadAction(request.providerThreadId.value)) {
+                    return@withTransaction ComposerSmsOperationResult.Conflict
+                }
+                operation
             }
             val count = dao.count()
             if (count < 0 || count > MAXIMUM_COMPOSER_SMS_OPERATIONS) {
@@ -72,6 +114,17 @@ class RoomComposerSmsOperationRepository(
                 draft.revision != request.expectedDraftRevision
             ) {
                 return@withTransaction ComposerSmsOperationResult.StaleWrite
+            }
+            if (handoff != null) {
+                val attachments = firstContactDao.findAttachments(draft.id.value).toDomainListOrNull()
+                    ?: return@withTransaction ComposerSmsOperationResult.CorruptData
+                if (
+                    FirstContactAttachmentSetEvidence.fromAttachments(attachments) !=
+                    authority?.attachmentSetEvidence ||
+                    request.hasAttachments != attachments.isNotEmpty()
+                ) {
+                    return@withTransaction ComposerSmsOperationResult.StaleWrite
+                }
             }
             val body = draft.body?.takeIf(String::isNotBlank)
             if (
@@ -105,6 +158,23 @@ class RoomComposerSmsOperationRepository(
             }
             val operation = dao.findByLocalId(localId)?.toDomainOrNull()
                 ?: throw AbortTransaction(ComposerSmsOperationResult.CorruptData)
+            if (
+                handoff != null &&
+                firstContactDao.deleteExactHandoffIfComposerReserved(
+                    id = handoff.id.value,
+                    participantSetKey = handoff.participantSetKey.toStorageValue(),
+                    draftId = handoff.draftId.value,
+                    subscriptionId = handoff.subscriptionId.value,
+                    transportCode = handoff.transport.storageCode,
+                    providerThreadId = request.providerThreadId.value,
+                    handoffDraftRevisionMillis = request.expectedDraftRevision.updatedTimestampMillis,
+                    expectedUpdatedTimestampMillis = handoff.revision.updatedTimestampMillis,
+                    signatureText = handoff.frozenSignature?.value,
+                    handoffReservedPhase = FirstContactOperationPhase.HANDOFF_RESERVED.storageCode,
+                ) != 1
+            ) {
+                throw AbortTransaction(ComposerSmsOperationResult.StaleWrite)
+            }
             ComposerSmsOperationResult.Success(
                 ComposerSmsReservation(
                     operation = operation,

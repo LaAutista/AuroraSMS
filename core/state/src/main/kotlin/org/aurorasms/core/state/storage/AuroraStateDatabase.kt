@@ -53,6 +53,6 @@ abstract class AuroraStateDatabase : RoomDatabase() {
     internal abstract fun firstContactOperationDao(): FirstContactOperationDao
 
     companion object {
-        const val VERSION: Int = 15
+        const val VERSION: Int = 16
     }
 }

@@ -154,6 +154,34 @@ internal interface FirstContactOperationDao {
         """
         DELETE FROM first_contact_operations
         WHERE first_contact_id = :id
+          AND participant_set_key = :participantSetKey
+          AND draft_id = :draftId
+          AND subscription_id = :subscriptionId
+          AND transport_code = :transportCode
+          AND phase_code = :handoffReservedPhase
+          AND provider_thread_id = :providerThreadId
+          AND handoff_draft_revision_ms = :handoffDraftRevisionMillis
+          AND updated_timestamp_ms = :expectedUpdatedTimestampMillis
+          AND signature_text IS :signatureText
+        """,
+    )
+    suspend fun deleteExactHandoffIfComposerReserved(
+        id: Long,
+        participantSetKey: String,
+        draftId: Long,
+        subscriptionId: Int,
+        transportCode: String,
+        providerThreadId: Long,
+        handoffDraftRevisionMillis: Long,
+        expectedUpdatedTimestampMillis: Long,
+        signatureText: String?,
+        handoffReservedPhase: String,
+    ): Int
+
+    @Query(
+        """
+        DELETE FROM first_contact_operations
+        WHERE first_contact_id = :id
           AND phase_code = :knownUnsentPhase
           AND updated_timestamp_ms = :expectedUpdatedTimestampMillis
         """,
