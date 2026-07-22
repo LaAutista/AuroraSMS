@@ -106,12 +106,17 @@ import org.aurorasms.app.drafts.DraftRestorationToken
 import org.aurorasms.app.drafts.SerializedDraftWriter
 import org.aurorasms.app.drafts.SerializedDraftWriterLease
 import org.aurorasms.app.drafts.SerializedDraftWriterPool
+import org.aurorasms.app.message.FirstContactOwnershipCommand
+import org.aurorasms.app.message.FirstContactOwnershipController
+import org.aurorasms.app.message.FirstContactOwnershipFailureReason
+import org.aurorasms.app.message.FirstContactOwnershipResult
 import org.aurorasms.app.message.ThreadSmsRecoveryResult
 import org.aurorasms.app.message.ThreadSmsSendAttempt
 import org.aurorasms.app.message.ThreadSmsSendCommand
 import org.aurorasms.app.message.ThreadSmsSendController
 import org.aurorasms.app.message.ThreadSmsSendObservation
 import org.aurorasms.app.message.ThreadSmsSendPhase
+import org.aurorasms.app.message.UnavailableFirstContactOwnershipController
 import org.aurorasms.app.preview.BoundedMediaDecodeGate
 import org.aurorasms.app.settings.SETTINGS_BACKUP_RESTORE_TEST_TAG
 import org.aurorasms.app.settings.SETTINGS_BACK_TEST_TAG
@@ -586,6 +591,46 @@ class AuroraSmsRootAcceptanceTest {
             )
         } finally {
             clearDraft(application.container.draftRepository, identity)
+        }
+    }
+
+    @Test
+    fun newChatInternalExternalAndRecreationNeverInvokeFirstContactOwnership() {
+        val firstContact = RecordingFirstContactOwnershipController()
+        val fixture = SyntheticFixture(firstContactOwnershipController = firstContact)
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+        assertFirstContactOwnershipIsAbsentFromNewMessageRuntimeGraph()
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+            waitForTag(INBOX_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.INBOX_NEW_CHAT_ACTION_TEST_TAG,
+            ).performClick()
+            waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            assertEquals(0, firstContact.invocationCount)
+
+            scenario.recreate()
+            waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            assertEquals(0, firstContact.invocationCount)
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val externalIntent = Intent(context, ComposeMessageActivity::class.java).apply {
+            action = Intent.ACTION_SENDTO
+            data = Uri.parse("smsto:+15550100041")
+            putExtra("sms_body", "Synthetic dormant first-contact review")
+        }
+        ActivityScenario.launch<ComposeMessageActivity>(externalIntent).use { scenario ->
+            waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            assertEquals(0, firstContact.invocationCount)
+
+            scenario.recreate()
+            waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            assertEquals(0, firstContact.invocationCount)
         }
     }
 
@@ -3320,6 +3365,31 @@ class AuroraSmsRootAcceptanceTest {
             compose.onAllNodesWithTag(SCOPED_WALLPAPER_DIALOG_TEST_TAG).fetchSemanticsNodes().isEmpty()
         }
     }
+
+    private fun assertFirstContactOwnershipIsAbsentFromNewMessageRuntimeGraph() {
+        val controller = FirstContactOwnershipController::class.java
+        val runtimeSurfaces = listOf(
+            AuroraSmsRootServices::class.java,
+            ComposeMessageActivity::class.java,
+            Class.forName("org.aurorasms.app.compose.NewMessageRouteKt"),
+        )
+
+        runtimeSurfaces.forEach { surface ->
+            assertTrue(
+                "${surface.name} unexpectedly owns first-contact controller",
+                surface.declaredFields.none { field ->
+                    controller.isAssignableFrom(field.type)
+                },
+            )
+            assertTrue(
+                "${surface.name} unexpectedly exposes first-contact controller",
+                surface.declaredMethods.none { method ->
+                    controller.isAssignableFrom(method.returnType) ||
+                        method.parameterTypes.any { type -> controller.isAssignableFrom(type) }
+                },
+            )
+        }
+    }
 }
 
 private data class ColdRestartEnvironment(
@@ -3394,6 +3464,8 @@ private class SyntheticFixture(
     contactsPermissionGranted: Boolean = true,
     subscriptionRepository: SubscriptionRepository = SyntheticSubscriptions,
     threadSmsSendController: ThreadSmsSendController = SyntheticIdleThreadSmsSendController,
+    firstContactOwnershipController: FirstContactOwnershipController =
+        UnavailableFirstContactOwnershipController,
     segmentCounter: (String) -> Int? = { body -> body.takeIf(String::isNotBlank)?.let { 1 } },
     draftRepositoryOverride: DraftRepository? = null,
     draftAttachmentRepositoryOverride: DraftAttachmentRepository? = null,
@@ -3422,6 +3494,7 @@ private class SyntheticFixture(
         draftAttachmentRepository = rootDraftAttachments,
         subscriptionRepository = subscriptionRepository,
         threadSmsSendController = threadSmsSendController,
+        firstContactOwnershipController = firstContactOwnershipController,
         segmentCounter = segmentCounter,
     )
     private val controller = AppearanceController(appearance, scope) { 20_000L }
@@ -3449,6 +3522,7 @@ private class SyntheticRootServices(
     override val draftAttachmentRepository: DraftAttachmentRepository,
     override val subscriptionRepository: SubscriptionRepository,
     override val threadSmsSendController: ThreadSmsSendController,
+    val firstContactOwnershipController: FirstContactOwnershipController,
     private val segmentCounter: (String) -> Int?,
 ) : AuroraSmsRootServices, AutoCloseable {
     private val clock = AtomicLong(30_000L)
@@ -3571,6 +3645,22 @@ private object SyntheticIdleThreadSmsSendController : ThreadSmsSendController {
     override fun fence() = Unit
 
     override suspend fun handleTransportResult(result: TransportResult): Boolean = false
+}
+
+private class RecordingFirstContactOwnershipController : FirstContactOwnershipController {
+    private val invocations = AtomicInteger()
+
+    val invocationCount: Int
+        get() = invocations.get()
+
+    override suspend fun reserveAndBind(
+        command: FirstContactOwnershipCommand,
+    ): FirstContactOwnershipResult {
+        invocations.incrementAndGet()
+        return FirstContactOwnershipResult.Failure(
+            FirstContactOwnershipFailureReason.STORAGE_UNAVAILABLE,
+        )
+    }
 }
 
 private class RecordingUnknownThreadSmsSendController : ThreadSmsSendController {

@@ -594,6 +594,41 @@ Controls:
 - perform no Contacts/Telephony provider write, provider-thread resolution, or
   SMS/MMS transport from discovery or selection.
 
+### T14: first-contact provider authority ambiguity
+
+Threats: New chat resolves or creates a provider thread before durable user
+intent exists; a crash or cancellation after provider entry is mistaken for no
+mutation and retried; equivalent recipient formatting creates sibling owners;
+a stale draft or removed SIM is silently substituted; a resolved thread is
+rebound; or a participant draft is rekeyed over an existing thread draft before
+carrier submission.
+
+Controls:
+
+- reserve one schema-15, content-free first-contact operation against the exact
+  participant-draft ID and revision before entering provider authority;
+- use a first-contact-domain SHA-256 fingerprint of shared semantic recipient
+  keys to reject reordered or harmlessly reformatted sibling reservations,
+  while retaining the exact draft identity check as content authority;
+- persist `RESOLUTION_STARTED` with compare-and-set before allocation. Once
+  that fence exists, every non-verified result, cancellation, or exception
+  becomes `RESOLUTION_UNKNOWN` and is never automatically retried;
+- require current default-SMS role and `READ_SMS` before resolver entry, then
+  verify a positive returned thread through a bounded exact provider recipient
+  readback before a write-once binding can be committed;
+- retain typed active-subscription failures, require the exact selected ID to
+  remain active and SMS-capable at each authority boundary, and never substitute
+  the platform default SIM;
+- bridge only from the exact bound operation in one Room transaction: re-read
+  the source draft identity and revision, reject a target-thread sibling, rekey
+  the same draft at a strictly newer revision, and preserve its body, subject,
+  creation time, and attachment ownership;
+- retain `HANDOFF_RESERVED` until a future transaction reserves the mature
+  composer journal; N2B cannot delete that owner, stage a provider message,
+  register a callback, or invoke SMS/MMS transport; and
+- keep the Android resolver and headless coordinator outside the New chat and
+  production application graph until the separately reviewed N2C activation.
+
 ## Privacy defaults
 
 - No general network permission or network-capable SDK.

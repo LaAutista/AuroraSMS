@@ -17,6 +17,7 @@ import org.aurorasms.core.state.storage.ComposerSmsOperationEnforcement
 import org.aurorasms.core.state.storage.ConversationSubscriptionPreferenceEnforcement
 import org.aurorasms.core.state.storage.DraftAttachmentEnforcement
 import org.aurorasms.core.state.storage.DraftIdentityEnforcement
+import org.aurorasms.core.state.storage.FirstContactOperationEnforcement
 import org.aurorasms.core.state.storage.ScheduledSmsEnforcement
 import org.aurorasms.core.state.storage.SendDelayEnforcement
 import org.aurorasms.core.state.storage.PermanentDeletionEnforcement
@@ -57,11 +58,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionFourteen_hasBoundedStateTablesAndComposerTransportOwnership() {
+    fun schemaVersionFifteen_hasBoundedStateTablesAndFirstContactOwnership() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(14, AuroraStateDatabase.VERSION)
+            assertEquals(15, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -359,6 +360,42 @@ class StateSchemaCurrentTest {
             )
             assertEquals(
                 setOf(
+                    "first_contact_id",
+                    "participant_set_key",
+                    "draft_id",
+                    "source_draft_revision_ms",
+                    "attachment_set_evidence",
+                    "subscription_id",
+                    "transport_code",
+                    "phase_code",
+                    "provider_thread_id",
+                    "handoff_draft_revision_ms",
+                    "created_timestamp_ms",
+                    "updated_timestamp_ms",
+                    "signature_text",
+                ),
+                sqlite.tableColumns("first_contact_operations"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "first_contact_operations",
+                    "index_first_contact_operations_participant_set_key",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "first_contact_operations",
+                    "index_first_contact_operations_draft_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "first_contact_operations",
+                    "index_first_contact_operations_provider_thread_id",
+                ),
+            )
+            assertEquals(
+                setOf(
                     "deletion_id", "target_kind_code", "provider_thread_id", "provider_kind",
                     "provider_message_id", "sync_fingerprint", "sms_count", "latest_sms_id",
                     "mms_count", "latest_mms_id", "draft_id", "draft_revision_ms",
@@ -494,6 +531,12 @@ class StateSchemaCurrentTest {
                         "AND name = 'send_delay_operations'",
                 ).use { it.moveToFirst() },
             )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'first_contact_operations'",
+                ).use { it.moveToFirst() },
+            )
         }
 
         val database = Room.databaseBuilder(
@@ -510,6 +553,7 @@ class StateSchemaCurrentTest {
             .addCallback(ScheduledSmsEnforcement.callback)
             .addCallback(SendDelayEnforcement.callback)
             .addCallback(PermanentDeletionEnforcement.callback)
+            .addCallback(FirstContactOperationEnforcement.callback)
             .build()
         try {
             assertEquals(AuroraStateDatabase.VERSION, database.openHelper.writableDatabase.version)
@@ -569,6 +613,10 @@ class StateSchemaCurrentTest {
         assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_LIMIT_TRIGGER_NAME)
         assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
         assertTriggerExists(sqlite, PermanentDeletionEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, FirstContactOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, FirstContactOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, FirstContactOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, FirstContactOperationEnforcement.DELETE_INTEGRITY_TRIGGER_NAME)
 
         assertThrows(SQLiteConstraintException::class.java) {
             sqlite.execSQL(
@@ -614,6 +662,10 @@ class StateSchemaCurrentTest {
         sqlite.execSQL("DROP TRIGGER ${PermanentDeletionEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${PermanentDeletionEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${PermanentDeletionEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${FirstContactOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${FirstContactOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${FirstContactOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${FirstContactOperationEnforcement.DELETE_INTEGRITY_TRIGGER_NAME}")
         database.close()
 
         database = openStateDatabase()
@@ -648,6 +700,19 @@ class StateSchemaCurrentTest {
             assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_LIMIT_TRIGGER_NAME)
             assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
             assertTriggerExists(sqlite, PermanentDeletionEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(sqlite, FirstContactOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+            assertTriggerExists(
+                sqlite,
+                FirstContactOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME,
+            )
+            assertTriggerExists(
+                sqlite,
+                FirstContactOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME,
+            )
+            assertTriggerExists(
+                sqlite,
+                FirstContactOperationEnforcement.DELETE_INTEGRITY_TRIGGER_NAME,
+            )
             assertThrows(SQLiteConstraintException::class.java) {
                 sqlite.execSQL(
                     "INSERT INTO appearance_selection(" +

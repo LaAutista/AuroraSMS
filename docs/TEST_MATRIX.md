@@ -4462,6 +4462,86 @@ Activity stop, and manual fallback, remains open. Provider-thread ownership and
 first-contact SMS/MMS transport are separate N2B gates and remain open.
 AuroraSMS is not gold.
 
+#### Phase 7 N2B durable first-contact ownership acceptance — 2026-07-22
+
+N2B adds the synthetic, durable ownership path that must exist before New chat
+may enter provider authority. Shared recipient equivalence keeps supported phone
+presentation punctuation from creating sibling owners, compares email domains
+case-insensitively while retaining exact local parts, and keeps opaque address
+kinds exact. State schema 15 adds one bounded first-contact operation for the
+exact participant draft, revision, attachment-set evidence, selected active
+SMS-capable subscription, transport kind, and optional frozen signature. It
+stores no raw recipient, body, subject, attachment bytes, query, contact label,
+or photo reference.
+
+`RESERVED` is committed before provider resolution. `RESOLUTION_STARTED` is a
+one-way crash fence: once it exists, no caller can convert the operation to
+retryable `KNOWN_UNSENT`; every non-verified result, cancellation, exception,
+or recovery becomes terminal `RESOLUTION_UNKNOWN`. A positive provider thread
+is write-once and must have an exact bounded participant readback. SQL triggers
+enforce physical integer types, monotonic revisions, exact transitions, the
+128-owner cap, unique participant and provider-thread ownership, and deletion
+only from a genuinely pre-resolution `KNOWN_UNSENT` state.
+
+The `THREAD_BOUND` bridge rekeys the same draft to its exact provider thread in
+one Room transaction, strictly advances its draft revision, preserves body,
+subject, creation time, and attachments, and rejects existing thread drafts or
+other active workflow owners. Reopen tests prove the exact
+`HANDOFF_RESERVED` operation, provider-draft identity/revision/content, and
+attachments survive process loss. N2B intentionally creates no composer
+operation and submits no message.
+
+The Android resolver is present only behind injected allocator/readback seams.
+It checks role and `READ_SMS`, uses a cancellable bounded canonical-recipient
+readback, and classifies allocator/readback ambiguity or post-readback role or
+permission loss as unknown. Static and runtime acceptance proves internal New
+chat, external `SENDTO`, and Activity recreation keep Send disabled and invoke
+first-contact ownership zero times. Neither the resolver nor the headless
+coordinator is wired into the production New chat graph, and the coordinator
+has no transport, provider-message staging, callback, or existing-thread send
+dependency.
+
+Final synthetic acceptance evidence:
+
+- integrated model/telephony/state/app contracts and Android-test compilation —
+  `./gradlew :core:model:test :core:telephony:testDebugUnitTest
+  :core:state:testDebugUnitTest :app:testDebugUnitTest
+  :core:telephony:compileDebugAndroidTestKotlin
+  :core:state:compileDebugAndroidTestKotlin
+  :app:compileDebugAndroidTestKotlin --offline --no-daemon --no-parallel
+  --console=plain` — **PASS**, 176 tasks in 14s;
+- complete governed host/lint/R8/benchmark/privacy/dependency/license gate —
+  `./gradlew test lintDebug lintRelease assembleDebug assembleRelease
+  bundleRelease :app:lintBenchmark :app:assembleBenchmark
+  :macrobenchmark:check :macrobenchmark:assembleBenchmark verifyGovernance
+  checkLicense generateLicenseReport verifyCleanRoom verifyPrivateAssets
+  verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon
+  --no-parallel --console=plain` — **PASS**, 987 tasks in 2m35s. The required
+  standalone `./gradlew cyclonedxBom --offline --no-daemon --no-parallel
+  --console=plain` also passed, 16 tasks in 9s;
+- API 36 complete connected matrix — `AuroraSMS_API36(AVD) - 16`,
+  `ANDROID_SERIAL=emulator-5554 ./gradlew connectedDebugAndroidTest --offline
+  --no-daemon --no-parallel --console=plain` — **PASS**, 519 enumerated cases
+  (507 passed plus 12 intentional opt-in protocol skips), zero failures, 506
+  tasks in 3m23s; and
+- API 26 complete connected matrix — `AuroraSMS_API26(AVD) - 8.0.0`,
+  `ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline
+  --no-daemon --no-parallel --console=plain` — **PASS**, 516 enumerated cases
+  (501 passed plus 15 intentional opt-in protocol skips), zero failures, 506
+  tasks in 3m26s.
+
+Every N2B case used synthetic participants, drafts, attachments, provider IDs,
+role/permission states, subscriptions, cursors, and controller seams. No live
+message address/body/subject, contact record, provider thread, provider write,
+role mutation, permission grant/revoke, SMS/MMS submission, callback, carrier
+send, screenshot, or broad log participated.
+
+N2C must transactionally revalidate `HANDOFF_RESERVED` against the current
+draft while acquiring the mature composer journal, add an explicit safe
+`KNOWN_UNSENT` release/retry path, wire resolution only behind the user's exact
+send action, expose exact multi-SIM choice, and complete real-provider and
+carrier SMS/MMS acceptance. Those gates remain open. AuroraSMS is not gold.
+
 ## Release gate
 
 - [ ] All relevant platform/device/telephony/message/lifecycle/appearance rows

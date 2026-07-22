@@ -23,6 +23,7 @@ import androidx.room.RoomDatabase
         SendDelayEntity::class,
         PermanentDeletionEntity::class,
         SpamSafetyDecisionEntity::class,
+        FirstContactOperationEntity::class,
     ],
     version = AuroraStateDatabase.VERSION,
     exportSchema = true,
@@ -49,7 +50,9 @@ abstract class AuroraStateDatabase : RoomDatabase() {
 
     internal abstract fun spamSafetyDecisionDao(): SpamSafetyDecisionDao
 
+    internal abstract fun firstContactOperationDao(): FirstContactOperationDao
+
     companion object {
-        const val VERSION: Int = 14
+        const val VERSION: Int = 15
     }
 }

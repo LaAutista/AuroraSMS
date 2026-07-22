@@ -5,6 +5,50 @@ package org.aurorasms.core.state.storage
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+val STATE_MIGRATION_14_15: Migration = object : Migration(14, 15) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `first_contact_operations` (
+                `first_contact_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `participant_set_key` TEXT NOT NULL,
+                `draft_id` INTEGER NOT NULL,
+                `source_draft_revision_ms` INTEGER NOT NULL,
+                `attachment_set_evidence` TEXT NOT NULL,
+                `subscription_id` INTEGER NOT NULL,
+                `transport_code` TEXT NOT NULL,
+                `phase_code` TEXT NOT NULL,
+                `provider_thread_id` INTEGER,
+                `handoff_draft_revision_ms` INTEGER,
+                `created_timestamp_ms` INTEGER NOT NULL,
+                `updated_timestamp_ms` INTEGER NOT NULL,
+                `signature_text` TEXT
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                "`index_first_contact_operations_participant_set_key` " +
+                "ON `first_contact_operations` (`participant_set_key`)",
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_first_contact_operations_draft_id` " +
+                "ON `first_contact_operations` (`draft_id`)",
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                "`index_first_contact_operations_provider_thread_id` " +
+                "ON `first_contact_operations` (`provider_thread_id`)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS " +
+                "`index_first_contact_operations_updated_timestamp_ms_first_contact_id` " +
+                "ON `first_contact_operations` (`updated_timestamp_ms`, `first_contact_id`)",
+        )
+        FirstContactOperationEnforcement.install(db)
+    }
+}
+
 val STATE_MIGRATION_13_14: Migration = object : Migration(13, 14) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(

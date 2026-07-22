@@ -188,6 +188,16 @@ The production manifest contract separately requires `READ_CONTACTS` and
 rejects `WRITE_CONTACTS`; none of those benchmark or verifier boundaries are
 relaxed by N2A.
 
+N2B adds no permission. Its dormant provider-thread resolver reuses the
+default-SMS app's existing `READ_SMS` authority and must reject role or
+permission loss before allocator entry. Once provider entry begins, cancellation
+or an exception is not proof that no provider row changed and is recorded as an
+unknown resolution outcome. The resolver is not installed in the production
+application graph, New chat Send remains disabled, and no role or permission is
+requested merely by opening, editing, restoring, or selecting a contact in New
+chat. Activating the resolver, subscription selector, composer-journal handoff,
+or transport requires the separately reviewed N2C boundary.
+
 Photo Picker and the Storage Access Framework are the default attachment,
 wallpaper, import, and export paths. They do not justify broad media or storage
 permissions.

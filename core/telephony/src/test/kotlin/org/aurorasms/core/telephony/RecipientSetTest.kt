@@ -45,6 +45,28 @@ class RecipientSetTest {
     }
 
     @Test
+    fun `email domains deduplicate case insensitively while local parts remain exact`() {
+        val recipients = valid(
+            "Local@Example.COM",
+            "Local@example.com",
+            "local@example.com",
+        )
+
+        assertEquals(2, recipients.size)
+        assertEquals(
+            listOf(ParticipantAddress("Local@Example.COM"), ParticipantAddress("local@example.com")),
+            recipients.addresses,
+        )
+    }
+
+    @Test
+    fun `domain tags prevent crafted opaque addresses from colliding`() {
+        val recipients = valid("+15550102020", "phone:+15550102020")
+
+        assertEquals(2, recipients.size)
+    }
+
+    @Test
     fun `attachment forces MMS even for one recipient`() {
         val recipients = valid("synthetic@example.invalid")
 

@@ -12,14 +12,16 @@ or physical-device gate.
 
 ## Current boundary
 
-The Phase 7 N1 source is `0.7.0-phase7` (`versionCode` 22). It adds the first
-review-only New chat surface while keeping every first-contact transport path
-disabled. Host, R8 release, benchmark, privacy, dependency, and license gates
-remain required for every candidate. The following boundaries remain open and
-prevent a gold claim:
+The Phase 7 source is `0.7.0-phase7` (`versionCode` 22). N1 and N2A add the
+review-only New chat and bounded contact-selection surfaces. N2B adds synthetic
+durable first-contact reservation and exact thread-binding contracts while
+keeping the live resolver, New chat Send, provider-message writes, callbacks,
+and every carrier transport path disabled. Host, R8 release, benchmark,
+privacy, dependency, and license gates remain required for every candidate.
+The following boundaries remain open and prevent a gold claim:
 
-- an explicit first-contact SMS/MMS send path, including provider-thread
-  resolution and durable write ownership;
+- production wiring and physical acceptance for exact first-contact provider-
+  thread resolution, the composer-journal handoff, and SMS/MMS transport;
 - Archive, pinning, inbox selection/Mark all read, complete Settings/About, and
   a persisted notification-privacy control wired to the notifier;
 - forward and local quote actions, named-profile import/export, bottom/rail
@@ -58,8 +60,11 @@ separate open gate, not an indexing delay.
   request state without carrying recipients or text across intents.
 - [x] Add explicit contact discovery/selection with a reviewed permission and
   bounded-query contract.
+- [x] Add schema-15 durable first-contact reservation, one-time exact thread
+  binding, participant-draft rekeying, resolver fakes, and a headless
+  zero-transport coordinator under ADR 0028.
 - [ ] Resolve or create the provider conversation only after an explicit send
-  action with durable ownership.
+  action using the reviewed durable ownership path on a real provider.
 - [ ] Enable and physically verify first-contact SMS/MMS transport.
 
 New chat remains a draft-safe review surface. N2A adds an explicit **Find
@@ -70,9 +75,22 @@ are cancellable and memory-only. Closing the panel, stopping the Activity, or
 losing permission clears the query and results. Selecting one validated address
 uses the existing bounded recipient/draft authority. It performs no contact or
 Telephony provider write and does not add `WRITE_CONTACTS`, network access, or
-background discovery. Send remains disabled: provider-thread resolution,
-durable first-contact write ownership, and SMS/MMS transport remain unchecked
-and open.
+background discovery. Send remains disabled: production invocation of provider-
+thread resolution, composer-journal ownership transfer, and SMS/MMS transport
+remain unchecked and open.
+
+N2B persists a bounded, content-free operation before provider authority may be
+entered. A durable `RESOLUTION_STARTED` checkpoint prevents crash recovery from
+blindly repeating an ambiguous provider allocation. Exact thread binding is
+write-once, and the same participant draft is rekeyed to that thread only in a
+transaction that preserves its content and attachments and rejects an existing
+thread draft. Semantic participant fingerprints prevent reordered or harmlessly
+reformatted phone addresses from creating sibling reservations. The Android
+resolver remains outside the production application graph, and the headless
+coordinator has no transport, provider-message staging, callback, or existing-
+thread send-controller dependency. `HANDOFF_RESERVED` remains durable until a
+future N2C transaction can reserve the existing composer journal; it is not a
+send acknowledgement.
 
 ## Workstream 7A: release truth and governance
 
@@ -99,7 +117,7 @@ and open.
 ## Workstream 7C: data completeness and migrations
 
 - [x] Export every shipped Room schema and retain an explicit test for every
-  adjacent migration: index 1 through 3 and durable state 1 through 14.
+  adjacent migration: index 1 through 3 and durable state 1 through 15.
 - [ ] Complete and verify a nonempty physical-provider generation with both SMS
   and MMS checkpoints exhausted and provider counts reconciled.
 - [ ] Prove Inbox, Thread, search, and exact old-result jump across that
