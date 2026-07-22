@@ -4387,6 +4387,81 @@ provider ownership/transport, complete MMS product acceptance, signing,
 F-Droid/publication metadata, artwork notices, and signed checksums also remain
 open. This integrity hardening does not make AuroraSMS gold.
 
+#### Phase 7 N2A bounded contact-discovery acceptance — 2026-07-21
+
+N2A adds an explicit **Find contacts** selector to the internal and external New
+chat review surfaces. Contact access is optional: `READ_CONTACTS` is requested
+only after the user opens that panel and explicitly chooses **Manage contact
+access**.
+The pre-existing Inbox-overflow **Use contacts** action remains the other
+explicit, user-triggered permission entry point. Contact access is not part of
+app/default-SMS onboarding, and absent, denied, cancelled,
+permanently denied, revoked, or provider-unavailable access leaves manual
+recipient entry and the existing participant-draft flow usable.
+
+The implementation trims each query, then accepts only a control-free
+1-to-100-character value. Its public result cap is 50; the N2A surface requests
+20 and reads at most
+one extra provider row to report truncation. The phone-row filter query runs off
+the main thread, closes its cursor, propagates coroutine cancellation through
+Android's `CancellationSignal`, and discards stale work when the query or UI
+owner changes. Returned addresses and bounded names/photo references are
+validated and deduplicated. Query text and unselected result metadata remain
+memory-only and are cleared on panel close. A selected bounded display label may
+remain only in memory for its recipient chip until removal, Activity stop, or
+permission loss. Selecting a result contributes only its validated address to
+the same bounded recipient/draft authority used by manual entry.
+
+N2A requests no `WRITE_CONTACTS`, network, media, storage, or background-access
+permission. The production manifest contract requires optional
+`READ_CONTACTS` and rejects `WRITE_CONTACTS`. The isolated benchmark continues
+to remove `READ_CONTACTS`, and the unchanged exact permission verifier must
+still prove complete permission-set equality in every production/benchmark
+merged manifest and packaged APK. Discovery and selection perform no Contacts
+or Telephony provider write, provider-thread resolution, subscription choice,
+SMS/MMS submission, or carrier send. New chat Send remains disabled.
+
+Final synthetic acceptance evidence:
+
+- focused N2A host contracts —
+  `./gradlew :app:testDebugUnitTest
+  -Pandroid.testInstrumentationRunnerArguments.class=org.aurorasms.app.compose.NewMessageRouteStateTest
+  :app:compileDebugAndroidTestKotlin :core:telephony:testDebugUnitTest
+  :core:telephony:compileDebugAndroidTestKotlin
+  :feature:conversations:testDebugUnitTest
+  :feature:conversations:compileDebugAndroidTestKotlin --offline --no-daemon
+  --no-parallel --console=plain` — **PASS**, 172 tasks in 7s;
+- complete governed host/lint/R8/benchmark/privacy/dependency/license gate —
+  `./gradlew test lintDebug lintRelease assembleDebug assembleRelease
+  bundleRelease :app:lintBenchmark :app:assembleBenchmark
+  :macrobenchmark:check :macrobenchmark:assembleBenchmark verifyGovernance
+  checkLicense generateLicenseReport verifyCleanRoom verifyPrivateAssets
+  verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon
+  --no-parallel --console=plain` — **PASS**, 987 tasks in 24s. The required
+  standalone `./gradlew cyclonedxBom --offline --no-daemon --no-parallel
+  --console=plain` also passed, 16 tasks in 8s;
+- API 36 complete connected matrix — `AuroraSMS_API36(AVD) - 16`, 1080x2400,
+  `ANDROID_SERIAL=emulator-5554 ./gradlew connectedDebugAndroidTest --offline
+  --no-daemon --no-parallel --console=plain` — **PASS**, 481 test cases (469
+  passed plus 12 intentional opt-in protocol skips), zero failures, 506 tasks in
+  3m13s; and
+- API 26 complete connected matrix — `AuroraSMS_API26(AVD) - 8.0.0`, 320x640,
+  `ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline
+  --no-daemon --no-parallel --console=plain` — **PASS**, 475 test cases (460
+  passed plus 15 intentional opt-in protocol skips), zero failures, 506 tasks in
+  3m21s. The compact matrix specifically proved the scroll-safe New Message
+  notices, all bounded contact-discovery states, and selection of the last row
+  from the maximum 20-result surface.
+
+The N2A-specific cases in those runs must use synthetic names, numbers, and
+provider rows only and record zero SMS-role change, automated `READ_CONTACTS`
+grant/revoke, Contacts/Telephony provider write, or carrier send.
+Owner-controlled validation against a real physical/OEM Contacts provider,
+including grant, denial, permanent denial, revocation, cancellation, selection,
+Activity stop, and manual fallback, remains open. Provider-thread ownership and
+first-contact SMS/MMS transport are separate N2B gates and remain open.
+AuroraSMS is not gold.
+
 ## Release gate
 
 - [ ] All relevant platform/device/telephony/message/lifecycle/appearance rows

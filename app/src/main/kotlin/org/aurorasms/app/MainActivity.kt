@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
     private var roleState by mutableStateOf<RoleOnboardingState>(RoleOnboardingState.ReadyToRequest)
     private var permissionState by mutableStateOf<Map<String, Boolean>>(emptyMap())
     private var contactsPermissionGranted by mutableStateOf(false)
+    private var contactsPermissionRequestedBefore by mutableStateOf(false)
     private var notificationPermissionGranted by mutableStateOf(Build.VERSION.SDK_INT < 33)
     private var notificationPermissionRequestedBefore by mutableStateOf(false)
     private var lastReportedContactsPermission: Boolean? = null
@@ -84,9 +85,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private val contactsPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        contactsPermissionGranted = granted || isPermissionGranted(Manifest.permission.READ_CONTACTS)
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        if (contactsPermissionResultRecordsDecision(results, Manifest.permission.READ_CONTACTS)) {
+            contactsPermissionRequestedBefore = true
+            contactsPermissionPreferences().edit {
+                putBoolean(CONTACTS_PERMISSION_REQUESTED_BEFORE, true)
+            }
+        }
+        contactsPermissionGranted = isPermissionGranted(Manifest.permission.READ_CONTACTS)
         relayContactsPermissionIfChanged()
     }
 
@@ -131,6 +138,8 @@ class MainActivity : ComponentActivity() {
         roleState = roleCoordinator.refresh()
         notificationPermissionRequestedBefore = notificationPermissionPreferences()
             .getBoolean(NOTIFICATION_PERMISSION_REQUESTED_BEFORE, false)
+        contactsPermissionRequestedBefore = contactsPermissionPreferences()
+            .getBoolean(CONTACTS_PERMISSION_REQUESTED_BEFORE, false)
         refreshPermissionState()
         val rawConversationId = intent.getLongExtra(
             AppNotificationIntentFactory.EXTRA_CONVERSATION_ID,
@@ -191,7 +200,7 @@ class MainActivity : ComponentActivity() {
                                     onOpenDiagnostics = { showDiagnostics = true },
                                     onRequestContactsPermission = {
                                         if (roleCoordinator.refresh() == RoleOnboardingState.Held) {
-                                            contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+                                            recoverContactsPermission()
                                         } else {
                                             roleState = roleCoordinator.state
                                         }
@@ -337,6 +346,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun recoverContactsPermission() {
+        val currentlyGranted = isPermissionGranted(Manifest.permission.READ_CONTACTS)
+        contactsPermissionGranted = currentlyGranted
+        relayContactsPermissionIfChanged()
+        when (
+            contactsPermissionRecoveryAction(
+                contactsPermissionGranted = currentlyGranted,
+                requestedBefore = contactsPermissionRequestedBefore,
+                shouldShowRationale = shouldShowRequestPermissionRationale(
+                    Manifest.permission.READ_CONTACTS,
+                ),
+            )
+        ) {
+            ContactsPermissionRecoveryAction.NONE -> contactsPermissionGranted = true
+            ContactsPermissionRecoveryAction.REQUEST_PERMISSION ->
+                contactsPermissionLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS))
+            ContactsPermissionRecoveryAction.OPEN_SETTINGS -> openApplicationDetailsSettings()
+        }
+    }
+
     private fun openNotificationSettings() {
         try {
             startActivity(appNotificationSettingsIntent(packageName))
@@ -349,6 +378,11 @@ class MainActivity : ComponentActivity() {
 
     private fun notificationPermissionPreferences() = getSharedPreferences(
         NOTIFICATION_PERMISSION_PREFERENCES,
+        Context.MODE_PRIVATE,
+    )
+
+    private fun contactsPermissionPreferences() = getSharedPreferences(
+        CONTACTS_PERMISSION_PREFERENCES,
         Context.MODE_PRIVATE,
     )
 

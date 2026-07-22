@@ -2,6 +2,7 @@
 
 package org.aurorasms.app
 
+import android.Manifest
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -32,6 +33,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.onView
@@ -53,6 +55,7 @@ import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -185,6 +188,10 @@ import org.aurorasms.core.state.NewDraft
 import org.aurorasms.core.telephony.ActiveSubscription
 import org.aurorasms.core.telephony.ContactCache
 import org.aurorasms.core.telephony.ContactCacheInvalidation
+import org.aurorasms.core.telephony.ContactDiscovery
+import org.aurorasms.core.telephony.ContactDiscoveryResult
+import org.aurorasms.core.telephony.DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT
+import org.aurorasms.core.telephony.DiscoveredContact
 import org.aurorasms.core.telephony.MmsAttachmentContentReader
 import org.aurorasms.core.telephony.MmsAttachmentId
 import org.aurorasms.core.telephony.MmsAttachmentListResult
@@ -194,6 +201,7 @@ import org.aurorasms.core.telephony.OutgoingMmsAttachment
 import org.aurorasms.core.telephony.ResolvedContact
 import org.aurorasms.core.telephony.SubscriptionRepository
 import org.aurorasms.core.telephony.SubscriptionSnapshot
+import org.aurorasms.core.telephony.UnavailableContactDiscovery
 import org.aurorasms.feature.conversations.AttachmentPreviewResult
 import org.aurorasms.feature.conversations.BoundedPreviewLoader
 import org.aurorasms.feature.conversations.COMPOSER_SEND_TEST_TAG
@@ -663,6 +671,564 @@ class AuroraSmsRootAcceptanceTest {
         } finally {
             clearDraft(application.container.draftRepository, firstIdentity)
             clearDraft(application.container.draftRepository, secondIdentity)
+        }
+    }
+
+    @Test
+    fun externalSendToStartsWithDiscoveryClosedAndNewIntentDisposesBlankPanel() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val application = context as AuroraSmsApplication
+        val firstRecipient = ParticipantAddress("+15550100034")
+        val secondRecipient = ParticipantAddress("+15550100035")
+        val firstIdentity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(firstRecipient)),
+        )
+        val secondIdentity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(secondRecipient)),
+        )
+        clearDraft(application.container.draftRepository, firstIdentity)
+        clearDraft(application.container.draftRepository, secondIdentity)
+        val permissionBefore = context.checkSelfPermission(Manifest.permission.READ_CONTACTS)
+        val firstIntent = Intent(context, ComposeMessageActivity::class.java).apply {
+            action = Intent.ACTION_SENDTO
+            data = Uri.parse("smsto:${firstRecipient.value}")
+        }
+
+        var launchedScenario: ActivityScenario<ComposeMessageActivity>? = null
+        try {
+            val scenario = ActivityScenario.launch<ComposeMessageActivity>(firstIntent)
+            launchedScenario = scenario
+            waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+            compose.onNodeWithText(firstRecipient.value).assertIsDisplayed()
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+            ).assertDoesNotExist()
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                runCatching {
+                    compose.onNodeWithTag(
+                        org.aurorasms.feature.conversations
+                            .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+                    ).assertIsEnabled()
+                }.isSuccess
+            }
+
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).performClick()
+            waitForTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+            )
+            assertEquals(
+                permissionBefore,
+                context.checkSelfPermission(Manifest.permission.READ_CONTACTS),
+            )
+
+            scenario.onActivity { activity ->
+                val replacement = Intent(activity.intent).apply {
+                    action = Intent.ACTION_SENDTO
+                    data = Uri.parse("smsto:${secondRecipient.value}")
+                    removeExtra("sms_body")
+                    removeExtra(Intent.EXTRA_TEXT)
+                }
+                ComposeMessageActivity::class.java
+                    .getDeclaredMethod("onNewIntent", Intent::class.java)
+                    .apply { isAccessible = true }
+                    .invoke(activity, replacement)
+            }
+
+            waitForDisplayedText(secondRecipient.value)
+            compose.onNodeWithText(firstRecipient.value).assertDoesNotExist()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+            ).assertDoesNotExist()
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            assertEquals(
+                permissionBefore,
+                context.checkSelfPermission(Manifest.permission.READ_CONTACTS),
+            )
+            assertNull(readDraft(application.container.draftRepository, firstIdentity))
+            assertNull(readDraft(application.container.draftRepository, secondIdentity))
+        } finally {
+            launchedScenario?.let { scenario ->
+                runCatching {
+                    scenario.onActivity { activity -> activity.finishAndRemoveTask() }
+                }
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            clearDraft(application.container.draftRepository, firstIdentity)
+            clearDraft(application.container.draftRepository, secondIdentity)
+        }
+    }
+
+    @Test
+    fun newChatContactSelectionUsesParticipantDraftPathWithoutTransportAttempt() {
+        val recipient = ParticipantAddress("+15550100031")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(recipient)),
+        )
+        val discovery = RecordingContactDiscovery { query, resultLimit ->
+            assertEquals(DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT, resultLimit)
+            when (query) {
+                SYNTHETIC_CONTACT_QUERY -> ContactDiscoveryResult.Available(
+                    contacts = listOf(
+                        DiscoveredContact(
+                            address = recipient,
+                            displayName = "Synthetic Ada",
+                            photoUri = null,
+                        ),
+                    ),
+                    truncated = false,
+                )
+                SYNTHETIC_REVOKED_CONTACT_QUERY -> ContactDiscoveryResult.PermissionDenied
+                else -> error("Unexpected synthetic contact query")
+            }
+        }
+        val sendController = RecordingUnknownThreadSmsSendController()
+        val fixture = SyntheticFixture(
+            contactDiscovery = discovery,
+            threadSmsSendController = sendController,
+        )
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+            openNewChat()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).assertIsEnabled().performClick()
+            waitForTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+            )
+            assertEquals(0, discovery.requestCount)
+
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_QUERY_TEST_TAG,
+            ).performTextReplacement(SYNTHETIC_CONTACT_QUERY)
+            compose.waitUntil(TIMEOUT_MILLIS) { discovery.requestCount == 1 }
+            waitForTag(
+                "${org.aurorasms.feature.conversations.NEW_MESSAGE_CONTACT_DISCOVERY_RESULT_TEST_TAG_PREFIX}-0",
+            )
+            compose.onNodeWithText("Synthetic Ada").assertIsDisplayed()
+            compose.onNodeWithText(recipient.value).assertIsDisplayed()
+            compose.onNodeWithTag(
+                "${org.aurorasms.feature.conversations.NEW_MESSAGE_CONTACT_DISCOVERY_RESULT_TEST_TAG_PREFIX}-0",
+            ).performClick()
+
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                compose.onAllNodesWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+                ).fetchSemanticsNodes().isEmpty()
+            }
+            compose.onNodeWithText("Synthetic Ada").assertIsDisplayed()
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                runCatching { compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsEnabled() }.isSuccess
+            }
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).assertIsEnabled().performClick()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_QUERY_TEST_TAG,
+            ).performTextReplacement(SYNTHETIC_REVOKED_CONTACT_QUERY)
+            compose.waitUntil(TIMEOUT_MILLIS) { discovery.requestCount == 2 }
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                compose.onAllNodesWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+                ).fetchSemanticsNodes().isEmpty()
+            }
+            compose.onNodeWithText("Synthetic Ada").assertDoesNotExist()
+            compose.onNodeWithText(recipient.value).assertIsDisplayed()
+
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).performClick()
+            waitForTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+            )
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_QUERY_TEST_TAG,
+            ).assertIsNotEnabled()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_RETRY_TEST_TAG,
+            ).assertIsEnabled()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).performClick()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).performClick()
+            waitForTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+            )
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_QUERY_TEST_TAG,
+            ).assertIsNotEnabled()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_RETRY_TEST_TAG,
+            ).assertIsEnabled()
+            assertEquals(2, discovery.requestCount)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).performClick()
+
+            compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                .performTextReplacement(SYNTHETIC_CONTACT_DRAFT_BODY)
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.drafts.snapshot(identity)?.body == SYNTHETIC_CONTACT_DRAFT_BODY
+            }
+
+            assertEquals(
+                listOf(
+                    SyntheticContactDiscoveryRequest(
+                        query = SYNTHETIC_CONTACT_QUERY,
+                        resultLimit = DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT,
+                    ),
+                    SyntheticContactDiscoveryRequest(
+                        query = SYNTHETIC_REVOKED_CONTACT_QUERY,
+                        resultLimit = DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT,
+                    ),
+                ),
+                discovery.requestsSnapshot(),
+            )
+            assertEquals(1, fixture.drafts.snapshotCount())
+            assertEquals(0, sendController.sendCount)
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        }
+    }
+
+    @Test
+    fun deniedContactsPermissionNeverQueriesAndManualRecipientDraftingStillWorks() {
+        val recipient = ParticipantAddress("+15550100032")
+        val identity = DraftIdentity.ParticipantSet(
+            DraftParticipantSetKey.fromParticipants(listOf(recipient)),
+        )
+        val discovery = RecordingContactDiscovery { _, _ ->
+            throw AssertionError("Permission-denied New Chat must not query contact discovery")
+        }
+        val sendController = RecordingUnknownThreadSmsSendController()
+        val fixture = SyntheticFixture(
+            contactDiscovery = discovery,
+            contactsPermissionGranted = false,
+            threadSmsSendController = sendController,
+        )
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+            openNewChat()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).performClick()
+            waitForTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+            )
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_QUERY_TEST_TAG,
+            ).assertIsNotEnabled()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_RETRY_TEST_TAG,
+            ).assertIsEnabled().performClick()
+            assertEquals(1, fixture.harness.contactsPermissionRequestCount)
+            assertEquals(0, discovery.requestCount)
+
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).performClick()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_RECIPIENT_INPUT_TEST_TAG,
+            ).performTextReplacement(recipient.value)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations.NEW_MESSAGE_COMMIT_RECIPIENT_TEST_TAG,
+            ).performClick()
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                runCatching { compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsEnabled() }.isSuccess
+            }
+            compose.onNodeWithTag(COMPOSER_TEST_TAG)
+                .performTextReplacement(SYNTHETIC_MANUAL_CONTACT_DRAFT_BODY)
+            compose.waitUntil(TIMEOUT_MILLIS) {
+                fixture.drafts.snapshot(identity)?.body == SYNTHETIC_MANUAL_CONTACT_DRAFT_BODY
+            }
+
+            assertEquals(0, discovery.requestCount)
+            assertEquals(0, sendController.sendCount)
+            compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        }
+    }
+
+    @Test
+    fun newChatContactQueryAndResultsAreNotReplayedAfterActivityRecreation() {
+        val recipient = ParticipantAddress("+15550100033")
+        val discovery = RecordingContactDiscovery { _, _ ->
+            ContactDiscoveryResult.Available(
+                contacts = listOf(
+                    DiscoveredContact(
+                        address = recipient,
+                        displayName = "Synthetic Grace",
+                        photoUri = null,
+                    ),
+                ),
+                truncated = false,
+            )
+        }
+        val fixture = SyntheticFixture(contactDiscovery = discovery)
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+            openNewChat()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).performClick()
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_QUERY_TEST_TAG,
+            ).performTextReplacement(SYNTHETIC_CONTACT_QUERY)
+            compose.waitUntil(TIMEOUT_MILLIS) { discovery.requestCount == 1 }
+            waitForTag(
+                "${org.aurorasms.feature.conversations.NEW_MESSAGE_CONTACT_DISCOVERY_RESULT_TEST_TAG_PREFIX}-0",
+            )
+
+            scenario.recreate()
+
+            waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+            ).assertDoesNotExist()
+            compose.onNodeWithText("Synthetic Grace").assertDoesNotExist()
+            assertEquals(1, discovery.requestCount)
+
+            compose.onNodeWithTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+            ).performClick()
+            waitForTag(
+                org.aurorasms.feature.conversations
+                    .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+            )
+            compose.onNodeWithText("Synthetic Grace").assertDoesNotExist()
+            compose.waitForIdle()
+            assertEquals(1, discovery.requestCount)
+        }
+    }
+
+    @Test
+    fun stoppingNewChatCancelsInFlightContactDiscoveryAndClearsItsPanel() {
+        val started = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<ContactDiscoveryResult>()
+        val discovery = RecordingContactDiscovery { _, _ ->
+            started.complete(Unit)
+            try {
+                release.await()
+            } catch (failure: CancellationException) {
+                cancelled.complete(Unit)
+                throw failure
+            }
+        }
+        val fixture = SyntheticFixture(contactDiscovery = discovery)
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        try {
+            ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use { scenario ->
+                openNewChat()
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+                ).performClick()
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_QUERY_TEST_TAG,
+                ).performTextReplacement(SYNTHETIC_CONTACT_QUERY)
+                compose.waitUntil(TIMEOUT_MILLIS) { started.isCompleted }
+                assertEquals(1, discovery.requestCount)
+
+                scenario.moveToState(Lifecycle.State.CREATED)
+                runBlocking { withTimeout(TIMEOUT_MILLIS) { cancelled.await() } }
+
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+                ).assertDoesNotExist()
+                assertEquals(1, discovery.requestCount)
+            }
+        } finally {
+            release.complete(ContactDiscoveryResult.Unavailable)
+        }
+    }
+
+    @Test
+    fun replacingNewChatContactQueryCancelsInFlightDiscoveryAndPublishesOnlyNewestResult() {
+        val firstStarted = CompletableDeferred<Unit>()
+        val firstCancelled = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<ContactDiscoveryResult>()
+        val newestRecipient = ParticipantAddress("+15550100036")
+        val discovery = RecordingContactDiscovery { query, resultLimit ->
+            assertEquals(DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT, resultLimit)
+            when (query) {
+                SYNTHETIC_REPLACED_CONTACT_QUERY -> {
+                    firstStarted.complete(Unit)
+                    try {
+                        releaseFirst.await()
+                    } catch (failure: CancellationException) {
+                        firstCancelled.complete(Unit)
+                        throw failure
+                    }
+                }
+                SYNTHETIC_REPLACEMENT_CONTACT_QUERY -> ContactDiscoveryResult.Available(
+                    contacts = listOf(
+                        DiscoveredContact(
+                            address = newestRecipient,
+                            displayName = "Synthetic newest contact",
+                            photoUri = null,
+                        ),
+                    ),
+                    truncated = false,
+                )
+                else -> error("Unexpected synthetic replacement query")
+            }
+        }
+        val sendController = RecordingUnknownThreadSmsSendController()
+        val fixture = SyntheticFixture(
+            contactDiscovery = discovery,
+            threadSmsSendController = sendController,
+        )
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        try {
+            ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+                openNewChat()
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+                ).performClick()
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_QUERY_TEST_TAG,
+                ).performTextReplacement(SYNTHETIC_REPLACED_CONTACT_QUERY)
+                compose.waitUntil(TIMEOUT_MILLIS) { firstStarted.isCompleted }
+
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_QUERY_TEST_TAG,
+                ).performTextReplacement(SYNTHETIC_REPLACEMENT_CONTACT_QUERY)
+                compose.waitUntil(TIMEOUT_MILLIS) { firstCancelled.isCompleted }
+                compose.waitUntil(TIMEOUT_MILLIS) { discovery.requestCount == 2 }
+                waitForTag(
+                    "${org.aurorasms.feature.conversations.NEW_MESSAGE_CONTACT_DISCOVERY_RESULT_TEST_TAG_PREFIX}-0",
+                )
+
+                compose.onNodeWithText("Synthetic newest contact").assertIsDisplayed()
+                compose.onNodeWithText(newestRecipient.value).assertIsDisplayed()
+                compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+                assertEquals(
+                    listOf(
+                        SyntheticContactDiscoveryRequest(
+                            query = SYNTHETIC_REPLACED_CONTACT_QUERY,
+                            resultLimit = DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT,
+                        ),
+                        SyntheticContactDiscoveryRequest(
+                            query = SYNTHETIC_REPLACEMENT_CONTACT_QUERY,
+                            resultLimit = DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT,
+                        ),
+                    ),
+                    discovery.requestsSnapshot(),
+                )
+                assertEquals(0, sendController.sendCount)
+            }
+        } finally {
+            releaseFirst.complete(ContactDiscoveryResult.Unavailable)
+        }
+    }
+
+    @Test
+    fun closingNewChatContactPanelCancelsInFlightDiscoveryAndClearsTransientQuery() {
+        val started = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<ContactDiscoveryResult>()
+        val discovery = RecordingContactDiscovery { query, resultLimit ->
+            assertEquals(SYNTHETIC_PANEL_CLOSE_CONTACT_QUERY, query)
+            assertEquals(DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT, resultLimit)
+            started.complete(Unit)
+            try {
+                release.await()
+            } catch (failure: CancellationException) {
+                cancelled.complete(Unit)
+                throw failure
+            }
+        }
+        val sendController = RecordingUnknownThreadSmsSendController()
+        val fixture = SyntheticFixture(
+            contactDiscovery = discovery,
+            threadSmsSendController = sendController,
+        )
+        AuroraSmsRootTestHarnessRegistry.install(fixture.harness)
+
+        try {
+            ActivityScenario.launch(AuroraSmsRootTestActivity::class.java).use {
+                openNewChat()
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+                ).performClick()
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_QUERY_TEST_TAG,
+                ).performTextReplacement(SYNTHETIC_PANEL_CLOSE_CONTACT_QUERY)
+                compose.waitUntil(TIMEOUT_MILLIS) { started.isCompleted }
+
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+                ).performScrollTo().performClick()
+                compose.waitUntil(TIMEOUT_MILLIS) { cancelled.isCompleted }
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+                ).assertDoesNotExist()
+
+                compose.onNodeWithTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_ACTION_TEST_TAG,
+                ).performScrollTo().performClick()
+                waitForTag(
+                    org.aurorasms.feature.conversations
+                        .NEW_MESSAGE_CONTACT_DISCOVERY_PANEL_TEST_TAG,
+                )
+                compose.onNodeWithText(SYNTHETIC_PANEL_CLOSE_CONTACT_QUERY).assertDoesNotExist()
+                assertEquals(1, discovery.requestCount)
+                assertEquals(0, sendController.sendCount)
+                compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+            }
+        } finally {
+            release.complete(ContactDiscoveryResult.Unavailable)
         }
     }
 
@@ -2598,6 +3164,14 @@ class AuroraSmsRootAcceptanceTest {
         waitForDisplayedText(SYNTHETIC_EXACT_ANCHOR)
     }
 
+    private fun openNewChat() {
+        waitForTag(INBOX_SCREEN_TEST_TAG)
+        compose.onNodeWithTag(
+            org.aurorasms.feature.conversations.INBOX_NEW_CHAT_ACTION_TEST_TAG,
+        ).performClick()
+        waitForTag(org.aurorasms.feature.conversations.NEW_MESSAGE_SCREEN_TEST_TAG)
+    }
+
     private fun clearDraft(
         repository: DraftRepository,
         identity: DraftIdentity,
@@ -2816,6 +3390,8 @@ private class SyntheticFixture(
     wallpaperControllerOverride: WallpaperController? = null,
     threadSummary: ConversationSummary = syntheticThreadSummary(),
     verifiedIdentity: VerifiedConversationIdentity = SYNTHETIC_VERIFIED_IDENTITY,
+    contactDiscovery: ContactDiscovery = UnavailableContactDiscovery,
+    contactsPermissionGranted: Boolean = true,
     subscriptionRepository: SubscriptionRepository = SyntheticSubscriptions,
     threadSmsSendController: ThreadSmsSendController = SyntheticIdleThreadSmsSendController,
     segmentCounter: (String) -> Int? = { body -> body.takeIf(String::isNotBlank)?.let { 1 } },
@@ -2840,6 +3416,7 @@ private class SyntheticFixture(
         conversations = conversations,
         index = index,
         timeline = timeline,
+        contactDiscovery = contactDiscovery,
         wallpaperController = wallpaperController,
         drafts = rootDrafts,
         draftAttachmentRepository = rootDraftAttachments,
@@ -2851,6 +3428,7 @@ private class SyntheticFixture(
     val harness = AuroraSmsRootTestHarness(
         services = services,
         appearanceController = controller,
+        contactsPermissionGranted = contactsPermissionGranted,
         onClear = ::close,
     )
 
@@ -2865,6 +3443,7 @@ private class SyntheticRootServices(
     conversations: SyntheticConversationRepository,
     index: SyntheticMessageIndex,
     timeline: RejectingTimelineRepository,
+    override val contactDiscovery: ContactDiscovery,
     override val wallpaperController: WallpaperController,
     private val drafts: DraftRepository,
     override val draftAttachmentRepository: DraftAttachmentRepository,
@@ -2907,6 +3486,34 @@ private class SyntheticRootServices(
 
     override fun close() {
         writerPool.close()
+    }
+}
+
+private data class SyntheticContactDiscoveryRequest(
+    val query: String,
+    val resultLimit: Int,
+)
+
+private class RecordingContactDiscovery(
+    private val response: suspend (query: String, resultLimit: Int) -> ContactDiscoveryResult,
+) : ContactDiscovery {
+    private val requests = Collections.synchronizedList(
+        mutableListOf<SyntheticContactDiscoveryRequest>(),
+    )
+
+    val requestCount: Int
+        get() = requests.size
+
+    fun requestsSnapshot(): List<SyntheticContactDiscoveryRequest> = synchronized(requests) {
+        requests.toList()
+    }
+
+    override suspend fun discover(
+        query: String,
+        resultLimit: Int,
+    ): ContactDiscoveryResult {
+        requests += SyntheticContactDiscoveryRequest(query, resultLimit)
+        return response(query, resultLimit)
     }
 }
 
@@ -3740,6 +4347,13 @@ private const val SYNTHETIC_CLEAR_GATED_NEW_CHAT_DRAFT_BODY = "Synthetic clear-g
 private const val SYNTHETIC_CONFLICTED_LOCAL_NEW_CHAT_BODY = "Synthetic conflicted local New chat draft"
 private const val SYNTHETIC_RECOVERED_NEW_CHAT_DRAFT_BODY = "Synthetic recovered New chat draft"
 private const val SYNTHETIC_MULTI_RECIPIENT_DRAFT_BODY = "Synthetic group draft"
+private const val SYNTHETIC_CONTACT_QUERY = "Synthetic contact lookup"
+private const val SYNTHETIC_REVOKED_CONTACT_QUERY = "Synthetic revoked contact lookup"
+private const val SYNTHETIC_REPLACED_CONTACT_QUERY = "Synthetic replaced contact lookup"
+private const val SYNTHETIC_REPLACEMENT_CONTACT_QUERY = "Synthetic replacement contact lookup"
+private const val SYNTHETIC_PANEL_CLOSE_CONTACT_QUERY = "Synthetic panel-close contact lookup"
+private const val SYNTHETIC_CONTACT_DRAFT_BODY = "Synthetic discovered-contact draft"
+private const val SYNTHETIC_MANUAL_CONTACT_DRAFT_BODY = "Synthetic manual-recipient draft"
 private const val SYNTHETIC_EXISTING_NEW_CHAT_DRAFT = "Synthetic existing participant draft"
 private const val SYNTHETIC_EXISTING_NEW_CHAT_SUBJECT = "Synthetic preserved subject"
 private const val SYNTHETIC_CONFLICTING_EXTERNAL_BODY = "Synthetic conflicting external prefill"

@@ -13,7 +13,13 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import org.aurorasms.app.AppContainer
 import org.aurorasms.app.AuroraSmsRootServices
 import org.aurorasms.app.drafts.DraftEditorContent
@@ -28,7 +34,13 @@ import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.core.state.DraftParticipantSetKey
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.telephony.ContactDiscovery
+import org.aurorasms.core.telephony.ContactDiscoveryResult
+import org.aurorasms.core.telephony.DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT
 import org.aurorasms.core.telephony.RecipientSet
+import org.aurorasms.feature.conversations.MAXIMUM_NEW_MESSAGE_CONTACT_QUERY_CHARACTERS
+import org.aurorasms.feature.conversations.NewMessageContactDiscoveryUiState
+import org.aurorasms.feature.conversations.NewMessageContactResultUiItem
 import org.aurorasms.feature.conversations.NewMessageDraftStatus
 import org.aurorasms.feature.conversations.NewMessageRecipientError
 import org.aurorasms.feature.conversations.NewMessageRecipientUiItem
@@ -39,14 +51,19 @@ import org.aurorasms.feature.conversations.NewMessageScreen
 internal fun NewMessageRoute(
     services: AuroraSmsRootServices,
     draftWriterRouteOwner: String,
+    contactsPermissionGranted: Boolean,
+    onRequestContactsPermission: () -> Unit,
     onBack: () -> Unit,
 ) {
     NewMessageRouteContent(
         writerOwnerKey = services,
         acquireDraftWriter = services::acquireDraftWriter,
+        contactDiscovery = services.contactDiscovery,
         stableDraftWriterRouteOwner = draftWriterRouteOwner,
         initialRequest = null,
         invalidExternalRequest = false,
+        contactsPermissionGranted = contactsPermissionGranted,
+        onRequestContactsPermission = onRequestContactsPermission,
         onBack = onBack,
     )
 }
@@ -57,14 +74,19 @@ internal fun NewMessageRoute(
     container: AppContainer,
     initialRequest: ComposeRequest?,
     invalidExternalRequest: Boolean,
+    contactsPermissionGranted: Boolean,
+    onRequestContactsPermission: () -> Unit,
     onBack: () -> Unit,
 ) {
     NewMessageRouteContent(
         writerOwnerKey = container,
         acquireDraftWriter = container::acquireDraftWriter,
+        contactDiscovery = container.contactDiscovery,
         stableDraftWriterRouteOwner = null,
         initialRequest = initialRequest,
         invalidExternalRequest = invalidExternalRequest,
+        contactsPermissionGranted = contactsPermissionGranted,
+        onRequestContactsPermission = onRequestContactsPermission,
         onBack = onBack,
     )
 }
@@ -73,9 +95,12 @@ internal fun NewMessageRoute(
 private fun NewMessageRouteContent(
     writerOwnerKey: Any,
     acquireDraftWriter: (DraftIdentity, DraftRestorationToken?, String?) -> SerializedDraftWriterLease,
+    contactDiscovery: ContactDiscovery,
     stableDraftWriterRouteOwner: String?,
     initialRequest: ComposeRequest?,
     invalidExternalRequest: Boolean,
+    contactsPermissionGranted: Boolean,
+    onRequestContactsPermission: () -> Unit,
     onBack: () -> Unit,
 ) {
     val initialRecipientValues = remember(initialRequest) {
@@ -109,8 +134,43 @@ private fun NewMessageRouteContent(
             },
         )
     }
+    var contactDiscoveryOpen by remember { mutableStateOf(false) }
+    var contactDiscoveryQuery by remember { mutableStateOf("") }
+    var contactDiscoveryRetryGeneration by remember { mutableStateOf(0L) }
+    var contactDiscoveryPermissionRecoveryRequired by remember { mutableStateOf(false) }
+    var transientContactLabels by remember {
+        mutableStateOf<Map<ParticipantAddress, String>>(emptyMap())
+    }
+    var contactDiscoveryLoad by remember {
+        mutableStateOf<NewMessageContactDiscoveryLoad>(NewMessageContactDiscoveryLoad.Idle)
+    }
     val draftWriterRouteOwner = rememberSaveable {
         stableDraftWriterRouteOwner ?: UUID.randomUUID().toString()
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                contactDiscoveryOpen = false
+                contactDiscoveryQuery = ""
+                contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Idle
+                contactDiscoveryPermissionRecoveryRequired = false
+                transientContactLabels = emptyMap()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(contactsPermissionGranted) {
+        if (!contactsPermissionGranted) {
+            contactDiscoveryOpen = false
+            contactDiscoveryQuery = ""
+            contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Idle
+            contactDiscoveryPermissionRecoveryRequired = false
+            transientContactLabels = emptyMap()
+        }
     }
 
     val committedRecipients = remember(savedRecipients) {
@@ -238,26 +298,94 @@ private fun NewMessageRouteContent(
         ExternalPrefillResolution.AWAITING_DURABLE_DRAFT &&
         savedFailureContent == null
 
-    fun transitionRecipients(recipients: RecipientSet) {
-        if (!recipientEditingEnabled) return
+    LaunchedEffect(
+        contactDiscovery,
+        contactDiscoveryOpen,
+        contactDiscoveryQuery,
+        contactsPermissionGranted,
+        contactDiscoveryPermissionRecoveryRequired,
+        contactDiscoveryRetryGeneration,
+    ) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            when {
+                !contactDiscoveryOpen -> {
+                    contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Idle
+                }
+                !contactsPermissionGranted || contactDiscoveryPermissionRecoveryRequired -> {
+                    contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Resolved(
+                        query = contactDiscoveryQuery,
+                        result = ContactDiscoveryResult.PermissionDenied,
+                    )
+                }
+                contactDiscoveryQuery.isBlank() -> {
+                    contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Idle
+                }
+                else -> {
+                    val requestedQuery = contactDiscoveryQuery
+                    contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Loading(requestedQuery)
+                    delay(CONTACT_DISCOVERY_DEBOUNCE_MILLIS)
+                    val result = try {
+                        contactDiscovery.discover(
+                            query = requestedQuery,
+                            resultLimit = DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT,
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: RuntimeException) {
+                        ContactDiscoveryResult.Unavailable
+                    }
+                    if (result == ContactDiscoveryResult.PermissionDenied) {
+                        contactDiscoveryOpen = false
+                        contactDiscoveryQuery = ""
+                        contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Idle
+                        contactDiscoveryPermissionRecoveryRequired = true
+                        transientContactLabels = emptyMap()
+                    } else {
+                        contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Resolved(
+                            query = requestedQuery,
+                            result = result,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    val contactDiscoveryUiState = resolveNewMessageContactDiscoveryUiState(
+        open = contactDiscoveryOpen,
+        query = contactDiscoveryQuery,
+        contactsPermissionGranted = contactsPermissionGranted,
+        load = contactDiscoveryLoad,
+        committedRecipients = currentRecipients.toSet(),
+    )
+
+    fun transitionRecipients(recipients: RecipientSet): Boolean {
+        if (!recipientEditingEnabled) return false
         val nextValues = recipients.addresses.map(ParticipantAddress::value)
         if (nextValues == savedRecipients.values) {
             recipientErrorName = NewMessageRecipientError.DUPLICATE.name
-            return
+            return false
         }
         ephemeralBody = visibleBody
         savedDraftRestoration = NewMessageSavedDraftRestoration(
             token = visibleBody.takeIf(String::isNotEmpty)?.let(::baseFreeRestorationToken),
         )
         savedRecipients = SavedRecipientSelection(nextValues)
+        transientContactLabels = transientContactLabels.filterKeys { it in recipients.addresses }
         recipientInput = ""
         recipientErrorName = null
         externalPrefillResolutionName = ExternalPrefillResolution.NOT_APPLICABLE.name
+        return true
     }
 
     NewMessageScreen(
         recipientInput = recipientInput,
-        committedRecipients = currentRecipients.map(::NewMessageRecipientUiItem),
+        committedRecipients = currentRecipients.map { address ->
+            NewMessageRecipientUiItem(
+                address = address,
+                displayLabel = transientContactLabels[address] ?: address.value,
+            )
+        },
         body = visibleBody,
         onBack = onBack,
         onRecipientInputChanged = { value ->
@@ -282,6 +410,7 @@ private fun NewMessageRouteContent(
                 ephemeralBody = visibleBody
                 savedDraftRestoration = NewMessageSavedDraftRestoration()
                 savedRecipients = SavedRecipientSelection(remaining.map(ParticipantAddress::value))
+                transientContactLabels = transientContactLabels.filterKeys { it != removed }
                 recipientErrorName = null
                 externalPrefillResolutionName = ExternalPrefillResolution.NOT_APPLICABLE.name
             }
@@ -316,6 +445,83 @@ private fun NewMessageRouteContent(
                 }
             }
         },
+        contactDiscoveryState = contactDiscoveryUiState,
+        onOpenContactDiscovery = {
+            if (recipientEditingEnabled) {
+                contactDiscoveryOpen = true
+            }
+        },
+        onCloseContactDiscovery = {
+            contactDiscoveryOpen = false
+            contactDiscoveryQuery = ""
+            contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Idle
+        },
+        onContactDiscoveryQueryChanged = { query ->
+            if (
+                recipientEditingEnabled &&
+                query.length <= MAXIMUM_NEW_MESSAGE_CONTACT_QUERY_CHARACTERS &&
+                query.none(Char::isISOControl)
+            ) {
+                contactDiscoveryQuery = query
+            }
+        },
+        onRetryContactDiscovery = {
+            when (
+                newMessageContactDiscoveryRetryAction(
+                    contactsPermissionGranted = contactsPermissionGranted,
+                    load = contactDiscoveryLoad,
+                )
+            ) {
+                NewMessageContactDiscoveryRetryAction.RETRY_QUERY -> {
+                    contactDiscoveryRetryGeneration += 1L
+                }
+                NewMessageContactDiscoveryRetryAction.RECOVER_PERMISSION_AND_RETRY -> {
+                    // Refreshing the Activity snapshot may close/clear this panel if the grant was
+                    // actually revoked. If Android still reports a grant, clearing this local fence
+                    // admits exactly one explicit retry and cannot spin automatically.
+                    contactDiscoveryPermissionRecoveryRequired = false
+                    contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Idle
+                    contactDiscoveryRetryGeneration += 1L
+                    onRequestContactsPermission()
+                }
+            }
+        },
+        onSelectDiscoveredContact = { selected ->
+            if (recipientEditingEnabled) {
+                when (
+                    val parsed = parseComposeRecipientList(
+                        raw = selected.value,
+                        existing = currentRecipients,
+                    )
+                ) {
+                    is RecipientSet.CreationResult.Valid -> {
+                        if (transitionRecipients(parsed.recipients)) {
+                            val discoveredLabel =
+                                (contactDiscoveryLoad as? NewMessageContactDiscoveryLoad.Resolved)
+                                    ?.result
+                                    ?.let { it as? ContactDiscoveryResult.Available }
+                                    ?.contacts
+                                    ?.firstOrNull { it.address == selected }
+                                    ?.displayNameOrAddress
+                                    ?.takeIf {
+                                        it.length <= MAXIMUM_TRANSIENT_CONTACT_LABEL_CHARACTERS
+                                    }
+                            if (discoveredLabel != null) {
+                                transientContactLabels = transientContactLabels +
+                                    (selected to discoveredLabel)
+                            }
+                            contactDiscoveryOpen = false
+                            contactDiscoveryQuery = ""
+                            contactDiscoveryLoad = NewMessageContactDiscoveryLoad.Idle
+                            contactDiscoveryPermissionRecoveryRequired = false
+                        }
+                    }
+                    is RecipientSet.CreationResult.Rejected -> {
+                        recipientErrorName = parsed.reason.toNewMessageError().name
+                    }
+                }
+            }
+        },
         recipientError = recipientErrorName?.let(NewMessageRecipientError::valueOf),
         draftStatus = when {
             savedFailureContent != null || draftStatus is DraftWriteStatus.Failed ->
@@ -334,6 +540,116 @@ private fun NewMessageRouteContent(
             ExternalPrefillResolution.PRESERVED_EXISTING_DRAFT,
         explicitMmsRequested = initialRequest?.requestedTransport == MessageTransportKind.MMS,
     )
+}
+
+internal sealed interface NewMessageContactDiscoveryLoad {
+    data object Idle : NewMessageContactDiscoveryLoad
+
+    data class Loading(val query: String) : NewMessageContactDiscoveryLoad {
+        override fun toString(): String = "NewMessageContactDiscoveryLoad.Loading(REDACTED)"
+    }
+
+    data class Resolved(
+        val query: String,
+        val result: ContactDiscoveryResult,
+    ) : NewMessageContactDiscoveryLoad {
+        override fun toString(): String = "NewMessageContactDiscoveryLoad.Resolved(REDACTED)"
+    }
+}
+
+internal enum class NewMessageContactDiscoveryRetryAction {
+    RETRY_QUERY,
+    RECOVER_PERMISSION_AND_RETRY,
+}
+
+internal fun newMessageContactDiscoveryRetryAction(
+    contactsPermissionGranted: Boolean,
+    load: NewMessageContactDiscoveryLoad,
+): NewMessageContactDiscoveryRetryAction =
+    if (
+        !contactsPermissionGranted ||
+        (
+            load is NewMessageContactDiscoveryLoad.Resolved &&
+                load.result == ContactDiscoveryResult.PermissionDenied
+            )
+    ) {
+        NewMessageContactDiscoveryRetryAction.RECOVER_PERMISSION_AND_RETRY
+    } else {
+        NewMessageContactDiscoveryRetryAction.RETRY_QUERY
+    }
+
+internal fun resolveNewMessageContactDiscoveryUiState(
+    open: Boolean,
+    query: String,
+    contactsPermissionGranted: Boolean,
+    load: NewMessageContactDiscoveryLoad,
+    committedRecipients: Set<ParticipantAddress>,
+): NewMessageContactDiscoveryUiState {
+    if (!open) return NewMessageContactDiscoveryUiState.Closed
+    if (!contactsPermissionGranted) return NewMessageContactDiscoveryUiState.Unavailable(query)
+    if (
+        load is NewMessageContactDiscoveryLoad.Resolved &&
+        load.result == ContactDiscoveryResult.PermissionDenied
+    ) {
+        return NewMessageContactDiscoveryUiState.Unavailable(query)
+    }
+    if (query.isBlank()) return NewMessageContactDiscoveryUiState.Empty(query)
+
+    return when (load) {
+        NewMessageContactDiscoveryLoad.Idle -> NewMessageContactDiscoveryUiState.Loading(query)
+        is NewMessageContactDiscoveryLoad.Loading ->
+            NewMessageContactDiscoveryUiState.Loading(query)
+        is NewMessageContactDiscoveryLoad.Resolved -> {
+            if (load.query != query) return NewMessageContactDiscoveryUiState.Loading(query)
+            when (val result = load.result) {
+                is ContactDiscoveryResult.Available -> {
+                    val items = result.contacts
+                        .asSequence()
+                        .filterNot { contact ->
+                            isCanonicalRecipientAlreadyCommitted(
+                                candidate = contact.address,
+                                committedRecipients = committedRecipients,
+                            )
+                        }
+                        .map { contact ->
+                            NewMessageContactResultUiItem(
+                                address = contact.address,
+                                displayLabel = contact.displayNameOrAddress,
+                            )
+                        }
+                        .toList()
+                    if (items.isEmpty()) {
+                        NewMessageContactDiscoveryUiState.Empty(
+                            query = query,
+                            truncated = result.truncated,
+                        )
+                    } else {
+                        NewMessageContactDiscoveryUiState.Results(
+                            query = query,
+                            items = items,
+                            truncated = result.truncated,
+                        )
+                    }
+                }
+                ContactDiscoveryResult.PermissionDenied ->
+                    NewMessageContactDiscoveryUiState.Unavailable(query)
+                ContactDiscoveryResult.InvalidRequest,
+                ContactDiscoveryResult.Unavailable,
+                -> NewMessageContactDiscoveryUiState.Error(query)
+            }
+        }
+    }
+}
+
+private fun isCanonicalRecipientAlreadyCommitted(
+    candidate: ParticipantAddress,
+    committedRecipients: Set<ParticipantAddress>,
+): Boolean {
+    if (committedRecipients.isEmpty()) return false
+    val combined = RecipientSet.from(committedRecipients + candidate)
+        as? RecipientSet.CreationResult.Valid
+        ?: return false
+    return combined.recipients.size == committedRecipients.size
 }
 
 @Composable
@@ -551,3 +867,5 @@ private const val SAVED_DRAFT_REVISION_KEY = "new_message_draft_revision"
 private const val SAVED_DRAFT_FAILURE_PRESENT_KEY = "new_message_draft_failure_present"
 private const val SAVED_DRAFT_FAILURE_BODY_KEY = "new_message_draft_failure_body"
 private const val SAVED_DRAFT_FAILURE_SUBJECT_KEY = "new_message_draft_failure_subject"
+private const val CONTACT_DISCOVERY_DEBOUNCE_MILLIS = 250L
+private const val MAXIMUM_TRANSIENT_CONTACT_LABEL_CHARACTERS = 320

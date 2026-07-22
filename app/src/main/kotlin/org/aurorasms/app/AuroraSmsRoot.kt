@@ -343,6 +343,8 @@ internal fun AuroraSmsRoot(
             AppRoute.NewChat -> NewMessageRoute(
                 services = services,
                 draftWriterRouteOwner = newMessageDraftWriterRouteOwner,
+                contactsPermissionGranted = contactsPermissionGranted,
+                onRequestContactsPermission = onRequestContactsPermission,
                 onBack = ::pop,
             )
             AppRoute.Appearance -> ThemeStudioRoute(

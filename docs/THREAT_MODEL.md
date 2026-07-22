@@ -35,7 +35,7 @@ AuroraSMS must:
 | MMS attachments and local voice memos | Critical personal data | Lazy bounded decode, private/temp storage, narrow URI grants, cleanup |
 | Drafts, scheduled messages, pending sends/deletes | Critical action data | Durable transactional state, process/reboot recovery, explicit commit semantics |
 | Search index and queries | Critical derived data | Rebuildable private DB, no backup/logging, safe FTS parser |
-| Contacts and photos | Sensitive personal data | Optional permission, bounded cache, invalidate on change, no serialization per message |
+| Contacts and photos | Sensitive personal data | Optional just-in-time read permission, cancellable bounded query, memory-only results, no contact writes or metadata persistence |
 | Subscription/SIM choice | Sensitive device data | Minimal access, validated fallback, no identifier logging |
 | Notification content/settings | Sensitive disclosure control | User-selectable privacy levels, lock-screen safe defaults |
 | Delivery/reply claims, accepted reply operations, and notification generations | Critical action metadata | Bounded content-minimized no-backup stores, checksums, explicit state transitions, role-scoped recovery |
@@ -560,6 +560,40 @@ Controls:
 - synthetic-only fixtures and public screenshots;
 - clean-room incident process if prohibited input becomes visible.
 
+### T13: contact discovery disclosure or authority expansion
+
+Threats: onboarding requests contact access without context; a broad or stale
+query retains names, numbers, or photo references; lifecycle or query changes
+leave provider work running; malicious metadata reaches diagnostics; or a
+future manifest change silently adds contact-write authority.
+
+Controls:
+
+- never request contacts permission during onboarding, startup, Inbox entry, or
+  merely by opening New chat; the user must open **Find contacts** and then
+  explicitly choose the in-panel permission action;
+- retain bounded manual number entry as the complete denial, cancellation,
+  revocation, and provider-failure fallback;
+- accept only trimmed 1-to-100-character, control-free queries; request 20
+  results in N2A, cap the public contract at 50, and inspect at most one extra
+  provider row to disclose truncation;
+- project only phone number, display name, and photo URI; validate and bound all
+  returned fields, canonicalize unique selectable addresses, and never log
+  their values or expose them through diagnostic strings;
+- debounce the UI query, perform it off the main thread, propagate coroutine
+  cancellation to the Contacts provider, hide stale replacement-query results,
+  and clear query/results on panel close, Activity stop, or permission loss;
+- keep query, labels, photo references, and results in memory only. Panel close
+  clears the query and unselected results; a selected bounded display label may
+  remain only for its recipient chip until removal, Activity stop, or permission
+  loss. An explicit selection contributes only the validated address to the
+  existing bounded recipient/draft authority;
+- declare only `READ_CONTACTS` in production, forbid `WRITE_CONTACTS`, strip
+  `READ_CONTACTS` from the isolated benchmark, and retain exact merged-manifest
+  and packaged-APK permission equality checks; and
+- perform no Contacts/Telephony provider write, provider-thread resolution, or
+  SMS/MMS transport from discovery or selection.
+
 ## Privacy defaults
 
 - No general network permission or network-capable SDK.
@@ -577,8 +611,9 @@ Controls:
   as an exact-Room-base hint. Exclude it from backup, logs, diagnostics, exports,
   and callback identity; hide it until base validation and discard it on mismatch
   or successful completion.
-- Contacts permission is optional and denial leaves number-based messaging
-  usable.
+- Contacts permission is optional and just in time. Denial, cancellation, or
+  revocation leaves number-based messaging usable; queries and result metadata
+  remain memory-only.
 - Destructive and external actions require explicit, contextual user intent.
 
 ## Security verification obligations
@@ -594,6 +629,10 @@ Every applicable phase gate includes:
 - dependency/provenance/SBOM scan;
 - private-path/tracked-resource/APK inventory scan;
 - no-sensitive-log checks;
+- N2A bounded contact-discovery contract, cancellation/permission-loss tests,
+  production `READ_CONTACTS`/absent-`WRITE_CONTACTS` manifest assertion,
+  isolated-benchmark permission removal, and API 26/API 36 synthetic UI/provider
+  tests with zero contact/provider write or carrier send;
 - Phase 5A content-free Room/schema tests, exact saved-state base restoration and
   stale-discard tests, atomic draft-freeze race tests, awaited checkpoint and
   role/fence race tests, per-operation recovery isolation, duplicate callback
@@ -941,5 +980,7 @@ feature's release:
 - physical incoming MMS carrier/OEM/SIM-line/roaming/billing audit beyond ADR
   0024/0025's bounded synthetic codec and durable handoff, plus general/group
   outgoing composition;
+- physical/OEM Contacts-provider permission, denial/revocation, query,
+  cancellation, selection, and manual-fallback acceptance for ADR 0027;
 - optional SQLCipher hardened mode after measured FTS/migration impact;
 - artwork license and attribution.

@@ -20,6 +20,7 @@ class VoiceMemoControllerPolicyTest {
         val onboarding = messagingOnboardingPermissions()
 
         assertFalse(Manifest.permission.RECORD_AUDIO in onboarding)
+        assertFalse(Manifest.permission.READ_CONTACTS in onboarding)
         assertEquals(onboarding.size, onboarding.distinct().size)
     }
 

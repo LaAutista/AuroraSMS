@@ -6,7 +6,9 @@ wallpaper decision with no new permission on 2026-07-14; commit `7c9d848`
 adds the ledgered debug snapshot boundary and durable-message hardening on
 2026-07-18; ADR 0011 activates the conditional boot and exact-alarm entries for
 bounded scheduled SMS with a visible inexact fallback; ADR 0021 activates
-just-in-time foreground microphone access for bounded voice memos on 2026-07-19
+just-in-time foreground microphone access for bounded voice memos on 2026-07-19;
+ADR 0027 activates optional, read-only, just-in-time contact discovery for the
+New chat recipient selector on 2026-07-21
 
 This ledger is the allowlist enforced against the Phase 1 source manifest,
 merged debug/release manifests, and packaged APKs. A permission not listed
@@ -148,12 +150,12 @@ AuroraSMS's actual default-SMS core purpose.
 
 Conditional permissions are absent until the named feature is implemented and
 tested. `RECEIVE_BOOT_COMPLETED` and `SCHEDULE_EXACT_ALARM` are active under ADR
-0011, and `RECORD_AUDIO` is active under ADR 0021; the other entries remain
-conditional.
+0011, `RECORD_AUDIO` is active under ADR 0021, and `READ_CONTACTS` is active
+under ADR 0027; entries without an accepted activation remain conditional.
 
 | Permission | Phase/feature | Rule |
 |---|---|---|
-| `READ_CONTACTS` | Phase 1 contact labels/photos | Optional; numbers/initials remain usable when denied |
+| `READ_CONTACTS` | Phase 7 N2A contact discovery/selection — active under ADR 0027 | Request only after the user explicitly chooses Inbox-overflow Use contacts or Find contacts > Manage contact access; manual number entry and drafts remain usable when absent, denied, or revoked |
 | `POST_NOTIFICATIONS` | API 33+ messaging notifications | Request after role with privacy choice; foreground app remains usable when denied |
 | `READ_PHONE_NUMBERS` | Own-number display only | Not approved for core transport; add only with a user-visible need |
 | `VIBRATE` | Notification behavior | Normal permission; honor user/channel settings |
@@ -162,6 +164,29 @@ conditional.
 | `RECORD_AUDIO` | Phase 6F voice memo — active under ADR 0021 | Request only after tapping Record; never include it in messaging onboarding; no background recording |
 | `USE_BIOMETRIC` | Optional app lock | App lock is not database encryption |
 | Foreground-service permission/type | A measured long-running user-visible operation only | Add exact subtype and notification design before use |
+
+N2A does not request contacts access during SMS-role onboarding, app startup,
+Inbox entry, or merely by opening New chat. Permission recovery requires the
+explicit Inbox-overflow **Use contacts** action or **Find contacts** followed by
+its in-panel **Manage contact access** action.
+The query and unselected result metadata are memory-only and are cleared when
+the panel closes. A selected bounded display label may remain only in memory for
+its recipient chip until that recipient is removed, the Activity stops, or
+permission is lost. No query or returned metadata is written to Room,
+preferences, logs, diagnostics, exports, or backup. Selecting one result admits
+only its validated address into the existing recipient/draft authority. Denial
+or revocation leaves bounded manual recipient entry intact.
+
+The provider operation is a cancellable, read-only phone-row filter query. The
+public contract accepts a 1-to-100-character query and at most 50 results; the
+N2A UI requests 20 and inspects at most one extra row to report truncation.
+Cancellation closes the cursor and propagates to Android's
+`CancellationSignal`. `WRITE_CONTACTS` is forbidden. The isolated benchmark
+manifest continues to remove `READ_CONTACTS`, while the exact permission
+verifier compares complete merged-manifest and packaged-APK permission sets.
+The production manifest contract separately requires `READ_CONTACTS` and
+rejects `WRITE_CONTACTS`; none of those benchmark or verifier boundaries are
+relaxed by N2A.
 
 Photo Picker and the Storage Access Framework are the default attachment,
 wallpaper, import, and export paths. They do not justify broad media or storage
@@ -200,6 +225,7 @@ implementation.
 | Broad `READ_MEDIA_*` | Rejected for ordinary attachments/wallpapers |
 | `READ_MEDIA_VISUAL_USER_SELECTED` | Rejected for ADR 0007; direct system-picker use needs no media permission |
 | `READ_CALL_LOG` / `WRITE_CALL_LOG` | Outside product scope |
+| `WRITE_CONTACTS` | Forbidden; contact discovery is read-only and a selected address is stored only through Aurora's existing recipient/draft authority |
 | `CALL_PHONE` | Rejected; use a user-confirmed system dial intent |
 | `QUERY_ALL_PACKAGES` | Forbidden |
 | `REQUEST_INSTALL_PACKAGES` | Outside product scope |

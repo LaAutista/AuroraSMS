@@ -4,13 +4,154 @@ package org.aurorasms.app.compose
 
 import org.aurorasms.app.drafts.DraftEditorContent
 import org.aurorasms.app.drafts.DraftWriteStatus
+import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.telephony.ContactDiscoveryResult
+import org.aurorasms.core.telephony.DiscoveredContact
+import org.aurorasms.feature.conversations.NewMessageContactDiscoveryUiState
 import org.aurorasms.feature.conversations.NewMessageDraftStatus
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class NewMessageRouteStateTest {
+    @Test
+    fun `contact discovery stays closed until explicitly opened and denial preserves fallback`() {
+        assertEquals(
+            NewMessageContactDiscoveryUiState.Closed,
+            resolveNewMessageContactDiscoveryUiState(
+                open = false,
+                query = "synthetic",
+                contactsPermissionGranted = true,
+                load = NewMessageContactDiscoveryLoad.Loading("synthetic"),
+                committedRecipients = emptySet(),
+            ),
+        )
+        assertEquals(
+            NewMessageContactDiscoveryUiState.Unavailable(""),
+            resolveNewMessageContactDiscoveryUiState(
+                open = true,
+                query = "",
+                contactsPermissionGranted = false,
+                load = NewMessageContactDiscoveryLoad.Idle,
+                committedRecipients = emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun `resolved contacts map bounded labels and preserve truncation`() {
+        val address = ParticipantAddress("+12025550101")
+        val state = resolveNewMessageContactDiscoveryUiState(
+            open = true,
+            query = "Syn",
+            contactsPermissionGranted = true,
+            load = NewMessageContactDiscoveryLoad.Resolved(
+                query = "Syn",
+                result = ContactDiscoveryResult.Available(
+                    contacts = listOf(
+                        DiscoveredContact(
+                            address = address,
+                            displayName = "Synthetic Contact",
+                            photoUri = null,
+                        ),
+                    ),
+                    truncated = true,
+                ),
+            ),
+            committedRecipients = emptySet(),
+        )
+
+        val results = state as NewMessageContactDiscoveryUiState.Results
+        assertEquals(address, results.items.single().address)
+        assertEquals("Synthetic Contact", results.items.single().displayLabel)
+        assertEquals(true, results.truncated)
+    }
+
+    @Test
+    fun `canonically equivalent selected result is filtered and remains truthfully truncated`() {
+        val selected = ParticipantAddress("+12025550102")
+        val committed = ParticipantAddress("+1 (202) 555-0102")
+        val state = resolveNewMessageContactDiscoveryUiState(
+            open = true,
+            query = "selected",
+            contactsPermissionGranted = true,
+            load = NewMessageContactDiscoveryLoad.Resolved(
+                query = "selected",
+                result = ContactDiscoveryResult.Available(
+                    contacts = listOf(DiscoveredContact(selected, "Selected", null)),
+                    truncated = true,
+                ),
+            ),
+            committedRecipients = setOf(committed),
+        )
+
+        assertEquals(
+            NewMessageContactDiscoveryUiState.Empty(query = "selected", truncated = true),
+            state,
+        )
+    }
+
+    @Test
+    fun `provider permission loss overrides a stale granted snapshot`() {
+        assertEquals(
+            NewMessageContactDiscoveryUiState.Unavailable(""),
+            resolveNewMessageContactDiscoveryUiState(
+                open = true,
+                query = "",
+                contactsPermissionGranted = true,
+                load = NewMessageContactDiscoveryLoad.Resolved(
+                    query = "",
+                    result = ContactDiscoveryResult.PermissionDenied,
+                ),
+                committedRecipients = emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun `stale granted provider denial requires one explicit recovery retry`() {
+        val denied = NewMessageContactDiscoveryLoad.Resolved(
+            query = "synthetic",
+            result = ContactDiscoveryResult.PermissionDenied,
+        )
+
+        assertEquals(
+            NewMessageContactDiscoveryRetryAction.RECOVER_PERMISSION_AND_RETRY,
+            newMessageContactDiscoveryRetryAction(
+                contactsPermissionGranted = true,
+                load = denied,
+            ),
+        )
+        assertEquals(
+            NewMessageContactDiscoveryRetryAction.RETRY_QUERY,
+            newMessageContactDiscoveryRetryAction(
+                contactsPermissionGranted = true,
+                load = NewMessageContactDiscoveryLoad.Resolved(
+                    query = "synthetic",
+                    result = ContactDiscoveryResult.Unavailable,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `obsolete contact result cannot publish for a newer query`() {
+        assertEquals(
+            NewMessageContactDiscoveryUiState.Loading("new query"),
+            resolveNewMessageContactDiscoveryUiState(
+                open = true,
+                query = "new query",
+                contactsPermissionGranted = true,
+                load = NewMessageContactDiscoveryLoad.Resolved(
+                    query = "old query",
+                    result = ContactDiscoveryResult.Available(emptyList(), truncated = false),
+                ),
+                committedRecipients = emptySet(),
+            ),
+        )
+    }
+
     @Test
     fun `settled recipient route without a durable draft reports ready not saved`() {
         assertEquals(

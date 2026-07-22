@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.aurorasms.core.model.ParticipantAddress
+import org.aurorasms.core.telephony.internal.AndroidContactDiscovery
 import org.aurorasms.core.telephony.internal.AndroidContactResolver
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -28,6 +29,19 @@ class ContactResolverPermissionTest {
         assertEquals(address.value, result.single().displayNameOrAddress)
         assertNull(result.single().displayName)
         assertNull(result.single().photoUri)
+    }
+
+    @Test
+    fun deniedContactsPermissionReturnsDiscoveryStateWithoutProviderRows() = runBlocking {
+        val base = ApplicationProvider.getApplicationContext<Context>()
+        val context = DeniedContactsContext(base)
+
+        val result = AndroidContactDiscovery(context).discover(
+            query = "synthetic",
+            resultLimit = DEFAULT_CONTACT_DISCOVERY_RESULT_LIMIT,
+        )
+
+        assertEquals(ContactDiscoveryResult.PermissionDenied, result)
     }
 
     private class DeniedContactsContext(base: Context) : ContextWrapper(base) {

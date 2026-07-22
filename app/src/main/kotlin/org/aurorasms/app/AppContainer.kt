@@ -140,6 +140,7 @@ import org.aurorasms.core.notifications.MarkConversationReadHandler
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.ContactCache
 import org.aurorasms.core.telephony.ContactCacheInvalidation
+import org.aurorasms.core.telephony.ContactDiscovery
 import org.aurorasms.core.telephony.EncodedMmsPdu
 import org.aurorasms.core.telephony.IncomingMessageSink
 import org.aurorasms.core.telephony.IncomingMmsDownloadResult
@@ -159,7 +160,9 @@ import org.aurorasms.core.telephony.SmsProviderDataSource
 import org.aurorasms.core.telephony.SmsProviderStatus
 import org.aurorasms.core.telephony.SubscriptionRepository
 import org.aurorasms.core.telephony.SubscriptionSnapshot
+import org.aurorasms.core.telephony.UnavailableContactDiscovery
 import org.aurorasms.core.telephony.followUpRequired
+import org.aurorasms.core.telephony.internal.AndroidContactDiscovery
 import org.aurorasms.core.telephony.internal.AndroidContactResolver
 import org.aurorasms.core.telephony.internal.AndroidDefaultSmsRoleState
 import org.aurorasms.core.telephony.internal.AndroidMmsProviderDataSource
@@ -291,6 +294,11 @@ class AppContainer(
         )
     }
     val contactCache: ContactCache = contactCacheController?.cache ?: AddressOnlyContactCache
+    val contactDiscovery: ContactDiscovery = if (syntheticIndexOnly) {
+        UnavailableContactDiscovery
+    } else {
+        AndroidContactDiscovery(application)
+    }
     val mmsProviderDataSource = AndroidMmsProviderDataSource(application, defaultSmsRoleState)
     private val permanentDeletionProvider = AndroidPermanentDeletionProvider(
         context = application,

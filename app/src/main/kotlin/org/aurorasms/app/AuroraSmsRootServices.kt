@@ -42,8 +42,10 @@ import org.aurorasms.core.model.ParticipantAddress
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import org.aurorasms.core.telephony.ContactCache
+import org.aurorasms.core.telephony.ContactDiscovery
 import org.aurorasms.core.telephony.MmsAttachmentRepository
 import org.aurorasms.core.telephony.SubscriptionRepository
+import org.aurorasms.core.telephony.UnavailableContactDiscovery
 import org.aurorasms.feature.conversations.BoundedPreviewLoader
 import org.aurorasms.feature.backup.AuroraBackupDocumentController
 import org.aurorasms.feature.backup.AuroraBackupStartupRecoveryResult
@@ -54,6 +56,8 @@ internal interface AuroraSmsRootServices {
     val threadTimelineRepository: ThreadTimelineRepository
     val messageIndex: MessageIndex
     val contactCache: ContactCache
+    val contactDiscovery: ContactDiscovery
+        get() = UnavailableContactDiscovery
     val subscriptionRepository: SubscriptionRepository
     val conversationSubscriptionPreferenceRepository:
         ConversationSubscriptionPreferenceRepository
@@ -142,6 +146,8 @@ internal class AppContainerAuroraSmsRootServices(
         get() = container.messageIndex
     override val contactCache: ContactCache
         get() = container.contactCache
+    override val contactDiscovery: ContactDiscovery
+        get() = container.contactDiscovery
     override val subscriptionRepository: SubscriptionRepository
         get() = container.subscriptionRepository
     override val conversationSubscriptionPreferenceRepository:

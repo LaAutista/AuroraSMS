@@ -41,6 +41,20 @@ class DefaultSmsManifestContractTest {
     }
 
     @Test
+    fun optionalContactDiscoveryIsReadOnlyAtTheProductionManifestBoundary() {
+        val requested = packageInfo.requestedPermissions.orEmpty().toSet()
+
+        assertTrue(
+            "READ_CONTACTS must remain declared for optional just-in-time contact discovery",
+            Manifest.permission.READ_CONTACTS in requested,
+        )
+        assertFalse(
+            "AuroraSMS must never request authority to modify the user's contacts",
+            Manifest.permission.WRITE_CONTACTS in requested,
+        )
+    }
+
+    @Test
     fun corePermissionsAndTelephonyFeatureAreDeclared() {
         val requested = packageInfo.requestedPermissions.orEmpty().toSet()
         val required = setOf(

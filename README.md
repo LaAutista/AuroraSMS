@@ -11,14 +11,22 @@ Android's Telephony provider as the authority for messages.
 
 Phase 7 product completion is active. The current candidate identifies as
 `0.7.0-phase7` (`versionCode` 22) and adds an Inbox New chat action plus one
-shared internal/external review surface. Manually entered, bounded recipients
-and message text use the existing local participant-set draft authority.
+shared internal/external review surface. Its
+[N2A recipient selector](docs/adr/0027-bounded-jit-contact-discovery.md) offers
+bounded, read-only contact discovery only after the user opens **Find
+contacts**. `READ_CONTACTS` is optional and requested just in time; denial or
+revocation leaves manual number entry available. Contact queries and unselected
+results remain memory-only and are cleared when the panel closes. A selected,
+bounded display label may remain only in memory for its recipient chip until
+that recipient is removed, the Activity stops, or contact access is lost.
+Manually entered or explicitly selected, bounded recipients and message text
+use the existing local participant-set draft authority.
 External `SENDTO` input never auto-sends, and a conflicting prefill cannot
 replace an existing saved draft. Merely opening an external request does not
 persist its text; Aurora saves it only after an in-app edit. New chat is a
 draft-safe review surface only.
-Send is disabled; this slice performs no contact picking, provider-thread
-creation or mutation, or SMS/MMS transport.
+Send is disabled; contact selection performs no Contacts or Telephony provider
+write, provider-thread creation or mutation, or SMS/MMS transport.
 
 The last clean reproducibility proof remains historical evidence for
 implementation commit `d163811653e69ec8e1ad505a454b51770180ef73` and version
@@ -33,7 +41,7 @@ its AAB SHA-256 is
 `349ea4f6a1be6f348cbd54c64bdf06e3fe56f7bc13f1eaef2aa4d807d7a86b1b`.
 The exact release and gold checklist is in
 [the Phase 7 plan](docs/PHASE_7_RELEASE_PLAN.md). Required local product work is
-still open: contact discovery and explicit first-contact sending,
+still open: durable provider-thread ownership and explicit first-contact sending,
 Archive/pin/inbox actions, the complete Settings/About and notification-privacy
 surface, forward/quote, profile interchange/adaptive navigation, and broader
 accessibility/form-factor acceptance. Signing, a complete nonempty physical-

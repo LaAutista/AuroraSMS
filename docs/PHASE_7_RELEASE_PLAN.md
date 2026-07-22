@@ -18,8 +18,8 @@ disabled. Host, R8 release, benchmark, privacy, dependency, and license gates
 remain required for every candidate. The following boundaries remain open and
 prevent a gold claim:
 
-- contact discovery and an explicit first-contact SMS/MMS send path, including
-  provider-thread resolution and write ownership;
+- an explicit first-contact SMS/MMS send path, including provider-thread
+  resolution and durable write ownership;
 - Archive, pinning, inbox selection/Mark all read, complete Settings/About, and
   a persisted notification-privacy control wired to the notifier;
 - forward and local quote actions, named-profile import/export, bottom/rail
@@ -43,7 +43,7 @@ provider scan. General incoming and group MMS now have bounded synthetic codec,
 composer, persistence, and recovery coverage; carrier/OEM acceptance remains a
 separate open gate, not an indexing delay.
 
-### N1 New chat review surface
+### N1 New chat review surface and N2A contact selection
 
 - [x] Add an Inbox New chat entry point with bottom-list clearance.
 - [x] Share one Aurora composer between the internal route and external
@@ -56,15 +56,23 @@ separate open gate, not an indexing delay.
 - [x] Fail closed across overlapping participant-draft writers, preserve an
   in-flight edit through Activity recreation, and replace reused external
   request state without carrying recipients or text across intents.
-- [ ] Add explicit contact discovery/selection with a reviewed permission and
+- [x] Add explicit contact discovery/selection with a reviewed permission and
   bounded-query contract.
 - [ ] Resolve or create the provider conversation only after an explicit send
   action with durable ownership.
 - [ ] Enable and physically verify first-contact SMS/MMS transport.
 
-New chat is a draft-safe review surface only. Send is disabled; recipients are
-entered manually and remain fixed while text is present. This slice performs no
-contact picking, provider-thread creation or mutation, or SMS/MMS transport.
+New chat remains a draft-safe review surface. N2A adds an explicit **Find
+contacts** panel backed by optional, just-in-time `READ_CONTACTS`; denial,
+revocation, cancellation, and provider failure retain manual number entry. The
+1-to-100-character query, at-most-20 UI results, and one-row truncation probe
+are cancellable and memory-only. Closing the panel, stopping the Activity, or
+losing permission clears the query and results. Selecting one validated address
+uses the existing bounded recipient/draft authority. It performs no contact or
+Telephony provider write and does not add `WRITE_CONTACTS`, network access, or
+background discovery. Send remains disabled: provider-thread resolution,
+durable first-contact write ownership, and SMS/MMS transport remain unchecked
+and open.
 
 ## Workstream 7A: release truth and governance
 
