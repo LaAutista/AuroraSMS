@@ -831,6 +831,7 @@ internal interface NotificationMutationGateway {
     fun activeNotifications(): List<ActiveNotificationSnapshot>
 }
 
+@SuppressLint("NotificationPermission")
 private class AndroidNotificationMutationGateway(
     private val notificationManager: NotificationManagerCompat,
     private val platformNotificationManager: NotificationManager,

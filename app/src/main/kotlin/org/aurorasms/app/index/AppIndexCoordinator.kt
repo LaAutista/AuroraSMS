@@ -19,7 +19,7 @@ import org.aurorasms.core.index.sync.IndexSyncOutcome
 /** Application-lifetime owner for bounded index signals and periodic reconciliation. */
 class AppIndexCoordinator(
     private val applicationScope: CoroutineScope,
-    synchronize: suspend (Set<IndexSignal>) -> IndexSyncOutcome,
+    synchronize: suspend (Set<IndexSignal>, Long?) -> IndexSyncOutcome,
     markPendingChanges: suspend () -> Unit,
     private val periodicIntervalMillis: Long = DEFAULT_PERIODIC_INTERVAL_MILLIS,
     private val shouldContinuePending: () -> Boolean = { false },
@@ -34,19 +34,27 @@ class AppIndexCoordinator(
     private val signals = IndexSignalCoalescer(
         applicationScope = applicationScope,
         onSignal = { markPendingChanges() },
-        reconcile = { reasons ->
-            val outcome = synchronize(reasons)
-            _lastOutcome.value = outcome
-            if (outcome is IndexSyncOutcome.Pending) {
-                schedulePendingContinuation()
-            } else {
-                resetPendingContinuation()
+        reconcile = { reasons, durableSequence ->
+            val coveredSequence = claimDurableSequence(durableSequence)
+            var acknowledgedComplete = false
+            try {
+                val outcome = synchronize(reasons, coveredSequence)
+                _lastOutcome.value = outcome
+                acknowledgedComplete = outcome is IndexSyncOutcome.Complete
+                if (outcome is IndexSyncOutcome.Pending) {
+                    schedulePendingContinuation()
+                } else {
+                    resetPendingContinuation()
+                }
+            } finally {
+                if (!acknowledgedComplete) retainDurableSequence(coveredSequence)
             }
         },
     )
     private var periodicJob: Job? = null
     private var pendingRetryJob: Job? = null
     private var pendingRetryCount: Int = 0
+    private var unresolvedDurableSequence: Long? = null
 
     @Volatile
     private var closed: Boolean = false
@@ -61,7 +69,10 @@ class AppIndexCoordinator(
         if (!started.compareAndSet(false, true)) return
         resetPendingContinuation()
         applicationScope.launch {
-            signals.signal(IndexSignal.STARTUP, requiresDirtyMark = false)
+            signals.signal(
+                IndexSignal.STARTUP,
+                requiresDirtyMark = false,
+            )
         }
         periodicJob = applicationScope.launch {
             while (isActive) {
@@ -75,15 +86,17 @@ class AppIndexCoordinator(
         }
     }
 
-    suspend fun signal(signal: IndexSignal): Boolean {
+    suspend fun signal(
+        signal: IndexSignal,
+        durableSequence: Long? = null,
+    ): Boolean {
         resetPendingContinuation()
         return signals.signal(
             signal = signal,
-            // Gaining or losing provider authority is not itself evidence that
-            // provider rows changed. Keeping this signal clean lets a paused,
-            // checkpointed first-history scan resume instead of abandoning its
-            // progress every time the user temporarily changes SMS apps.
-            requiresDirtyMark = signal != IndexSignal.ROLE_CHANGED,
+            // Explicit provider and authority transitions are ambiguous until
+            // a fresh generation proves the complete eligible provider set.
+            requiresDirtyMark = true,
+            durableSequence = durableSequence,
         )
     }
 
@@ -91,7 +104,10 @@ class AppIndexCoordinator(
     fun resumeAfterForeground() {
         resetPendingContinuation()
         applicationScope.launch {
-            signals.signal(IndexSignal.FOREGROUND_RESUME, requiresDirtyMark = false)
+            signals.signal(
+                IndexSignal.FOREGROUND_RESUME,
+                requiresDirtyMark = false,
+            )
         }
     }
 
@@ -104,8 +120,9 @@ class AppIndexCoordinator(
 
     private fun schedulePendingContinuation() {
         val permitted = runCatching(shouldContinuePending).getOrDefault(false)
-        if (!permitted || closed) return
         synchronized(retryLock) {
+            if (closed) return
+            if (!permitted) return
             if (
                 closed ||
                 pendingRetryJob?.isActive == true ||
@@ -131,7 +148,10 @@ class AppIndexCoordinator(
             synchronized(retryLock) {
                 if (pendingRetryJob === currentJob) pendingRetryJob = null
             }
-            signals.signal(IndexSignal.FOREGROUND_RESUME, requiresDirtyMark = false)
+            signals.signal(
+                IndexSignal.FOREGROUND_RESUME,
+                requiresDirtyMark = false,
+            )
         } finally {
             synchronized(retryLock) {
                 if (pendingRetryJob === currentJob) pendingRetryJob = null
@@ -145,6 +165,27 @@ class AppIndexCoordinator(
             pendingRetryJob = null
             pendingRetryCount = 0
         }
+    }
+
+    private fun claimDurableSequence(durableSequence: Long?): Long? = synchronized(retryLock) {
+        maxSequence(unresolvedDurableSequence, durableSequence).also {
+            unresolvedDurableSequence = null
+        }
+    }
+
+    private fun retainDurableSequence(durableSequence: Long?) {
+        synchronized(retryLock) {
+            unresolvedDurableSequence = maxSequence(
+                unresolvedDurableSequence,
+                durableSequence,
+            )
+        }
+    }
+
+    private fun maxSequence(first: Long?, second: Long?): Long? = when {
+        first == null -> second
+        second == null -> first
+        else -> maxOf(first, second)
     }
 
     companion object {

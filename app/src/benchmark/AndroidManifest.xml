@@ -10,19 +10,24 @@
     -->
     <uses-permission
         android:name="android.permission.READ_SMS"
-        tools:node="remove" />
+        tools:node="remove"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
     <uses-permission
         android:name="android.permission.SEND_SMS"
-        tools:node="remove" />
+        tools:node="remove"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
     <uses-permission
         android:name="android.permission.RECEIVE_SMS"
-        tools:node="remove" />
+        tools:node="remove"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
     <uses-permission
         android:name="android.permission.RECEIVE_MMS"
-        tools:node="remove" />
+        tools:node="remove"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
     <uses-permission
         android:name="android.permission.RECEIVE_WAP_PUSH"
-        tools:node="remove" />
+        tools:node="remove"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
     <uses-permission
         android:name="android.permission.READ_PHONE_STATE"
         tools:node="remove" />
@@ -104,7 +109,8 @@
 
         <provider
             android:name="org.aurorasms.core.telephony.internal.MmsPduFileProvider"
-            android:enabled="false" />
+            android:enabled="false"
+            android:exported="false" />
 
         <receiver
             android:name="org.aurorasms.core.telephony.receiver.SmsSentReceiver"

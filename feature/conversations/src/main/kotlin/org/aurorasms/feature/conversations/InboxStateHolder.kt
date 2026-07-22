@@ -4,6 +4,7 @@ package org.aurorasms.feature.conversations
 
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +28,9 @@ class InboxStateHolder(
     val state: StateFlow<InboxUiState> = _state.asStateFlow()
     private var pageJob: Job? = null
     private var contactJob: Job? = null
+    private var replayInvalidationAfterPage = false
+    private var reloadAfterPage = false
+    private var closed = false
     private var userAtNewest = true
     private var visibleItems: List<ConversationSummary> = emptyList()
     private var lastContactRequest = emptyList<org.aurorasms.core.model.ParticipantAddress>()
@@ -36,8 +40,17 @@ class InboxStateHolder(
         observerJobs = listOf(
             scope.launch {
                 repository.invalidations.collect {
-                    val current = _state.value as? InboxUiState.Ready ?: return@collect
-                    if (userAtNewest) refreshNewest(current) else publish(current.copy(window = current.window.noteIncomingWhileAway()))
+                    val current = _state.value as? InboxUiState.Ready
+                    if (pageJob?.isActive == true) {
+                        replayInvalidationAfterPage = true
+                        return@collect
+                    }
+                    if (current == null) return@collect
+                    if (userAtNewest) {
+                        refreshNewest(current, replayIfBusy = true)
+                    } else {
+                        publish(current.copy(window = current.window.noteIncomingWhileAway()))
+                    }
                 }
             },
             scope.launch {
@@ -53,8 +66,7 @@ class InboxStateHolder(
     }
 
     fun reload() {
-        if (pageJob?.isActive == true) return
-        pageJob = scope.launch {
+        launchPageJob {
             _state.value = InboxUiState.Loading
             when (val result = safeLoad(ConversationPageRequest())) {
                 is ConversationPageResult.Page -> publish(
@@ -77,7 +89,7 @@ class InboxStateHolder(
         val cursor = current.window.olderCursor ?: return
         if (pageJob?.isActive == true) return
         publish(current.copy(loadingOlder = true, restoreAnchor = null))
-        pageJob = scope.launch {
+        launchPageJob {
             when (val result = safeLoad(ConversationPageRequest(cursor = cursor))) {
                 is ConversationPageResult.Page -> {
                     val mutation = current.window.appendOlder(result.page, anchor)
@@ -105,7 +117,7 @@ class InboxStateHolder(
     fun acceptPendingNewer() {
         userAtNewest = true
         val current = _state.value as? InboxUiState.Ready ?: return
-        refreshNewest(current)
+        refreshNewest(current, replayIfBusy = true)
     }
 
     fun onViewportChanged(items: List<ConversationSummary>) {
@@ -119,14 +131,23 @@ class InboxStateHolder(
     }
 
     override fun close() {
+        closed = true
+        replayInvalidationAfterPage = false
+        reloadAfterPage = false
         pageJob?.cancel()
         contactJob?.cancel()
         observerJobs.forEach(Job::cancel)
     }
 
-    private fun refreshNewest(current: InboxUiState.Ready) {
-        if (pageJob?.isActive == true) return
-        pageJob = scope.launch {
+    private fun refreshNewest(
+        current: InboxUiState.Ready,
+        replayIfBusy: Boolean = false,
+    ) {
+        if (pageJob?.isActive == true) {
+            if (replayIfBusy) replayInvalidationAfterPage = true
+            return
+        }
+        launchPageJob {
             when (val result = safeLoad(ConversationPageRequest())) {
                 is ConversationPageResult.Page -> publish(
                     (_state.value as? InboxUiState.Ready ?: current).copy(
@@ -180,7 +201,48 @@ class InboxStateHolder(
     }
 
     private fun reloadAfterCurrentJob() {
+        if (pageJob?.isActive == true) {
+            reloadAfterPage = true
+        } else {
+            reload()
+        }
+    }
+
+    /** Owns the page slot before starting so even immediate jobs complete through one fence. */
+    private fun launchPageJob(block: suspend () -> Unit): Boolean {
+        if (closed || pageJob?.isActive == true) return false
+        lateinit var owner: Job
+        owner = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                block()
+            } finally {
+                finishPageJob(owner)
+            }
+        }
+        pageJob = owner
+        owner.start()
+        return true
+    }
+
+    private fun finishPageJob(owner: Job) {
+        if (pageJob !== owner) return
         pageJob = null
-        reload()
+        if (closed) return
+        if (reloadAfterPage) {
+            reloadAfterPage = false
+            replayInvalidationAfterPage = false
+            reload()
+            return
+        }
+        if (!replayInvalidationAfterPage) return
+        replayInvalidationAfterPage = false
+        val current = _state.value as? InboxUiState.Ready
+        if (current == null) {
+            reload()
+        } else if (userAtNewest) {
+            refreshNewest(current, replayIfBusy = true)
+        } else {
+            publish(current.copy(window = current.window.noteIncomingWhileAway()))
+        }
     }
 }

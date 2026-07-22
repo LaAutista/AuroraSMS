@@ -36,7 +36,7 @@ class IndexSignalCoalescerTest {
                 dirtyStarted.complete(Unit)
                 releaseDirty.await()
             },
-            reconcile = { runs += it },
+            reconcile = { signals, _ -> runs += signals },
         )
 
         assertTrue(coalescer.signal(IndexSignal.STARTUP, requiresDirtyMark = false))
@@ -65,7 +65,7 @@ class IndexSignalCoalescerTest {
         val coalescer = IndexSignalCoalescer(
             applicationScope = backgroundScope,
             onSignal = { dirtyCallbackCount += 1 },
-            reconcile = { runs += it },
+            reconcile = { signals, _ -> runs += signals },
         )
 
         IndexSignal.entries.forEach { signal ->
@@ -92,7 +92,7 @@ class IndexSignalCoalescerTest {
         var maximumActiveRuns = 0
         val coalescer = IndexSignalCoalescer(
             applicationScope = backgroundScope,
-            reconcile = { signals ->
+            reconcile = { signals, _ ->
                 activeRuns += 1
                 maximumActiveRuns = maxOf(maximumActiveRuns, activeRuns)
                 runs += signals
@@ -137,6 +137,48 @@ class IndexSignalCoalescerTest {
     }
 
     @Test
+    fun `durable sequence belongs only to the reconciliation epoch that consumed it`() = runTest {
+        val started = Channel<Pair<Set<IndexSignal>, Long?>>(capacity = Channel.UNLIMITED)
+        val releases = Channel<Unit>(capacity = Channel.UNLIMITED)
+        val coalescer = IndexSignalCoalescer(
+            applicationScope = backgroundScope,
+            reconcile = { signals, durableSequence ->
+                started.send(signals to durableSequence)
+                releases.receive()
+            },
+        )
+
+        assertTrue(
+            coalescer.signal(
+                IndexSignal.EXTERNAL_PROVIDER_CHANGE,
+                durableSequence = 41L,
+            ),
+        )
+        runCurrent()
+        assertEquals(
+            setOf(IndexSignal.EXTERNAL_PROVIDER_CHANGE) to 41L,
+            started.tryReceive().getOrNull(),
+        )
+
+        assertTrue(
+            coalescer.signal(
+                IndexSignal.ROLE_CHANGED,
+                durableSequence = 42L,
+            ),
+        )
+        assertTrue(releases.trySend(Unit).isSuccess)
+        runCurrent()
+        assertEquals(
+            setOf(IndexSignal.ROLE_CHANGED) to 42L,
+            started.tryReceive().getOrNull(),
+        )
+
+        assertTrue(releases.trySend(Unit).isSuccess)
+        runCurrent()
+        coalescer.cancelAndJoin()
+    }
+
+    @Test
     fun `concurrent duplicates wait behind one durable callback before enqueue`() = runTest {
         val dirtyStarted = CompletableDeferred<Unit>()
         val releaseDirty = CompletableDeferred<Unit>()
@@ -149,7 +191,7 @@ class IndexSignalCoalescerTest {
                 dirtyStarted.complete(Unit)
                 releaseDirty.await()
             },
-            reconcile = { runs += it },
+            reconcile = { signals, _ -> runs += signals },
         )
 
         val first = async { coalescer.signal(IndexSignal.STARTUP) }
@@ -185,7 +227,7 @@ class IndexSignalCoalescerTest {
         val coalescer = IndexSignalCoalescer(
             applicationScope = backgroundScope,
             onSignal = { signal -> events += "dirty:${signal.name}" },
-            reconcile = { signals -> events += "reconcile:${signals.single().name}" },
+            reconcile = { signals, _ -> events += "reconcile:${signals.single().name}" },
         )
 
         assertTrue(coalescer.signal(IndexSignal.INCOMING_INSERT))
@@ -206,7 +248,7 @@ class IndexSignalCoalescerTest {
         val coalescer = IndexSignalCoalescer(
             applicationScope = backgroundScope,
             onSignal = { throw CancellationException("synthetic cancellation") },
-            reconcile = { runCount += 1 },
+            reconcile = { _, _ -> runCount += 1 },
         )
 
         try {
@@ -231,7 +273,7 @@ class IndexSignalCoalescerTest {
         val coalescer = IndexSignalCoalescer(
             applicationScope = applicationScope,
             onSignal = { dirtyCallbackCount += 1 },
-            reconcile = {
+            reconcile = { _, _ ->
                 runStarted.complete(Unit)
                 try {
                     awaitCancellation()
@@ -266,7 +308,7 @@ class IndexSignalCoalescerTest {
                 dirtyStarted.complete(Unit)
                 releaseDirty.await()
             },
-            reconcile = { runCount += 1 },
+            reconcile = { _, _ -> runCount += 1 },
         )
         val accepted = async {
             coalescer.signal(IndexSignal.EXTERNAL_PROVIDER_CHANGE)
@@ -290,7 +332,7 @@ class IndexSignalCoalescerTest {
         var attempts = 0
         val coalescer = IndexSignalCoalescer(
             applicationScope = backgroundScope,
-            reconcile = {
+            reconcile = { _, _ ->
                 attempts += 1
                 if (attempts == 1) throw IllegalStateException(privateMessage)
             },
@@ -315,7 +357,7 @@ class IndexSignalCoalescerTest {
         var runCount = 0
         val coalescer = IndexSignalCoalescer(
             applicationScope = backgroundScope,
-            reconcile = { runCount += 1 },
+            reconcile = { _, _ -> runCount += 1 },
         )
 
         assertTrue(coalescer.signal(IndexSignal.STARTUP))

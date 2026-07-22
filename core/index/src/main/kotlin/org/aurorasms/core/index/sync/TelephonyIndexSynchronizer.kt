@@ -75,24 +75,26 @@ class TelephonyIndexSynchronizer(
     }
 
     suspend fun pauseForRoleLoss() = withContext(ioDispatcher) {
-        mutex.withLock { pauseCurrentGeneration() }
+        mutex.withLock { fenceAuthorityInterruptedGeneration() }
     }
 
     private suspend fun synchronizeLocked(signals: Set<IndexSignal>): IndexSyncOutcome {
         if (!roleState.isRoleHeld()) {
-            pauseCurrentGeneration()
+            fenceAuthorityInterruptedGeneration()
             return IndexSyncOutcome.Paused(IndexFailureCode.ROLE_REQUIRED)
         }
         if (!isProviderReadPermitted()) {
             return IndexSyncOutcome.Pending(messageIndex.coverage())
         }
+        if (IndexSignal.ROLE_CHANGED in signals) {
+            fenceAuthorityInterruptedGeneration()
+        }
 
         val active = syncDao.activeGeneration()
         val latest = syncDao.latestGeneration()
-        // A completed index may have missed arbitrary provider changes while
+        // Any index may have missed arbitrary deep provider changes while
         // Aurora lacked SMS-role authority. Role recovery therefore requires a
-        // new full generation. Paused first-history work remains resumable
-        // because this boundary applies only to a previously complete state.
+        // new full generation, including when the prior scan was incomplete.
         val completeRoleRecovery =
             latest?.state == GenerationStateCode.COMPLETE && IndexSignal.ROLE_CHANGED in signals
         if (
@@ -109,7 +111,14 @@ class TelephonyIndexSynchronizer(
                 )
             ) {
                 is SteadyStateResult.Complete -> {
-                    return IndexSyncOutcome.Complete(messageIndex.coverage(), deletedStaleRows = 0)
+                    val coverage = messageIndex.coverage()
+                    if (coverage.verifiedComplete) {
+                        return IndexSyncOutcome.Complete(coverage, deletedStaleRows = 0)
+                    }
+                    // A legacy or internally inconsistent COMPLETE row is not
+                    // completion authority. Fall through to a fresh generation
+                    // so physical rows and both provider checkpoints are proved
+                    // again before any durable signal may be acknowledged.
                 }
                 SteadyStateResult.Superseded -> {
                     return IndexSyncOutcome.Pending(messageIndex.coverage())
@@ -122,12 +131,17 @@ class TelephonyIndexSynchronizer(
         }
 
         repeat(MAX_GENERATIONS_PER_RUN) { attempt ->
-            val generation = generationForRun()
+            val generation = generationForRun(
+                allowResume = IndexSignal.ROLE_CHANGED !in signals,
+            )
             when (val result = runGeneration(generation)) {
                 is GenerationResult.Complete -> {
                     return IndexSyncOutcome.Complete(messageIndex.coverage(), result.deletedRows)
                 }
                 GenerationResult.Dirty -> {
+                    check(syncDao.markPendingChanges(generation.generationId, safeNow()) == 1) {
+                        "Dirty index generation could not retain its restart requirement"
+                    }
                     stopGeneration(generation.generationId, terminalState = GenerationStateCode.PAUSED)
                     if (attempt == MAX_GENERATIONS_PER_RUN - 1) {
                         return IndexSyncOutcome.Pending(messageIndex.coverage())
@@ -154,12 +168,25 @@ class TelephonyIndexSynchronizer(
         return requireNotNull(syncDao.generationById(id)) { "Started index generation was not retained" }
     }
 
-    private suspend fun generationForRun(): IndexGenerationEntity {
+    private suspend fun fenceAuthorityInterruptedGeneration() {
+        val active = syncDao.activeGeneration()
+        val generation = active ?: syncDao.latestGeneration() ?: return
+        if (!generation.pendingChanges) {
+            check(syncDao.markPendingChanges(generation.generationId, safeNow()) == 1) {
+                "Authority-interrupted generation could not retain its restart requirement"
+            }
+        }
+        if (active != null) {
+            stopGeneration(active.generationId, terminalState = GenerationStateCode.PAUSED)
+        }
+    }
+
+    private suspend fun generationForRun(allowResume: Boolean): IndexGenerationEntity {
         syncDao.activeGeneration()?.let { return it }
         val latest = syncDao.latestGeneration()
         val canResume = latest?.state == GenerationStateCode.PAUSED ||
             (latest?.state == GenerationStateCode.FAILED && latest.failureCode in RECOVERABLE_FAILURE_CODES)
-        if (latest != null && canResume && !latest.pendingChanges &&
+        if (allowResume && latest != null && canResume && !latest.pendingChanges &&
             syncDao.resumeTerminalGeneration(latest.generationId, safeNow())) {
             return requireNotNull(syncDao.generationById(latest.generationId))
         }
@@ -286,6 +313,11 @@ class TelephonyIndexSynchronizer(
 
     private suspend fun recordFailure(generationId: Long, code: IndexFailureCode) {
         try {
+            if (code == IndexFailureCode.ROLE_REQUIRED || code == IndexFailureCode.PERMISSION_DENIED) {
+                check(syncDao.markPendingChanges(generationId, safeNow()) == 1) {
+                    "Authority-interrupted generation could not retain its restart requirement"
+                }
+            }
             if (code == IndexFailureCode.ROLE_REQUIRED) {
                 stopGeneration(generationId, terminalState = GenerationStateCode.PAUSED)
             } else {

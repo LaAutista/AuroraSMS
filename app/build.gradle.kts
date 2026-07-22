@@ -62,6 +62,11 @@ android {
 
     lint {
         abortOnError = true
+        // The benchmark APK deliberately strips POST_NOTIFICATIONS while
+        // retaining production bytecode as R8 roots. Keep that single
+        // project-level detector finding explicit; verifyPermissions enforces
+        // the exact production and benchmark manifest ledgers independently.
+        baseline = file("lint-benchmark-baseline.xml")
         checkDependencies = true
         checkReleaseBuilds = true
         // Phase 0 deliberately approved target 36 and this exact audited,

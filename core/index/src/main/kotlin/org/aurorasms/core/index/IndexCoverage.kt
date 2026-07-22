@@ -57,7 +57,21 @@ data class IndexCoverage(
     }
 
     val verifiedComplete: Boolean
-        get() = state == IndexRunState.COMPLETE && smsExhausted && mmsExhausted && !pendingChanges
+        get() {
+            val checkpointTotalIsSafe =
+                smsCheckpointCommittedCount <= Long.MAX_VALUE - mmsCheckpointCommittedCount
+            val checkpointTotal = if (checkpointTotalIsSafe) {
+                smsCheckpointCommittedCount + mmsCheckpointCommittedCount
+            } else {
+                -1L
+            }
+            return state == IndexRunState.COMPLETE &&
+                smsExhausted &&
+                mmsExhausted &&
+                !pendingChanges &&
+                generationCommittedCount == indexedMessageCount &&
+                generationCommittedCount == checkpointTotal
+        }
 
     override fun toString(): String =
         "IndexCoverage(state=$state, indexedMessageCount=$indexedMessageCount, " +

@@ -140,8 +140,8 @@ snapshot_is_verified_complete() {
     [[ "$SNAPSHOT_SMS_EXHAUSTED" == "1" && "$SNAPSHOT_MMS_EXHAUSTED" == "1" ]] || return 1
     [[ -n "$SNAPSHOT_SMS_VERIFIED" && -n "$SNAPSHOT_MMS_VERIFIED" ]] || return 1
     ((SNAPSHOT_GENERATION_COMMITTED > 0)) || return 1
-    ((SNAPSHOT_SMS_VERIFIED >= SNAPSHOT_SMS_COMMITTED)) || return 1
-    ((SNAPSHOT_MMS_VERIFIED >= SNAPSHOT_MMS_COMMITTED)) || return 1
+    ((SNAPSHOT_SMS_VERIFIED == SNAPSHOT_SMS_COMMITTED)) || return 1
+    ((SNAPSHOT_MMS_VERIFIED == SNAPSHOT_MMS_COMMITTED)) || return 1
     ((SNAPSHOT_SMS_COMMITTED + SNAPSHOT_MMS_COMMITTED == SNAPSHOT_GENERATION_COMMITTED)) || return 1
     ((SNAPSHOT_INDEXED_ROWS == SNAPSHOT_GENERATION_COMMITTED)) || return 1
     ((SNAPSHOT_DISTINCT_THREADS == SNAPSHOT_CONVERSATIONS)) || return 1
@@ -153,11 +153,12 @@ snapshot_is_verified_complete() {
 }
 
 self_test() {
-    local valid scanning missing_checkpoint inconsistent
+    local valid scanning missing_checkpoint inconsistent excess_provider_count
     valid=$'GEN|9|3|150|0|1||7000\nCP|1|1|100|100\nCP|2|1|50|50\nIDX|150|12|12|150|7|7|0|0|150'
     scanning=$'GEN|9|1|100|0|0||6000\nCP|1|1|100|\nCP|2|0|0|\nIDX|100|10|10|100|5|5|0|0|100'
     missing_checkpoint=$'GEN|9|3|150|0|1||7000\nCP|1|1|100|100\nCP|1|1|50|50\nIDX|150|12|12|150|7|7|0|0|150'
     inconsistent=$'GEN|9|3|150|0|1||7000\nCP|1|1|100|100\nCP|2|1|50|50\nIDX|149|12|12|149|7|7|0|0|149'
+    excess_provider_count=$'GEN|9|3|150|0|1||7000\nCP|1|1|100|101\nCP|2|1|50|50\nIDX|150|12|12|150|7|7|0|0|150'
 
     snapshot_is_verified_complete "$valid" || {
         printf 'Physical provider protocol rejected its valid aggregate fixture.\n' >&2
@@ -173,6 +174,10 @@ self_test() {
     fi
     if snapshot_is_verified_complete "$inconsistent"; then
         printf 'Physical provider protocol accepted inconsistent aggregate counts.\n' >&2
+        exit 1
+    fi
+    if snapshot_is_verified_complete "$excess_provider_count"; then
+        printf 'Physical provider protocol accepted an unindexed eligible provider row.\n' >&2
         exit 1
     fi
     printf 'Physical provider completion parser self-test passed.\n'

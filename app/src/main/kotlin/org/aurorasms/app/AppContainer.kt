@@ -2,9 +2,11 @@
 
 package org.aurorasms.app
 
+import android.Manifest
 import android.app.Application
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.Handler
@@ -257,6 +259,16 @@ class AppContainer(
         INDEX_SIGNAL_LEDGER_NAME,
         Context.MODE_PRIVATE,
     )
+    private val messagingEligibilityObservationLedger = MessagingEligibilityObservationLedger(
+        initialValue = if (
+            !syntheticIndexOnly && indexSignalLedger.contains(MESSAGING_ELIGIBILITY_LEDGER_KEY)
+        ) {
+            indexSignalLedger.getBoolean(MESSAGING_ELIGIBILITY_LEDGER_KEY, false)
+        } else {
+            null
+        },
+        persist = ::persistMessagingEligibility,
+    )
 
     val defaultSmsRoleState: DefaultSmsRoleState = AndroidDefaultSmsRoleState(application)
     private val defaultSmsRoleLifecycleFence = DefaultSmsRoleLifecycleFence(
@@ -308,14 +320,10 @@ class AppContainer(
     val threadTimelineRepository: ThreadTimelineRepository = DeferredThreadTimelineRepository(indexRuntimeState)
     val indexCoordinator = AppIndexCoordinator(
         applicationScope = applicationScope,
-        synchronize = { reasons ->
-            val signalSequence = synchronized(indexSignalLock) { ambiguousSignalSequence }
+        synchronize = { reasons, durableSequence ->
             val outcome = awaitIndexRuntime().synchronizer.reconcile(reasons)
-            if (
-                outcome is IndexSyncOutcome.Complete &&
-                reconciliationCoversAmbiguousSignalLedger(reasons)
-            ) {
-                clearAmbiguousSignalLedger(signalSequence)
+            if (outcome is IndexSyncOutcome.Complete && durableSequence != null) {
+                clearAmbiguousSignalLedger(durableSequence)
             }
             outcome
         },
@@ -499,10 +507,10 @@ class AppContainer(
         if (!syntheticIndexOnly) {
             applicationScope.launch {
                 for (ignored in indexSignalWakeUps) {
-                    val signals = takePendingIndexSignals()
-                    val conservativeSignal = signals.singleOrNull()
+                    val batch = takePendingIndexSignals()
+                    val conservativeSignal = batch.signals.singleOrNull()
                         ?: IndexSignal.EXTERNAL_PROVIDER_CHANGE
-                    signalIndex(conservativeSignal)
+                    signalIndex(conservativeSignal, batch.durableSequence)
                 }
             }
         }
@@ -798,27 +806,35 @@ class AppContainer(
 
     suspend fun onDefaultSmsRoleChanged(
         @Suppress("UNUSED_PARAMETER") isDefaultSmsApp: Boolean,
-    ) = defaultSmsRoleLifecycleFence.reconcile { roleHeld ->
-        reconcileMessagingRecoveryForRole(roleHeld)
-        previewLoader.clear()
-        if (!roleHeld && !syntheticIndexOnly) {
-            if (!defaultSmsRoleState.isRoleHeld()) sentPartTracker.clear()
+    ) {
+        // The manifest receiver is not guaranteed to be redelivered after a
+        // process death. Persist the authority gap before any suspendable
+        // recovery work so startup must conservatively rebuild if interrupted.
+        val durableAuthorityGap = enqueueIndexSignal(IndexSignal.ROLE_CHANGED)
+        if (!syntheticIndexOnly && durableAuthorityGap) {
+            messagingEligibilityObservationLedger.record(currentMessagingEligibility())
         }
-        if (!roleHeld && !defaultSmsRoleState.isRoleHeld()) {
-            try {
-                (indexRuntimeState.value as? IndexRuntimeState.Ready)
-                    ?.runtime
-                    ?.synchronizer
-                    ?.pauseForRoleLoss()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: RuntimeException) {
-                // Role loss remains authoritative even if the disposable index
-                // cannot persist its best-effort paused marker.
+        defaultSmsRoleLifecycleFence.reconcile { roleHeld ->
+            reconcileMessagingRecoveryForRole(roleHeld)
+            previewLoader.clear()
+            if (!roleHeld && !syntheticIndexOnly) {
+                if (!defaultSmsRoleState.isRoleHeld()) sentPartTracker.clear()
             }
+            if (!roleHeld && !defaultSmsRoleState.isRoleHeld()) {
+                try {
+                    (indexRuntimeState.value as? IndexRuntimeState.Ready)
+                        ?.runtime
+                        ?.synchronizer
+                        ?.pauseForRoleLoss()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: RuntimeException) {
+                    // Role loss remains authoritative even if the disposable index
+                    // cannot persist its best-effort paused marker.
+                }
+            }
+            if (defaultSmsRoleState.isRoleHeld()) requestIndexOpen()
         }
-        if (defaultSmsRoleState.isRoleHeld()) requestIndexOpen()
-        enqueueIndexSignal(IndexSignal.ROLE_CHANGED)
     }
 
     suspend fun onExternalProviderChanged() {
@@ -855,6 +871,21 @@ class AppContainer(
         notificationReminderController.recover(reason.toNotificationReminderRecoveryReason())
     }
 
+    /**
+     * Relays only a real eligibility transition. The last observation is
+     * durable so an unchanged Activity/process restart cannot manufacture a
+     * ROLE_CHANGED full-history generation.
+     */
+    fun onMessagingEligibilityObserved(eligible: Boolean) {
+        if (syntheticIndexOnly) return
+        val changed = messagingEligibilityObservationLedger.record(
+            observed = eligible,
+            beforePersist = { enqueueIndexSignal(IndexSignal.ROLE_CHANGED) },
+        )
+        if (!changed) return
+        onMessagingEligibilityChangedAfterDurableObservation()
+    }
+
     /** Retries observer registration and reconciliation after explicit role/permission UI success. */
     fun onMessagingEligibilityChanged() {
         applicationScope.launch {
@@ -867,6 +898,19 @@ class AppContainer(
         if (!syntheticIndexOnly) {
             ensureProviderObserverRegistered()
             enqueueIndexSignal(IndexSignal.ROLE_CHANGED)
+        }
+    }
+
+    private fun onMessagingEligibilityChangedAfterDurableObservation() {
+        applicationScope.launch {
+            previewLoader.clear()
+            defaultSmsRoleLifecycleFence.reconcile { roleHeld ->
+                reconcileMessagingRecoveryForRole(roleHeld)
+            }
+        }
+        requestIndexOpen()
+        if (!syntheticIndexOnly) {
+            ensureProviderObserverRegistered()
         }
     }
 
@@ -1155,9 +1199,12 @@ class AppContainer(
         applicationScope.cancel()
     }
 
-    private suspend fun signalIndex(signal: IndexSignal) {
+    private suspend fun signalIndex(
+        signal: IndexSignal,
+        durableSequence: Long? = null,
+    ) {
         try {
-            indexCoordinator.signal(signal)
+            indexCoordinator.signal(signal, durableSequence)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: RuntimeException) {
@@ -1166,21 +1213,27 @@ class AppContainer(
         }
     }
 
-    private fun enqueueIndexSignal(signal: IndexSignal) {
-        if (syntheticIndexOnly) return
-        if (signal.requiresDurableAmbiguousLedger()) recordAmbiguousSignal()
-        synchronized(indexSignalLock) {
+    /** Atomically ledgers ambiguous work and queues its in-process signal. */
+    private fun enqueueIndexSignal(signal: IndexSignal): Boolean {
+        if (syntheticIndexOnly) return true
+        val durableLedger = synchronized(indexSignalLock) {
+            val recorded = if (signal.requiresDurableAmbiguousLedger()) {
+                recordAmbiguousSignalLocked()
+            } else {
+                true
+            }
             pendingIndexSignals.add(signal)
+            recorded
         }
         indexSignalWakeUps.trySend(Unit)
+        return durableLedger
     }
 
-    private fun recordAmbiguousSignal() {
-        synchronized(indexSignalLock) {
-            ambiguousSignalSequence += 1L
-            if (ambiguousSignalLedgered) return
-            ambiguousSignalLedgered = persistAmbiguousSignalLedger(value = true)
-        }
+    private fun recordAmbiguousSignalLocked(): Boolean {
+        ambiguousSignalSequence += 1L
+        if (ambiguousSignalLedgered) return true
+        ambiguousSignalLedgered = persistAmbiguousSignalLedger(value = true)
+        return ambiguousSignalLedgered
     }
 
     private fun clearAmbiguousSignalLedger(expectedSequence: Long) {
@@ -1194,8 +1247,23 @@ class AppContainer(
     private fun persistAmbiguousSignalLedger(value: Boolean): Boolean =
         indexSignalLedger.edit().putBoolean(INDEX_SIGNAL_LEDGER_KEY, value).commit()
 
-    private fun takePendingIndexSignals(): Set<IndexSignal> = synchronized(indexSignalLock) {
-        pendingIndexSignals.toSet().also { pendingIndexSignals.clear() }
+    @SuppressLint("UseKtx")
+    private fun persistMessagingEligibility(value: Boolean): Boolean =
+        indexSignalLedger.edit().putBoolean(MESSAGING_ELIGIBILITY_LEDGER_KEY, value).commit()
+
+    private fun currentMessagingEligibility(): Boolean =
+        defaultSmsRoleState.isRoleHeld() &&
+            application.checkSelfPermission(Manifest.permission.READ_SMS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun takePendingIndexSignals(): PendingIndexSignalBatch = synchronized(indexSignalLock) {
+        val batch = snapshotPendingIndexSignalBatch(
+            signals = pendingIndexSignals,
+            ambiguousSignalLedgered = ambiguousSignalLedgered,
+            ambiguousSignalSequence = ambiguousSignalSequence,
+        )
+        pendingIndexSignals.clear()
+        batch
     }
 
     private fun requestIndexOpen() {
@@ -1275,6 +1343,25 @@ class AppContainer(
         const val INCOMING_NOTIFICATION_RECOVERY_FOLLOW_UP_DELAY_MILLIS = 30_000L
         const val INDEX_SIGNAL_LEDGER_NAME: String = "aurora_index_signal_ledger"
         const val INDEX_SIGNAL_LEDGER_KEY: String = "ambiguous_provider_change_pending"
+        const val MESSAGING_ELIGIBILITY_LEDGER_KEY: String = "last_messaging_eligibility"
+    }
+}
+
+internal class MessagingEligibilityObservationLedger(
+    initialValue: Boolean?,
+    private val persist: (Boolean) -> Boolean,
+) {
+    private val lock = Any()
+    private var lastValue: Boolean? = initialValue
+
+    fun record(
+        observed: Boolean,
+        beforePersist: () -> Boolean = { true },
+    ): Boolean = synchronized(lock) {
+        if (lastValue == observed) return@synchronized false
+        if (!beforePersist()) return@synchronized true
+        if (persist(observed)) lastValue = observed
+        true
     }
 }
 
@@ -1831,28 +1918,37 @@ private class DeferredAppearanceWallpaperRepository(
 
 private class StateStorageUnavailableException : IllegalStateException("State storage unavailable")
 
+internal data class PendingIndexSignalBatch(
+    val signals: Set<IndexSignal>,
+    val durableSequence: Long?,
+)
+
+internal fun snapshotPendingIndexSignalBatch(
+    signals: Set<IndexSignal>,
+    ambiguousSignalLedgered: Boolean,
+    ambiguousSignalSequence: Long,
+): PendingIndexSignalBatch = PendingIndexSignalBatch(
+    signals = signals.toSet(),
+    durableSequence = if (
+        ambiguousSignalLedgered && signals.any(IndexSignal::requiresDurableAmbiguousLedger)
+    ) {
+        ambiguousSignalSequence
+    } else {
+        null
+    },
+)
+
 private fun IndexSignal.requiresDurableAmbiguousLedger(): Boolean = when (this) {
     IndexSignal.FOREGROUND_RESUME,
     IndexSignal.STARTUP,
-    IndexSignal.ROLE_CHANGED,
     IndexSignal.INCOMING_INSERT,
     IndexSignal.PERIODIC_RECONCILIATION,
     -> false
     IndexSignal.CONTENT_OBSERVER_CHANGE,
     IndexSignal.EXTERNAL_PROVIDER_CHANGE,
+    IndexSignal.ROLE_CHANGED,
     -> true
 }
-
-/**
- * A foreground resume can complete provider work that originally started from
- * a durable ambiguous signal and was deferred at the background read gate. It
- * may therefore clear an unchanged ledger after a complete reconciliation,
- * while still never creating that ledger or marking provider state dirty.
- */
-internal fun reconciliationCoversAmbiguousSignalLedger(reasons: Set<IndexSignal>): Boolean =
-    reasons.any { signal ->
-        signal == IndexSignal.FOREGROUND_RESUME || signal.requiresDurableAmbiguousLedger()
-    }
 
 private fun ReplyOperationRecoveryResult.unknownSubmissionMayStillCallback(): Boolean =
     this is ReplyOperationRecoveryResult.Recovered && submissionUnknownCount > 0

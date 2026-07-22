@@ -49,14 +49,16 @@ enum class IndexSignalDiagnostic {
  * Only one [reconcile] call can run at a time. Signals already pending are
  * represented by a seven-value enum set, while the channel holds at most one
  * wake-up. Signals received during a reconciliation therefore cause exactly
- * one subsequent call, regardless of duplicate volume.
+ * one subsequent call, regardless of duplicate volume. An optional monotonic
+ * durable sequence is coalesced only with the epoch that consumed it, allowing
+ * callers to acknowledge exactly that persisted work after reconciliation.
  *
  * Cancellation is never converted into a failure diagnostic. Closing this
  * object cancels only its worker child; it does not cancel [applicationScope].
  */
 class IndexSignalCoalescer(
     applicationScope: CoroutineScope,
-    private val reconcile: suspend (Set<IndexSignal>) -> Unit,
+    private val reconcile: suspend (Set<IndexSignal>, Long?) -> Unit,
     private val onSignal: suspend (IndexSignal) -> Unit = {},
     private val onDiagnostic: (IndexSignalDiagnostic) -> Unit = {},
 ) : AutoCloseable {
@@ -84,16 +86,21 @@ class IndexSignalCoalescer(
      * If closure races the suspend callback, the callback may finish but the
      * return value is `false`; its durable dirty mark is intentionally retained
      * for the next application startup. Callback cancellation and failures are
-     * propagated to the caller and do not enqueue a wake-up.
+     * propagated to the caller and do not enqueue a wake-up. [durableSequence]
+     * is content-free metadata and is never inferred for signals that omit it.
      */
     suspend fun signal(
         signal: IndexSignal,
         requiresDirtyMark: Boolean = true,
+        durableSequence: Long? = null,
     ): Boolean {
         val reservation = synchronized(stateLock) {
             if (closed) return false
             val epoch = pendingEpoch ?: PendingEpoch().also { pendingEpoch = it }
             epoch.signals.add(signal)
+            if (durableSequence != null) {
+                epoch.durableSequence = maxOf(epoch.durableSequence ?: durableSequence, durableSequence)
+            }
             val ownsDirtyCallback = requiresDirtyMark && !epoch.dirtyMarked && epoch.dirtyInFlight == null
             if (ownsDirtyCallback) epoch.dirtyInFlight = CompletableDeferred()
             SignalReservation(epoch = epoch, ownsDirtyCallback = ownsDirtyCallback)
@@ -138,11 +145,10 @@ class IndexSignalCoalescer(
     private suspend fun runWorker() {
         while (true) {
             if (wakeUps.receiveCatching().isClosed) return
-            val signals = takePendingSignals()
-            if (signals.isEmpty()) continue
+            val batch = takePendingSignals() ?: continue
 
             try {
-                reconcile(signals)
+                reconcile(batch.signals, batch.durableSequence)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -156,17 +162,20 @@ class IndexSignalCoalescer(
      * with producers. A producer is therefore either included in this run or
      * leaves one token and one signal for the following run, never both.
      */
-    private fun takePendingSignals(): Set<IndexSignal> = synchronized(stateLock) {
+    private fun takePendingSignals(): ReconciliationBatch? = synchronized(stateLock) {
         while (wakeUps.tryReceive().isSuccess) {
             // One token is enough; the bounded enum set retains all reasons.
         }
-        val epoch = pendingEpoch ?: return@synchronized emptySet()
+        val epoch = pendingEpoch ?: return@synchronized null
         if (epoch.dirtyInFlight?.isCompleted == false) {
             epoch.needsWakeAfterDirty = true
-            return@synchronized emptySet()
+            return@synchronized null
         }
         pendingEpoch = null
-        epoch.signals.toSet()
+        ReconciliationBatch(
+            signals = epoch.signals.toSet(),
+            durableSequence = epoch.durableSequence,
+        )
     }
 
     private fun reportDiagnostic(diagnostic: IndexSignalDiagnostic) {
@@ -219,7 +228,13 @@ class IndexSignalCoalescer(
         var dirtyInFlight: CompletableDeferred<Unit>? = null
         var dirtyMarked: Boolean = false
         var needsWakeAfterDirty: Boolean = false
+        var durableSequence: Long? = null
     }
+
+    private data class ReconciliationBatch(
+        val signals: Set<IndexSignal>,
+        val durableSequence: Long?,
+    )
 
     private data class SignalReservation(
         val epoch: PendingEpoch,

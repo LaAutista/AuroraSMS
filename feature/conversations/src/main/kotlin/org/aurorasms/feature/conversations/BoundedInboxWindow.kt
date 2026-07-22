@@ -50,7 +50,11 @@ data class BoundedInboxWindow(
         val merged = distinctNewestFirst(page.items + items).take(MAXIMUM_RETAINED_INBOX_ROWS)
         return copy(
             items = merged,
-            olderCursor = if (items.isEmpty()) page.next else olderCursor,
+            // A first paint can occur before the index has discovered enough
+            // conversations to expose an older page. Admit the cursor once a
+            // later invalidation proves that older rows now exist; otherwise a
+            // nonempty window with a null cursor can never page into them.
+            olderCursor = olderCursor ?: page.next,
             newerCursor = null,
             pendingNewer = false,
         )

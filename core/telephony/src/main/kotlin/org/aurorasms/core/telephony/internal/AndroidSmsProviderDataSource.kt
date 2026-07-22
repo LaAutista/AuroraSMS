@@ -62,7 +62,7 @@ class AndroidSmsProviderDataSource(
         resolver.query(
             Telephony.Sms.CONTENT_URI,
             arrayOf(BaseColumns._ID),
-            null,
+            SMS_INDEX_ELIGIBILITY_SELECTION,
             null,
             null,
         )?.use { cursor ->
@@ -73,12 +73,11 @@ class AndroidSmsProviderDataSource(
     override suspend fun readPage(
         request: ProviderPageRequest,
     ): ProviderAccessResult<ProviderPage<SmsProviderMessage>> = withReadAccess("read SMS page") {
-        val eligibleRows = "${BaseColumns._ID} > 0 AND ${Telephony.Sms.DATE} >= 0"
         val selection = request.before?.let {
-            "$eligibleRows AND " +
+            "$SMS_INDEX_ELIGIBILITY_SELECTION AND " +
                 "((${Telephony.Sms.DATE} < ?) OR " +
                 "(${Telephony.Sms.DATE} = ? AND ${BaseColumns._ID} < ?))"
-        } ?: eligibleRows
+        } ?: SMS_INDEX_ELIGIBILITY_SELECTION
         val selectionArgs = request.before?.let {
             arrayOf(
                 it.timestampMillis.toString(),

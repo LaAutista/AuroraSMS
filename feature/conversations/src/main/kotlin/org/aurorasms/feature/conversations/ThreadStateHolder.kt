@@ -4,6 +4,7 @@ package org.aurorasms.feature.conversations
 
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,6 +52,9 @@ class ThreadStateHolder(
     private var contactJob: Job? = null
     private var metadataJob: Job? = null
     private var contentJob: Job? = null
+    private var replayInvalidationAfterPage = false
+    private var reloadAfterPage = false
+    private var closed = false
     private var userAtNewest = initialAnchor == null
     private var visibleItems: List<TimelineMessage> = emptyList()
     private var lastContactRequest = emptyList<ParticipantAddress>()
@@ -77,10 +81,22 @@ class ThreadStateHolder(
                         )
                     }
                     loadMetadata()
-                    val current = _state.value as? ThreadUiState.Ready ?: return@collect
-                    if (userAtNewest) requestNewer(current, visibleAnchor = null, allowTailCursor = true) else publish(
-                        current.copy(window = current.window.noteIncomingWhileAway()),
-                    )
+                    val current = _state.value as? ThreadUiState.Ready
+                    if (pageJob?.isActive == true) {
+                        replayInvalidationAfterPage = true
+                        return@collect
+                    }
+                    if (current == null) return@collect
+                    if (userAtNewest) {
+                        requestNewer(
+                            current,
+                            visibleAnchor = null,
+                            allowTailCursor = true,
+                            replayIfBusy = true,
+                        )
+                    } else {
+                        publish(current.copy(window = current.window.noteIncomingWhileAway()))
+                    }
                 }
             },
             scope.launch {
@@ -97,8 +113,7 @@ class ThreadStateHolder(
     }
 
     fun loadLatest() {
-        if (pageJob?.isActive == true) return
-        pageJob = scope.launch {
+        launchPageJob {
             _state.value = ThreadUiState.Loading
             when (val result = safeLoad(TimelinePageRequest(providerThreadId))) {
                 is TimelinePageResult.Page -> publish(
@@ -130,7 +145,7 @@ class ThreadStateHolder(
         val cursor = current.window.olderCursor ?: return
         if (pageJob?.isActive == true) return
         publish(current.copy(loadingOlder = true, restoreAnchor = null))
-        pageJob = scope.launch {
+        launchPageJob {
             when (
                 val result = safeLoad(
                     TimelinePageRequest(
@@ -243,6 +258,8 @@ class ThreadStateHolder(
 
     fun acceptPendingNewer() {
         userAtNewest = true
+        replayInvalidationAfterPage = false
+        reloadAfterPage = false
         pageJob?.cancel()
         pageJob = null
         loadLatest()
@@ -259,6 +276,9 @@ class ThreadStateHolder(
     }
 
     override fun close() {
+        closed = true
+        replayInvalidationAfterPage = false
+        reloadAfterPage = false
         pageJob?.cancel()
         contactJob?.cancel()
         metadataJob?.cancel()
@@ -267,14 +287,14 @@ class ThreadStateHolder(
     }
 
     private fun loadExactAnchor(anchor: SearchAnchor) {
-        pageJob = scope.launch {
+        launchPageJob {
             val result = try {
                 messageIndex.loadAnchor(anchor)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: RuntimeException) {
                 _state.value = ThreadUiState.Failed(ConversationLoadFailure.STORAGE, IndexCoverage.NOT_STARTED)
-                return@launch
+                return@launchPageJob
             }
             when (result) {
                 is AnchorWindowResult.Found -> {
@@ -283,7 +303,7 @@ class ThreadStateHolder(
                         .map(SearchHit::toTimelineMessage)
                     if (items.isEmpty() || result.coverage.generationId == null) {
                         reloadAfterCurrentJob()
-                        return@launch
+                        return@launchPageJob
                     }
                     val generationId = checkNotNull(result.coverage.generationId)
                     publish(
@@ -315,11 +335,16 @@ class ThreadStateHolder(
         suppliedCurrent: ThreadUiState.Ready,
         visibleAnchor: WindowAnchor<ProviderMessageId>?,
         allowTailCursor: Boolean,
+        replayIfBusy: Boolean = false,
     ) {
         val current = collapseExpansion(suppliedCurrent)
-        if (pageJob?.isActive == true || current.window.items.isEmpty()) return
+        if (pageJob?.isActive == true) {
+            if (replayIfBusy) replayInvalidationAfterPage = true
+            return
+        }
+        if (current.window.items.isEmpty()) return
         val generationId = current.coverage.generationId ?: run {
-            reloadAfterCurrentJob()
+            loadLatest()
             return
         }
         val cursor = current.window.newerCursor ?: if (allowTailCursor) {
@@ -328,7 +353,7 @@ class ThreadStateHolder(
             return
         }
         publish(current.copy(loadingNewer = true))
-        pageJob = scope.launch {
+        launchPageJob {
             when (
                 val result = safeLoad(
                     TimelinePageRequest(
@@ -464,8 +489,54 @@ class ThreadStateHolder(
     }
 
     private fun reloadAfterCurrentJob() {
+        if (pageJob?.isActive == true) {
+            reloadAfterPage = true
+        } else {
+            loadLatest()
+        }
+    }
+
+    /** Owns the page slot before starting so even immediate jobs complete through one fence. */
+    private fun launchPageJob(block: suspend () -> Unit): Boolean {
+        if (closed || pageJob?.isActive == true) return false
+        lateinit var owner: Job
+        owner = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                block()
+            } finally {
+                finishPageJob(owner)
+            }
+        }
+        pageJob = owner
+        owner.start()
+        return true
+    }
+
+    private fun finishPageJob(owner: Job) {
+        if (pageJob !== owner) return
         pageJob = null
-        loadLatest()
+        if (closed) return
+        if (reloadAfterPage) {
+            reloadAfterPage = false
+            replayInvalidationAfterPage = false
+            loadLatest()
+            return
+        }
+        if (!replayInvalidationAfterPage) return
+        replayInvalidationAfterPage = false
+        val current = _state.value as? ThreadUiState.Ready
+        if (current == null || current.window.items.isEmpty()) {
+            loadLatest()
+        } else if (userAtNewest) {
+            requestNewer(
+                current,
+                visibleAnchor = null,
+                allowTailCursor = true,
+                replayIfBusy = true,
+            )
+        } else {
+            publish(current.copy(window = current.window.noteIncomingWhileAway()))
+        }
     }
 
     private fun collapseExpansion(current: ThreadUiState.Ready): ThreadUiState.Ready {

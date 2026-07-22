@@ -63,7 +63,6 @@ class MainActivity : ComponentActivity() {
     private var contactsPermissionGranted by mutableStateOf(false)
     private var notificationPermissionGranted by mutableStateOf(Build.VERSION.SDK_INT < 33)
     private var notificationPermissionRequestedBefore by mutableStateOf(false)
-    private var lastReportedMessagingEligibility: Boolean? = null
     private var lastReportedContactsPermission: Boolean? = null
     private var fullyDrawnReported = false
     private var showDiagnostics by mutableStateOf(false)
@@ -295,9 +294,9 @@ class MainActivity : ComponentActivity() {
     private fun relayMessagingEligibilityIfChanged() {
         if (!::roleCoordinator.isInitialized) return
         val eligible = roleState == RoleOnboardingState.Held && isPermissionGranted(Manifest.permission.READ_SMS)
-        if (lastReportedMessagingEligibility == eligible) return
-        lastReportedMessagingEligibility = eligible
-        (application as? AuroraSmsApplication)?.container?.onMessagingEligibilityChanged()
+        (application as? AuroraSmsApplication)
+            ?.container
+            ?.onMessagingEligibilityObserved(eligible)
     }
 
     private fun relayContactsPermissionIfChanged() {

@@ -784,12 +784,13 @@ prevents a stalled partial index from depending on incidental user navigation
 without introducing a background provider-read loop or weakening Android's
 default-SMS authority boundary.
 
-Physical large-history follow-up found that treating the role transition itself
-as a provider mutation abandoned the durable cursor every time the user switched
-temporarily to another SMS app. Role changes now pause/resume cleanly and do not
-create the ambiguous-provider ledger. Content-observer and external-provider
-signals remain dirty, while completion still requires exhausted SMS/MMS cursors,
-provider counts, and the bounded head/fingerprint verification. The partial UI
+Physical large-history follow-up initially preserved paused cursors across role
+transitions. Further review found that another default app can insert or mutate
+deep/backdated rows during that authority gap, beyond both the saved cursor and
+a bounded head check. Role recovery now dirties the generation and starts a
+fresh full scan; ordinary clean process recovery remains resumable. Completion
+requires exhausted SMS/MMS cursors, exact eligible provider/projection count
+equality, and bounded head/fingerprint verification. The partial UI
 exposes a content-free committed-row count. ADR 0020 permits Inbox and Thread to
 show the best-known union of private cached generations while coverage is
 incomplete, with explicit disclosure that recent provider changes may not be

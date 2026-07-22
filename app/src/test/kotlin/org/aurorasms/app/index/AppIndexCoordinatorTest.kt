@@ -22,7 +22,7 @@ class AppIndexCoordinatorTest {
         val coordinator = AppIndexCoordinator(
             applicationScope = backgroundScope,
             markPendingChanges = { events += "dirty" },
-            synchronize = { _ ->
+            synchronize = { _, _ ->
                 events += "sync"
                 IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
             },
@@ -47,7 +47,7 @@ class AppIndexCoordinatorTest {
         val coordinator = AppIndexCoordinator(
             applicationScope = backgroundScope,
             markPendingChanges = {},
-            synchronize = { _ ->
+            synchronize = { _, _ ->
                 runs += 1
                 IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
             },
@@ -71,7 +71,7 @@ class AppIndexCoordinatorTest {
         val coordinator = AppIndexCoordinator(
             applicationScope = backgroundScope,
             markPendingChanges = { events += "dirty" },
-            synchronize = { reasons ->
+            synchronize = { reasons, _ ->
                 events += reasons.single().name
                 IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
             },
@@ -85,12 +85,12 @@ class AppIndexCoordinatorTest {
     }
 
     @Test
-    fun roleChangeResumesCheckpointWithoutDirtyingPartialHistory() = runTest {
+    fun roleChangeDirtiesPartialHistoryBeforeReconciliation() = runTest {
         val events = mutableListOf<String>()
         val coordinator = AppIndexCoordinator(
             applicationScope = backgroundScope,
             markPendingChanges = { events += "dirty" },
-            synchronize = { reasons ->
+            synchronize = { reasons, _ ->
                 events += reasons.single().name
                 IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
             },
@@ -99,7 +99,7 @@ class AppIndexCoordinatorTest {
         assertTrue(coordinator.signal(IndexSignal.ROLE_CHANGED))
         runCurrent()
 
-        assertEquals(listOf(IndexSignal.ROLE_CHANGED.name), events)
+        assertEquals(listOf("dirty", IndexSignal.ROLE_CHANGED.name), events)
         coordinator.close()
     }
 
@@ -109,7 +109,7 @@ class AppIndexCoordinatorTest {
         val coordinator = AppIndexCoordinator(
             applicationScope = backgroundScope,
             markPendingChanges = {},
-            synchronize = { _ ->
+            synchronize = { _, _ ->
                 runs += 1
                 if (runs < 3) {
                     IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
@@ -139,12 +139,45 @@ class AppIndexCoordinatorTest {
     }
 
     @Test
+    fun pendingForegroundContinuationRetainsTheConsumedDurableSequence() = runTest {
+        val runs = mutableListOf<Pair<Set<IndexSignal>, Long?>>()
+        val coordinator = AppIndexCoordinator(
+            applicationScope = backgroundScope,
+            markPendingChanges = {},
+            synchronize = { reasons, durableSequence ->
+                runs += reasons to durableSequence
+                if (runs.size == 1) {
+                    IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
+                } else {
+                    IndexSyncOutcome.Complete(COMPLETE_COVERAGE, deletedStaleRows = 0)
+                }
+            },
+            shouldContinuePending = { true },
+            pendingRetryDelayMillis = 100L,
+        )
+
+        assertTrue(coordinator.signal(IndexSignal.ROLE_CHANGED, durableSequence = 42L))
+        runCurrent()
+        advanceTimeBy(100L)
+        runCurrent()
+
+        assertEquals(
+            listOf(
+                setOf(IndexSignal.ROLE_CHANGED) to 42L,
+                setOf(IndexSignal.FOREGROUND_RESUME) to 42L,
+            ),
+            runs,
+        )
+        coordinator.close()
+    }
+
+    @Test
     fun pendingReconciliationDoesNotContinueWithoutForegroundRoleEligibility() = runTest {
         var runs = 0
         val coordinator = AppIndexCoordinator(
             applicationScope = backgroundScope,
             markPendingChanges = {},
-            synchronize = { _ ->
+            synchronize = { _, _ ->
                 runs += 1
                 IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
             },
@@ -162,12 +195,115 @@ class AppIndexCoordinatorTest {
     }
 
     @Test
+    fun foregroundResumeRecoversDurableSequenceHeldWhileReadsWereNotPermitted() = runTest {
+        var permitted = false
+        val runs = mutableListOf<Pair<Set<IndexSignal>, Long?>>()
+        val coordinator = AppIndexCoordinator(
+            applicationScope = backgroundScope,
+            markPendingChanges = {},
+            synchronize = { reasons, durableSequence ->
+                runs += reasons to durableSequence
+                if (permitted) {
+                    IndexSyncOutcome.Complete(COMPLETE_COVERAGE, deletedStaleRows = 0)
+                } else {
+                    IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
+                }
+            },
+            shouldContinuePending = { permitted },
+            pendingRetryDelayMillis = 100L,
+        )
+
+        assertTrue(coordinator.signal(IndexSignal.ROLE_CHANGED, durableSequence = 42L))
+        runCurrent()
+        permitted = true
+        coordinator.resumeAfterForeground()
+        runCurrent()
+
+        assertEquals(
+            listOf(
+                setOf(IndexSignal.ROLE_CHANGED) to 42L,
+                setOf(IndexSignal.FOREGROUND_RESUME) to 42L,
+            ),
+            runs,
+        )
+        coordinator.close()
+    }
+
+    @Test
+    fun reconciliationFailureRetainsDurableSequenceForTheNextForegroundRun() = runTest {
+        val runs = mutableListOf<Pair<Set<IndexSignal>, Long?>>()
+        val coordinator = AppIndexCoordinator(
+            applicationScope = backgroundScope,
+            markPendingChanges = {},
+            synchronize = { reasons, durableSequence ->
+                runs += reasons to durableSequence
+                if (runs.size == 1) {
+                    throw IllegalStateException("synthetic redacted failure")
+                }
+                IndexSyncOutcome.Complete(COMPLETE_COVERAGE, deletedStaleRows = 0)
+            },
+        )
+
+        assertTrue(coordinator.signal(IndexSignal.ROLE_CHANGED, durableSequence = 42L))
+        runCurrent()
+        coordinator.resumeAfterForeground()
+        runCurrent()
+
+        assertEquals(
+            listOf(
+                setOf(IndexSignal.ROLE_CHANGED) to 42L,
+                setOf(IndexSignal.FOREGROUND_RESUME) to 42L,
+            ),
+            runs,
+        )
+        coordinator.close()
+    }
+
+    @Test
+    fun startPreservesPreStartDurableSequenceThroughForegroundRecovery() = runTest {
+        var permitted = false
+        val runs = mutableListOf<Pair<Set<IndexSignal>, Long?>>()
+        val coordinator = AppIndexCoordinator(
+            applicationScope = backgroundScope,
+            markPendingChanges = {},
+            synchronize = { reasons, durableSequence ->
+                runs += reasons to durableSequence
+                if (permitted) {
+                    IndexSyncOutcome.Complete(COMPLETE_COVERAGE, deletedStaleRows = 0)
+                } else {
+                    IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
+                }
+            },
+            shouldContinuePending = { permitted },
+            pendingRetryDelayMillis = 100L,
+        )
+
+        assertTrue(coordinator.signal(IndexSignal.ROLE_CHANGED, durableSequence = 42L))
+        runCurrent()
+        coordinator.start()
+        runCurrent()
+        permitted = true
+        coordinator.resumeAfterForeground()
+        runCurrent()
+
+        assertEquals(
+            listOf(
+                setOf(IndexSignal.ROLE_CHANGED) to 42L,
+                setOf(IndexSignal.STARTUP) to 42L,
+                setOf(IndexSignal.FOREGROUND_RESUME) to 42L,
+            ),
+            runs,
+        )
+        coordinator.close()
+    }
+
+    @Test
     fun pendingContinuationIsBoundedUntilANewExplicitSignal() = runTest {
         var runs = 0
         val coordinator = AppIndexCoordinator(
             applicationScope = backgroundScope,
             markPendingChanges = {},
-            synchronize = { _ ->
+            synchronize = { _, _ ->
                 runs += 1
                 IndexSyncOutcome.Pending(PARTIAL_COVERAGE)
             },
@@ -206,6 +342,8 @@ class AppIndexCoordinatorTest {
             state = IndexRunState.COMPLETE,
             smsExhausted = true,
             mmsExhausted = true,
+            generationCommittedCount = 10L,
+            smsCheckpointCommittedCount = 10L,
         )
     }
 }

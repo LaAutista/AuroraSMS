@@ -336,6 +336,8 @@ class ScopedAppearanceResolutionTest {
             smsExhausted = true,
             mmsExhausted = true,
             pendingChanges = false,
+            generationCommittedCount = 1L,
+            smsCheckpointCommittedCount = 1L,
         )
     }
 }

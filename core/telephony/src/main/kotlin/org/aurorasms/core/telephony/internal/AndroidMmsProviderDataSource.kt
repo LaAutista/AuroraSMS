@@ -76,7 +76,7 @@ class AndroidMmsProviderDataSource internal constructor(
         resolver.query(
             Telephony.Mms.CONTENT_URI,
             arrayOf(BaseColumns._ID),
-            null,
+            MMS_INDEX_ELIGIBILITY_SELECTION,
             null,
             null,
         )?.use { ProviderAccessResult.Success(it.count.toLong()) }
@@ -87,14 +87,11 @@ class AndroidMmsProviderDataSource internal constructor(
         request: ProviderPageRequest,
     ): ProviderAccessResult<ProviderPage<MmsProviderMessage>> = withReadAccess("read MMS page") {
         val beforeSeconds = request.before?.timestampMillis?.div(MILLIS_PER_SECOND_VALUE)
-        val eligibleRows =
-            "${BaseColumns._ID} > 0 AND " +
-                "${Telephony.Mms.DATE} BETWEEN 0 AND $MAX_MMS_DATE_SECONDS"
         val selection = request.before?.let {
-            "$eligibleRows AND " +
+            "$MMS_INDEX_ELIGIBILITY_SELECTION AND " +
                 "((${Telephony.Mms.DATE} < ?) OR " +
                 "(${Telephony.Mms.DATE} = ? AND ${BaseColumns._ID} < ?))"
-        } ?: eligibleRows
+        } ?: MMS_INDEX_ELIGIBILITY_SELECTION
         val selectionArgs = request.before?.let {
             arrayOf(
                 beforeSeconds.toString(),
@@ -1462,7 +1459,6 @@ internal fun voiceMemoSmil(durationMillis: Long, hasText: Boolean): String = bui
 }
 
 private const val MILLIS_PER_SECOND_VALUE = 1_000L
-private const val MAX_MMS_DATE_SECONDS = Long.MAX_VALUE / MILLIS_PER_SECOND_VALUE
 private const val MAX_INSPECTED_MMS_ADDRESS_ROWS = MmsProviderMessage.MAX_MMS_PARTICIPANTS
 private const val MAX_INSPECTED_MMS_PART_ROWS = 100
 private const val MMS_FROM_ADDRESS_TYPE = 137

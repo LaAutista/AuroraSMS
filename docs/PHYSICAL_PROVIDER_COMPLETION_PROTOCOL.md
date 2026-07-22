@@ -24,12 +24,11 @@ subjects, attachment metadata, search terms, or contact data. It never invokes
 the debug SMS-row snapshot provider. Terminal output is limited to aggregate
 counts and state codes.
 
-Role recovery is intentionally asymmetric. An incomplete paused generation
-resumes its durable cursors so a large history does not restart from the newest
-page. A previously complete generation starts a fresh full generation after
-`ROLE_CHANGED`, because arbitrary provider changes may have occurred while
-Aurora lacked authority; a bounded head check cannot prove deep history stayed
-unchanged.
+Every `ROLE_CHANGED` recovery starts a fresh full generation. Arbitrary deep or
+backdated provider changes may have occurred while Aurora lacked authority, so
+neither a paused cursor nor a bounded head check can prove that old history
+stayed unchanged. Ordinary process-death and foreground recovery remain
+resumable when no provider or authority transition was observed.
 
 ## Owner-visible sequence
 
@@ -78,12 +77,12 @@ infer completion from a partial count or an earlier generation.
 ## Acceptance and nonclaims
 
 Provider completion passes only when the latest generation is nonempty and
-`COMPLETE`, both SMS and MMS checkpoints are exhausted and carry verified
-counts no smaller than their committed counts, checkpoint totals equal the
-indexed generation, conversation summaries and unread totals reconcile, and
-the FTS row count matches the index. The same snapshot must remain stable for
-three polls after a proven cold-start refresh while the APK, role, and
-permission state remain unchanged.
+`COMPLETE`, both SMS and MMS checkpoints are exhausted, their verified eligible
+provider counts exactly equal their committed projection counts, checkpoint
+totals equal the indexed generation, conversation summaries and unread totals
+reconcile, and the FTS row count matches the index. The same snapshot must
+remain stable for three polls after a proven cold-start refresh while the APK,
+role, and permission state remain unchanged.
 
 This gate does not prove current carrier delivery, SMS/MMS sending, group
 self-line discovery, dual-SIM routing, billing/roaming behavior, OEM

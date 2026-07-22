@@ -331,10 +331,12 @@ totals, and FTS count reconcile for three identical polls after a proven cold-
 start refresh. Its parser has an offline governed self-test; physical execution
 and private owner UI confirmation remain open.
 
-Host coverage separately proves that `ROLE_CHANGED` resumes the exact durable
-cursor of a paused first-history generation, while role recovery after a
-complete generation creates a new full scan. Clean startup without a role
-transition retains the bounded head/count reconciliation path.
+Host coverage separately proves that clean process recovery resumes the exact
+durable cursor of a paused first-history generation, while `ROLE_CHANGED`
+starts a new full scan from either paused or complete history. Completion also
+requires exact equality between each source's eligible provider count and its
+committed projections; clean startup without a role transition retains the
+bounded head/count reconciliation path.
 
 ### One-to-one SMS
 
@@ -3364,6 +3366,12 @@ The incomplete Inbox and Thread notice is now a prominent progress surface that
 shows only the content-free committed count and explicitly says some
 conversations and older messages are missing.
 
+This 2026-07-19 behavior is retained as historical evidence only. The
+2026-07-21 completeness hardening supersedes clean role-resume: an authority
+gap can hide deep or backdated provider changes, so current role recovery
+starts a fresh generation while ordinary clean process recovery remains
+resumable.
+
 The first complete aggregate stopped only because lint correctly found the old
 generic incomplete-history string unused after both screens moved to the new
 pluralized progress copy. Removing that dead resource produced a definitive
@@ -4176,6 +4184,11 @@ startup retains bounded steady-state reconciliation. This prevents deep
 provider changes made while another app held the SMS role from hiding beyond a
 bounded head/count check.
 
+This commit-specific result is historical and was superseded on 2026-07-21.
+Current code restarts both paused and complete generations after
+`ROLE_CHANGED`, and exact eligible provider/projection count equality rejects
+an inserted or skipped row before completion.
+
 Acceptance evidence:
 
 - the focused index synchronizer suite plus protocol/governance checks passed;
@@ -4315,6 +4328,64 @@ This closes the review-only N1 acceptance boundary. Contact discovery,
 first-contact provider ownership and transport, physical carrier/OEM cases,
 the wider Phase 7 product surface, signing, and publication remain open.
 AuroraSMS is not gold.
+
+#### Phase 7 complete-history integrity hardening — 2026-07-21
+
+The source committed with this record closes four correctness gaps found while
+reviewing N1 against complete-history and authority-loss requirements. SMS and
+MMS provider `count()` and page reads now share one exact projectable-row
+eligibility definition. Completion requires the eligible provider total, the
+sum of committed checkpoints, the generation metadata total, and the unique
+physical current-generation row count to agree before checkpoint verification
+or stale-row deletion. A regression fixture with 501 eligible provider rows,
+501 metadata/checkpoint rows, and only the newest 500 physical index rows proves
+that a legacy false-complete generation is rejected and rebuilt to a verified
+501-row generation even when its bounded head sample is unchanged.
+
+Inbox refresh now adopts an older cursor discovered while refreshing the
+bounded head. Inbox and Thread state holders also replay a conflated provider
+invalidation that arrives during an active page load, with job fencing that
+prevents an obsolete load from publishing. These host regressions close the
+known presentation paths where older history or an invalidation could otherwise
+be stranded until another user action.
+
+Messaging-eligibility observation no longer manufactures `ROLE_CHANGED` on
+every process start. Role ingress first persists and queues its durable
+authority-gap sequence, and that exact sequence is carried through the outer
+queue and coalescer epoch. Every serialized reconciliation claims the maximum
+unresolved sequence and retains it after a non-complete result or exception;
+only a verified complete reconciliation consumes it. Deterministic tests cover
+pre-start ingress, sequence 41/42 snapshot ordering, epoch isolation, pending
+continuation, prohibited background reads, and a throwing reconciler.
+
+The benchmark-only notification-permission lint finding has a narrowly scoped
+baseline. The permission verifier independently enforces exact symmetric
+permission equality for every production and benchmark merged manifest and
+packaged APK, including `POST_NOTIFICATIONS`, so the lint baseline cannot hide
+either an added or a lost permission.
+
+Acceptance evidence for the final candidate was:
+
+- focused history/authority regressions: 150 Gradle tasks executed successfully;
+- complete governed host gate (`test`, debug/release/benchmark lint and
+  assembly, R8, macrobenchmark checks, governance, clean-room/private-asset,
+  dependency, license, performance-protocol, physical-provider-protocol,
+  permission, APK-content, and release-metadata verification): 980 tasks passed
+  in 2m09s;
+- release bundle: 306 tasks passed in 9s;
+- CycloneDX aggregate: 16 tasks passed in 9s;
+- API 36 complete connected matrix: 477 enumerated tests passed with zero
+  failures and 12 intentional protocol skips in 3m02s; and
+- API 26 complete connected matrix: 474 enumerated tests passed with zero
+  failures and 15 intentional protocol skips in 3m09s.
+
+No live provider content, message address/body/subject, search phrase, SMS-role
+or permission mutation, screenshot, broad log, provider write, or carrier send
+participated. Physical Pixel/OEM provider-completion, carrier transport, and
+private exact-result acceptance remain open. Contact discovery, first-contact
+provider ownership/transport, complete MMS product acceptance, signing,
+F-Droid/publication metadata, artwork notices, and signed checksums also remain
+open. This integrity hardening does not make AuroraSMS gold.
 
 ## Release gate
 

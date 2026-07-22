@@ -15,6 +15,7 @@ import org.aurorasms.core.index.storage.IndexCheckpointEntity
 import org.aurorasms.core.index.storage.IndexGenerationEntity
 import org.aurorasms.core.index.storage.IndexSyncDao
 import org.aurorasms.core.index.storage.IndexUpsertSummary
+import org.aurorasms.core.index.storage.INITIAL_INDEX_BATCH_SIZE
 import org.aurorasms.core.index.storage.IndexedConversationEntity
 import org.aurorasms.core.index.storage.IndexedConversationParticipantEntity
 import org.aurorasms.core.index.storage.IndexedMessageDao
@@ -60,8 +61,27 @@ class TelephonyIndexSynchronizerTest {
         val database = FakeIndexDatabase()
         val generationId = database.sync.startGeneration(10L)
         val cursor = cursor(timestamp = 50L, id = 5L)
-        database.sync.putCheckpoint(
-            checkpoint(generationId, ProviderKindCode.SMS, cursor, committedCount = 5L),
+        database.messages.commitScanningProjectionBatch(
+            generationId = generationId,
+            projections = (9L downTo 5L).map { id ->
+                IndexProjectionMapper.projectionFromSms(
+                    message = sms(id = id, timestamp = id * 10L),
+                    generationId = generationId,
+                )
+            },
+            smsCheckpoint = checkpoint(
+                generationId,
+                ProviderKindCode.SMS,
+                cursor,
+                committedCount = 5L,
+            ),
+            mmsCheckpoint = checkpoint(
+                generationId,
+                ProviderKindCode.MMS,
+                exhausted = true,
+            ),
+            nowMillis = 15L,
+            targetBatchSize = INITIAL_INDEX_BATCH_SIZE,
         )
         database.sync.stopActiveGeneration(
             generationId = generationId,
@@ -74,14 +94,59 @@ class TelephonyIndexSynchronizerTest {
             countResult = ProviderAccessResult.Success(6L),
         )
 
-        val outcome = synchronizer(database, sms, SyncTestMmsSource()).reconcile(
-            setOf(IndexSignal.ROLE_CHANGED),
-        )
+        val outcome = synchronizer(database, sms, SyncTestMmsSource()).synchronize()
 
         assertTrue(outcome is IndexSyncOutcome.Complete)
         assertEquals(1, database.sync.allGenerations().size)
         assertEquals(generationId, database.sync.latestGeneration()?.generationId)
         assertEquals(cursor, sms.readRequests.first().before)
+    }
+
+    @Test
+    fun `role recovery abandons paused cursor and starts a fresh full generation`() = runTest {
+        val database = FakeIndexDatabase()
+        val staleGenerationId = database.sync.startGeneration(10L)
+        val staleCursor = cursor(timestamp = 50L, id = 5L)
+        database.sync.putCheckpoint(
+            checkpoint(staleGenerationId, ProviderKindCode.SMS, staleCursor, committedCount = 5L),
+        )
+        database.sync.stopActiveGeneration(
+            generationId = staleGenerationId,
+            terminalState = GenerationStateCode.PAUSED,
+            failureCode = null,
+            nowMillis = 20L,
+        )
+        val sms = SyncTestSmsSource(messages = smsRange(6))
+
+        val outcome = synchronizer(database, sms, SyncTestMmsSource()).reconcile(
+            setOf(IndexSignal.ROLE_CHANGED),
+        )
+
+        assertTrue(outcome is IndexSyncOutcome.Complete)
+        assertEquals(2, database.sync.allGenerations().size)
+        assertTrue(database.sync.latestGeneration()?.generationId != staleGenerationId)
+        assertEquals(null, sms.readRequests.first().before)
+        assertEquals(6L, database.messages.count())
+    }
+
+    @Test
+    fun `role recovery immediately abandons an active partial generation`() = runTest {
+        val database = FakeIndexDatabase()
+        val staleGenerationId = database.sync.startGeneration(10L)
+        val sms = SyncTestSmsSource(messages = smsRange(2))
+
+        val outcome = synchronizer(database, sms, SyncTestMmsSource()).reconcile(
+            setOf(IndexSignal.ROLE_CHANGED),
+        )
+
+        assertTrue(outcome is IndexSyncOutcome.Complete)
+        val generations = database.sync.allGenerations()
+        assertEquals(2, generations.size)
+        assertEquals(GenerationStateCode.PAUSED, generations.first().state)
+        assertTrue(generations.first().pendingChanges)
+        assertTrue(database.sync.latestGeneration()?.generationId != staleGenerationId)
+        assertEquals(null, sms.readRequests.first().before)
+        assertEquals(2L, database.messages.count())
     }
 
     @Test
@@ -148,6 +213,102 @@ class TelephonyIndexSynchronizerTest {
     }
 
     @Test
+    fun `provider count above scanned eligible rows cannot complete a generation`() = runTest {
+        val database = FakeIndexDatabase()
+        val sms = SyncTestSmsSource(
+            messages = listOf(sms(id = 1L, timestamp = 10L)),
+            countResult = ProviderAccessResult.Success(2L),
+        )
+
+        val outcome = synchronizer(database, sms, SyncTestMmsSource()).synchronize()
+
+        assertTrue(outcome is IndexSyncOutcome.Pending)
+        assertEquals(2, database.sync.allGenerations().size)
+        assertTrue(database.sync.allGenerations().all { it.state == GenerationStateCode.PAUSED })
+        assertTrue(database.sync.staleDeletionAttempts.isEmpty())
+    }
+
+    @Test
+    fun `completion transaction rejects a provider count above committed projections`() = runTest {
+        val database = FakeIndexDatabase()
+        val generationId = database.sync.startGeneration(10L)
+        database.sync.putCheckpoint(
+            checkpoint(
+                generationId = generationId,
+                providerKind = ProviderKindCode.SMS,
+                exhausted = true,
+                committedCount = 1L,
+            ),
+        )
+        database.sync.putCheckpoint(
+            checkpoint(
+                generationId = generationId,
+                providerKind = ProviderKindCode.MMS,
+                exhausted = true,
+            ),
+        )
+        assertEquals(1, database.sync.markVerifying(generationId, 20L))
+
+        try {
+            database.sync.finishVerifiedGeneration(
+                generationId = generationId,
+                nowMillis = 30L,
+                smsProviderCount = 2L,
+                mmsProviderCount = 0L,
+            )
+            fail("Expected exact provider/projection equality to be enforced")
+        } catch (_: IllegalArgumentException) {
+            // Expected: no stale-row deletion or completion may occur.
+        }
+
+        assertEquals(GenerationStateCode.VERIFYING, database.sync.generationById(generationId)?.state)
+        assertTrue(database.sync.staleDeletionAttempts.isEmpty())
+    }
+
+    @Test
+    fun `completion transaction rejects fewer unique generation rows than provider projections`() = runTest {
+        val database = FakeIndexDatabase()
+        val generationId = database.sync.startGeneration(10L)
+        database.sync.putCheckpoint(
+            checkpoint(
+                generationId = generationId,
+                providerKind = ProviderKindCode.SMS,
+                exhausted = true,
+                committedCount = 1L,
+            ),
+        )
+        database.sync.putCheckpoint(
+            checkpoint(
+                generationId = generationId,
+                providerKind = ProviderKindCode.MMS,
+                exhausted = true,
+            ),
+        )
+        database.sync.updateGeneration(
+            generationId = generationId,
+            state = GenerationStateCode.SCANNING,
+            nowMillis = 15L,
+            completedAtMillis = null,
+            committedCount = 1L,
+            pendingChanges = false,
+            failureCode = null,
+            targetBatchSize = INITIAL_INDEX_BATCH_SIZE,
+        )
+        assertEquals(1, database.sync.markVerifying(generationId, 20L))
+
+        val result = database.sync.finishVerifiedGeneration(
+            generationId = generationId,
+            nowMillis = 30L,
+            smsProviderCount = 1L,
+            mmsProviderCount = 0L,
+        )
+
+        assertEquals(null, result)
+        assertEquals(GenerationStateCode.VERIFYING, database.sync.generationById(generationId)?.state)
+        assertTrue(database.sync.staleDeletionAttempts.isEmpty())
+    }
+
+    @Test
     fun `mixed valid and missing provider identities keep the summary incomplete`() = runTest {
         val database = FakeIndexDatabase()
         val sms = SyncTestSmsSource(
@@ -185,6 +346,54 @@ class TelephonyIndexSynchronizerTest {
         assertEquals(1, startupMms.readRequests.size)
         assertEquals(1, database.sync.allGenerations().size)
         assertEquals(generationId, database.sync.latestGeneration()?.generationId)
+    }
+
+    @Test
+    fun `legacy complete metadata with a missing deep row self heals before completion`() = runTest {
+        val database = FakeIndexDatabase()
+        val generationId = database.sync.startGeneration(10L)
+        val providerMessages = smsRange(501)
+        providerMessages.take(500).forEach { message ->
+            database.messages.seed(
+                IndexProjectionMapper.fromSms(
+                    message = message,
+                    generationId = generationId,
+                ),
+            )
+        }
+        database.sync.putCheckpoint(
+            checkpoint(
+                generationId = generationId,
+                providerKind = ProviderKindCode.SMS,
+                exhausted = true,
+                committedCount = 501L,
+            ).copy(verifiedProviderCount = 501L),
+        )
+        database.sync.putCheckpoint(
+            checkpoint(
+                generationId = generationId,
+                providerKind = ProviderKindCode.MMS,
+                exhausted = true,
+            ).copy(verifiedProviderCount = 0L),
+        )
+        database.sync.updateGeneration(
+            generationId = generationId,
+            state = GenerationStateCode.COMPLETE,
+            nowMillis = 20L,
+            completedAtMillis = 20L,
+            committedCount = 501L,
+            pendingChanges = false,
+            failureCode = null,
+            targetBatchSize = INITIAL_INDEX_BATCH_SIZE,
+        )
+        val sms = SyncTestSmsSource(messages = providerMessages)
+
+        val outcome = synchronizer(database, sms, SyncTestMmsSource()).synchronize()
+
+        assertTrue(outcome is IndexSyncOutcome.Complete)
+        assertTrue((outcome as IndexSyncOutcome.Complete).coverage.verifiedComplete)
+        assertEquals(2, database.sync.allGenerations().size)
+        assertEquals(501L, database.messages.count())
     }
 
     @Test
@@ -317,7 +526,19 @@ class TelephonyIndexSynchronizerTest {
             exhausted = true,
             committedCount = 5L,
         )
-        database.sync.putCheckpoint(committedSms)
+        database.messages.commitScanningProjectionBatch(
+            generationId = generationId,
+            projections = (9L downTo 5L).map { id ->
+                IndexProjectionMapper.projectionFromSms(
+                    message = sms(id = id, timestamp = id * 10L),
+                    generationId = generationId,
+                )
+            },
+            smsCheckpoint = committedSms,
+            mmsCheckpoint = checkpoint(generationId, ProviderKindCode.MMS),
+            nowMillis = 15L,
+            targetBatchSize = INITIAL_INDEX_BATCH_SIZE,
+        )
         val sms = SyncTestSmsSource(messages = emptyList(), countResult = ProviderAccessResult.Success(5L))
         val mms = SyncTestMmsSource(messages = listOf(mms(id = 4, timestamp = 40)))
 
@@ -384,6 +605,7 @@ class TelephonyIndexSynchronizerTest {
         ).synchronize()
         assertEquals(IndexSyncOutcome.Paused(IndexFailureCode.ROLE_REQUIRED), roleOutcome)
         assertEquals(GenerationStateCode.PAUSED, roleDatabase.sync.latestGeneration()?.state)
+        assertTrue(requireNotNull(roleDatabase.sync.latestGeneration()).pendingChanges)
 
         val permissionDatabase = FakeIndexDatabase()
         val permissionOutcome = synchronizer(
@@ -393,6 +615,7 @@ class TelephonyIndexSynchronizerTest {
         ).synchronize()
         assertEquals(IndexSyncOutcome.Failed(IndexFailureCode.PERMISSION_DENIED), permissionOutcome)
         assertEquals(GenerationStateCode.FAILED, permissionDatabase.sync.latestGeneration()?.state)
+        assertTrue(requireNotNull(permissionDatabase.sync.latestGeneration()).pendingChanges)
     }
 
     @Test
@@ -537,6 +760,7 @@ class TelephonyIndexSynchronizerTest {
         synchronizer.pauseForRoleLoss()
 
         assertEquals(GenerationStateCode.PAUSED, database.sync.generationById(generationId)?.state)
+        assertTrue(requireNotNull(database.sync.generationById(generationId)).pendingChanges)
     }
 
     private fun synchronizer(
@@ -759,6 +983,9 @@ private class FakeIndexSyncDao(
         messages.deleteParticipantsOutside(generationId)
 
     protected override suspend fun indexedMessageCount(): Long = messages.count()
+
+    protected override suspend fun indexedMessageCount(generationId: Long): Long =
+        messages.indexedMessageCount(generationId)
 
     protected override suspend fun indexedThreadCount(generationId: Long): Long =
         messages.indexedThreadCount(generationId)
@@ -1104,6 +1331,10 @@ private class FakeIndexedMessageDao : IndexedMessageDao() {
         .map(IndexedMessageEntity::providerThreadId)
         .distinct()
         .size
+        .toLong()
+
+    fun indexedMessageCount(generationId: Long): Long = rows.values
+        .count { it.lastSeenGeneration == generationId }
         .toLong()
 
     fun indexedConversationCount(generationId: Long): Long = conversations.values

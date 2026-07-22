@@ -217,9 +217,11 @@ def verify_manifest(path: Path) -> None:
     expected_permissions = allowed_permissions | {
         f"{expected_app_id}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
     }
-    unexpected = permissions - expected_permissions
-    if unexpected:
-        raise AssertionError(f"{path}: unexpected permissions: {sorted(unexpected)}")
+    if permissions != expected_permissions and not is_benchmark:
+        raise AssertionError(
+            f"{path}: production permissions changed: "
+            f"{sorted(permissions ^ expected_permissions)}"
+        )
     denied = permissions & forbidden_permissions
     if denied:
         raise AssertionError(f"{path}: forbidden permissions: {sorted(denied)}")
@@ -530,11 +532,7 @@ if aapt2:
             expected = benchmark_permissions
         elif package_name != APP_ID:
             raise AssertionError(f"{apk}: unexpected APK package {package_name}")
-        unexpected = (
-            apk_permissions ^ expected
-            if package_name in {MACRO_ID, BENCHMARK_APP_ID}
-            else apk_permissions - expected
-        )
+        unexpected = apk_permissions ^ expected
         if unexpected:
             raise AssertionError(f"{apk}: unexpected packaged permissions: {sorted(unexpected)}")
         if package_name in {APP_ID, BENCHMARK_APP_ID} and apk_permissions & forbidden_permissions:
