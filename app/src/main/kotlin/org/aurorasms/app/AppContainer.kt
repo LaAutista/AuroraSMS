@@ -70,7 +70,10 @@ import org.aurorasms.app.message.ReplyTargetRegistry
 import org.aurorasms.app.message.SharedPreferencesReplyOperationStore
 import org.aurorasms.app.message.SharedPreferencesReplyReplayGuard
 import org.aurorasms.app.message.SharedPreferencesReplyTargetStore
+import org.aurorasms.app.message.DeferredFirstContactOwnershipController
 import org.aurorasms.app.message.DeferredThreadSmsSendController
+import org.aurorasms.app.message.FirstContactAuthorityPreflight
+import org.aurorasms.app.message.FirstContactOwnershipCoordinator
 import org.aurorasms.app.message.ThreadSmsSendController
 import org.aurorasms.app.message.ThreadSmsSendCoordinator
 import org.aurorasms.app.message.AndroidScheduledSmsAlarmDriver
@@ -78,6 +81,7 @@ import org.aurorasms.app.message.DeferredScheduledSmsController
 import org.aurorasms.app.message.ScheduledSmsController
 import org.aurorasms.app.message.ScheduledSmsCoordinator
 import org.aurorasms.app.message.ScheduledSmsRecoveryReason
+import org.aurorasms.app.message.UnavailableFirstContactOwnershipController
 import org.aurorasms.app.message.UnavailableScheduledSmsController
 import org.aurorasms.app.message.UnavailableThreadSmsSendController
 import org.aurorasms.app.message.AndroidSendDelayAlarmDriver
@@ -165,6 +169,7 @@ import org.aurorasms.core.telephony.followUpRequired
 import org.aurorasms.core.telephony.internal.AndroidContactDiscovery
 import org.aurorasms.core.telephony.internal.AndroidContactResolver
 import org.aurorasms.core.telephony.internal.AndroidDefaultSmsRoleState
+import org.aurorasms.core.telephony.internal.AndroidProviderThreadResolver
 import org.aurorasms.core.telephony.internal.AndroidMmsProviderDataSource
 import org.aurorasms.core.telephony.internal.AndroidMmsAttachmentRepository
 import org.aurorasms.core.telephony.internal.AndroidMmsTransport
@@ -213,6 +218,7 @@ import org.aurorasms.core.state.storage.RoomComposerSmsOperationRepository
 import org.aurorasms.core.state.storage.RoomConversationSubscriptionPreferenceRepository
 import org.aurorasms.core.state.storage.RoomDraftRepository
 import org.aurorasms.core.state.storage.RoomDraftAttachmentRepository
+import org.aurorasms.core.state.storage.RoomFirstContactOperationRepository
 import org.aurorasms.core.state.storage.RoomScheduledSmsRepository
 import org.aurorasms.core.state.storage.RoomSendDelayRepository
 import org.aurorasms.core.state.storage.RoomPermanentDeletionRepository
@@ -417,6 +423,8 @@ class AppContainer(
     )
     private val deferredThreadSmsSendController = DeferredThreadSmsSendController()
     internal val threadSmsSendController: ThreadSmsSendController = deferredThreadSmsSendController
+    private val deferredFirstContactOwnershipController = DeferredFirstContactOwnershipController()
+    internal val firstContactOwnershipController = deferredFirstContactOwnershipController
     private val deferredScheduledSmsController = DeferredScheduledSmsController()
     internal val scheduledSmsController: ScheduledSmsController = deferredScheduledSmsController
     private val deferredSendDelayController = DeferredSendDelayController()
@@ -528,6 +536,7 @@ class AppContainer(
         requestIndexOpen()
         if (syntheticIndexOnly) {
             deferredThreadSmsSendController.install(UnavailableThreadSmsSendController)
+            deferredFirstContactOwnershipController.install(UnavailableFirstContactOwnershipController)
             deferredScheduledSmsController.install(UnavailableScheduledSmsController)
             deferredSendDelayController.install(UnavailableSendDelayController)
             deferredPermanentDeletionController.install(UnavailablePermanentDeletionController)
@@ -548,6 +557,28 @@ class AppContainer(
                         stateDatabase = result.database
                         val appearanceRepository = RoomAppearanceProfileRepository(result.database)
                         val composerRepository = RoomComposerSmsOperationRepository(result.database)
+                        deferredFirstContactOwnershipController.install(
+                            FirstContactOwnershipCoordinator(
+                                authorityPreflight = {
+                                    when {
+                                        !defaultSmsRoleState.isRoleAvailable() ->
+                                            FirstContactAuthorityPreflight.PLATFORM_UNAVAILABLE
+                                        !defaultSmsRoleState.isRoleHeld() ->
+                                            FirstContactAuthorityPreflight.ROLE_REQUIRED
+                                        application.checkSelfPermission(Manifest.permission.READ_SMS) !=
+                                            PackageManager.PERMISSION_GRANTED ->
+                                            FirstContactAuthorityPreflight.PERMISSION_DENIED
+                                        else -> FirstContactAuthorityPreflight.READY
+                                    }
+                                },
+                                subscriptions = subscriptionRepository,
+                                operations = RoomFirstContactOperationRepository(result.database),
+                                threadResolver = AndroidProviderThreadResolver(
+                                    context = application,
+                                    roleState = defaultSmsRoleState,
+                                ),
+                            ),
+                        )
                         deferredThreadSmsSendController.install(
                             ThreadSmsSendCoordinator(
                                 applicationScope = applicationScope,
@@ -613,6 +644,9 @@ class AppContainer(
                     }
                     is StateDatabaseOpenResult.Failed -> {
                         deferredThreadSmsSendController.install(UnavailableThreadSmsSendController)
+                        deferredFirstContactOwnershipController.install(
+                            UnavailableFirstContactOwnershipController,
+                        )
                         deferredScheduledSmsController.install(UnavailableScheduledSmsController)
                         deferredSendDelayController.install(UnavailableSendDelayController)
                         deferredPermanentDeletionController.install(

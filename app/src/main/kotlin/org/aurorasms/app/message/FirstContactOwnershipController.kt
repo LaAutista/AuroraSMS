@@ -2,6 +2,9 @@
 
 package org.aurorasms.app.message
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderThreadId
@@ -139,4 +142,21 @@ internal object UnavailableFirstContactOwnershipController : FirstContactOwnersh
     ): FirstContactOwnershipResult = FirstContactOwnershipResult.Failure(
         FirstContactOwnershipFailureReason.STORAGE_UNAVAILABLE,
     )
+}
+
+/** Waits for state storage before admitting first-contact ownership. */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal class DeferredFirstContactOwnershipController : FirstContactOwnershipController {
+    private val delegate = MutableStateFlow<FirstContactOwnershipController?>(null)
+
+    fun install(controller: FirstContactOwnershipController) {
+        delegate.value = controller
+    }
+
+    override suspend fun reserveAndBind(
+        command: FirstContactOwnershipCommand,
+    ): FirstContactOwnershipResult = awaitDelegate().reserveAndBind(command)
+
+    private suspend fun awaitDelegate(): FirstContactOwnershipController =
+        delegate.value ?: delegate.first { it != null }.let(::checkNotNull)
 }
