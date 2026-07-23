@@ -623,11 +623,19 @@ Controls:
   the source draft identity and revision, reject a target-thread sibling, rekey
   the same draft at a strictly newer revision, and preserve its body, subject,
   creation time, and attachment ownership;
-- retain `HANDOFF_RESERVED` until a future transaction reserves the mature
-  composer journal; N2B cannot delete that owner, stage a provider message,
-  register a callback, or invoke SMS/MMS transport; and
+- retire `HANDOFF_RESERVED` only inside the exact Room transaction that
+  revalidates operation, participant fingerprint, draft, attachment, thread,
+  subscription, transport, and signature authority while reserving the mature
+  composer journal; the physical delete guard and transaction preserve exactly
+  one owner across mismatches, capacity refusal, and post-insert rollback;
+- keep every phase except explicitly proven `KNOWN_UNSENT` unreleasable by a
+  direct or user release; `HANDOFF_RESERVED` may retire only through the paired
+  composer transaction above, and a separately reviewed exact current
+  participant-draft authority is required before exposing known-unsent
+  release/retry; and
 - keep the Android resolver and headless coordinator outside the New chat and
-  production application graph until the separately reviewed N2C activation.
+  production application graph until separately reviewed production
+  first-contact activation.
 
 ## Privacy defaults
 

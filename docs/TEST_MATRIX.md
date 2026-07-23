@@ -4536,11 +4536,14 @@ message address/body/subject, contact record, provider thread, provider write,
 role mutation, permission grant/revoke, SMS/MMS submission, callback, carrier
 send, screenshot, or broad log participated.
 
-N2C must transactionally revalidate `HANDOFF_RESERVED` against the current
-draft while acquiring the mature composer journal, add an explicit safe
-`KNOWN_UNSENT` release/retry path, wire resolution only behind the user's exact
-send action, expose exact multi-SIM choice, and complete real-provider and
-carrier SMS/MMS acceptance. Those gates remain open. AuroraSMS is not gold.
+N2C now transactionally revalidates exact `HANDOFF_RESERVED` authority and the
+current draft/attachments while acquiring the mature composer journal. The
+synthetic Room matrix also covers every immutable mismatch, capacity
+preservation, and fault-injected post-insert rollback without a production
+fault hook. Still open: an explicit safe `KNOWN_UNSENT` release/retry path,
+production resolution only behind the user's exact send action, exact
+multi-SIM choice, and real-provider/carrier SMS/MMS acceptance. AuroraSMS is
+not gold.
 
 ## Release gate
 

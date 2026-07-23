@@ -41,13 +41,13 @@ its AAB SHA-256 is
 `349ea4f6a1be6f348cbd54c64bdf06e3fe56f7bc13f1eaef2aa4d807d7a86b1b`.
 The exact release and gold checklist is in
 [the Phase 7 plan](docs/PHASE_7_RELEASE_PLAN.md). Required local product work is
-still open: durable provider-thread ownership and explicit first-contact sending,
-Archive/pin/inbox actions, the complete Settings/About and notification-privacy
-surface, forward/quote, profile interchange/adaptive navigation, and broader
-accessibility/form-factor acceptance. Signing, a complete nonempty physical-
-provider scan, physical outgoing/incoming MMS and OEM/carrier/performance/
-Android Auto acceptance, and the final F-Droid build recipe remain external
-gates. AuroraSMS is not gold.
+still open: production first-contact wiring and explicit sending,
+Archive/pin/inbox actions, the complete Settings/About and
+notification-privacy surface, forward/quote, profile interchange/adaptive
+navigation, and broader accessibility/form-factor acceptance. Signing, a
+complete nonempty physical-provider scan, physical outgoing/incoming MMS and
+OEM/carrier/performance/Android Auto acceptance, and the final F-Droid build
+recipe remain external gates. AuroraSMS is not gold.
 
 Implementation commit `d052db0` gives the current-candidate Pixel history gate a
 reviewed [physical provider-completion protocol](docs/PHYSICAL_PROVIDER_COMPLETION_PROTOCOL.md)
