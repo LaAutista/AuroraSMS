@@ -69,6 +69,8 @@ separate open gate, not an indexing delay.
 - [x] Admit exact first-contact SMS authority into the existing composer sender
   under ADR 0029 without an index row, duplicate transport, New chat UI wiring,
   or Android provider-resolution activation.
+- [x] Return exact persisted composer handoff authority across coordinator
+  recreation without rerunning provider resolution or activating New chat.
 - [ ] Resolve or create the provider conversation only after an explicit send
   action using the reviewed durable ownership path on a real provider.
 - [ ] Enable and physically verify first-contact SMS/MMS transport.
@@ -94,9 +96,9 @@ thread draft. Semantic participant fingerprints prevent reordered or harmlessly
 reformatted phone addresses from creating sibling reservations. The Android
 resolver remains outside the production application graph, and the headless
 coordinator has no transport, provider-message staging, callback, or existing-
-thread send-controller dependency. `HANDOFF_RESERVED` remains durable until a
-future N2C transaction can reserve the existing composer journal; it is not a
-send acknowledgement.
+thread send-controller dependency. `HANDOFF_RESERVED` remains durable until
+the exact N2C transaction reserves the existing composer journal; neither the
+handoff result nor that reservation is a send acknowledgement.
 
 ## Workstream 7A: release truth and governance
 

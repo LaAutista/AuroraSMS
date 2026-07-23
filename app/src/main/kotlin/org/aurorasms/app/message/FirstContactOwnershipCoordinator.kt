@@ -7,6 +7,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.aurorasms.core.state.ComposerSmsFirstContactAuthority
 import org.aurorasms.core.state.DraftParticipantSetKey
 import org.aurorasms.core.state.FirstContactBridgeSnapshot
 import org.aurorasms.core.state.FirstContactKnownUnsentProof
@@ -648,7 +649,17 @@ internal class FirstContactOwnershipCoordinator(
             thread != null &&
             draftRevision != null
         ) {
-            FirstContactOwnershipResult.HandoffReserved(id, thread, draftId, draftRevision)
+            FirstContactOwnershipResult.HandoffReserved(
+                authority = ComposerSmsFirstContactAuthority(
+                    operationId = id,
+                    expectedRevision = revision,
+                    participantSetKey = participantSetKey,
+                    attachmentSetEvidence = attachmentSetEvidence,
+                ),
+                providerThreadId = thread,
+                draftId = draftId,
+                boundDraftRevision = draftRevision,
+            )
         } else {
             failure(FirstContactOwnershipFailureReason.CORRUPT_STATE, this)
         }

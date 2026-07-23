@@ -5,6 +5,7 @@ package org.aurorasms.app.message
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderThreadId
+import org.aurorasms.core.state.ComposerSmsFirstContactAuthority
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftIdentity
 import org.aurorasms.core.state.DraftRevision
@@ -74,7 +75,7 @@ internal enum class FirstContactOwnershipFailureReason {
  */
 internal sealed interface FirstContactOwnershipResult {
     data class HandoffReserved(
-        val operationId: FirstContactOperationId,
+        val authority: ComposerSmsFirstContactAuthority,
         val providerThreadId: ProviderThreadId,
         val draftId: DraftId,
         val boundDraftRevision: DraftRevision,

@@ -2,7 +2,7 @@
 
 # ADR 0029: atomic first-contact composer acquisition
 
-- Status: Accepted for the synthetic N2C sender-admission checkpoint
+- Status: Accepted for the synthetic N2C durable-authority checkpoint
 - Date: 2026-07-22
 
 ## Context
@@ -74,11 +74,15 @@ then uses the existing provider staging, callbacks, transport, classification,
 and recovery unchanged. MMS remains refused until its authority evidence comes
 from the exact outgoing attachment bytes.
 
-This checkpoint still does not expose New chat Send or install the Android
-thread resolver in the production route graph. The current
-`FirstContactOwnershipResult.HandoffReserved` also lacks the full composer
-authority, so later UI activation must expose that exact durable authority
-without resolving the provider thread again.
+The durable-authority checkpoint returns the exact
+`ComposerSmsFirstContactAuthority` from each persisted `HANDOFF_RESERVED`
+result, including after coordinator recreation, without resolving the provider
+thread again. This result is still transient input: the composer reservation
+must transactionally reread and compare the durable operation.
+
+This checkpoint still does not expose New chat Send, construct a production
+`FirstContactSmsAdmission`, or install the Android thread resolver in the
+production route graph.
 
 ## Verification
 
@@ -96,6 +100,11 @@ the existing sender once, participant/MMS mismatch stops before reservation,
 ambiguous subscription and stale durable authority produce zero transport,
 duplicate admission cannot submit twice, and an ambiguous committed
 reservation uses existing non-sending recovery.
+
+Ownership tests prove fresh and recreated handoff results expose the same exact
+persisted operation revision, participant fingerprint, and attachment evidence
+without a second provider-resolution call; mismatched commands expose no
+handoff authority and result logging remains redacted.
 
 ## Consequences
 

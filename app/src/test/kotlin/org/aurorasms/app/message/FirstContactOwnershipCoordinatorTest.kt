@@ -11,6 +11,7 @@ import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderThreadId
+import org.aurorasms.core.state.ComposerSmsFirstContactAuthority
 import org.aurorasms.core.state.Draft
 import org.aurorasms.core.state.DraftAttachment
 import org.aurorasms.core.state.DraftId
@@ -47,7 +48,21 @@ class FirstContactOwnershipCoordinatorTest {
 
         val result = fixture.coordinator.reserveAndBind(COMMAND)
 
-        assertTrue(result is FirstContactOwnershipResult.HandoffReserved)
+        val handoff = result as FirstContactOwnershipResult.HandoffReserved
+        val persisted = checkNotNull(fixture.repository.operation)
+        assertEquals(
+            ComposerSmsFirstContactAuthority(
+                operationId = persisted.id,
+                expectedRevision = persisted.revision,
+                participantSetKey = persisted.participantSetKey,
+                attachmentSetEvidence = persisted.attachmentSetEvidence,
+            ),
+            handoff.authority,
+        )
+        assertFalse(
+            handoff.authority.expectedRevision.updatedTimestampMillis ==
+                handoff.boundDraftRevision.updatedTimestampMillis,
+        )
         assertEquals(FirstContactOperationPhase.HANDOFF_RESERVED, fixture.repository.operation?.phase)
         assertEquals(
             listOf(
@@ -303,10 +318,28 @@ class FirstContactOwnershipCoordinatorTest {
         assertEquals(0, threadBound.resolver.callCount)
 
         val complete = fixture()
-        assertTrue(complete.coordinator.reserveAndBind(COMMAND) is FirstContactOwnershipResult.HandoffReserved)
+        val first = complete.coordinator.reserveAndBind(COMMAND)
+            as FirstContactOwnershipResult.HandoffReserved
         complete.events.clear()
         val recreated = complete.newCoordinator()
-        assertTrue(recreated.reserveAndBind(COMMAND) is FirstContactOwnershipResult.HandoffReserved)
+        val resumed = recreated.reserveAndBind(COMMAND)
+            as FirstContactOwnershipResult.HandoffReserved
+        assertEquals(first, resumed)
+        assertEquals(listOf("subscription", "reserve", "read_by_draft"), complete.events)
+        assertEquals(1, complete.resolver.callCount)
+
+        complete.events.clear()
+        val mismatch = recreated.reserveAndBind(
+            COMMAND.copy(
+                expectedDraftRevision = DraftRevision(
+                    SOURCE_REVISION.updatedTimestampMillis + 1L,
+                ),
+            ),
+        )
+        assertEquals(
+            FirstContactOwnershipConflictReason.ACTIVE_OPERATION,
+            (mismatch as FirstContactOwnershipResult.Conflict).reason,
+        )
         assertEquals(listOf("subscription", "reserve", "read_by_draft"), complete.events)
         assertEquals(1, complete.resolver.callCount)
     }
@@ -360,14 +393,24 @@ class FirstContactOwnershipCoordinatorTest {
     @Test
     fun `commands and outcomes redact all identifiers and recipient content`() {
         val outcome = FirstContactOwnershipResult.HandoffReserved(
-            OPERATION_ID,
-            ProviderThreadId(8_675_309L),
-            DRAFT_ID,
-            DraftRevision(123_456L),
+            authority = ComposerSmsFirstContactAuthority(
+                operationId = FirstContactOperationId(7_654_321L),
+                expectedRevision = FirstContactOperationRevision(9_876_543L),
+                participantSetKey = FirstContactParticipantSetKey.fromParticipants(
+                    RECIPIENTS.addresses,
+                ),
+                attachmentSetEvidence =
+                    FirstContactAttachmentSetEvidence.fromAttachments(emptyList()),
+            ),
+            providerThreadId = ProviderThreadId(8_675_309L),
+            draftId = DRAFT_ID,
+            boundDraftRevision = DraftRevision(123_456L),
         )
 
         assertFalse(COMMAND.toString().contains(RECIPIENT.value))
         assertFalse(COMMAND.toString().contains(DRAFT_ID.value.toString()))
+        assertFalse(outcome.toString().contains("7654321"))
+        assertFalse(outcome.toString().contains("9876543"))
         assertFalse(outcome.toString().contains("8675309"))
         assertFalse(outcome.toString().contains("123456"))
     }
@@ -465,7 +508,7 @@ class FirstContactOwnershipCoordinatorTest {
                 -> THREAD
                 else -> null
             }
-            val handoff = DraftRevision(1_004L)
+            val handoff = DraftRevision(1_104L)
                 .takeIf { phase == FirstContactOperationPhase.HANDOFF_RESERVED }
             val updated = when (phase) {
                 FirstContactOperationPhase.RESERVED -> 1_000L
@@ -696,7 +739,10 @@ private class RecordingFirstContactRepository(
             ?: return FirstContactOperationResult.StaleWrite
         val thread = current.providerThreadId ?: return FirstContactOperationResult.CorruptData
         val handoffRevision = DraftRevision(
-            maxOf(updatedTimestampMillis, current.sourceDraftRevision.updatedTimestampMillis + 1L),
+            maxOf(
+                updatedTimestampMillis + 100L,
+                current.sourceDraftRevision.updatedTimestampMillis + 1L,
+            ),
         )
         val updated = current.copy(
             phase = FirstContactOperationPhase.HANDOFF_RESERVED,
