@@ -32,7 +32,11 @@ class ConversationFrameBenchmark {
         FixtureController.seed(FixtureShape.THREAD_250K)
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
-            metrics = listOf(FrameTimingMetric()),
+            metrics = if (fullPerformanceEvidence()) {
+                listOf(FrameTimingMetric())
+            } else {
+                rendererIndependentReachabilityMetrics()
+            },
             compilationMode = BASELINE_COMPILATION,
             iterations = frameIterations(),
             setupBlock = {
@@ -50,10 +54,12 @@ class ConversationFrameBenchmark {
     private fun measureThreadOpen(compilationMode: CompilationMode) {
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
-            metrics = listOf(
-                TraceSectionMetric(THREAD_OPEN_TRACE, TraceSectionMetric.Mode.First),
-                FrameTimingMetric(),
-            ),
+            metrics = buildList {
+                add(TraceSectionMetric(THREAD_OPEN_TRACE, TraceSectionMetric.Mode.First))
+                if (fullPerformanceEvidence()) {
+                    add(FrameTimingMetric())
+                }
+            },
             compilationMode = compilationMode,
             iterations = measurementIterations(),
             setupBlock = {
@@ -68,7 +74,7 @@ class ConversationFrameBenchmark {
         @JvmStatic
         @BeforeClass
         fun seedThreadOnce() {
-            FixtureController.requireMessagingEligibility()
+            FixtureController.requireSyntheticIsolation()
             FixtureController.seed(FixtureShape.THREAD_250K)
         }
     }

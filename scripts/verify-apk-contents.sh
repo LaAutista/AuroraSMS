@@ -40,7 +40,18 @@ if ((${#APKS[@]} == 0)); then
     exit 0
 fi
 
+if [[ ! -f "$DENYLIST" ]]; then
+    printf 'Missing private-reference denylist: %s\n' "$DENYLIST" >&2
+    exit 1
+fi
+
 mapfile -t PRIVATE_HASHES < <(sed -nE 's/^([[:xdigit:]]{64})$/\L\1/p' "$DENYLIST" | sort -u)
+if [[ ${#PRIVATE_HASHES[@]} -ne 41 ]]; then
+    printf 'Expected exactly 41 unique private-input hashes; found %d.\n' \
+        "${#PRIVATE_HASHES[@]}" >&2
+    exit 1
+fi
+
 declare -A PRIVATE_HASH_SET=()
 for hash in "${PRIVATE_HASHES[@]}"; do
     PRIVATE_HASH_SET["$hash"]=1
@@ -79,9 +90,16 @@ for apk in "${APKS[@]}"; do
     badging="$($AAPT2 dump badging "$apk")"
     package_name="$(sed -nE "s/^package: name='([^']+)'.*/\\1/p" <<<"$badging" | head -1)"
     case "$build_identity" in
-        app_debug|app_release|app_benchmark)
+        app_debug|app_release)
             [[ "$package_name" == 'org.aurorasms.app' ]] || {
                 printf 'Unexpected app package in %s: %s\n' "$apk" "$package_name" >&2
+                exit 1
+            }
+            ;;
+        app_benchmark)
+            [[ "$package_name" == 'org.aurorasms.app.benchmark' ]] || {
+                printf 'Unexpected isolated benchmark target package in %s: %s\n' \
+                    "$apk" "$package_name" >&2
                 exit 1
             }
             ;;
@@ -111,7 +129,7 @@ for apk in "${APKS[@]}"; do
         [[ -z "$entry" || "$entry" == */ ]] && continue
         entry_hash="$(unzip -p "$apk" "$entry" | sha256sum | awk '{print tolower($1)}')"
         if [[ -n "${PRIVATE_HASH_SET[$entry_hash]:-}" ]]; then
-            printf 'APK entry matches a private visual reference: %s!/%s\n' \
+            printf 'APK entry matches a denied private input: %s!/%s\n' \
                 "$apk" "$entry" >&2
             exit 1
         fi
@@ -128,6 +146,7 @@ for apk in "${APKS[@]}"; do
         for marker in \
             'org.aurorasms.app.benchmark.fixture' \
             'org.aurorasms.app.permission.BENCHMARK_CONTROL' \
+            'org.aurorasms.app.benchmark.permission.BENCHMARK_CONTROL' \
             'BenchmarkFixtureProvider' \
             'SyntheticIndexFixtures' \
             'inbox_20k' \
@@ -173,7 +192,7 @@ for apk in "${APKS[@]}"; do
     if [[ "$build_identity" == app_benchmark || "$build_identity" == macro_benchmark ]]; then
         for marker in \
             'org.aurorasms.app.benchmark.fixture' \
-            'org.aurorasms.app.permission.BENCHMARK_CONTROL' \
+            'org.aurorasms.app.benchmark.permission.BENCHMARK_CONTROL' \
             'inbox_20k' \
             'search_500k' \
             'thread_250k'; do

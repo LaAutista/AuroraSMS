@@ -58,6 +58,134 @@ class SharedPreferencesReplyReplayGuardTest {
         assertFalse(guard.claim(claim("SMS:81"), 20_003L))
     }
 
+    @Test
+    fun malformedExactClaimFailsClosedInsteadOfAllowingReplay() {
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString("claim.SMS:91", "malformed")
+            .commit()
+        val guard = SharedPreferencesReplyReplayGuard(context)
+
+        assertFalse(guard.claim(claim("SMS:91"), 20_000L))
+    }
+
+    @Test
+    fun nonStringExactClaimFailsClosedInsteadOfAllowingReplay() {
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong("claim.SMS:92", 1L)
+            .commit()
+        val guard = SharedPreferencesReplyReplayGuard(context)
+
+        assertFalse(guard.claim(claim("SMS:92"), 20_000L))
+    }
+
+    @Test
+    fun validLookingKeyMutationPoisonsJournalInsteadOfChangingRequestBinding() {
+        val guard = guard()
+        assertTrue(guard.claim(claim("SMS:93"), 20_000L))
+        val preferences = preferences()
+        val encoded = requireNotNull(preferences.getString("claim.SMS:93", null))
+        assertTrue(
+            preferences.edit()
+                .remove("claim.SMS:93")
+                .putString("claim.SMS:94", encoded)
+                .commit(),
+        )
+
+        assertFalse(guard.claim(claim("SMS:95"), 20_001L))
+    }
+
+    @Test
+    fun validLookingConversationMutationPoisonsJournal() {
+        assertMutatedClaimRejectsFreshClaim(
+            fieldIndex = 3,
+            replacement = "78",
+            storedRequestId = "SMS:96",
+            freshRequestId = "SMS:97",
+        )
+    }
+
+    @Test
+    fun validLookingTimestampMutationPoisonsJournal() {
+        assertMutatedClaimRejectsFreshClaim(
+            fieldIndex = 2,
+            replacement = "19999",
+            storedRequestId = "SMS:98",
+            freshRequestId = "SMS:99",
+        )
+    }
+
+    @Test
+    fun validLookingRecipientDigestMutationPoisonsJournal() {
+        assertMutatedClaimRejectsFreshClaim(
+            fieldIndex = 6,
+            replacement = "a".repeat(64),
+            storedRequestId = "SMS:100",
+            freshRequestId = "SMS:101",
+        )
+    }
+
+    @Test
+    fun validLegacyClaimIsAtomicallyMigratedBeforeDistinctClaim() {
+        val preferences = preferences()
+        assertTrue(
+            preferences.edit().putString(
+                "claim.SMS:102",
+                "20000|77|2|40000|${"b".repeat(64)}",
+            ).commit(),
+        )
+        val guard = guard()
+
+        assertTrue(guard.claim(claim("SMS:103"), 20_001L))
+        assertCurrentFormat(requireNotNull(preferences.getString("claim.SMS:102", null)))
+        assertCurrentFormat(requireNotNull(preferences.getString("claim.SMS:103", null)))
+        assertFalse(guard.claim(claim("SMS:102"), 20_002L))
+    }
+
+    @Test
+    fun semanticallyInvalidLegacyClaimPoisonsJournalInsteadOfMigrating() {
+        val preferences = preferences()
+        val legacy = "40000|77|2|20000|${"b".repeat(64)}"
+        assertTrue(preferences.edit().putString("claim.SMS:104", legacy).commit())
+
+        assertFalse(guard().claim(claim("SMS:105"), 20_001L))
+        assertTrue(preferences.getString("claim.SMS:104", null) == legacy)
+    }
+
+    private fun assertCurrentFormat(serialized: String) {
+        val fields = serialized.split('|')
+        assertTrue(fields.size == 8)
+        assertTrue(fields[0] == "2")
+        assertTrue(fields.last().length == 64)
+    }
+
+    private fun assertMutatedClaimRejectsFreshClaim(
+        fieldIndex: Int,
+        replacement: String,
+        storedRequestId: String,
+        freshRequestId: String,
+    ) {
+        val guard = guard()
+        assertTrue(guard.claim(claim(storedRequestId), 20_000L))
+        val preferences = preferences()
+        val key = "claim.$storedRequestId"
+        val fields = requireNotNull(preferences.getString(key, null)).split('|').toMutableList()
+        fields[fieldIndex] = replacement
+        assertTrue(preferences.edit().putString(key, fields.joinToString("|")).commit())
+
+        assertFalse(guard.claim(claim(freshRequestId), 20_001L))
+    }
+
+    private fun guard() = SharedPreferencesReplyReplayGuard(
+        context = context,
+        retentionMillis = 1_000L,
+        maximumActiveClaims = 8,
+    )
+
+    private fun preferences() =
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+
     private fun claim(
         requestId: String,
         expiresAt: Long = 40_000L,

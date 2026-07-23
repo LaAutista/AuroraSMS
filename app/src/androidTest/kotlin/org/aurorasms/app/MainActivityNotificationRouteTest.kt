@@ -2,13 +2,17 @@
 
 package org.aurorasms.app
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.SystemClock
+import androidx.core.content.ContextCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.aurorasms.app.message.AppNotificationIntentFactory
+import org.aurorasms.app.role.AndroidSmsRolePlatform
 import org.aurorasms.core.model.ConversationId
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -35,6 +39,9 @@ class MainActivityNotificationRouteTest {
                 ),
             )
             scenario.waitForOpenedConversation(ConversationId(602L))
+            if (messagingUiEligible()) {
+                scenario.waitForIntentAction(Intent.ACTION_MAIN)
+            }
         } finally {
             // MainActivity deliberately replaces a consumed notification intent with ACTION_MAIN.
             // ActivityScenario identifies its activity by the launch intent's filter fields, so
@@ -50,6 +57,17 @@ class MainActivityNotificationRouteTest {
             .putExtra(AppNotificationIntentFactory.EXTRA_CONVERSATION_ID, conversationId)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
+    private fun messagingUiEligible(): Boolean {
+        val role = AndroidSmsRolePlatform(context) { error("Role request is not expected") }
+            .snapshot()
+        return role.telephonyCapable &&
+            role.messagingCapable &&
+            role.roleAvailable &&
+            role.roleHeld &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
     private fun ActivityScenario<MainActivity>.waitForOpenedConversation(
         expected: ConversationId,
     ) {
@@ -58,6 +76,18 @@ class MainActivityNotificationRouteTest {
         do {
             actual = null
             onActivity { activity -> actual = activity.openedConversationId }
+            if (actual == expected) return
+            SystemClock.sleep(ROUTE_POLL_INTERVAL_MILLIS)
+        } while (SystemClock.uptimeMillis() < timeoutAt)
+        assertEquals(expected, actual)
+    }
+
+    private fun ActivityScenario<MainActivity>.waitForIntentAction(expected: String) {
+        val timeoutAt = SystemClock.uptimeMillis() + ROUTE_TIMEOUT_MILLIS
+        var actual: String?
+        do {
+            actual = null
+            onActivity { activity -> actual = activity.intent.action }
             if (actual == expected) return
             SystemClock.sleep(ROUTE_POLL_INTERVAL_MILLIS)
         } while (SystemClock.uptimeMillis() < timeoutAt)

@@ -7,11 +7,18 @@ import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.MmsDownloadRequest
 import org.aurorasms.core.telephony.MmsSendRequest
+import org.aurorasms.core.telephony.MmsSubmissionObserver
+import org.aurorasms.core.telephony.MmsSubmissionOwnership
 import org.aurorasms.core.telephony.SmsSendRequest
+import org.aurorasms.core.telephony.SmsSubmissionOwnership
+import org.aurorasms.core.telephony.SmsSubmissionObserver
+import org.aurorasms.core.telephony.hasValidOperationOwnership
 
 class FakeMessageTransport : MessageTransport {
     val smsRequests = mutableListOf<SmsSendRequest>()
+    val smsSubmissionOwnership = mutableListOf<SmsSubmissionOwnership>()
     val mmsRequests = mutableListOf<MmsSendRequest>()
+    val mmsSubmissionOwnership = mutableListOf<MmsSubmissionOwnership>()
     val mmsDownloadRequests = mutableListOf<MmsDownloadRequest>()
 
     var smsResponder: (SmsSendRequest) -> TransportResult = { request ->
@@ -19,15 +26,21 @@ class FakeMessageTransport : MessageTransport {
             operationId = request.operationId,
             transport = MessageTransportKind.SMS,
             unitCount = 1,
+            operationOrigin = request.operationOrigin,
         )
     }
+    var smsResponderWithObserver:
+        (suspend (SmsSendRequest, SmsSubmissionObserver) -> TransportResult)? = null
     var mmsResponder: (MmsSendRequest) -> TransportResult = { request ->
         TransportResult.Submitted(
             operationId = request.operationId,
             transport = MessageTransportKind.MMS,
             unitCount = 1,
+            operationOrigin = request.operationOrigin,
         )
     }
+    var mmsResponderWithObserver:
+        (suspend (MmsSendRequest, MmsSubmissionObserver) -> TransportResult)? = null
     var mmsDownloadResponder: (MmsDownloadRequest) -> TransportResult = { request ->
         TransportResult.Submitted(
             operationId = request.operationId,
@@ -36,14 +49,50 @@ class FakeMessageTransport : MessageTransport {
         )
     }
 
-    override suspend fun sendSms(request: SmsSendRequest): TransportResult {
+    override suspend fun sendSms(
+        request: SmsSendRequest,
+        ownership: SmsSubmissionOwnership,
+    ): TransportResult {
         smsRequests += request
-        return smsResponder(request)
+        smsSubmissionOwnership += ownership
+        if (!request.hasValidOperationOwnership(ownership)) {
+            return TransportResult.Failed(
+                operationId = request.operationId,
+                transport = MessageTransportKind.SMS,
+                reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                retryable = false,
+                operationOrigin = request.operationOrigin,
+            )
+        }
+        val observer = (ownership as? SmsSubmissionOwnership.CallerOwned)?.observer
+        return if (observer != null && smsResponderWithObserver != null) {
+            requireNotNull(smsResponderWithObserver).invoke(request, observer)
+        } else {
+            smsResponder(request)
+        }
     }
 
-    override suspend fun sendMms(request: MmsSendRequest): TransportResult {
+    override suspend fun sendMms(
+        request: MmsSendRequest,
+        ownership: MmsSubmissionOwnership,
+    ): TransportResult {
         mmsRequests += request
-        return mmsResponder(request)
+        mmsSubmissionOwnership += ownership
+        if (!request.hasValidOperationOwnership(ownership)) {
+            return TransportResult.Failed(
+                operationId = request.operationId,
+                transport = MessageTransportKind.MMS,
+                reason = TransportResult.FailureReason.INTERNAL_ERROR,
+                retryable = false,
+                operationOrigin = request.operationOrigin,
+            )
+        }
+        val observer = (ownership as? MmsSubmissionOwnership.CallerOwned)?.observer
+        return if (observer != null && mmsResponderWithObserver != null) {
+            requireNotNull(mmsResponderWithObserver).invoke(request, observer)
+        } else {
+            mmsResponder(request)
+        }
     }
 
     override suspend fun downloadMms(request: MmsDownloadRequest): TransportResult {

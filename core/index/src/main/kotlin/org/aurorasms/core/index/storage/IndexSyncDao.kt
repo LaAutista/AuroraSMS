@@ -179,6 +179,9 @@ abstract class IndexSyncDao {
     @Query("SELECT COUNT(*) FROM indexed_messages")
     protected abstract suspend fun indexedMessageCount(): Long
 
+    @Query("SELECT COUNT(*) FROM indexed_messages WHERE last_seen_generation = :generationId")
+    protected abstract suspend fun indexedMessageCount(generationId: Long): Long
+
     @Query("SELECT COUNT(DISTINCT provider_thread_id) FROM indexed_messages WHERE last_seen_generation = :generationId")
     protected abstract suspend fun indexedThreadCount(generationId: Long): Long
 
@@ -267,11 +270,23 @@ abstract class IndexSyncDao {
         ) {
             return null
         }
-        require(smsProviderCount >= smsCheckpoint(providerCheckpoints).committedCount) {
-            "Verified SMS count cannot be below committed projections"
+        require(smsProviderCount == smsCheckpoint(providerCheckpoints).committedCount) {
+            "Verified SMS count must equal committed projections"
         }
-        require(mmsProviderCount >= mmsCheckpoint(providerCheckpoints).committedCount) {
-            "Verified MMS count cannot be below committed projections"
+        require(mmsProviderCount == mmsCheckpoint(providerCheckpoints).committedCount) {
+            "Verified MMS count must equal committed projections"
+        }
+        val expectedRetained = smsProviderCount + mmsProviderCount
+        if (
+            expectedRetained < smsProviderCount ||
+            generation.committedCount != expectedRetained ||
+            indexedMessageCount(generationId) != expectedRetained
+        ) {
+            // Projection/checkpoint counts track consumed provider rows. A
+            // duplicate or moving identity can consume twice while upserting
+            // only one unique index row; never delete stale rows or complete
+            // such a generation.
+            return null
         }
         putCheckpoint(
             smsCheckpoint(providerCheckpoints).copy(
@@ -289,6 +304,9 @@ abstract class IndexSyncDao {
         deleteConversationsOutsideGeneration(generationId)
         deleteParticipantsOutsideGeneration(generationId)
         val retained = indexedMessageCount()
+        check(retained == expectedRetained) {
+            "Verified retained rows changed during transactional completion"
+        }
         check(indexedConversationCount(generationId) == indexedThreadCount(generationId)) {
             "Verified conversation projection did not cover every indexed thread"
         }

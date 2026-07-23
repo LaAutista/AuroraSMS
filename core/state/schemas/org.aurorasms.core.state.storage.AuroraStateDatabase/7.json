@@ -1,0 +1,814 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 7,
+    "identityHash": "59b74854698039ac15f36f147b8806ba",
+    "entities": [
+      {
+        "tableName": "drafts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`draft_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `provider_thread_id` INTEGER, `participant_set_key` TEXT, `body` TEXT, `subject` TEXT, `created_timestamp_ms` INTEGER NOT NULL, `updated_timestamp_ms` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "draftId",
+            "columnName": "draft_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerThreadId",
+            "columnName": "provider_thread_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "participantSetKey",
+            "columnName": "participant_set_key",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "body",
+            "columnName": "body",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "subject",
+            "columnName": "subject",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdTimestampMillis",
+            "columnName": "created_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedTimestampMillis",
+            "columnName": "updated_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "draft_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_drafts_provider_thread_id",
+            "unique": true,
+            "columnNames": [
+              "provider_thread_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_drafts_provider_thread_id` ON `${TABLE_NAME}` (`provider_thread_id`)"
+          },
+          {
+            "name": "index_drafts_participant_set_key",
+            "unique": true,
+            "columnNames": [
+              "participant_set_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_drafts_participant_set_key` ON `${TABLE_NAME}` (`participant_set_key`)"
+          },
+          {
+            "name": "index_drafts_updated_timestamp_ms_draft_id",
+            "unique": false,
+            "columnNames": [
+              "updated_timestamp_ms",
+              "draft_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_drafts_updated_timestamp_ms_draft_id` ON `${TABLE_NAME}` (`updated_timestamp_ms`, `draft_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "appearance_profiles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`profile_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `normalized_name` TEXT NOT NULL, `profile_schema_version` INTEGER NOT NULL, `palette_code` TEXT NOT NULL, `hue_degrees` INTEGER NOT NULL, `row_density_code` TEXT NOT NULL, `avatar_mask_code` TEXT NOT NULL, `navigation_style_code` TEXT NOT NULL, `bubble_geometry_code` TEXT NOT NULL, `reduced_motion` INTEGER NOT NULL, `high_contrast` INTEGER NOT NULL, `wallpaper_dim_permill` INTEGER NOT NULL, `focal_x_permill` INTEGER NOT NULL, `focal_y_permill` INTEGER NOT NULL, `revision` INTEGER NOT NULL, `created_timestamp_ms` INTEGER NOT NULL, `updated_timestamp_ms` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "profileId",
+            "columnName": "profile_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "normalizedName",
+            "columnName": "normalized_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileSchemaVersion",
+            "columnName": "profile_schema_version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paletteCode",
+            "columnName": "palette_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hueDegrees",
+            "columnName": "hue_degrees",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rowDensityCode",
+            "columnName": "row_density_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "avatarMaskCode",
+            "columnName": "avatar_mask_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "navigationStyleCode",
+            "columnName": "navigation_style_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bubbleGeometryCode",
+            "columnName": "bubble_geometry_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reducedMotion",
+            "columnName": "reduced_motion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "highContrast",
+            "columnName": "high_contrast",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "wallpaperDimPermill",
+            "columnName": "wallpaper_dim_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "focalXPermill",
+            "columnName": "focal_x_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "focalYPermill",
+            "columnName": "focal_y_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdTimestampMillis",
+            "columnName": "created_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedTimestampMillis",
+            "columnName": "updated_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "profile_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_appearance_profiles_normalized_name",
+            "unique": true,
+            "columnNames": [
+              "normalized_name"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_appearance_profiles_normalized_name` ON `${TABLE_NAME}` (`normalized_name`)"
+          }
+        ]
+      },
+      {
+        "tableName": "appearance_selection",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`singleton_id` INTEGER NOT NULL, `active_profile_id` INTEGER, `snapshot_revision` INTEGER NOT NULL, PRIMARY KEY(`singleton_id`), FOREIGN KEY(`active_profile_id`) REFERENCES `appearance_profiles`(`profile_id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "singletonId",
+            "columnName": "singleton_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeProfileId",
+            "columnName": "active_profile_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "snapshotRevision",
+            "columnName": "snapshot_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "singleton_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_appearance_selection_active_profile_id",
+            "unique": false,
+            "columnNames": [
+              "active_profile_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_appearance_selection_active_profile_id` ON `${TABLE_NAME}` (`active_profile_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "appearance_profiles",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "active_profile_id"
+            ],
+            "referencedColumns": [
+              "profile_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "appearance_screen_overrides",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`screen_code` TEXT NOT NULL, `profile_id` INTEGER NOT NULL, `revision` INTEGER NOT NULL, PRIMARY KEY(`screen_code`), FOREIGN KEY(`profile_id`) REFERENCES `appearance_profiles`(`profile_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "screenCode",
+            "columnName": "screen_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileId",
+            "columnName": "profile_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "screen_code"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_appearance_screen_overrides_profile_id",
+            "unique": false,
+            "columnNames": [
+              "profile_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_appearance_screen_overrides_profile_id` ON `${TABLE_NAME}` (`profile_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "appearance_profiles",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "profile_id"
+            ],
+            "referencedColumns": [
+              "profile_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "appearance_conversation_overrides",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`participant_set_key` TEXT NOT NULL, `provider_thread_id` INTEGER NOT NULL, `profile_id` INTEGER NOT NULL, `revision` INTEGER NOT NULL, PRIMARY KEY(`participant_set_key`), FOREIGN KEY(`profile_id`) REFERENCES `appearance_profiles`(`profile_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "participantSetKey",
+            "columnName": "participant_set_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerThreadId",
+            "columnName": "provider_thread_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileId",
+            "columnName": "profile_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "participant_set_key"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_appearance_conversation_overrides_provider_thread_id",
+            "unique": false,
+            "columnNames": [
+              "provider_thread_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_appearance_conversation_overrides_provider_thread_id` ON `${TABLE_NAME}` (`provider_thread_id`)"
+          },
+          {
+            "name": "index_appearance_conversation_overrides_profile_id",
+            "unique": false,
+            "columnNames": [
+              "profile_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_appearance_conversation_overrides_profile_id` ON `${TABLE_NAME}` (`profile_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "appearance_profiles",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "profile_id"
+            ],
+            "referencedColumns": [
+              "profile_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "appearance_screen_wallpapers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`screen_code` TEXT NOT NULL, `media_kind_code` TEXT NOT NULL, `media_id` TEXT NOT NULL, `dim_permill` INTEGER NOT NULL, `focal_x_permill` INTEGER NOT NULL, `focal_y_permill` INTEGER NOT NULL, `revision` INTEGER NOT NULL, PRIMARY KEY(`screen_code`))",
+        "fields": [
+          {
+            "fieldPath": "screenCode",
+            "columnName": "screen_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaKindCode",
+            "columnName": "media_kind_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaId",
+            "columnName": "media_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dimPermill",
+            "columnName": "dim_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "focalXPermill",
+            "columnName": "focal_x_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "focalYPermill",
+            "columnName": "focal_y_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "screen_code"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_appearance_screen_wallpapers_media_kind_code_media_id",
+            "unique": false,
+            "columnNames": [
+              "media_kind_code",
+              "media_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_appearance_screen_wallpapers_media_kind_code_media_id` ON `${TABLE_NAME}` (`media_kind_code`, `media_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "appearance_conversation_wallpapers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`participant_set_key` TEXT NOT NULL, `provider_thread_id` INTEGER NOT NULL, `media_kind_code` TEXT NOT NULL, `media_id` TEXT NOT NULL, `dim_permill` INTEGER NOT NULL, `focal_x_permill` INTEGER NOT NULL, `focal_y_permill` INTEGER NOT NULL, `revision` INTEGER NOT NULL, PRIMARY KEY(`participant_set_key`))",
+        "fields": [
+          {
+            "fieldPath": "participantSetKey",
+            "columnName": "participant_set_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerThreadId",
+            "columnName": "provider_thread_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaKindCode",
+            "columnName": "media_kind_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaId",
+            "columnName": "media_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dimPermill",
+            "columnName": "dim_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "focalXPermill",
+            "columnName": "focal_x_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "focalYPermill",
+            "columnName": "focal_y_permill",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "participant_set_key"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_appearance_conversation_wallpapers_provider_thread_id",
+            "unique": false,
+            "columnNames": [
+              "provider_thread_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_appearance_conversation_wallpapers_provider_thread_id` ON `${TABLE_NAME}` (`provider_thread_id`)"
+          },
+          {
+            "name": "index_appearance_conversation_wallpapers_media_kind_code_media_id",
+            "unique": false,
+            "columnNames": [
+              "media_kind_code",
+              "media_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_appearance_conversation_wallpapers_media_kind_code_media_id` ON `${TABLE_NAME}` (`media_kind_code`, `media_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "appearance_override_revision_sequence",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`singleton_id` INTEGER NOT NULL, `last_allocated_revision` INTEGER NOT NULL, PRIMARY KEY(`singleton_id`))",
+        "fields": [
+          {
+            "fieldPath": "singletonId",
+            "columnName": "singleton_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastAllocatedRevision",
+            "columnName": "last_allocated_revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "singleton_id"
+          ]
+        }
+      },
+      {
+        "tableName": "composer_sms_operations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`local_operation_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `provider_thread_id` INTEGER NOT NULL, `draft_id` INTEGER NOT NULL, `draft_revision_ms` INTEGER NOT NULL, `subscription_id` INTEGER NOT NULL, `phase_code` TEXT NOT NULL, `provider_message_id` INTEGER, `provider_conversation_id` INTEGER, `unit_count` INTEGER, `created_timestamp_ms` INTEGER NOT NULL, `updated_timestamp_ms` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "localOperationId",
+            "columnName": "local_operation_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerThreadId",
+            "columnName": "provider_thread_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "draftId",
+            "columnName": "draft_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "draftRevisionMillis",
+            "columnName": "draft_revision_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subscriptionId",
+            "columnName": "subscription_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "phaseCode",
+            "columnName": "phase_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerMessageId",
+            "columnName": "provider_message_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "providerConversationId",
+            "columnName": "provider_conversation_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "unitCount",
+            "columnName": "unit_count",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdTimestampMillis",
+            "columnName": "created_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedTimestampMillis",
+            "columnName": "updated_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "local_operation_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_composer_sms_operations_provider_thread_id",
+            "unique": true,
+            "columnNames": [
+              "provider_thread_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_composer_sms_operations_provider_thread_id` ON `${TABLE_NAME}` (`provider_thread_id`)"
+          },
+          {
+            "name": "index_composer_sms_operations_provider_message_id",
+            "unique": true,
+            "columnNames": [
+              "provider_message_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_composer_sms_operations_provider_message_id` ON `${TABLE_NAME}` (`provider_message_id`)"
+          },
+          {
+            "name": "index_composer_sms_operations_draft_id_draft_revision_ms",
+            "unique": false,
+            "columnNames": [
+              "draft_id",
+              "draft_revision_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_composer_sms_operations_draft_id_draft_revision_ms` ON `${TABLE_NAME}` (`draft_id`, `draft_revision_ms`)"
+          },
+          {
+            "name": "index_composer_sms_operations_updated_timestamp_ms_local_operation_id",
+            "unique": false,
+            "columnNames": [
+              "updated_timestamp_ms",
+              "local_operation_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_composer_sms_operations_updated_timestamp_ms_local_operation_id` ON `${TABLE_NAME}` (`updated_timestamp_ms`, `local_operation_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "acknowledged_composer_sms_receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`local_operation_id` INTEGER NOT NULL, `provider_message_id` INTEGER NOT NULL, `provider_conversation_id` INTEGER NOT NULL, `unit_count` INTEGER NOT NULL, `callback_proof_code` TEXT NOT NULL, `acknowledged_timestamp_ms` INTEGER NOT NULL, `updated_timestamp_ms` INTEGER NOT NULL, PRIMARY KEY(`local_operation_id`))",
+        "fields": [
+          {
+            "fieldPath": "localOperationId",
+            "columnName": "local_operation_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerMessageId",
+            "columnName": "provider_message_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerConversationId",
+            "columnName": "provider_conversation_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unitCount",
+            "columnName": "unit_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "callbackProofCode",
+            "columnName": "callback_proof_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acknowledgedTimestampMillis",
+            "columnName": "acknowledged_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedTimestampMillis",
+            "columnName": "updated_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "local_operation_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_acknowledged_composer_sms_receipts_provider_message_id",
+            "unique": true,
+            "columnNames": [
+              "provider_message_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_acknowledged_composer_sms_receipts_provider_message_id` ON `${TABLE_NAME}` (`provider_message_id`)"
+          },
+          {
+            "name": "index_acknowledged_composer_sms_receipts_updated_timestamp_ms_local_operation_id",
+            "unique": false,
+            "columnNames": [
+              "updated_timestamp_ms",
+              "local_operation_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_acknowledged_composer_sms_receipts_updated_timestamp_ms_local_operation_id` ON `${TABLE_NAME}` (`updated_timestamp_ms`, `local_operation_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "conversation_subscription_preferences",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`participant_set_key` TEXT NOT NULL, `provider_thread_id` INTEGER NOT NULL, `subscription_id` INTEGER NOT NULL, `revision` INTEGER NOT NULL, `updated_timestamp_ms` INTEGER NOT NULL, PRIMARY KEY(`participant_set_key`))",
+        "fields": [
+          {
+            "fieldPath": "participantSetKey",
+            "columnName": "participant_set_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerThreadId",
+            "columnName": "provider_thread_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subscriptionId",
+            "columnName": "subscription_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedTimestampMillis",
+            "columnName": "updated_timestamp_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "participant_set_key"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_conversation_subscription_preferences_provider_thread_id",
+            "unique": false,
+            "columnNames": [
+              "provider_thread_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_conversation_subscription_preferences_provider_thread_id` ON `${TABLE_NAME}` (`provider_thread_id`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '59b74854698039ac15f36f147b8806ba')"
+    ]
+  }
+}

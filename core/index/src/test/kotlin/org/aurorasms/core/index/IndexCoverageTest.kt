@@ -65,6 +65,26 @@ class IndexCoverageTest {
         }
     }
 
+    @Test
+    fun verifiedCompletionRequiresPhysicalGenerationAndCheckpointCountEquality() {
+        val exact = IndexCoverage(
+            generationId = 1L,
+            state = IndexRunState.COMPLETE,
+            indexedMessageCount = 6L,
+            smsExhausted = true,
+            mmsExhausted = true,
+            pendingChanges = false,
+            generationCommittedCount = 6L,
+            smsCheckpointCommittedCount = 5L,
+            mmsCheckpointCommittedCount = 1L,
+        )
+
+        assertTrue(exact.verifiedComplete)
+        assertFalse(exact.copy(indexedMessageCount = 5L).verifiedComplete)
+        assertFalse(exact.copy(generationCommittedCount = 5L).verifiedComplete)
+        assertFalse(exact.copy(smsCheckpointCommittedCount = 4L).verifiedComplete)
+    }
+
     private fun coverage(
         generationId: Long? = 1L,
         state: IndexRunState = IndexRunState.SCANNING,

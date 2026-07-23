@@ -11,6 +11,7 @@ const val MAX_APPEARANCE_PROFILE_NAME_CODE_POINTS: Int = 64
 const val MAX_APPEARANCE_PROFILE_NAME_UTF8_BYTES: Int = 256
 const val MINIMUM_APPEARANCE_HUE_DEGREES: Int = 0
 const val MAXIMUM_APPEARANCE_HUE_DEGREES: Int = 359
+const val CANONICAL_APPEARANCE_HUE_DEGREES: Int = 273
 const val MINIMUM_APPEARANCE_WALLPAPER_DIM_PERMILL: Int = 350
 const val MAXIMUM_APPEARANCE_WALLPAPER_DIM_PERMILL: Int = 900
 const val MINIMUM_APPEARANCE_FOCAL_PERMILL: Int = 0
@@ -135,7 +136,7 @@ class AppearanceProfileName private constructor(
 data class AppearanceProfileValues(
     val schemaVersion: Int = CURRENT_APPEARANCE_PROFILE_SCHEMA,
     val palette: AppearancePalette = AppearancePalette.AURORA_DARK,
-    val hueDegrees: Int = 174,
+    val hueDegrees: Int = CANONICAL_APPEARANCE_HUE_DEGREES,
     val rowDensity: AppearanceRowDensity = AppearanceRowDensity.COMFORTABLE,
     val avatarMask: AppearanceAvatarMask = AppearanceAvatarMask.CIRCLE,
     val navigationStyle: AppearanceNavigationStyle = AppearanceNavigationStyle.CLASSIC,

@@ -3,19 +3,27 @@
 package org.aurorasms.app
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -27,10 +35,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.aurorasms.app.benchmark.BuildVariantBenchmarkPolicy
 import org.aurorasms.app.diagnostics.BuildVariantDiagnosticsLauncher
 import org.aurorasms.app.diagnostics.DiagnosticsLauncher
 import org.aurorasms.app.message.AppNotificationIntentFactory
@@ -48,8 +61,9 @@ class MainActivity : ComponentActivity() {
     private var roleState by mutableStateOf<RoleOnboardingState>(RoleOnboardingState.ReadyToRequest)
     private var permissionState by mutableStateOf<Map<String, Boolean>>(emptyMap())
     private var contactsPermissionGranted by mutableStateOf(false)
+    private var contactsPermissionRequestedBefore by mutableStateOf(false)
     private var notificationPermissionGranted by mutableStateOf(Build.VERSION.SDK_INT < 33)
-    private var lastReportedMessagingEligibility: Boolean? = null
+    private var notificationPermissionRequestedBefore by mutableStateOf(false)
     private var lastReportedContactsPermission: Boolean? = null
     private var fullyDrawnReported = false
     private var showDiagnostics by mutableStateOf(false)
@@ -71,16 +85,38 @@ class MainActivity : ComponentActivity() {
     }
 
     private val contactsPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        contactsPermissionGranted = granted || isPermissionGranted(Manifest.permission.READ_CONTACTS)
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        if (contactsPermissionResultRecordsDecision(results, Manifest.permission.READ_CONTACTS)) {
+            contactsPermissionRequestedBefore = true
+            contactsPermissionPreferences().edit {
+                putBoolean(CONTACTS_PERMISSION_REQUESTED_BEFORE, true)
+            }
+        }
+        contactsPermissionGranted = isPermissionGranted(Manifest.permission.READ_CONTACTS)
         relayContactsPermissionIfChanged()
     }
 
     private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        notificationPermissionGranted = granted
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results ->
+        val decisionRecorded = if (Build.VERSION.SDK_INT >= 33) {
+            notificationPermissionResultRecordsDecision(
+                results = results,
+                permission = Manifest.permission.POST_NOTIFICATIONS,
+            )
+        } else {
+            false
+        }
+        // The multiple-permission contract preserves the distinction that matters here:
+        // an explicit choice contains true/false, while dismissing the dialog returns no entry.
+        if (decisionRecorded) {
+            notificationPermissionRequestedBefore = true
+            notificationPermissionPreferences().edit {
+                putBoolean(NOTIFICATION_PERMISSION_REQUESTED_BEFORE, true)
+            }
+        }
+        refreshPermissionState()
     }
 
     override fun onStart() {
@@ -100,6 +136,10 @@ class MainActivity : ComponentActivity() {
         )
         diagnosticsLauncher = BuildVariantDiagnosticsLauncher(application)
         roleState = roleCoordinator.refresh()
+        notificationPermissionRequestedBefore = notificationPermissionPreferences()
+            .getBoolean(NOTIFICATION_PERMISSION_REQUESTED_BEFORE, false)
+        contactsPermissionRequestedBefore = contactsPermissionPreferences()
+            .getBoolean(CONTACTS_PERMISSION_REQUESTED_BEFORE, false)
         refreshPermissionState()
         val rawConversationId = intent.getLongExtra(
             AppNotificationIntentFactory.EXTRA_CONVERSATION_ID,
@@ -120,47 +160,75 @@ class MainActivity : ComponentActivity() {
             val appearance by appContainer.appearanceController.state.collectAsStateWithLifecycle()
             AuroraSmsTheme(profile = appearance.activeProfile) {
                 val savedBranches = rememberSaveableStateHolder()
-                val messagingEligible = roleState == RoleOnboardingState.Held &&
-                    permissionState[Manifest.permission.READ_SMS] == true
+                val messagingEligible = BuildVariantBenchmarkPolicy.syntheticMessagingEligible ||
+                    (roleState == RoleOnboardingState.Held &&
+                        permissionState[Manifest.permission.READ_SMS] == true)
                 if (showDiagnostics && diagnosticsLauncher.available) {
                     diagnosticsLauncher.Content { showDiagnostics = false }
                 } else if (messagingEligible) {
                     savedBranches.SaveableStateProvider(ROOT_STATE_KEY) {
-                        AuroraSmsRoot(
-                            container = appContainer,
-                            appearance = appearance,
-                            appearanceController = appContainer.appearanceController,
-                            pendingConversationId = pendingConversationId,
-                            diagnosticsAvailable = diagnosticsLauncher.available,
-                            contactsPermissionGranted = contactsPermissionGranted,
-                            onOpenDiagnostics = { showDiagnostics = true },
-                            onRequestContactsPermission = {
-                                if (roleCoordinator.refresh() == RoleOnboardingState.Held) {
-                                    contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
-                                } else {
-                                    roleState = roleCoordinator.state
-                                }
-                            },
-                            onPendingConversationConsumed = { consumedConversationId ->
-                                if (pendingConversationId == consumedConversationId) {
-                                    pendingConversationId = null
-                                    setIntent(
-                                        Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN),
-                                    )
-                                }
-                            },
-                            onOpenedConversationChanged = { conversationId ->
-                                if (pendingConversationId == null) {
-                                    openedConversationId = conversationId
-                                }
-                            },
-                            onInboxReady = {
-                                if (!fullyDrawnReported) {
-                                    fullyDrawnReported = true
-                                    reportFullyDrawn()
-                                }
-                            },
-                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                // Consumed here so nested root screens do not double their own
+                                // safeDrawingPadding while this sibling notice stays unobscured.
+                                .windowInsetsPadding(WindowInsets.safeDrawing),
+                        ) {
+                            NotificationPermissionNoticeHost(
+                                notificationPermissionRequired =
+                                    Build.VERSION.SDK_INT >= 33 &&
+                                        !BuildVariantBenchmarkPolicy
+                                            .syntheticNotificationPermissionSatisfied,
+                                notificationPermissionGranted =
+                                    BuildVariantBenchmarkPolicy
+                                        .syntheticNotificationPermissionSatisfied ||
+                                        notificationPermissionGranted,
+                                onRecoverNotificationPermission = ::recoverNotificationPermission,
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                            ) {
+                                AuroraSmsRoot(
+                                    container = appContainer,
+                                    appearance = appearance,
+                                    appearanceController = appContainer.appearanceController,
+                                    pendingConversationId = pendingConversationId,
+                                    diagnosticsAvailable = diagnosticsLauncher.available,
+                                    contactsPermissionGranted = contactsPermissionGranted,
+                                    onOpenDiagnostics = { showDiagnostics = true },
+                                    onRequestContactsPermission = {
+                                        if (roleCoordinator.refresh() == RoleOnboardingState.Held) {
+                                            recoverContactsPermission()
+                                        } else {
+                                            roleState = roleCoordinator.state
+                                        }
+                                    },
+                                    onPendingConversationConsumed = { consumedConversationId ->
+                                        if (pendingConversationId == consumedConversationId) {
+                                            pendingConversationId = null
+                                            setIntent(
+                                                Intent(this@MainActivity, MainActivity::class.java)
+                                                    .setAction(Intent.ACTION_MAIN),
+                                            )
+                                        }
+                                    },
+                                    onOpenedConversationChanged = { conversationId ->
+                                        appContainer.onConversationOpened(conversationId)
+                                        if (pendingConversationId == null) {
+                                            openedConversationId = conversationId
+                                        }
+                                    },
+                                    onInboxReady = {
+                                        if (!fullyDrawnReported) {
+                                            fullyDrawnReported = true
+                                            reportFullyDrawn()
+                                        }
+                                    },
+                                )
+                            }
+                        }
                     }
                 } else {
                     OnboardingScreen(
@@ -182,7 +250,7 @@ class MainActivity : ComponentActivity() {
                             if (Build.VERSION.SDK_INT >= 33 &&
                                 roleCoordinator.refresh() == RoleOnboardingState.Held
                             ) {
-                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                recoverNotificationPermission()
                             }
                         },
                         onOpenDiagnostics = { showDiagnostics = true },
@@ -235,9 +303,9 @@ class MainActivity : ComponentActivity() {
     private fun relayMessagingEligibilityIfChanged() {
         if (!::roleCoordinator.isInitialized) return
         val eligible = roleState == RoleOnboardingState.Held && isPermissionGranted(Manifest.permission.READ_SMS)
-        if (lastReportedMessagingEligibility == eligible) return
-        lastReportedMessagingEligibility = eligible
-        (application as? AuroraSmsApplication)?.container?.onMessagingEligibilityChanged()
+        (application as? AuroraSmsApplication)
+            ?.container
+            ?.onMessagingEligibilityObserved(eligible)
     }
 
     private fun relayContactsPermissionIfChanged() {
@@ -251,21 +319,107 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(this, permission) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
 
-    private fun requiredMessagingPermissions(): List<String> = buildList {
-        add(Manifest.permission.READ_SMS)
-        add(Manifest.permission.SEND_SMS)
-        add(Manifest.permission.RECEIVE_SMS)
-        add(Manifest.permission.RECEIVE_MMS)
-        add(Manifest.permission.RECEIVE_WAP_PUSH)
-        add(Manifest.permission.READ_PHONE_STATE)
+    private fun recoverNotificationPermission() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val granted = isPermissionGranted(Manifest.permission.POST_NOTIFICATIONS)
+        when (
+            notificationPermissionRecoveryAction(
+                notificationPermissionRequired = true,
+                notificationPermissionGranted = granted,
+                requestedBefore = notificationPermissionRequestedBefore,
+                shouldShowRationale = shouldShowRequestPermissionRationale(
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ),
+            )
+        ) {
+            NotificationPermissionRecoveryAction.NONE -> {
+                notificationPermissionGranted = true
+            }
+
+            NotificationPermissionRecoveryAction.REQUEST_PERMISSION -> {
+                notificationPermissionLauncher.launch(
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                )
+            }
+
+            NotificationPermissionRecoveryAction.OPEN_SETTINGS -> openNotificationSettings()
+        }
     }
+
+    private fun recoverContactsPermission() {
+        val currentlyGranted = isPermissionGranted(Manifest.permission.READ_CONTACTS)
+        contactsPermissionGranted = currentlyGranted
+        relayContactsPermissionIfChanged()
+        when (
+            contactsPermissionRecoveryAction(
+                contactsPermissionGranted = currentlyGranted,
+                requestedBefore = contactsPermissionRequestedBefore,
+                shouldShowRationale = shouldShowRequestPermissionRationale(
+                    Manifest.permission.READ_CONTACTS,
+                ),
+            )
+        ) {
+            ContactsPermissionRecoveryAction.NONE -> contactsPermissionGranted = true
+            ContactsPermissionRecoveryAction.REQUEST_PERMISSION ->
+                contactsPermissionLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS))
+            ContactsPermissionRecoveryAction.OPEN_SETTINGS -> openApplicationDetailsSettings()
+        }
+    }
+
+    private fun openNotificationSettings() {
+        try {
+            startActivity(appNotificationSettingsIntent(packageName))
+        } catch (_: ActivityNotFoundException) {
+            openApplicationDetailsSettings()
+        } catch (_: SecurityException) {
+            openApplicationDetailsSettings()
+        }
+    }
+
+    private fun notificationPermissionPreferences() = getSharedPreferences(
+        NOTIFICATION_PERMISSION_PREFERENCES,
+        Context.MODE_PRIVATE,
+    )
+
+    private fun contactsPermissionPreferences() = getSharedPreferences(
+        CONTACTS_PERMISSION_PREFERENCES,
+        Context.MODE_PRIVATE,
+    )
+
+    private fun openApplicationDetailsSettings() {
+        val intent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", packageName, null),
+        )
+        try {
+            startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            // The notice remains visible and messaging remains usable.
+        } catch (_: SecurityException) {
+            // The notice remains visible and messaging remains usable.
+        }
+    }
+
+    private fun requiredMessagingPermissions(): List<String> = messagingOnboardingPermissions()
 
     private companion object {
         const val ROOT_STATE_KEY = "aurora.root"
         const val STATE_OPEN_CONVERSATION = "aurora.state.OPEN_CONVERSATION"
         const val INVALID_CONVERSATION_ID = -1L
+        const val NOTIFICATION_PERMISSION_PREFERENCES = "aurora_notification_permission_state"
+        const val NOTIFICATION_PERMISSION_REQUESTED_BEFORE = "requested_before"
     }
 }
+
+/** Optional capabilities such as microphone access must never enter onboarding. */
+internal fun messagingOnboardingPermissions(): List<String> = listOf(
+    Manifest.permission.READ_SMS,
+    Manifest.permission.SEND_SMS,
+    Manifest.permission.RECEIVE_SMS,
+    Manifest.permission.RECEIVE_MMS,
+    Manifest.permission.RECEIVE_WAP_PUSH,
+    Manifest.permission.READ_PHONE_STATE,
+)
 
 @Composable
 fun AuroraSmsTheme(
@@ -274,6 +428,83 @@ fun AuroraSmsTheme(
 ) {
     AuroraMaterialTheme(profile = profile, content = content)
 }
+
+@Composable
+internal fun NotificationPermissionNoticeHost(
+    notificationPermissionRequired: Boolean,
+    notificationPermissionGranted: Boolean,
+    onRecoverNotificationPermission: () -> Unit,
+) {
+    if (notificationPermissionRequired && !notificationPermissionGranted) {
+        NotificationPermissionNotice(onRecoverNotificationPermission)
+    }
+}
+
+@Composable
+private fun NotificationPermissionNotice(
+    onRecoverNotificationPermission: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { testTagsAsResourceId = true }
+            .testTag(NOTIFICATION_PERMISSION_NOTICE_TEST_TAG),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        tonalElevation = 2.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.notification_permission_explanation),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            OutlinedButton(
+                modifier = Modifier
+                    .semantics { testTagsAsResourceId = true }
+                    .testTag(NOTIFICATION_PERMISSION_CTA_TEST_TAG),
+                onClick = onRecoverNotificationPermission,
+            ) {
+                Text(stringResource(R.string.enable_notifications))
+            }
+        }
+    }
+}
+
+internal enum class NotificationPermissionRecoveryAction {
+    NONE,
+    REQUEST_PERMISSION,
+    OPEN_SETTINGS,
+}
+
+internal fun notificationPermissionRecoveryAction(
+    notificationPermissionRequired: Boolean,
+    notificationPermissionGranted: Boolean,
+    requestedBefore: Boolean,
+    shouldShowRationale: Boolean,
+): NotificationPermissionRecoveryAction = when {
+    !notificationPermissionRequired || notificationPermissionGranted ->
+        NotificationPermissionRecoveryAction.NONE
+    !requestedBefore || shouldShowRationale ->
+        NotificationPermissionRecoveryAction.REQUEST_PERMISSION
+    else -> NotificationPermissionRecoveryAction.OPEN_SETTINGS
+}
+
+internal fun notificationPermissionResultRecordsDecision(
+    results: Map<String, Boolean>,
+    permission: String,
+): Boolean = results.containsKey(permission)
+
+internal fun appNotificationSettingsIntent(packageName: String): Intent =
+    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+
+internal const val NOTIFICATION_PERMISSION_NOTICE_TEST_TAG =
+    "aurora-notification-permission-notice"
+internal const val NOTIFICATION_PERMISSION_CTA_TEST_TAG =
+    "aurora-notification-permission-cta"
 
 @Composable
 private fun OnboardingScreen(

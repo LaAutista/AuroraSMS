@@ -217,6 +217,55 @@ class WallpaperControllerTest {
     }
 
     @Test
+    fun lateRepositoryStaleWriteDeletesCreatedUnreferencedCandidate() = runTest {
+        val calls = mutableListOf<String>()
+        val importedId = mediaId('7')
+        val repository = FakeWallpaperRepository(calls).apply {
+            projectionResult = AppearanceRepositoryResult.Success(setOf(importedId))
+            referencedResult = AppearanceRepositoryResult.Success(emptySet())
+            setResult = AppearanceRepositoryResult.StaleWrite
+        }
+        val store = FakeWallpaperMediaStore(calls).apply {
+            importResult = WallpaperImportResult.Ready(
+                mediaId = importedId.toPrivateStorageToken(),
+                created = true,
+            )
+        }
+        val controller = WallpaperController(repository, store)
+
+        assertEquals(
+            WallpaperApplyControllerResult.Failed(WallpaperControllerError.STALE_ASSIGNMENT),
+            controller.apply(
+                scope = globalScope,
+                source = InertTestUri(),
+                dimPermill = 650,
+                focalXPermill = 500,
+                focalYPermill = 500,
+                expectedRevision = null,
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                "references",
+                "reconcile",
+                "quota",
+                "import",
+                "projection",
+                "quota",
+                "set",
+                "references",
+                "delete",
+            ),
+            calls,
+        )
+        assertEquals(1, repository.setCalls)
+        assertEquals(2, repository.referencedCalls)
+        assertEquals(listOf(importedId.toPrivateStorageToken()), store.deletedMediaIds)
+        assertEquals(listOf(emptySet<String>()), store.deletionReferenceSnapshots)
+    }
+
+    @Test
     fun applyExistingRejectsTargetThatChangesAfterProspectiveQuotaValidation() = runTest {
         val calls = mutableListOf<String>()
         val existingId = mediaId('d')

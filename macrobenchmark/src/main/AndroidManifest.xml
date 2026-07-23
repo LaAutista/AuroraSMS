@@ -3,7 +3,7 @@
 <manifest
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-    <uses-permission android:name="org.aurorasms.app.permission.BENCHMARK_CONTROL" />
+    <uses-permission android:name="org.aurorasms.app.benchmark.permission.BENCHMARK_CONTROL" />
 
     <!-- Transitive test fixtures compile against these libraries but never use their app permissions. -->
     <uses-feature
@@ -38,7 +38,49 @@
         tools:node="remove" />
 
     <queries>
-        <package android:name="org.aurorasms.app" />
+        <package android:name="org.aurorasms.app.benchmark" />
         <provider android:authorities="org.aurorasms.app.benchmark.fixture" />
+        <intent tools:node="remove">
+            <action android:name="android.provider.Telephony.SMS_DELIVER" />
+        </intent>
     </queries>
+
+    <application>
+        <service
+            android:name="org.aurorasms.core.notifications.MessagingNotificationActionService"
+            tools:node="remove" />
+        <receiver
+            android:name="org.aurorasms.core.notifications.InlineReplyReceiver"
+            tools:node="remove" />
+        <provider
+            android:name="org.aurorasms.core.telephony.internal.MmsPduFileProvider"
+            tools:node="remove" />
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.SmsDeliverReceiver"
+            tools:node="remove" />
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.MmsWapPushReceiver"
+            tools:node="remove" />
+        <service
+            android:name="org.aurorasms.core.telephony.service.RespondViaMessageService"
+            tools:node="remove" />
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.SmsSentReceiver"
+            tools:node="remove" />
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.SmsDeliveredReceiver"
+            tools:node="remove" />
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.MmsSendResultReceiver"
+            tools:node="remove" />
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.MmsDownloadResultReceiver"
+            tools:node="remove" />
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.DefaultSmsRoleChangedReceiver"
+            tools:node="remove" />
+        <receiver
+            android:name="org.aurorasms.core.telephony.receiver.ExternalProviderChangedReceiver"
+            tools:node="remove" />
+    </application>
 </manifest>

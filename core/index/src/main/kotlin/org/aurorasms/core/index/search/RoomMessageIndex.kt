@@ -44,13 +44,10 @@ class RoomMessageIndex(
     override suspend fun coverage(): IndexCoverage {
         val generation = syncDao.latestGeneration()
             ?: return IndexCoverage.NOT_STARTED.copy(indexedMessageCount = messageDao.count())
-        val indexedMessageCount = if (generation.state == GenerationStateCode.COMPLETE) {
-            // Completion and every steady-state content mutation persist a physical COUNT(*) in
-            // the same transaction, so a complete generation already owns an exact row count.
-            generation.committedCount
-        } else {
-            messageDao.count()
-        }
+        // Re-read the physical count even for COMPLETE rows. This keeps legacy
+        // or internally inconsistent completion metadata fail-closed instead
+        // of projecting an unverified index as exact search coverage.
+        val indexedMessageCount = messageDao.count()
         return generation.toCoverage(
             checkpoints = syncDao.checkpoints(generation.generationId),
             indexedMessageCount = indexedMessageCount,

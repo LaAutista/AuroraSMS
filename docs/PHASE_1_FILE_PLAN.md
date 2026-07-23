@@ -1,7 +1,7 @@
 # Phase 1 file-level plan
 
-Status: approved Phase 0 baseline; host foundation implemented, physical
-device/carrier acceptance pending
+Status: approved Phase 0 baseline; host foundation and commit `7c9d848`
+durable-message hardening implemented; final carrier/release acceptance pending
 
 ## Phase 1 outcome
 
@@ -151,6 +151,7 @@ app/build.gradle.kts
 app/src/main/AndroidManifest.xml
 app/src/main/kotlin/org/aurorasms/app/AuroraSmsApplication.kt
 app/src/main/kotlin/org/aurorasms/app/AppContainer.kt
+app/src/main/kotlin/org/aurorasms/app/DefaultSmsRoleLifecycleFence.kt
 app/src/main/kotlin/org/aurorasms/app/MainActivity.kt
 app/src/main/kotlin/org/aurorasms/app/compose/ComposeMessageActivity.kt
 app/src/main/kotlin/org/aurorasms/app/role/DefaultSmsRoleCoordinator.kt
@@ -159,8 +160,12 @@ app/src/main/kotlin/org/aurorasms/app/role/AndroidSmsRolePlatform.kt
 app/src/main/kotlin/org/aurorasms/app/role/RoleOnboardingState.kt
 app/src/main/kotlin/org/aurorasms/app/message/IncomingMessageOrchestrator.kt
 app/src/main/kotlin/org/aurorasms/app/message/InlineReplyOrchestrator.kt
+app/src/main/kotlin/org/aurorasms/app/message/InlineReplyProviderUpdateCoordinator.kt
+app/src/main/kotlin/org/aurorasms/app/message/InlineReplyTransportResultHandler.kt
+app/src/main/kotlin/org/aurorasms/app/message/ReplyOperationRegistry.kt
 app/src/main/kotlin/org/aurorasms/app/message/AppNotificationIntentFactory.kt
 app/src/main/kotlin/org/aurorasms/app/message/SharedPreferencesReplyReplayGuard.kt
+app/src/main/kotlin/org/aurorasms/app/message/SharedPreferencesReplyOperationStore.kt
 app/src/main/kotlin/org/aurorasms/app/message/SharedPreferencesReplyTargetStore.kt
 app/src/main/kotlin/org/aurorasms/app/diagnostics/DiagnosticsLauncher.kt
 app/src/main/res/values/strings.xml
@@ -170,6 +175,8 @@ app/src/main/res/drawable/ic_launcher_foreground.xml
 app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 app/src/main/res/xml/backup_rules.xml
 app/src/main/res/xml/data_extraction_rules.xml
+app/src/debug/AndroidManifest.xml
+app/src/debug/kotlin/org/aurorasms/app/debug/DebugSmsSnapshotProvider.kt
 app/src/debug/kotlin/org/aurorasms/app/diagnostics/DiagnosticsRoute.kt
 app/src/debug/kotlin/org/aurorasms/app/diagnostics/DiagnosticsViewModel.kt
 app/src/debug/kotlin/org/aurorasms/app/diagnostics/DiagnosticsScreen.kt
@@ -193,6 +200,23 @@ surface reports role, ledgered permissions, telephony feature, active
 subscriptions, provider counts, and last synthetic/real transport result with
 redacted output. Release code contains no diagnostics screen or synthetic
 seeded messaging state.
+
+Commit `7c9d848` extends that wiring with checksummed, bounded reply-target,
+consumed-claim, reply-operation, and incoming-notification-generation stores.
+The target store necessarily retains the validated recipient for cold-process
+routing but no body; claims retain a recipient digest; operation/generation
+records retain redacted IDs and bounded lifecycle, progress, status, and
+ordering evidence. `DefaultSmsRoleLifecycleFence` serializes lifecycle work
+against authoritative role reads. Confirmed loss disables new recovery,
+cancels and joins pending recovery jobs, fences live incoming work, performs
+exact-generation notification cleanup, and clears reply targets.
+
+The same commit adds one disposable-emulator seam in the debug source set.
+`DebugSmsSnapshotProvider` is query-only, requires the platform `DUMP`
+permission and the Binder shell UID, and exposes only SMS `_id`, `thread_id`,
+and `type`. It rejects selection, sorting, mutation, calls, and files.
+`scripts/verify-permissions.sh` requires that exact provider in debug and fails
+if its class or authority appears in a non-debug merged manifest.
 
 `DefaultSmsRoleCoordinator` is platform-neutral and depends on the injected
 `SmsRolePlatform` contract, so its host test uses a fake and requires no
@@ -252,6 +276,7 @@ core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidDefa
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidSubscriptionRepository.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidSmsTransport.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/AndroidMmsTransport.kt
+core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/IncomingSmsProviderContentDigest.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/IncomingSmsReplayJournal.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/MmsPduStagingStore.kt
 core/telephony/src/main/kotlin/org/aurorasms/core/telephony/internal/MmsPduFileProvider.kt
@@ -291,6 +316,16 @@ orchestrator; the end-to-end pipeline posts at most one notification. Receivers
 do not decode attachment media, reference the notifications module, or hold
 full histories.
 
+The incoming journal's v4 record is canonically checksummed with its delivery
+key and includes a domain-separated redacted provider-content digest for exact
+post-insert recovery. Poisoned or malformed entries are replaced by durable,
+key-bound, checksummed `Q1` quarantine tombstones while valid sibling entries
+remain recoverable. Receiver work accepted through `goAsync()` runs separately
+from its bounded lease watcher: lease timeout finishes the broadcast without
+cancelling that work. The work remains process-local and may be lost on process
+kill; the journal and later lifecycle recovery, not coroutine survival, cover
+that boundary.
+
 `MmsPduFileProvider` is a custom non-exported `FileProvider` subclass with
 cache-only canonical paths. An MMS send stages one bounded source PDU and grants
 its unique URI read-only; an MMS download creates one empty dedicated target
@@ -314,6 +349,7 @@ core/notifications/src/main/kotlin/org/aurorasms/core/notifications/Notification
 core/notifications/src/main/kotlin/org/aurorasms/core/notifications/InlineReplyHandler.kt
 core/notifications/src/main/kotlin/org/aurorasms/core/notifications/NotificationEntryPoint.kt
 core/notifications/src/main/kotlin/org/aurorasms/core/notifications/AndroidMessageNotifier.kt
+core/notifications/src/main/kotlin/org/aurorasms/core/notifications/IncomingNotificationGenerationTracker.kt
 core/notifications/src/main/kotlin/org/aurorasms/core/notifications/InlineReplyReceiver.kt
 core/notifications/src/main/kotlin/org/aurorasms/core/notifications/NotificationConfig.kt
 core/notifications/src/main/res/values/strings.xml
@@ -324,7 +360,11 @@ core/notifications/src/test/kotlin/org/aurorasms/core/notifications/PendingInten
 
 The module owns `MessagingStyle`, privacy levels, channel behavior, tap/deep
 link intent construction, and validated inline-reply input. It depends only on
-model contracts, never telephony or app internals.
+model contracts, never telephony or app internals. Incoming notification
+replacement/cancellation is ordered by a checksummed durable generation store,
+and role-loss cleanup verifies exact generation markers rather than cancelling
+a newer replacement. Reply-failure notifications contain only generic,
+body-free copy and an immutable route back into AuroraSMS.
 
 Dependency direction is acyclic: `app` depends on telephony and notifications;
 neither depends on the other. System-created telephony receivers obtain a

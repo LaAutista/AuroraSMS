@@ -17,8 +17,8 @@ android {
         applicationId = "org.aurorasms.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.4.2-phase4"
+        versionCode = 22
+        versionName = rootProject.version.toString()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -38,6 +38,9 @@ android {
         }
         create("benchmark") {
             initWith(getByName("release"))
+            // Performance fixtures must never replace or share private state
+            // with the installed messaging app on an owner's device.
+            applicationIdSuffix = ".benchmark"
             // Manual HRF capture must use unobfuscated signatures. Normal
             // benchmark/performance builds remain release-equivalent and R8-enabled.
             isMinifyEnabled = !baselineProfileCapture.get()
@@ -59,6 +62,11 @@ android {
 
     lint {
         abortOnError = true
+        // The benchmark APK deliberately strips POST_NOTIFICATIONS while
+        // retaining production bytecode as R8 roots. Keep that single
+        // project-level detector finding explicit; verifyPermissions enforces
+        // the exact production and benchmark manifest ledgers independently.
+        baseline = file("lint-benchmark-baseline.xml")
         checkDependencies = true
         checkReleaseBuilds = true
         // Phase 0 deliberately approved target 36 and this exact audited,
@@ -91,6 +99,7 @@ dependencies {
     implementation(project(":core:index"))
     implementation(project(":core:state"))
     implementation(project(":core:telephony"))
+    implementation(project(":feature:backup"))
     implementation(project(":feature:conversations"))
 
     implementation(libs.kotlin.stdlib)

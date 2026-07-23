@@ -1,9 +1,39 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+
     <application>
+        <activity
+            android:name="org.aurorasms.app.message.IncomingSmsPduCaptureArmActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:permission="android.permission.DUMP"
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <receiver
+            android:name="org.aurorasms.app.message.IncomingSmsPduCaptureReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="org.aurorasms.app.appearance.wallpaper.WallpaperTestContentProvider"
             android:authorities="org.aurorasms.app.wallpaper.testprovider"
             android:exported="true" />
+        <provider
+            android:name="org.aurorasms.app.appearance.wallpaper.WallpaperTestDocumentsProvider"
+            android:authorities="org.aurorasms.app.wallpaper.testdocuments"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
     </application>
 </manifest>

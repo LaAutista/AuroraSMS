@@ -118,6 +118,109 @@ class AppearanceWallpaperRepositoryInstrumentedTest {
     }
 
     @Test
+    fun globalAndConversationAssignmentsSurviveDatabaseReopenAndResetIndependently() = runBlocking {
+        val globalScope = AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD)
+        val conversationScope = conversationScope(
+            72L,
+            "reopen-a@example.invalid",
+            "reopen-b@example.invalid",
+        )
+        val globalMedia = wallpaperMediaId(34)
+        val conversationMedia = wallpaperMediaId(35)
+
+        val (expectedGlobal, expectedConversation) = openStateDatabase().let { database ->
+            val repository = RoomAppearanceProfileRepository(database)
+            try {
+                val global = checkNotNull(
+                    repository.setWallpaper(
+                        scope = globalScope,
+                        mediaId = globalMedia,
+                        dimPermill = 425,
+                        focalXPermill = 125,
+                        focalYPermill = 875,
+                        expectedRevision = null,
+                    ).successValue().assignment,
+                )
+                val conversation = checkNotNull(
+                    repository.setWallpaper(
+                        scope = conversationScope,
+                        mediaId = conversationMedia,
+                        dimPermill = 825,
+                        focalXPermill = 875,
+                        focalYPermill = 125,
+                        expectedRevision = null,
+                    ).successValue().assignment,
+                )
+                assertTrue(conversation.revision.value > global.revision.value)
+                global to conversation
+            } finally {
+                database.close()
+            }
+        }
+
+        val reopenedDatabase = openStateDatabase()
+        val reopenedRepository = RoomAppearanceProfileRepository(reopenedDatabase)
+        try {
+            val reopenedGlobal = checkNotNull(
+                reopenedRepository.observeWallpaper(globalScope).first(),
+            )
+            assertEquals(expectedGlobal, reopenedGlobal)
+            assertEquals(
+                globalMedia.toPrivateStorageToken(),
+                reopenedGlobal.mediaId.toPrivateStorageToken(),
+            )
+            assertEquals(425, reopenedGlobal.dimPermill)
+            assertEquals(125, reopenedGlobal.focalXPermill)
+            assertEquals(875, reopenedGlobal.focalYPermill)
+            assertEquals(expectedGlobal.revision, reopenedGlobal.revision)
+
+            val reopenedConversation = checkNotNull(
+                reopenedRepository.observeWallpaper(conversationScope).first(),
+            )
+            assertEquals(expectedConversation, reopenedConversation)
+            assertEquals(
+                conversationMedia.toPrivateStorageToken(),
+                reopenedConversation.mediaId.toPrivateStorageToken(),
+            )
+            assertEquals(825, reopenedConversation.dimPermill)
+            assertEquals(875, reopenedConversation.focalXPermill)
+            assertEquals(125, reopenedConversation.focalYPermill)
+            assertEquals(expectedConversation.revision, reopenedConversation.revision)
+
+            val conversationReset = reopenedRepository.resetWallpaper(
+                conversationScope,
+                reopenedConversation.revision,
+            ).successValue()
+            assertNull(conversationReset.assignment)
+            assertEquals(conversationMedia, conversationReset.mediaIdNowUnreferenced)
+            assertNull(reopenedRepository.observeWallpaper(conversationScope).first())
+            assertEquals(
+                reopenedGlobal,
+                reopenedRepository.observeWallpaper(globalScope).first(),
+            )
+            assertEquals(
+                setOf(globalMedia),
+                reopenedRepository.referencedMediaIds().successValue(),
+            )
+        } finally {
+            reopenedDatabase.close()
+        }
+
+        val verifiedDatabase = openStateDatabase()
+        val verifiedRepository = RoomAppearanceProfileRepository(verifiedDatabase)
+        try {
+            assertEquals(expectedGlobal, verifiedRepository.observeWallpaper(globalScope).first())
+            assertNull(verifiedRepository.observeWallpaper(conversationScope).first())
+            assertEquals(
+                setOf(globalMedia),
+                verifiedRepository.referencedMediaIds().successValue(),
+            )
+        } finally {
+            verifiedDatabase.close()
+        }
+    }
+
+    @Test
     fun resetAndRecreateNeverLetThePreResetRevisionRegainAuthority() = runBlocking {
         val database = openStateDatabase()
         val repository = RoomAppearanceProfileRepository(database)

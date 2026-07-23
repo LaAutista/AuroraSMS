@@ -15,14 +15,22 @@ import org.junit.Test
 
 class AuroraMaterialProfileTest {
     @Test
-    fun defaultProfilePreservesThePhaseThreeAppearanceAndAccessibilityFloor() {
+    fun defaultProfileUsesTheAuroraVisualIdentityAndAccessibilityFloor() {
         val profile = AuroraMaterialProfile.Default
         val scheme = staticColorScheme(profile.palette, systemDark = true)
         val tokens = tokensFor(profile)
+        val visualTokens = visualTokensFor(profile, scheme)
 
         assertEquals(AuroraPalette.AURORA_DARK, profile.palette)
-        assertEquals(Color(0xFF78D6C6), scheme.primary)
-        assertEquals(Color(0xFF101419), scheme.background)
+        assertEquals(273, profile.hueDegrees)
+        assertEquals(Color(0xFFB965FF), scheme.primary)
+        assertEquals(Color(0xFF05040F), scheme.background)
+        assertEquals(Color(0xFF31E8F2), scheme.tertiary)
+        assertEquals(Color(0xFFB965FF), visualTokens.violet)
+        assertEquals(Color(0xFF702EFF), visualTokens.outgoingGradientStart)
+        assertEquals(Color(0xFF994CE5), visualTokens.outgoingGradientEnd)
+        assertEquals(Color(0xFF683994), visualTokens.incomingOutline)
+        assertEquals(Color(0xFFB965FF), visualTokens.avatarRing)
         assertEquals(48.dp, tokens.minimumTouchTarget)
         assertEquals(64.dp, tokens.rowMinimumHeight)
         assertEquals(1f, tokens.motionScale)
@@ -65,7 +73,7 @@ class AuroraMaterialProfileTest {
             hueDegrees = 24,
         )
 
-        assertEquals(Color(0xFF78D6C6), canonical.primary)
+        assertEquals(Color(0xFFB965FF), canonical.primary)
         assertNotEquals(canonical.primary, shifted.primary)
         assertNotEquals(canonical.secondary, shifted.secondary)
         assertNotEquals(canonical.primaryContainer, shifted.primaryContainer)
@@ -98,6 +106,57 @@ class AuroraMaterialProfileTest {
     }
 
     @Test
+    fun everyOutgoingBubbleEndpointKeepsBodyTextContrast() {
+        for (hue in 0..359) {
+            listOf(
+                AuroraMaterialProfile(
+                    palette = AuroraPalette.AURORA_DARK,
+                    hueDegrees = hue,
+                ) to true,
+                AuroraMaterialProfile(
+                    palette = AuroraPalette.AMOLED_BLACK,
+                    hueDegrees = hue,
+                ) to true,
+                AuroraMaterialProfile(
+                    palette = AuroraPalette.LIGHT,
+                    hueDegrees = hue,
+                ) to false,
+                AuroraMaterialProfile(
+                    palette = AuroraPalette.AURORA_DARK,
+                    hueDegrees = hue,
+                    highContrast = true,
+                ) to true,
+                AuroraMaterialProfile(
+                    palette = AuroraPalette.LIGHT,
+                    hueDegrees = hue,
+                    highContrast = true,
+                ) to false,
+            ).forEach { (profile, systemDark) ->
+                val scheme = staticColorScheme(
+                    palette = profile.palette,
+                    systemDark = systemDark,
+                    hueDegrees = profile.hueDegrees,
+                    highContrast = profile.highContrast,
+                )
+                val visualTokens = visualTokensFor(profile, scheme)
+
+                assertContrastAtLeast(
+                    visualTokens.outgoingGradientStart,
+                    visualTokens.onOutgoing,
+                    4.5f,
+                    hue,
+                )
+                assertContrastAtLeast(
+                    visualTokens.outgoingGradientEnd,
+                    visualTokens.onOutgoing,
+                    4.5f,
+                    hue,
+                )
+            }
+        }
+    }
+
+    @Test
     fun highContrastUsesUnambiguousOpaqueForegroundAndBackgroundColors() {
         val dark = staticColorScheme(
             palette = AuroraPalette.AURORA_DARK,
@@ -116,12 +175,32 @@ class AuroraMaterialProfileTest {
         assertEquals(Color.Black, dark.onPrimaryContainer)
         assertEquals(Color.White, dark.secondaryContainer)
         assertEquals(Color.Black, dark.onSecondaryContainer)
+        assertEquals(Color.Black, dark.surfaceContainerHigh)
+        assertEquals(Color.White, dark.onSurface)
         assertEquals(Color.White, light.background)
         assertEquals(Color.Black, light.onBackground)
         assertEquals(Color.Black, light.primaryContainer)
         assertEquals(Color.White, light.onPrimaryContainer)
         assertEquals(Color.Black, light.secondaryContainer)
         assertEquals(Color.White, light.onSecondaryContainer)
+        assertEquals(Color.White, light.surfaceContainerHigh)
+        assertEquals(Color.Black, light.onSurface)
+
+        val darkVisuals = visualTokensFor(
+            AuroraMaterialProfile(highContrast = true),
+            dark,
+        )
+        val lightVisuals = visualTokensFor(
+            AuroraMaterialProfile(
+                palette = AuroraPalette.LIGHT,
+                highContrast = true,
+            ),
+            light,
+        )
+        assertEquals(Color.White, darkVisuals.avatarRing)
+        assertEquals(Color.Black, darkVisuals.onOutgoing)
+        assertEquals(Color.Black, lightVisuals.avatarRing)
+        assertEquals(Color.White, lightVisuals.onOutgoing)
     }
 
     @Test

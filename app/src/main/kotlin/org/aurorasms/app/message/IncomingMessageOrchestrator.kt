@@ -2,14 +2,28 @@
 
 package org.aurorasms.app.message
 
+import java.util.concurrent.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.aurorasms.core.model.AuroraSubscriptionId
+import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageDeliveryFingerprint
+import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.notifications.IncomingMessageNotification
 import org.aurorasms.core.notifications.MessageNotifier
+import org.aurorasms.core.notifications.NotificationCancelResult
 import org.aurorasms.core.notifications.NotificationConfig
+import org.aurorasms.core.notifications.NotificationPostResult
 import org.aurorasms.core.telephony.ContactResolver
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.IncomingMessage
+import org.aurorasms.core.telephony.IncomingMmsDelivery
 import org.aurorasms.core.telephony.IncomingMessageSink
 import org.aurorasms.core.telephony.IncomingPersistResult
+import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
+import org.aurorasms.core.telephony.IncomingSmsNotificationReplayRequest
 import org.aurorasms.core.telephony.IncomingSmsRecord
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderStoredMessage
@@ -21,18 +35,183 @@ class IncomingMessageOrchestrator(
     private val contactResolver: ContactResolver,
     private val messageNotifier: MessageNotifier,
     private val replyTargets: ReplyTargetRegistry,
+    private val isSenderBlocked: suspend (ParticipantAddress) -> Boolean = { false },
+    private val persistMms: suspend (IncomingMessage.MmsWapPush) -> IncomingPersistResult = {
+        IncomingPersistResult.Rejected(IncomingPersistResult.Reason.CODEC_UNAVAILABLE)
+    },
+    private val acknowledgeMms: suspend (IncomingMmsDelivery) -> Boolean = { false },
     private val notificationConfig: NotificationConfig = NotificationConfig(),
     private val onProviderInsertComplete: suspend () -> Unit = {},
+    private val onIncomingNotificationCommitted: suspend (ProviderStoredMessage) -> Unit = {},
 ) : IncomingMessageSink {
-    override suspend fun persist(message: IncomingMessage): IncomingPersistResult {
+    private val incomingWorkMutex = Mutex()
+
+    override suspend fun persist(message: IncomingMessage): IncomingPersistResult =
+        when (message) {
+            is IncomingMessage.Sms -> incomingWorkMutex.withLock {
+                if (!roleState.isRoleHeld()) {
+                    IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+                } else {
+                    persistSms(message)
+                }
+            }
+            is IncomingMessage.MmsWapPush -> incomingWorkMutex.withLock {
+                if (!roleState.isRoleHeld()) {
+                    IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+                } else {
+                    persistMms(message)
+                }
+            }
+        }
+
+    /**
+     * Rebuilds notifications for provider rows whose durable delivery journal was
+     * stored but never acknowledged. Work is bounded so a damaged or busy provider
+     * cannot monopolize the application scope; later lifecycle triggers retry it.
+     */
+    internal suspend fun recoverPendingNotifications(
+        batchLimit: Int = IncomingSmsNotificationReplayRequest.MAXIMUM_LIMIT,
+        maximumBatches: Int = DEFAULT_MAXIMUM_RECOVERY_BATCHES,
+    ): IncomingNotificationRecoveryResult = incomingWorkMutex.withLock {
+        require(maximumBatches in 1..ABSOLUTE_MAXIMUM_RECOVERY_BATCHES) {
+            "maximumBatches is out of bounds"
+        }
         if (!roleState.isRoleHeld()) {
-            return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+            return@withLock IncomingNotificationRecoveryResult.Deferred(recoveredCount = 0)
         }
-        return when (message) {
-            is IncomingMessage.Sms -> persistSms(message)
-            is IncomingMessage.MmsWapPush ->
-                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.CODEC_UNAVAILABLE)
+        val request = IncomingSmsNotificationReplayRequest(batchLimit)
+        var recoveredCount = 0
+        repeat(maximumBatches) {
+            if (!roleState.isRoleHeld()) {
+                return@withLock IncomingNotificationRecoveryResult.Deferred(recoveredCount)
+            }
+            val pending = when (val result = smsProvider.readPendingIncomingNotifications(request)) {
+                is ProviderAccessResult.Success -> result.value
+                ProviderAccessResult.RoleRequired,
+                ProviderAccessResult.PermissionDenied,
+                is ProviderAccessResult.InvalidInput,
+                is ProviderAccessResult.Unsupported,
+                is ProviderAccessResult.Unavailable ->
+                    return@withLock IncomingNotificationRecoveryResult.Deferred(recoveredCount)
+            }
+            if (pending.isEmpty()) {
+                return@withLock IncomingNotificationRecoveryResult.Complete(recoveredCount)
+            }
+            for (replay in pending) {
+                if (!roleState.isRoleHeld()) {
+                    return@withLock IncomingNotificationRecoveryResult.Deferred(recoveredCount)
+                }
+                if (notifyAndAcknowledge(replay) !is IncomingPersistResult.Persisted) {
+                    return@withLock IncomingNotificationRecoveryResult.Deferred(recoveredCount)
+                }
+                recoveredCount += 1
+            }
         }
+        IncomingNotificationRecoveryResult.Deferred(recoveredCount)
+    }
+
+    internal suspend fun notifyDownloadedMms(
+        delivery: IncomingMmsDelivery,
+    ): IncomingPersistResult = incomingWorkMutex.withLock {
+        if (!roleState.isRoleHeld()) {
+            return@withLock IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        onProviderInsertComplete()
+        val stored = ProviderStoredMessage(delivery.providerId, delivery.conversationId)
+        val explicitlyBlocked = try {
+            isSenderBlocked(delivery.sender)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            false
+        }
+        if (explicitlyBlocked) {
+            return@withLock if (acknowledgeMms(delivery)) {
+                IncomingPersistResult.Persisted(delivery.providerId, delivery.conversationId)
+            } else {
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.PROVIDER_UNAVAILABLE)
+            }
+        }
+        val displayName = contactResolver.resolve(listOf(delivery.sender))
+            .singleOrNull()
+            ?.displayNameOrAddress
+            ?: delivery.sender.value
+        if (!roleState.isRoleHeld()) {
+            return@withLock IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        val notificationResult = try {
+            messageNotifier.notifyIncoming(
+                IncomingMessageNotification(
+                    messageId = delivery.providerId.asMessageId(),
+                    conversationId = delivery.conversationId,
+                    senderDisplayName = displayName,
+                    senderPersonKey = "conversation-${delivery.conversationId.value}",
+                    body = delivery.body,
+                    receivedAtEpochMillis = delivery.receivedTimestampMillis,
+                    isGroupConversation = delivery.isGroupConversation,
+                    canReply = false,
+                ),
+                notificationConfig,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            return@withLock IncomingPersistResult.Rejected(
+                IncomingPersistResult.Reason.NOTIFICATION_UNAVAILABLE,
+            )
+        }
+        if (notificationResult is NotificationPostResult.Rejected) {
+            return@withLock IncomingPersistResult.Rejected(
+                IncomingPersistResult.Reason.NOTIFICATION_UNAVAILABLE,
+            )
+        }
+        if (!roleState.isRoleHeld() || !acknowledgeMms(delivery)) {
+            if (notificationResult is NotificationPostResult.Posted) {
+                cancelPostedGeneration(delivery.conversationId, delivery.providerId.asMessageId())
+            }
+            return@withLock IncomingPersistResult.Rejected(
+                if (roleState.isRoleHeld()) {
+                    IncomingPersistResult.Reason.PROVIDER_UNAVAILABLE
+                } else {
+                    IncomingPersistResult.Reason.ROLE_NOT_HELD
+                },
+            )
+        }
+        if (notificationResult is NotificationPostResult.Posted) {
+            try {
+                onIncomingNotificationCommitted(stored)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: RuntimeException) {
+                // Reminder ownership is optional after durable MMS acknowledgement.
+            }
+        }
+        IncomingPersistResult.Persisted(delivery.providerId, delivery.conversationId)
+    }
+
+    /**
+     * Fences role loss against live persistence/recovery and removes only the
+     * exact incoming generations posted during this held-role process epoch.
+     */
+    internal suspend fun onRoleLost() = incomingWorkMutex.withLock {
+        repeat(ROLE_LOSS_CANCELLATION_MAXIMUM_ATTEMPTS) { attempt ->
+            if (roleState.isRoleHeld()) return@withLock
+            val result = try {
+                messageNotifier.cancelAllIncoming()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: RuntimeException) {
+                NotificationCancelResult.RetryableFailure
+            }
+            if (result != NotificationCancelResult.RetryableFailure) {
+                replyTargets.clear()
+                return@withLock
+            }
+            if (attempt < ROLE_LOSS_CANCELLATION_MAXIMUM_ATTEMPTS - 1) {
+                delay(ROLE_LOSS_CANCELLATION_RETRY_MILLIS)
+            }
+        }
+        if (!roleState.isRoleHeld()) replyTargets.clear()
     }
 
     private suspend fun persistSms(message: IncomingMessage.Sms): IncomingPersistResult {
@@ -56,7 +235,14 @@ class IncomingMessageOrchestrator(
                         conversationId = stored.conversationId,
                     )
                 } else {
-                    notifyAndAcknowledge(message, stored)
+                    notifyAndAcknowledge(
+                        deliveryFingerprint = message.deliveryFingerprint,
+                        sender = message.sender,
+                        body = message.body,
+                        receivedTimestampMillis = message.receivedTimestampMillis,
+                        subscriptionId = message.subscriptionId,
+                        stored = stored,
+                    )
                 }
             }
 
@@ -73,44 +259,170 @@ class IncomingMessageOrchestrator(
     }
 
     private suspend fun notifyAndAcknowledge(
-        message: IncomingMessage.Sms,
+        replay: IncomingSmsNotificationReplay,
+    ): IncomingPersistResult = notifyAndAcknowledge(
+        deliveryFingerprint = replay.deliveryFingerprint,
+        sender = replay.sender,
+        body = replay.body,
+        receivedTimestampMillis = replay.receivedTimestampMillis,
+        subscriptionId = replay.subscriptionId,
+        stored = ProviderStoredMessage(
+            providerId = replay.providerId,
+            conversationId = replay.conversationId,
+        ),
+    )
+
+    private suspend fun notifyAndAcknowledge(
+        deliveryFingerprint: MessageDeliveryFingerprint,
+        sender: ParticipantAddress,
+        body: String,
+        receivedTimestampMillis: Long,
+        subscriptionId: AuroraSubscriptionId?,
         stored: ProviderStoredMessage,
     ): IncomingPersistResult {
-        val displayName = contactResolver.resolve(listOf(message.sender))
+        if (!roleState.isRoleHeld()) {
+            return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        val explicitlyBlocked = try {
+            isSenderBlocked(sender)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            // A block-store failure must fail open; it must not silently hide an incoming message.
+            false
+        }
+        if (explicitlyBlocked) {
+            return acknowledgeBlockedDelivery(deliveryFingerprint, stored)
+        }
+        val displayName = contactResolver.resolve(listOf(sender))
             .singleOrNull()
             ?.displayNameOrAddress
-            ?: message.sender.value
-        val canReply = message.subscriptionId?.let { subscriptionId ->
+            ?: sender.value
+        if (!roleState.isRoleHeld()) {
+            return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        val requestId = "${stored.providerId.kind.name}:${stored.providerId.value}"
+        var targetRemembered = false
+        val canReply = subscriptionId?.let { replySubscriptionId ->
             replyTargets.remember(
-                requestId = "${stored.providerId.kind.name}:${stored.providerId.value}",
+                requestId = requestId,
                 conversationId = stored.conversationId,
-                recipient = message.sender,
-                subscriptionId = subscriptionId,
-            )
+                recipient = sender,
+                subscriptionId = replySubscriptionId,
+            ).also { remembered -> targetRemembered = remembered }
         } == true
-        messageNotifier.notifyIncoming(
-            IncomingMessageNotification(
-                messageId = stored.providerId.asMessageId(),
-                conversationId = stored.conversationId,
-                senderDisplayName = displayName,
-                senderPersonKey = "conversation-${stored.conversationId.value}",
-                body = message.body,
-                receivedAtEpochMillis = message.receivedTimestampMillis,
-                canReply = canReply,
-            ),
-            notificationConfig,
+        if (!roleState.isRoleHeld()) {
+            if (targetRemembered) replyTargets.forget(requestId, stored.conversationId)
+            return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        val notificationResult = try {
+            messageNotifier.notifyIncoming(
+                IncomingMessageNotification(
+                    messageId = stored.providerId.asMessageId(),
+                    conversationId = stored.conversationId,
+                    senderDisplayName = displayName,
+                    senderPersonKey = "conversation-${stored.conversationId.value}",
+                    body = body,
+                    receivedAtEpochMillis = receivedTimestampMillis,
+                    canReply = canReply,
+                ),
+                notificationConfig,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            if (targetRemembered) replyTargets.forget(requestId, stored.conversationId)
+            return IncomingPersistResult.Rejected(
+                IncomingPersistResult.Reason.NOTIFICATION_UNAVAILABLE,
+            )
+        }
+        when (notificationResult) {
+            is NotificationPostResult.Posted -> Unit
+            NotificationPostResult.NotificationsDisabled,
+            NotificationPostResult.SupersededByNewer,
+            -> if (!replyTargets.forget(requestId, stored.conversationId)) {
+                return IncomingPersistResult.Rejected(
+                    IncomingPersistResult.Reason.NOTIFICATION_UNAVAILABLE,
+                )
+            }
+            is NotificationPostResult.Rejected -> {
+                if (targetRemembered) replyTargets.forget(requestId, stored.conversationId)
+                return IncomingPersistResult.Rejected(
+                    IncomingPersistResult.Reason.NOTIFICATION_UNAVAILABLE,
+                )
+            }
+        }
+        if (!roleState.isRoleHeld()) {
+            revokePostedNotification(
+                notificationResult = notificationResult,
+                requestId = requestId,
+                stored = stored,
+            )
+            return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
+        val handled = smsProvider.markIncomingHandled(
+            deliveryFingerprint = deliveryFingerprint,
+            providerId = stored.providerId,
+            conversationId = stored.conversationId,
         )
+        return when (handled) {
+            is ProviderAccessResult.Success -> if (roleState.isRoleHeld()) {
+                if (notificationResult is NotificationPostResult.Posted) {
+                    try {
+                        onIncomingNotificationCommitted(stored)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: RuntimeException) {
+                        // Reminder ownership is optional and must never turn a
+                        // safely persisted incoming SMS into a failed delivery.
+                    }
+                }
+                IncomingPersistResult.Persisted(stored.providerId, stored.conversationId)
+            } else {
+                revokePostedNotification(
+                    notificationResult = notificationResult,
+                    requestId = requestId,
+                    stored = stored,
+                )
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+            }
+            ProviderAccessResult.RoleRequired -> {
+                revokePostedNotification(
+                    notificationResult = notificationResult,
+                    requestId = requestId,
+                    stored = stored,
+                )
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+            }
+            ProviderAccessResult.PermissionDenied ->
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.PERMISSION_DENIED)
+            is ProviderAccessResult.InvalidInput ->
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.MALFORMED_INPUT)
+            is ProviderAccessResult.Unsupported,
+            is ProviderAccessResult.Unavailable ->
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.PROVIDER_UNAVAILABLE)
+        }
+    }
+
+    private suspend fun acknowledgeBlockedDelivery(
+        deliveryFingerprint: MessageDeliveryFingerprint,
+        stored: ProviderStoredMessage,
+    ): IncomingPersistResult {
+        if (!roleState.isRoleHeld()) {
+            return IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+        }
         return when (
             smsProvider.markIncomingHandled(
-                deliveryFingerprint = message.deliveryFingerprint,
+                deliveryFingerprint = deliveryFingerprint,
                 providerId = stored.providerId,
                 conversationId = stored.conversationId,
             )
         ) {
-            is ProviderAccessResult.Success -> IncomingPersistResult.Persisted(
-                providerId = stored.providerId,
-                conversationId = stored.conversationId,
-            )
+            is ProviderAccessResult.Success -> if (roleState.isRoleHeld()) {
+                IncomingPersistResult.Persisted(stored.providerId, stored.conversationId)
+            } else {
+                IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
+            }
             ProviderAccessResult.RoleRequired ->
                 IncomingPersistResult.Rejected(IncomingPersistResult.Reason.ROLE_NOT_HELD)
             ProviderAccessResult.PermissionDenied ->
@@ -122,4 +434,51 @@ class IncomingMessageOrchestrator(
                 IncomingPersistResult.Rejected(IncomingPersistResult.Reason.PROVIDER_UNAVAILABLE)
         }
     }
+
+    private fun revokePostedNotification(
+        notificationResult: NotificationPostResult,
+        requestId: String,
+        stored: ProviderStoredMessage,
+    ) {
+        if (notificationResult is NotificationPostResult.Posted) {
+            cancelPostedGeneration(stored.conversationId, stored.providerId.asMessageId())
+        }
+        replyTargets.forget(requestId, stored.conversationId)
+    }
+
+    private fun cancelPostedGeneration(
+        conversationId: ConversationId,
+        messageId: MessageId,
+    ) {
+        try {
+            when (
+                messageNotifier.cancelIncomingConversation(
+                    conversationId = conversationId,
+                    expectedMessageId = messageId,
+                )
+            ) {
+                NotificationCancelResult.Cancelled,
+                NotificationCancelResult.AlreadyAbsentOrReplaced,
+                NotificationCancelResult.RetryableFailure,
+                -> Unit
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            // The role-loss fence retries notifier-wide exact cancellation.
+        }
+    }
+
+    private companion object {
+        const val DEFAULT_MAXIMUM_RECOVERY_BATCHES = 4
+        const val ABSOLUTE_MAXIMUM_RECOVERY_BATCHES = 16
+        const val ROLE_LOSS_CANCELLATION_MAXIMUM_ATTEMPTS = 3
+        const val ROLE_LOSS_CANCELLATION_RETRY_MILLIS = 50L
+    }
+}
+
+internal sealed interface IncomingNotificationRecoveryResult {
+    data class Complete(val recoveredCount: Int) : IncomingNotificationRecoveryResult
+
+    data class Deferred(val recoveredCount: Int) : IncomingNotificationRecoveryResult
 }

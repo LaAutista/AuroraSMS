@@ -2,17 +2,36 @@
 
 package org.aurorasms.app
 
+import android.Manifest
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
+import android.provider.Settings
+import android.text.format.DateFormat
+import android.widget.Toast
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
+import java.util.Locale
+import java.util.UUID
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
@@ -23,7 +42,16 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.aurorasms.app.appearance.AppAppearanceOverrideObservation
 import org.aurorasms.app.appearance.AppAppearanceState
 import org.aurorasms.app.appearance.AppearanceController
@@ -39,11 +67,46 @@ import org.aurorasms.app.appearance.wallpaper.WallpaperApplyControllerResult
 import org.aurorasms.app.appearance.wallpaper.WallpaperControllerError
 import org.aurorasms.app.appearance.wallpaper.WallpaperRenderRequestEpoch
 import org.aurorasms.app.appearance.wallpaper.resolveWallpaperCandidates
+import org.aurorasms.app.backup.BackupRestoreScreen
+import org.aurorasms.app.compose.NewMessageRoute
+import org.aurorasms.app.settings.SettingsScreen
 import org.aurorasms.app.drafts.DraftEditorContent
+import org.aurorasms.app.drafts.DraftRestorationToken
+import org.aurorasms.app.drafts.DraftUnfreezeReason
 import org.aurorasms.app.drafts.DraftWriteStatus
+import org.aurorasms.app.drafts.FrozenDraftSnapshot
+import org.aurorasms.app.drafts.SerializedDraftWriter
+import org.aurorasms.app.message.ThreadSmsSendAttempt
+import org.aurorasms.app.message.ThreadSmsSendCommand
+import org.aurorasms.app.message.ThreadSmsSendObservation
+import org.aurorasms.app.message.ThreadSmsSendPhase
+import org.aurorasms.app.message.ScheduledSmsAttempt
+import org.aurorasms.app.message.ScheduledSmsCommand
+import org.aurorasms.app.message.ScheduledSmsObservation
+import org.aurorasms.app.message.SendDelayAttempt
+import org.aurorasms.app.message.SendDelayCommand
+import org.aurorasms.app.message.SendDelayObservation
+import org.aurorasms.app.message.ConversationMessageSignatureDialog
+import org.aurorasms.app.message.ComposerImageSanitizationResult
+import org.aurorasms.app.message.ComposerImageSanitizer
+import org.aurorasms.app.message.ConversationSignatureOverride
+import org.aurorasms.app.message.GlobalMessageSignatureDialog
+import org.aurorasms.app.message.MessageSignatureConversationKey
+import org.aurorasms.app.message.PermanentDeletionCommand
+import org.aurorasms.app.message.PermanentDeletionObservation
+import org.aurorasms.app.message.PermanentDeletionRecoveryReason
+import org.aurorasms.app.message.PermanentDeletionTargetKind
+import org.aurorasms.app.voice.VoiceMemoCaptureState
+import org.aurorasms.app.voice.VoiceMemoFailure
+import org.aurorasms.app.voice.VoiceMemoTarget
 import org.aurorasms.core.index.SearchAnchor
 import org.aurorasms.core.index.SearchHit
+import org.aurorasms.core.index.conversation.ConversationLookupResult
+import org.aurorasms.core.index.conversation.ConversationSummary
 import org.aurorasms.core.model.ConversationId
+import org.aurorasms.core.model.MessageDirection
+import org.aurorasms.core.model.MessageTransportKind
+import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
@@ -53,10 +116,38 @@ import org.aurorasms.core.model.asProviderThreadId
 import org.aurorasms.core.designsystem.AuroraMaterialProfile
 import org.aurorasms.core.designsystem.AuroraMaterialTheme
 import org.aurorasms.core.state.DraftIdentity
+import org.aurorasms.core.state.DraftId
+import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.DraftAttachment
+import org.aurorasms.core.state.DraftAttachmentRepository
+import org.aurorasms.core.state.DraftRepositoryResult
+import org.aurorasms.core.state.DraftStorageOperation
 import org.aurorasms.core.state.AppearanceParticipantSetKey
 import org.aurorasms.core.state.AppearanceScope
 import org.aurorasms.core.state.AppearanceScreenScope
+import org.aurorasms.core.state.ConversationSubscriptionParticipantSetKey
+import org.aurorasms.core.state.ConversationSubscriptionPreference
+import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
+import org.aurorasms.core.state.ConversationSubscriptionScope
+import org.aurorasms.core.state.ScheduledSmsPrecision
+import org.aurorasms.core.state.resolveOutgoingBody
+import org.aurorasms.core.state.BlockedSenderKey
+import org.aurorasms.core.state.SpamClassification
+import org.aurorasms.core.state.SpamParticipantSetKey
+import org.aurorasms.core.state.SpamSafetyDecision
+import org.aurorasms.core.state.SpamSafetyRepositoryResult
+import org.aurorasms.core.state.SpamSafetyRevision
+import org.aurorasms.core.state.SpamSafetyScope
+import org.aurorasms.core.state.SpamSafetySnapshot
+import org.aurorasms.core.telephony.RecipientSet
+import org.aurorasms.core.telephony.OutgoingMmsAttachment
+import org.aurorasms.core.telephony.OutgoingMmsPayload
+import org.aurorasms.feature.conversations.ComposerAttachmentFailure
+import org.aurorasms.feature.conversations.ComposerAttachmentUiItem
+import org.aurorasms.feature.conversations.ComposerScheduleState
 import org.aurorasms.feature.conversations.ComposerUiState
+import org.aurorasms.feature.conversations.ComposerSendState
+import org.aurorasms.feature.conversations.ComposerUnavailableReason
 import org.aurorasms.feature.conversations.InboxScreen
 import org.aurorasms.feature.conversations.InboxStateHolder
 import org.aurorasms.feature.conversations.InboxUiState
@@ -66,6 +157,18 @@ import org.aurorasms.feature.conversations.SearchUiState
 import org.aurorasms.feature.conversations.ThreadScreen
 import org.aurorasms.feature.conversations.ThreadStateHolder
 import org.aurorasms.feature.conversations.ThreadUiState
+import org.aurorasms.feature.conversations.ConversationSubscriptionUiState
+import org.aurorasms.feature.conversations.PermanentDeletionTargetUiKind
+import org.aurorasms.feature.conversations.PermanentDeletionUiState
+import org.aurorasms.feature.conversations.SpamBlockedRow
+import org.aurorasms.feature.conversations.SpamBlockedScreen
+import org.aurorasms.feature.conversations.SpamBlockedUiState
+import org.aurorasms.feature.conversations.SpamSafetyIndicator
+import org.aurorasms.feature.conversations.SpamSafetyReason
+import org.aurorasms.feature.conversations.ThreadSpamSafetyUiState
+import org.aurorasms.feature.conversations.VoiceMemoUiFailure
+import org.aurorasms.feature.conversations.VoiceMemoUiPhase
+import org.aurorasms.feature.conversations.VoiceMemoUiState
 
 @Composable
 internal fun AuroraSmsRoot(
@@ -127,12 +230,16 @@ internal fun AuroraSmsRoot(
     var routes by rememberSaveable(stateSaver = APP_ROUTE_STACK_SAVER) {
         mutableStateOf(initialStack)
     }
+    val newMessageDraftWriterRouteOwner = rememberSaveable { UUID.randomUUID().toString() }
     var inboxDrawReported by rememberSaveable { mutableStateOf(false) }
     var previewProfile by remember { mutableStateOf<AuroraMaterialProfile?>(null) }
     var scopedEditorDismissalGeneration by rememberSaveable { mutableStateOf(0L) }
     val saveableScreens = rememberSaveableStateHolder()
     val route = routes.last()
     val context = LocalContext.current
+    val backupStartupRecovery by services.backupStartupRecovery.collectAsStateWithLifecycle(
+        initialValue = null,
+    )
 
     fun newThreadRoute(
         providerThreadId: ProviderThreadId,
@@ -219,8 +326,11 @@ internal fun AuroraSmsRoot(
                     PresentationTrace.begin(PresentationTrace.THREAD_OPEN)
                     push(newThreadRoute(it))
                 },
+                onOpenNewChat = { push(AppRoute.NewChat) },
                 onOpenSearch = { push(AppRoute.Search()) },
                 onOpenAppearance = { push(AppRoute.Appearance) },
+                onOpenSettings = { push(AppRoute.Settings) },
+                onOpenSpamBlocked = { push(AppRoute.SpamBlocked) },
                 onOpenDiagnostics = onOpenDiagnostics,
                 onRequestContactsPermission = onRequestContactsPermission,
                 onReady = {
@@ -230,6 +340,13 @@ internal fun AuroraSmsRoot(
                     }
                 },
             )
+            AppRoute.NewChat -> NewMessageRoute(
+                services = services,
+                draftWriterRouteOwner = newMessageDraftWriterRouteOwner,
+                contactsPermissionGranted = contactsPermissionGranted,
+                onRequestContactsPermission = onRequestContactsPermission,
+                onBack = ::pop,
+            )
             AppRoute.Appearance -> ThemeStudioRoute(
                 appearance = appearance,
                 controller = appearanceController,
@@ -238,6 +355,33 @@ internal fun AuroraSmsRoot(
                     saveableScreens.removeState(AppRoute.Appearance.saveableScreenKey())
                     pop()
                 },
+            )
+            AppRoute.Settings -> SettingsScreen(
+                onOpenAppearance = { push(AppRoute.Appearance) },
+                onOpenSpamBlocked = { push(AppRoute.SpamBlocked) },
+                onOpenBackupRestore = {
+                    if (services.backupDocumentController != null) push(AppRoute.BackupRestore)
+                },
+                onBack = ::pop,
+            )
+            AppRoute.BackupRestore -> services.backupDocumentController?.let { controller ->
+                BackupRestoreScreen(
+                    controller = controller,
+                    startupRecovery = backupStartupRecovery,
+                    onBack = ::pop,
+                )
+            } ?: SettingsScreen(
+                onOpenAppearance = { replaceCurrent(AppRoute.Appearance) },
+                onOpenSpamBlocked = { replaceCurrent(AppRoute.SpamBlocked) },
+                onOpenBackupRestore = {},
+                onBack = ::pop,
+            )
+            AppRoute.SpamBlocked -> SpamBlockedRoute(
+                services = services,
+                appearance = appearance,
+                appearanceController = appearanceController,
+                onOpenConversation = { push(newThreadRoute(it)) },
+                onBack = ::pop,
             )
             is AppRoute.Search -> SearchRoute(
                 services = services,
@@ -266,6 +410,7 @@ internal fun AuroraSmsRoot(
                 scopedEditorDismissalGeneration = scopedEditorDismissalGeneration,
                 route = route,
                 context = context,
+                contactsPermissionGranted = contactsPermissionGranted,
                 onOpenSearch = { push(AppRoute.Search()) },
                 onBack = ::pop,
             )
@@ -283,13 +428,17 @@ private fun InboxRoute(
     diagnosticsAvailable: Boolean,
     contactsPermissionGranted: Boolean,
     onOpenConversation: (ProviderThreadId) -> Unit,
+    onOpenNewChat: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenSpamBlocked: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onRequestContactsPermission: () -> Unit,
     onReady: () -> Unit,
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val context = LocalContext.current
     val holder = remember(services, scope) {
         InboxStateHolder(
             repository = services.conversationRepository,
@@ -299,6 +448,9 @@ private fun InboxRoute(
     }
     DisposableEffect(holder) { onDispose(holder::close) }
     val state by holder.state.collectAsStateWithLifecycle()
+    val spamSnapshot by services.spamSafetyRepository.snapshots.collectAsStateWithLifecycle(
+        initialValue = SpamSafetySnapshot.Unavailable,
+    )
     LaunchedEffect(state is InboxUiState.Ready) {
         if (state is InboxUiState.Ready) {
             withFrameNanos { }
@@ -349,6 +501,15 @@ private fun InboxRoute(
     val canonicalName = stringResource(R.string.appearance_default_profile)
     val activeName = appearance.activeProfileName(canonicalName)
     val inboxProfile = appearance.profileFor(inboxOverride, appearance.activeProfile)
+    val notificationReminderController = services.notificationReminderController
+    val notificationReminderDelayMinutes by remember(notificationReminderController) {
+        notificationReminderController?.delayMinutes ?: flowOf(0)
+    }.collectAsStateWithLifecycle(
+        initialValue = notificationReminderController?.delayMinutes?.value ?: 0,
+    )
+    val signatureStore = services.messageSignaturePreferenceStore
+    val signatureSnapshot by signatureStore.snapshot.collectAsStateWithLifecycle()
+    var globalSignatureEditorOpen by rememberSaveable { mutableStateOf(false) }
 
     AuroraMaterialTheme(profile = inboxProfile) {
         InboxScreen(
@@ -356,8 +517,11 @@ private fun InboxRoute(
             diagnosticsAvailable = diagnosticsAvailable,
             contactsPermissionGranted = contactsPermissionGranted,
             onOpenConversation = onOpenConversation,
+            onOpenNewChat = onOpenNewChat,
             onOpenSearch = onOpenSearch,
             onOpenAppearance = onOpenAppearance,
+            onOpenSettings = onOpenSettings,
+            onOpenSpamBlocked = onOpenSpamBlocked,
             onOpenInboxAppearance = {
                 editorScopeCode = AppearanceScreenScope.INBOX.storageCode
                 wallpaperEditorScopeCode = null
@@ -374,7 +538,37 @@ private fun InboxRoute(
             onAcceptPending = holder::acceptPendingNewer,
             onViewportChanged = holder::onViewportChanged,
             onAnchorRestored = holder::anchorRestored,
+            notificationReminderDelayMinutes = notificationReminderDelayMinutes,
+            onSetNotificationReminderDelayMinutes = { delayMinutes ->
+                notificationReminderController?.let { controller ->
+                    scope.launch { controller.setDelayMinutes(delayMinutes) }
+                }
+            },
+            signaturesAvailable = signatureSnapshot.available,
+            onOpenGlobalSignature = { globalSignatureEditorOpen = true },
+            spamIndicators = inboxSpamIndicators(
+                state = state,
+                snapshot = spamSnapshot,
+                automaticRulesAllowed = contactsPermissionGranted,
+            ),
         )
+        if (globalSignatureEditorOpen && signatureSnapshot.available) {
+            GlobalMessageSignatureDialog(
+                current = signatureSnapshot.global,
+                onSave = { signature ->
+                    signatureStore.setGlobal(signature).also { saved ->
+                        if (!saved) {
+                            Toast.makeText(
+                                context,
+                                R.string.signature_save_failed,
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                },
+                onDismiss = { globalSignatureEditorOpen = false },
+            )
+        }
         editorScope?.let { target ->
             val currentObservation = when (target.screen) {
                 AppearanceScreenScope.INBOX -> inboxOverrideObservation
@@ -476,6 +670,134 @@ private fun InboxRoute(
 }
 
 @Composable
+private fun SpamBlockedRoute(
+    services: AuroraSmsRootServices,
+    appearance: AppAppearanceState,
+    appearanceController: AppearanceController,
+    onOpenConversation: (ProviderThreadId) -> Unit,
+    onBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val snapshot by services.spamSafetyRepository.snapshots.collectAsStateWithLifecycle(
+        initialValue = SpamSafetySnapshot.Unavailable,
+    )
+    var invalidationEpoch by remember { mutableStateOf(0L) }
+    LaunchedEffect(services.conversationRepository) {
+        services.conversationRepository.invalidations.collect { invalidationEpoch += 1L }
+    }
+    val screenState by produceState<SpamBlockedUiState>(
+        initialValue = SpamBlockedUiState.Loading,
+        snapshot,
+        invalidationEpoch,
+    ) {
+        if (!snapshot.available) {
+            value = SpamBlockedUiState.Unavailable
+            return@produceState
+        }
+        value = try {
+            val verified = mutableListOf<Pair<SpamSafetyDecision, ConversationSummary>>()
+            for (decision in snapshot.decisions) {
+                if (verified.size >= org.aurorasms.feature.conversations.MAXIMUM_SPAM_BLOCKED_ROWS) break
+                if (decision.classification != SpamClassification.SPAM && !decision.blocked) continue
+                val found = services.conversationRepository
+                    .loadConversation(decision.scope.providerThreadId)
+                    as? ConversationLookupResult.Found
+                    ?: continue
+                val identity = found.verifiedIdentity ?: continue
+                val exactScope = spamSafetyScope(identity.providerThreadId, identity.participants)
+                    ?: continue
+                if (
+                    exactScope.participantSetKey != decision.scope.participantSetKey ||
+                    exactScope.singleSenderKey != decision.scope.singleSenderKey
+                ) {
+                    continue
+                }
+                verified += decision to found.summary
+            }
+            val addresses = verified.flatMap { (_, summary) -> summary.participants }.distinct()
+            val contacts = addresses.chunked(100)
+                .flatMap { services.contactCache.resolve(it) }
+                .associateBy { it.address }
+            SpamBlockedUiState.Ready(
+                verified
+                    .sortedByDescending { (_, summary) -> summary.latestTimestampMillis }
+                    .map { (decision, summary) ->
+                        SpamBlockedRow(
+                            summary = summary,
+                            contacts = summary.participants
+                                .mapNotNull { address -> contacts[address]?.let { address to it } }
+                                .toMap(),
+                            markedSpam = decision.classification == SpamClassification.SPAM,
+                            blocked = decision.blocked,
+                        )
+                    },
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            SpamBlockedUiState.Unavailable
+        }
+    }
+
+    fun mutate(
+        providerThreadId: ProviderThreadId,
+        transform: (SpamSafetyDecision) -> Pair<SpamClassification, Boolean>,
+    ) {
+        scope.launch {
+            val found = services.conversationRepository.loadConversation(providerThreadId)
+                as? ConversationLookupResult.Found
+                ?: return@launch
+            val identity = found.verifiedIdentity ?: return@launch
+            val trustedScope = spamSafetyScope(providerThreadId, identity.participants) ?: return@launch
+            val current = when (val result = services.spamSafetyRepository.read(trustedScope)) {
+                is SpamSafetyRepositoryResult.Success -> result.value
+                else -> {
+                    showSpamSafetySaveFailure(context)
+                    return@launch
+                }
+            }
+            val (classification, blocked) = transform(current)
+            val result = services.spamSafetyRepository.set(
+                scope = trustedScope,
+                classification = classification,
+                blocked = blocked,
+                expectedRevision = current.revision,
+                updatedTimestampMillis = nextSpamSafetyTimestamp(current),
+            )
+            if (result !is SpamSafetyRepositoryResult.Success) {
+                showSpamSafetySaveFailure(context)
+            }
+        }
+    }
+
+    val appearanceScope = remember { AppearanceScope.Screen(AppearanceScreenScope.SPAM_BLOCKED) }
+    val overrideObservation by remember(appearanceController, appearanceScope) {
+        appearanceController.observeOverride(appearanceScope)
+    }.collectAsStateWithLifecycle(
+        initialValue = AppAppearanceOverrideObservation.loading(appearanceScope),
+    )
+    AuroraMaterialTheme(
+        profile = appearance.profileFor(
+            overrideObservation.overrideFor(appearanceScope),
+            appearance.activeProfile,
+        ),
+    ) {
+        SpamBlockedScreen(
+            state = screenState,
+            onBack = onBack,
+            onOpenConversation = onOpenConversation,
+            onMarkNotSpam = { threadId ->
+                mutate(threadId) { decision -> SpamClassification.NOT_SPAM to decision.blocked }
+            },
+            onUnblock = { threadId ->
+                mutate(threadId) { decision -> decision.classification to false }
+            },
+        )
+    }
+}
+
+@Composable
 private fun SearchRoute(
     services: AuroraSmsRootServices,
     route: AppRoute.Search,
@@ -526,6 +848,7 @@ private fun ThreadRoute(
     scopedEditorDismissalGeneration: Long,
     route: AppRoute.Thread,
     context: Context,
+    contactsPermissionGranted: Boolean,
     onOpenSearch: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -544,8 +867,115 @@ private fun ThreadRoute(
     }
     DisposableEffect(holder) { onDispose(holder::close) }
     val threadState by holder.state.collectAsStateWithLifecycle()
-    LaunchedEffect(threadState) {
-        if (threadState is ThreadUiState.Ready) {
+    val spamSnapshot by services.spamSafetyRepository.snapshots.collectAsStateWithLifecycle(
+        initialValue = SpamSafetySnapshot.Unavailable,
+    )
+    val spamScope = remember(route.providerThreadId, threadState) {
+        trustedSpamSafetyScope(route.providerThreadId, threadState)
+    }
+    val spamDecision = spamScope?.let { trustedScope ->
+        spamSnapshot.decisionFor(trustedScope.participantSetKey)?.takeIf { decision ->
+            decision.scope.providerThreadId == trustedScope.providerThreadId &&
+                decision.scope.singleSenderKey == trustedScope.singleSenderKey
+        }
+    }
+    var spamSaving by remember(spamScope) { mutableStateOf(false) }
+    val spamWarningReason = threadSpamSafetyReason(
+        ready = threadState as? ThreadUiState.Ready,
+        decision = spamDecision,
+        automaticRulesAllowed = contactsPermissionGranted,
+    )
+    val spamSafetyUi = ThreadSpamSafetyUiState(
+        storageAvailable = spamSnapshot.available,
+        actionsAvailable = spamSnapshot.available && spamScope != null,
+        blockAvailable = spamSnapshot.available && spamScope?.singleSenderKey != null,
+        classificationSpam = spamDecision?.classification == SpamClassification.SPAM,
+        classificationNotSpam = spamDecision?.classification == SpamClassification.NOT_SPAM,
+        blocked = spamDecision?.blocked == true,
+        warningReason = spamWarningReason,
+        saving = spamSaving,
+    )
+
+    fun updateSpamSafety(classification: SpamClassification, blocked: Boolean) {
+        val trustedScope = spamScope ?: return
+        if (spamSaving || !spamSnapshot.available) return
+        spamSaving = true
+        scope.launch {
+            try {
+                val current = when (val result = services.spamSafetyRepository.read(trustedScope)) {
+                    is SpamSafetyRepositoryResult.Success -> result.value
+                    SpamSafetyRepositoryResult.NotFound -> null
+                    else -> {
+                        showSpamSafetySaveFailure(context)
+                        return@launch
+                    }
+                }
+                val updated = services.spamSafetyRepository.set(
+                    scope = trustedScope,
+                    classification = classification,
+                    blocked = blocked,
+                    expectedRevision = current?.revision,
+                    updatedTimestampMillis = nextSpamSafetyTimestamp(current),
+                )
+                if (updated !is SpamSafetyRepositoryResult.Success) {
+                    showSpamSafetySaveFailure(context)
+                }
+            } finally {
+                spamSaving = false
+            }
+        }
+    }
+    val signatureStore = services.messageSignaturePreferenceStore
+    val signatureSnapshot by signatureStore.snapshot.collectAsStateWithLifecycle()
+    val signatureConversationKey = remember(route.providerThreadId, threadState) {
+        trustedMessageSignatureConversationKey(route.providerThreadId, threadState)
+    }
+    val effectiveSignature = signatureSnapshot.resolve(signatureConversationKey)
+    val conversationSignatureOverride = signatureConversationKey
+        ?.let(signatureSnapshot.conversations::get)
+        ?: ConversationSignatureOverride.Inherit
+    var conversationSignatureEditorOpen by rememberSaveable(route.providerThreadId.value) {
+        mutableStateOf(false)
+    }
+    LaunchedEffect(signatureConversationKey, signatureSnapshot.available) {
+        if (signatureConversationKey == null || !signatureSnapshot.available) {
+            conversationSignatureEditorOpen = false
+        }
+    }
+    val conversationSubscriptionScope = remember(route.providerThreadId, threadState) {
+        trustedConversationSubscriptionScope(route.providerThreadId, threadState)
+    }
+    var subscriptionPreferenceState by remember(conversationSubscriptionScope) {
+        mutableStateOf<AppConversationSubscriptionPreferenceState>(
+            if (conversationSubscriptionScope == null) {
+                AppConversationSubscriptionPreferenceState.Unavailable
+            } else {
+                AppConversationSubscriptionPreferenceState.Loading
+            },
+        )
+    }
+    var subscriptionSelectionInFlight by remember(conversationSubscriptionScope) {
+        mutableStateOf(false)
+    }
+    LaunchedEffect(services, conversationSubscriptionScope) {
+        val preferenceScope = conversationSubscriptionScope
+        if (preferenceScope == null) {
+            subscriptionPreferenceState = AppConversationSubscriptionPreferenceState.Unavailable
+            return@LaunchedEffect
+        }
+        subscriptionPreferenceState = AppConversationSubscriptionPreferenceState.Loading
+        subscriptionPreferenceState = services.conversationSubscriptionPreferenceRepository
+            .read(preferenceScope)
+            .toAppPreferenceState()
+    }
+    val subscriptionSelection = resolveConversationSubscriptionUiState(
+        ready = threadState as? ThreadUiState.Ready,
+        preferenceState = subscriptionPreferenceState,
+        saving = subscriptionSelectionInFlight,
+    )
+    val presentationReady = threadState is ThreadUiState.Ready
+    LaunchedEffect(route.stateEntryId, presentationReady) {
+        if (presentationReady) {
             withFrameNanos { }
             PresentationTrace.end(
                 if (route.anchor == null) PresentationTrace.THREAD_OPEN else PresentationTrace.EXACT_JUMP,
@@ -553,25 +983,340 @@ private fun ThreadRoute(
         }
     }
 
-    var savedBody by rememberSaveable(route.providerThreadId.value) { mutableStateOf<String?>(null) }
-    val writer = remember(services, route.providerThreadId) {
-        services.createDraftWriter(
-            identity = DraftIdentity.ProviderThread(route.providerThreadId),
-            restoredUnacknowledged = savedBody?.let { body ->
-                DraftEditorContent(body = body.takeIf(String::isNotEmpty), subject = null)
-            },
-        )
+    val sendController = services.threadSmsSendController
+    val sendObservationFlow = remember(sendController, route.providerThreadId) {
+        sendController.observe(route.providerThreadId)
     }
-    DisposableEffect(writer) { onDispose { services.releaseDraftWriter(writer) } }
-    val draftStatus by writer.status.collectAsStateWithLifecycle()
-    LaunchedEffect(draftStatus) {
-        when (val status = draftStatus) {
-            DraftWriteStatus.Loading -> Unit
-            is DraftWriteStatus.Active -> savedBody = status.latest.body.orEmpty()
-            is DraftWriteStatus.Failed -> savedBody = status.latest.body.orEmpty()
+    val sendObservation by sendObservationFlow.collectAsStateWithLifecycle(
+        initialValue = ThreadSmsSendObservation(ThreadSmsSendPhase.RECOVERY_PENDING),
+    )
+    val scheduleController = services.scheduledSmsController
+    val scheduleObservationFlow = remember(scheduleController, route.providerThreadId) {
+        scheduleController.observe(route.providerThreadId)
+    }
+    val scheduleObservation by scheduleObservationFlow.collectAsStateWithLifecycle(
+        initialValue = ScheduledSmsObservation.Loading,
+    )
+    val sendDelayController = services.sendDelayController
+    val sendDelayObservationFlow = remember(sendDelayController, route.providerThreadId) {
+        sendDelayController.observe(route.providerThreadId)
+    }
+    val sendDelayObservation by sendDelayObservationFlow.collectAsStateWithLifecycle(
+        initialValue = SendDelayObservation.Loading,
+    )
+    val sendDelaySeconds by services.sendDelayPreferenceStore.delaySeconds
+        .collectAsStateWithLifecycle()
+    val deletionController = services.permanentDeletionController
+    val deletionObservationFlow = remember(deletionController, route.providerThreadId) {
+        deletionController.observe(route.providerThreadId)
+    }
+    val deletionObservation by deletionObservationFlow.collectAsStateWithLifecycle(
+        initialValue = PermanentDeletionObservation.Loading,
+    )
+    val deletion = deletionObservation.toDeletionUiState()
+    val deletionLocksComposer = deletionObservation !is PermanentDeletionObservation.None &&
+        deletionObservation !is PermanentDeletionObservation.Completed
+    var observedDeletionCompletionEpoch by remember(route.providerThreadId) {
+        mutableStateOf(0L)
+    }
+    LaunchedEffect(deletionObservation) {
+        val completed = deletionObservation as? PermanentDeletionObservation.Completed
+            ?: return@LaunchedEffect
+        if (completed.epoch <= observedDeletionCompletionEpoch) return@LaunchedEffect
+        observedDeletionCompletionEpoch = completed.epoch
+        deletionController.acknowledgeCompletion(route.providerThreadId, completed.epoch)
+        if (completed.targetKind == PermanentDeletionTargetKind.THREAD) {
+            onBack()
+        } else {
+            holder.loadLatest()
         }
     }
-    val composer = draftStatus.toComposerUiState(savedBody.orEmpty())
+    var savedDraftRestoration by rememberSaveable(
+        route.providerThreadId.value,
+        stateSaver = SAVED_DRAFT_RESTORATION_SAVER,
+    ) {
+        mutableStateOf(SavedDraftRestoration())
+    }
+    var writerGeneration by rememberSaveable(route.providerThreadId.value) { mutableStateOf(0L) }
+    // Controller epochs are process-local. This observer must reset with the
+    // process too, otherwise a restored larger value could hide a later send.
+    var observedCompletionEpoch by remember(route.providerThreadId) {
+        mutableStateOf(0L)
+    }
+    var observedUnknownAcknowledgementEpoch by remember(route.providerThreadId) {
+        mutableStateOf(0L)
+    }
+    var composerAttachments by remember(route.providerThreadId) {
+        mutableStateOf<List<OutgoingMmsAttachment>>(emptyList())
+    }
+    var attachmentPickerOpen by remember(route.providerThreadId) { mutableStateOf(false) }
+    var attachmentImporting by remember(route.providerThreadId) { mutableStateOf(false) }
+    var attachmentFailure by remember(route.providerThreadId) {
+        mutableStateOf<ComposerAttachmentFailure?>(null)
+    }
+    var attachmentStorageBlocked by remember(route.providerThreadId) { mutableStateOf(false) }
+    LaunchedEffect(sendObservation.completionEpoch) {
+        if (sendObservation.completionEpoch > observedCompletionEpoch) {
+            observedCompletionEpoch = sendObservation.completionEpoch
+            savedDraftRestoration = SavedDraftRestoration()
+            composerAttachments = emptyList()
+            attachmentStorageBlocked = false
+            attachmentFailure = null
+            writerGeneration += 1L
+        }
+    }
+    val writerCreationGeneration = writerGeneration
+    val writerLease = remember(services, route.providerThreadId, writerCreationGeneration) {
+        services.acquireDraftWriter(
+            identity = DraftIdentity.ProviderThread(route.providerThreadId),
+            restorationToken = savedDraftRestoration.token,
+        )
+    }
+    val writer = writerLease.writer
+    DisposableEffect(writerLease) { onDispose(writerLease::close) }
+    val draftStatus by writer.status.collectAsStateWithLifecycle()
+    LaunchedEffect(writer, draftStatus) {
+        if (writerCreationGeneration != writerGeneration) return@LaunchedEffect
+        when (val status = draftStatus) {
+            DraftWriteStatus.Loading -> Unit
+            is DraftWriteStatus.Active -> {
+                savedDraftRestoration = SavedDraftRestoration(status.toRestorationToken())
+            }
+            is DraftWriteStatus.Failed -> {
+                savedDraftRestoration = SavedDraftRestoration(status.toRestorationToken())
+            }
+        }
+    }
+    var attachmentAuthorityLoaded by remember(writer) { mutableStateOf(false) }
+    LaunchedEffect(writer, draftStatus) {
+        if (attachmentAuthorityLoaded) return@LaunchedEffect
+        val active = draftStatus as? DraftWriteStatus.Active ?: return@LaunchedEffect
+        if (!active.initialized || active.saving) return@LaunchedEffect
+        val draftId = active.acknowledgedDraftId
+        if (draftId == null) {
+            composerAttachments = emptyList()
+            attachmentStorageBlocked = false
+            attachmentAuthorityLoaded = true
+            return@LaunchedEffect
+        }
+        when (val result = safeReadDraftAttachments(services.draftAttachmentRepository, draftId)) {
+            is DraftRepositoryResult.Success -> {
+                val restored = result.value.toOutgoingMmsAttachmentsOrNull()
+                if (restored == null) {
+                    attachmentStorageBlocked = true
+                    attachmentFailure = ComposerAttachmentFailure.STORAGE
+                } else {
+                    composerAttachments = restored
+                    attachmentStorageBlocked = false
+                }
+            }
+            else -> {
+                attachmentStorageBlocked = true
+                attachmentFailure = ComposerAttachmentFailure.STORAGE
+            }
+        }
+        attachmentAuthorityLoaded = true
+    }
+    val imageAttachmentPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(
+            OutgoingMmsPayload.Message.MAX_ATTACHMENTS,
+        ),
+    ) { selectedUris ->
+        attachmentPickerOpen = false
+        if (selectedUris.isEmpty()) return@rememberLauncherForActivityResult
+        attachmentImporting = true
+        attachmentFailure = null
+        scope.launch {
+            try {
+                val admitted = composerAttachments.toMutableList()
+                var firstFailure: ComposerAttachmentFailure? = null
+                for (uri in selectedUris) {
+                    if (admitted.size >= OutgoingMmsPayload.Message.MAX_ATTACHMENTS) {
+                        firstFailure = firstFailure ?: ComposerAttachmentFailure.LIMIT_REACHED
+                        break
+                    }
+                    when (val sanitized = ComposerImageSanitizer.sanitize(context.contentResolver, uri)) {
+                        is ComposerImageSanitizationResult.Ready -> {
+                            val aggregateBytes = admitted.sumOf { it.size.toLong() } +
+                                sanitized.attachment.size.toLong()
+                            if (
+                                aggregateBytes <=
+                                OutgoingMmsPayload.Message.MAX_ATTACHMENT_BYTES_TOTAL
+                            ) {
+                                admitted += sanitized.attachment
+                            } else {
+                                firstFailure = firstFailure ?: ComposerAttachmentFailure.TOO_LARGE
+                            }
+                        }
+                        ComposerImageSanitizationResult.Unreadable -> {
+                            firstFailure = firstFailure ?: ComposerAttachmentFailure.UNREADABLE
+                        }
+                        ComposerImageSanitizationResult.Unsupported -> {
+                            firstFailure = firstFailure ?: ComposerAttachmentFailure.UNSUPPORTED
+                        }
+                        ComposerImageSanitizationResult.TooLarge -> {
+                            firstFailure = firstFailure ?: ComposerAttachmentFailure.TOO_LARGE
+                        }
+                    }
+                }
+                if (admitted != composerAttachments) {
+                    if (
+                        replaceDurableComposerAttachments(
+                            writer = writer,
+                            repository = services.draftAttachmentRepository,
+                            attachments = admitted,
+                        )
+                    ) {
+                        composerAttachments = admitted.toList()
+                        attachmentStorageBlocked = false
+                        attachmentFailure = firstFailure
+                    } else {
+                        attachmentStorageBlocked = true
+                        attachmentFailure = ComposerAttachmentFailure.STORAGE
+                    }
+                } else {
+                    attachmentFailure = firstFailure
+                }
+            } finally {
+                attachmentImporting = false
+            }
+        }
+    }
+    LaunchedEffect(writer, sendObservation.phase) {
+        if (sendObservation.phase == ThreadSmsSendPhase.KNOWN_UNSENT) {
+            writer.unfreezeAfterSendSettled(DraftUnfreezeReason.KNOWN_UNSENT)
+        }
+    }
+    LaunchedEffect(writer, sendObservation.unknownAcknowledgementEpoch) {
+        if (
+            sendObservation.unknownAcknowledgementEpoch >
+            observedUnknownAcknowledgementEpoch
+        ) {
+            observedUnknownAcknowledgementEpoch = sendObservation.unknownAcknowledgementEpoch
+            writer.unfreezeAfterSendSettled(
+                DraftUnfreezeReason.SUBMISSION_UNKNOWN_ACKNOWLEDGED,
+            )
+        }
+    }
+    var sendAttemptInFlight by remember(route.providerThreadId) { mutableStateOf(false) }
+    var scheduleAttemptInFlight by remember(route.providerThreadId) { mutableStateOf(false) }
+    var sendDelayAttemptInFlight by remember(route.providerThreadId) { mutableStateOf(false) }
+    val visibleBody = when (val status = draftStatus) {
+        // Saved-state text is untrusted until the writer compares its exact
+        // base token with Room. Avoid even a transient post-send resurrection.
+        DraftWriteStatus.Loading -> ""
+        is DraftWriteStatus.Active -> status.latest.body.orEmpty()
+        is DraftWriteStatus.Failed -> status.latest.body.orEmpty()
+    }
+    val visibleSubject = when (val status = draftStatus) {
+        DraftWriteStatus.Loading -> ""
+        is DraftWriteStatus.Active -> status.latest.subject.orEmpty()
+        is DraftWriteStatus.Failed -> status.latest.subject.orEmpty()
+    }
+    val unsignedSegmentCount = visibleBody.takeIf(String::isNotBlank)
+        ?.let(services::countSmsSegments)
+    val resolvedOutgoingBody = visibleBody.takeIf(String::isNotBlank)
+        ?.let { body -> resolveOutgoingBody(body, effectiveSignature) }
+    val segmentCount = resolvedOutgoingBody?.let(services::countSmsSegments)
+    val composer = draftStatus.toComposerUiState(
+        restoredBody = "",
+        threadState = threadState,
+        sendObservation = sendObservation,
+        sendAttemptInFlight = sendAttemptInFlight,
+        segmentCount = segmentCount,
+        unsignedSegmentCount = unsignedSegmentCount,
+        signatureApplied = effectiveSignature != null && resolvedOutgoingBody != null,
+        signatureStateAllowsSend = signatureSnapshot.sendAllowed,
+        selectedSubscriptionAvailable = subscriptionSelection.selected?.smsCapable == true,
+        scheduleObservation = scheduleObservation,
+        scheduleAttemptInFlight = scheduleAttemptInFlight,
+        sendDelayObservation = sendDelayObservation,
+        sendDelayAttemptInFlight = sendDelayAttemptInFlight,
+        permanentDeletionActive = deletionLocksComposer,
+        attachments = composerAttachments.mapIndexed { index, attachment ->
+            ComposerAttachmentUiItem(
+                index = index,
+                contentType = attachment.contentType,
+                sizeBytes = attachment.size,
+            )
+        },
+        attachmentImporting =
+            attachmentPickerOpen || attachmentImporting || !attachmentAuthorityLoaded,
+        attachmentStorageAvailable = !attachmentStorageBlocked,
+        attachmentFailure = attachmentFailure,
+    )
+    val voiceMemoController = services.voiceMemoController
+    val voiceMemoCaptureFlow = remember(voiceMemoController) {
+        voiceMemoController?.state ?: flowOf(VoiceMemoCaptureState.Idle)
+    }
+    val voiceMemoCapture by voiceMemoCaptureFlow.collectAsStateWithLifecycle(
+        initialValue = VoiceMemoCaptureState.Idle,
+    )
+    val voiceMemoTarget = remember(
+        route.providerThreadId,
+        threadState,
+        subscriptionSelection.selected,
+        signatureSnapshot.sendAllowed,
+        effectiveSignature,
+    ) {
+        val ready = threadState as? ThreadUiState.Ready
+        val identity = ready?.verifiedConversationIdentity
+        val subscription = subscriptionSelection.selected?.takeIf { it.smsCapable }
+        val recipients = identity?.participants
+            ?.takeIf { identity.providerThreadId == route.providerThreadId && it.size == 1 }
+            ?.let(RecipientSet::from) as? RecipientSet.CreationResult.Valid
+        if (
+            voiceMemoController != null &&
+            signatureSnapshot.sendAllowed &&
+            subscription != null &&
+            recipients != null
+        ) {
+            VoiceMemoTarget(
+                providerThreadId = route.providerThreadId,
+                recipients = recipients.recipients,
+                subscriptionId = subscription.id,
+                caption = effectiveSignature?.value,
+            )
+        } else {
+            null
+        }
+    }
+    val voiceMemoRecordEligible = voiceMemoTarget != null &&
+        composer.sendState == ComposerSendState.UNAVAILABLE &&
+        composer.unavailableReason == ComposerUnavailableReason.EMPTY_MESSAGE &&
+        scheduleObservation is ScheduledSmsObservation.None &&
+        sendDelayObservation is SendDelayObservation.None &&
+        sendObservation.phase != ThreadSmsSendPhase.SENDING &&
+        !deletionLocksComposer
+    var microphonePermissionDenied by remember(route.providerThreadId) { mutableStateOf(false) }
+    val latestVoiceMemoTarget by rememberUpdatedState(voiceMemoTarget)
+    val microphonePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        microphonePermissionDenied = !granted
+        if (granted) {
+            val target = latestVoiceMemoTarget ?: return@rememberLauncherForActivityResult
+            scope.launch { voiceMemoController?.start(target) }
+        }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, voiceMemoController, route.providerThreadId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                voiceMemoController?.onThreadHiddenAsync(route.providerThreadId)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            voiceMemoController?.onThreadHiddenAsync(route.providerThreadId)
+        }
+    }
+    val voiceMemoUiState = voiceMemoCapture.toVoiceMemoUiState(
+        currentThreadId = route.providerThreadId,
+        recordEligible = voiceMemoRecordEligible,
+        permissionDenied = microphonePermissionDenied,
+    )
     val globalThreadScope = remember { AppearanceScope.Screen(AppearanceScreenScope.GLOBAL_THREAD) }
     val globalThreadOverrideObservation by remember(appearanceController, globalThreadScope) {
         appearanceController.observeOverride(globalThreadScope)
@@ -673,6 +1418,7 @@ private fun ThreadRoute(
         ThreadScreen(
             state = threadState,
             composer = composer,
+            subscriptionSelection = subscriptionSelection,
             attachmentRepository = services.mmsAttachmentRepository,
             previewLoader = services.previewLoader,
             onBack = onBack,
@@ -682,6 +1428,9 @@ private fun ThreadRoute(
                 openEditorTarget = privateRestorationKey.takeIf { conversationScope != null }
                 wallpaperEditorOpen = false
             },
+            conversationSignatureAvailable = signatureSnapshot.available &&
+                signatureConversationKey != null,
+            onOpenConversationSignature = { conversationSignatureEditorOpen = true },
             timelineBackground = {
                 wallpaperController?.let { controller ->
                     ManagedWallpaperSurface(
@@ -702,10 +1451,456 @@ private fun ThreadRoute(
             onAnchorRestored = holder::anchorRestored,
             onToggleMessageExpansion = holder::toggleMessageExpansion,
             onDraftChanged = { body ->
-                val content = DraftEditorContent(body = body.takeIf(String::isNotEmpty), subject = null)
-                if (writer.submit(content)) savedBody = body
+                val content = DraftEditorContent(
+                    body = body.takeIf(String::isNotEmpty),
+                    subject = visibleSubject.takeIf(String::isNotEmpty),
+                )
+                if (writer.submit(content)) {
+                    val token = (writer.status.value as? DraftWriteStatus.Active)
+                        ?.toRestorationToken()
+                    if (token != null) savedDraftRestoration = SavedDraftRestoration(token)
+                }
+            },
+            onDraftSubjectChanged = { subject ->
+                val content = DraftEditorContent(
+                    body = visibleBody.takeIf(String::isNotEmpty),
+                    subject = subject.takeIf(String::isNotEmpty),
+                )
+                if (writer.submit(content)) {
+                    val token = (writer.status.value as? DraftWriteStatus.Active)
+                        ?.toRestorationToken()
+                    if (token != null) savedDraftRestoration = SavedDraftRestoration(token)
+                }
+            },
+            onAddAttachment = {
+                if (
+                    !attachmentPickerOpen &&
+                    !attachmentImporting &&
+                    attachmentAuthorityLoaded &&
+                    !attachmentStorageBlocked &&
+                    composerAttachments.size < OutgoingMmsPayload.Message.MAX_ATTACHMENTS
+                ) {
+                    attachmentPickerOpen = true
+                    attachmentFailure = null
+                    try {
+                        imageAttachmentPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    } catch (_: ActivityNotFoundException) {
+                        attachmentPickerOpen = false
+                        attachmentFailure = ComposerAttachmentFailure.UNREADABLE
+                    }
+                }
+            },
+            onRemoveAttachment = { index ->
+                if (
+                    !attachmentPickerOpen &&
+                    !attachmentImporting &&
+                    attachmentAuthorityLoaded &&
+                    !attachmentStorageBlocked
+                ) {
+                    val retained = composerAttachments.filterIndexed { current, _ ->
+                        current != index
+                    }
+                    attachmentImporting = true
+                    attachmentFailure = null
+                    scope.launch {
+                        try {
+                            if (
+                                replaceDurableComposerAttachments(
+                                    writer = writer,
+                                    repository = services.draftAttachmentRepository,
+                                    attachments = retained,
+                                )
+                            ) {
+                                composerAttachments = retained
+                                attachmentStorageBlocked = false
+                            } else {
+                                attachmentStorageBlocked = true
+                                attachmentFailure = ComposerAttachmentFailure.STORAGE
+                            }
+                        } finally {
+                            attachmentImporting = false
+                        }
+                    }
+                }
+            },
+            voiceMemo = voiceMemoUiState,
+            onRecordVoiceMemo = {
+                voiceMemoTarget?.let { target ->
+                    microphonePermissionDenied = false
+                    if (
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        scope.launch { voiceMemoController?.start(target) }
+                    } else {
+                        microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                }
+            },
+            onStopVoiceMemo = {
+                scope.launch { voiceMemoController?.stop() }
+            },
+            onCancelVoiceMemo = {
+                microphonePermissionDenied = false
+                scope.launch { voiceMemoController?.cancel() }
+            },
+            onSendVoiceMemo = {
+                scope.launch {
+                    withContext(NonCancellable) { voiceMemoController?.send() }
+                }
+            },
+            onSend = {
+                if (!sendAttemptInFlight && !sendDelayAttemptInFlight) {
+                    sendAttemptInFlight = true
+                    scope.launch {
+                        var coordinatorEntered = false
+                        var sendAttempt: ThreadSmsSendAttempt? = null
+                        var sendDelayEntered = false
+                        var sendDelayAttempt: SendDelayAttempt? = null
+                        try {
+                            val frozen = writer.freezeForSend() ?: return@launch
+                            // Close the base-free SavedState ABA window before
+                            // the durable coordinator can clear this revision.
+                            savedDraftRestoration = SavedDraftRestoration(
+                                frozen.toExactRestorationToken(),
+                            )
+                            val frozenAttachments = when (
+                                val result = safeReadDraftAttachments(
+                                    services.draftAttachmentRepository,
+                                    frozen.draftId,
+                                )
+                            ) {
+                                is DraftRepositoryResult.Success ->
+                                    result.value.toOutgoingMmsAttachmentsOrNull()
+                                else -> null
+                            }
+                            if (frozenAttachments == null) {
+                                attachmentStorageBlocked = true
+                                attachmentFailure = ComposerAttachmentFailure.STORAGE
+                                return@launch
+                            }
+                            val frozenBody = frozen.content.body?.takeIf(String::isNotBlank)
+                            if (frozenBody == null && frozenAttachments.isEmpty()) return@launch
+                            val ready = threadState as? ThreadUiState.Ready ?: return@launch
+                            val identity = ready.verifiedConversationIdentity ?: return@launch
+                            val subscription = subscriptionSelection.selected
+                                ?.takeIf { it.smsCapable }
+                                ?: return@launch
+                            val frozenSignature = effectiveSignature.takeIf { frozenBody != null }
+                            val outgoingSegmentCount = frozenBody?.let { body ->
+                                resolveOutgoingBody(body, frozenSignature)
+                                    ?.let(services::countSmsSegments)
+                            }
+                            if (frozenBody != null && outgoingSegmentCount == null) return@launch
+                            if (identity.providerThreadId != route.providerThreadId) {
+                                return@launch
+                            }
+                            val transportKind = if (
+                                identity.participants.size > 1 ||
+                                !frozen.content.subject.isNullOrBlank() ||
+                                frozenAttachments.isNotEmpty() ||
+                                (outgoingSegmentCount ?: 1) != 1
+                            ) {
+                                MessageTransportKind.MMS
+                            } else {
+                                MessageTransportKind.SMS
+                            }
+                            // Once control enters the durable coordinator, a
+                            // cancellation or unexpected exception is not proof
+                            // that submission was refused. Keep the writer
+                            // frozen until recovery classifies the operation.
+                            if (sendDelaySeconds > 0 && transportKind == MessageTransportKind.SMS) {
+                                sendDelayEntered = true
+                                sendDelayAttempt = withContext(NonCancellable) {
+                                    sendDelayController.enqueue(
+                                        SendDelayCommand(
+                                            identity = identity,
+                                            subscriptionId = subscription.id,
+                                            draftId = frozen.draftId,
+                                            draftRevision = frozen.revision,
+                                            delayMillis = sendDelaySeconds * 1_000L,
+                                            frozenSignature = effectiveSignature,
+                                        ),
+                                    )
+                                }
+                            } else {
+                                coordinatorEntered = true
+                                sendAttempt = withContext(NonCancellable) {
+                                    sendController.send(
+                                        ThreadSmsSendCommand(
+                                            identity = identity,
+                                            subscriptionId = subscription.id,
+                                            draftId = frozen.draftId,
+                                            draftRevision = frozen.revision,
+                                            frozenSignature = frozenSignature,
+                                            transport = transportKind,
+                                            attachments = frozenAttachments,
+                                        ),
+                                    )
+                                }
+                            }
+                        } finally {
+                            if (
+                                shouldUnfreezeComposerAsRefused(coordinatorEntered, sendAttempt) &&
+                                (!sendDelayEntered || sendDelayAttempt == SendDelayAttempt.REFUSED)
+                            ) {
+                                writer.unfreezeAfterSendSettled(DraftUnfreezeReason.SEND_REFUSED)
+                            }
+                            sendAttemptInFlight = false
+                        }
+                    }
+                }
+            },
+            onUndoSend = {
+                if (!sendDelayAttemptInFlight) {
+                    sendDelayAttemptInFlight = true
+                    scope.launch {
+                        try {
+                            if (sendDelayController.undo(route.providerThreadId)) {
+                                writer.unfreezeAfterSendSettled(
+                                    DraftUnfreezeReason.SEND_DELAY_UNDONE,
+                                )
+                            }
+                        } finally {
+                            sendDelayAttemptInFlight = false
+                        }
+                    }
+                }
+            },
+            sendDelaySeconds = sendDelaySeconds,
+            onSetSendDelaySeconds = { seconds ->
+                services.sendDelayPreferenceStore.setDelaySeconds(seconds)
+            },
+            onSchedule = {
+                if (!scheduleAttemptInFlight && scheduleObservation == ScheduledSmsObservation.None) {
+                    showScheduledSmsDateTimePicker(context) { dueTimestampMillis ->
+                        scheduleAttemptInFlight = true
+                        scope.launch {
+                            var accepted = false
+                            try {
+                                val frozen = writer.freezeForSend() ?: return@launch
+                                savedDraftRestoration = SavedDraftRestoration(
+                                    frozen.toExactRestorationToken(),
+                                )
+                                if (frozen.content.body.isNullOrBlank()) return@launch
+                                val ready = threadState as? ThreadUiState.Ready ?: return@launch
+                                val identity = ready.verifiedConversationIdentity ?: return@launch
+                                val subscription = subscriptionSelection.selected
+                                    ?.takeIf { it.smsCapable } ?: return@launch
+                                if (
+                                    identity.providerThreadId != route.providerThreadId ||
+                                    identity.participants.size != 1 ||
+                                    resolveOutgoingBody(
+                                        frozen.content.body.orEmpty(),
+                                        effectiveSignature,
+                                    )?.let(services::countSmsSegments) != 1
+                                ) {
+                                    return@launch
+                                }
+                                accepted = withContext(NonCancellable) {
+                                    scheduleController.schedule(
+                                        ScheduledSmsCommand(
+                                            identity = identity,
+                                            subscriptionId = subscription.id,
+                                            draftId = frozen.draftId,
+                                            draftRevision = frozen.revision,
+                                            dueTimestampMillis = dueTimestampMillis,
+                                            frozenSignature = effectiveSignature,
+                                        ),
+                                    )
+                                } == ScheduledSmsAttempt.ACCEPTED
+                            } finally {
+                                if (!accepted) {
+                                    writer.unfreezeAfterSendSettled(
+                                        DraftUnfreezeReason.SCHEDULE_REFUSED,
+                                    )
+                                }
+                                scheduleAttemptInFlight = false
+                            }
+                        }
+                    }
+                }
+            },
+            onCancelSchedule = {
+                if (!scheduleAttemptInFlight) {
+                    scheduleAttemptInFlight = true
+                    scope.launch {
+                        try {
+                            if (scheduleController.cancel(route.providerThreadId)) {
+                                writer.unfreezeAfterSendSettled(
+                                    DraftUnfreezeReason.SCHEDULE_CANCELLED,
+                                )
+                            }
+                        } finally {
+                            scheduleAttemptInFlight = false
+                        }
+                    }
+                }
+            },
+            onRequestExactAlarmAccess = {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                    Toast.makeText(
+                        context,
+                        R.string.exact_alarm_settings_unavailable,
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    return@ThreadScreen
+                }
+                val intent = Intent(
+                    Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                    "package:${context.packageName}".toUri(),
+                )
+                try {
+                    context.startActivity(intent)
+                } catch (_: ActivityNotFoundException) {
+                    Toast.makeText(
+                        context,
+                        R.string.exact_alarm_settings_unavailable,
+                        Toast.LENGTH_LONG,
+                    ).show()
+                } catch (_: SecurityException) {
+                    Toast.makeText(
+                        context,
+                        R.string.exact_alarm_settings_unavailable,
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            },
+            onAcknowledgeSubmissionUnknown = {
+                scope.launch {
+                    if (sendController.acknowledgeSubmissionUnknown(route.providerThreadId)) {
+                        writer.unfreezeAfterSendSettled(
+                            DraftUnfreezeReason.SUBMISSION_UNKNOWN_ACKNOWLEDGED,
+                        )
+                    }
+                }
+            },
+            deletion = deletion,
+            onRequestDeleteMessage = { message ->
+                val fingerprint = message.syncFingerprint
+                if (fingerprint != null) {
+                    scope.launch {
+                        deletionController.request(
+                            PermanentDeletionCommand.Message(
+                                providerMessageId = message.providerMessageId,
+                                providerThreadId = route.providerThreadId,
+                                syncFingerprint = fingerprint,
+                            ),
+                        )
+                    }
+                }
+            },
+            onRequestDeleteThread = {
+                scope.launch {
+                    deletionController.request(
+                        PermanentDeletionCommand.Thread(route.providerThreadId),
+                    )
+                }
+            },
+            onUndoDeletion = {
+                scope.launch { deletionController.undo(route.providerThreadId) }
+            },
+            onRetryDeletionStatus = {
+                scope.launch {
+                    deletionController.recover(PermanentDeletionRecoveryReason.APP_STARTUP)
+                }
+            },
+            onSelectSubscription = { subscriptionId ->
+                val preferenceScope = conversationSubscriptionScope
+                val option = subscriptionSelection.options.singleOrNull {
+                    it.id == subscriptionId && it.smsCapable
+                }
+                if (
+                    preferenceScope != null &&
+                    option != null &&
+                    !subscriptionSelectionInFlight &&
+                    (subscriptionPreferenceState as?
+                        AppConversationSubscriptionPreferenceState.Stored)
+                        ?.preference?.subscriptionId != subscriptionId
+                ) {
+                    subscriptionSelectionInFlight = true
+                    scope.launch {
+                        val current = subscriptionPreferenceState
+                            as? AppConversationSubscriptionPreferenceState.Stored
+                        val now = System.currentTimeMillis().coerceAtLeast(
+                            (current?.preference?.updatedTimestampMillis ?: -1L) + 1L,
+                        )
+                        val result = services.conversationSubscriptionPreferenceRepository.set(
+                            scope = preferenceScope,
+                            subscriptionId = subscriptionId,
+                            expectedRevision = current?.preference?.revision,
+                            updatedTimestampMillis = now,
+                        )
+                        subscriptionPreferenceState = when (result) {
+                            is ConversationSubscriptionRepositoryResult.Success ->
+                                AppConversationSubscriptionPreferenceState.Stored(result.value)
+                            ConversationSubscriptionRepositoryResult.StaleWrite ->
+                                services.conversationSubscriptionPreferenceRepository
+                                    .read(preferenceScope)
+                                    .toAppPreferenceState()
+                            ConversationSubscriptionRepositoryResult.NotFound,
+                            ConversationSubscriptionRepositoryResult.CorruptData,
+                            ConversationSubscriptionRepositoryResult.InvalidTimestamp,
+                            is ConversationSubscriptionRepositoryResult.StorageFailure,
+                            -> AppConversationSubscriptionPreferenceState.Failed
+                        }
+                        subscriptionSelectionInFlight = false
+                    }
+                }
+            },
+            spamSafety = spamSafetyUi,
+            onMarkSpam = {
+                updateSpamSafety(
+                    classification = SpamClassification.SPAM,
+                    blocked = spamDecision?.blocked == true,
+                )
+            },
+            onMarkNotSpam = {
+                updateSpamSafety(
+                    classification = SpamClassification.NOT_SPAM,
+                    blocked = spamDecision?.blocked == true,
+                )
+            },
+            onBlockSender = {
+                updateSpamSafety(
+                    classification = spamDecision?.classification ?: SpamClassification.NEUTRAL,
+                    blocked = true,
+                )
+            },
+            onUnblockSender = {
+                updateSpamSafety(
+                    classification = spamDecision?.classification ?: SpamClassification.NEUTRAL,
+                    blocked = false,
+                )
             },
         )
+        if (
+            conversationSignatureEditorOpen &&
+            signatureSnapshot.available &&
+            signatureConversationKey != null
+        ) {
+            ConversationMessageSignatureDialog(
+                inherited = signatureSnapshot.global,
+                current = conversationSignatureOverride,
+                onSave = { override ->
+                    signatureStore.setConversation(
+                        signatureConversationKey,
+                        override,
+                    ).also { saved ->
+                        if (!saved) {
+                            Toast.makeText(
+                                context,
+                                R.string.signature_save_failed,
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                },
+                onDismiss = { conversationSignatureEditorOpen = false },
+            )
+        }
         if (appearanceEditorOpen && !wallpaperEditorOpen) {
             ScopedAppearanceDialog(
                 kind = ScopedAppearanceKind.CONVERSATION,
@@ -814,6 +2009,146 @@ private fun ThreadRoute(
     }
 }
 
+private fun inboxSpamIndicators(
+    state: InboxUiState,
+    snapshot: SpamSafetySnapshot,
+    automaticRulesAllowed: Boolean,
+): Map<ProviderThreadId, SpamSafetyIndicator> {
+    val ready = state as? InboxUiState.Ready ?: return emptyMap()
+    return ready.window.items.mapNotNull { summary ->
+        val trustedScope = spamSafetyScope(summary, ready.coverage.verifiedComplete)
+            ?: return@mapNotNull null
+        val decision = snapshot.decisionFor(trustedScope.participantSetKey)?.takeIf {
+            it.scope.providerThreadId == trustedScope.providerThreadId &&
+                it.scope.singleSenderKey == trustedScope.singleSenderKey
+        }
+        spamSafetyReason(
+            summary = summary,
+            contacts = ready.contacts,
+            decision = decision,
+            automaticRulesAllowed = automaticRulesAllowed,
+        )?.let { reason ->
+            summary.providerThreadId to SpamSafetyIndicator(
+                reason = reason,
+                warning = reason == SpamSafetyReason.USER_MARKED_SPAM ||
+                    reason == SpamSafetyReason.USER_BLOCKED ||
+                    reason == SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST,
+            )
+        }
+    }.toMap()
+}
+
+private fun threadSpamSafetyReason(
+    ready: ThreadUiState.Ready?,
+    decision: SpamSafetyDecision?,
+    automaticRulesAllowed: Boolean,
+): SpamSafetyReason? {
+    val state = ready ?: return null
+    val summary = state.conversation ?: return null
+    return spamSafetyReason(summary, state.contacts, decision, automaticRulesAllowed)
+}
+
+internal fun spamSafetyReason(
+    summary: ConversationSummary,
+    contacts: Map<ParticipantAddress, org.aurorasms.core.telephony.ResolvedContact>,
+    decision: SpamSafetyDecision?,
+    automaticRulesAllowed: Boolean = true,
+): SpamSafetyReason? {
+    if (decision?.blocked == true) return SpamSafetyReason.USER_BLOCKED
+    when (decision?.classification) {
+        SpamClassification.SPAM -> return SpamSafetyReason.USER_MARKED_SPAM
+        SpamClassification.NOT_SPAM -> return SpamSafetyReason.USER_MARKED_NOT_SPAM
+        SpamClassification.NEUTRAL,
+        null,
+        -> Unit
+    }
+    if (!automaticRulesAllowed) return null
+    val address = summary.participants.singleOrNull() ?: return null
+    val contact = contacts[address] ?: return null
+    if (!contact.displayName.isNullOrBlank()) return SpamSafetyReason.SAVED_CONTACT
+    if (summary.latestDirection != MessageDirection.INCOMING) return null
+    if (address.value.any(Char::isLetter) || address.value.count(Char::isDigit) < 10) return null
+    val body = summary.latestSnippet?.lowercase(Locale.ROOT).orEmpty()
+    val hasLink = body.contains("https://") || body.contains("http://") || body.contains("www.")
+    val urgent = SPAM_URGENCY_TERMS.any(body::contains)
+    val request = SPAM_REQUEST_TERMS.any(body::contains)
+    return SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST.takeIf { hasLink && urgent && request }
+}
+
+private fun trustedSpamSafetyScope(
+    providerThreadId: ProviderThreadId,
+    state: ThreadUiState,
+): SpamSafetyScope? {
+    val ready = state as? ThreadUiState.Ready ?: return null
+    if (!ready.verifiedConversationIdentityResolved) return null
+    val identity = ready.verifiedConversationIdentity ?: return null
+    if (
+        !ready.coverage.verifiedComplete ||
+        identity.providerThreadId != providerThreadId ||
+        identity.generationId != ready.coverage.generationId
+    ) {
+        return null
+    }
+    return spamSafetyScope(identity.providerThreadId, identity.participants)
+}
+
+private fun spamSafetyScope(
+    summary: ConversationSummary,
+    coverageVerifiedComplete: Boolean,
+): SpamSafetyScope? {
+    if (
+        !coverageVerifiedComplete || summary.participantsTruncated ||
+        summary.indexedParticipantCount != summary.participants.size ||
+        summary.participants.isEmpty()
+    ) {
+        return null
+    }
+    return spamSafetyScope(summary.providerThreadId, summary.participants)
+}
+
+private fun spamSafetyScope(
+    providerThreadId: ProviderThreadId,
+    participants: List<ParticipantAddress>,
+): SpamSafetyScope? = runCatching {
+    SpamSafetyScope(
+        participantSetKey = SpamParticipantSetKey.fromParticipants(participants),
+        providerThreadId = providerThreadId,
+        singleSenderKey = participants.singleOrNull()?.let(BlockedSenderKey::fromSender),
+    )
+}.getOrNull()
+
+private fun nextSpamSafetyTimestamp(current: SpamSafetyDecision?): Long =
+    System.currentTimeMillis().coerceAtLeast((current?.updatedTimestampMillis ?: -1L) + 1L)
+
+private fun showSpamSafetySaveFailure(context: Context) {
+    Toast.makeText(
+        context,
+        org.aurorasms.feature.conversations.R.string.spam_setting_save_failed,
+        Toast.LENGTH_LONG,
+    ).show()
+}
+
+private val SPAM_URGENCY_TERMS = listOf(
+    "urgent",
+    "immediately",
+    "act now",
+    "final notice",
+    "suspended",
+    "expires",
+    "verify now",
+)
+private val SPAM_REQUEST_TERMS = listOf(
+    "account",
+    "password",
+    "login",
+    "payment",
+    "bank",
+    "card",
+    "gift card",
+    "security code",
+    "click",
+)
+
 internal fun trustedConversationAppearanceScope(
     providerThreadId: ProviderThreadId,
     state: ThreadUiState,
@@ -834,6 +2169,101 @@ internal fun trustedConversationAppearanceScope(
             providerThreadId = identity.providerThreadId,
         )
     }.getOrNull()
+}
+
+internal fun trustedConversationSubscriptionScope(
+    providerThreadId: ProviderThreadId,
+    state: ThreadUiState,
+): ConversationSubscriptionScope? {
+    val ready = state as? ThreadUiState.Ready ?: return null
+    if (!ready.verifiedConversationIdentityResolved) return null
+    val identity = ready.verifiedConversationIdentity ?: return null
+    if (
+        !ready.coverage.verifiedComplete ||
+        identity.providerThreadId != providerThreadId ||
+        identity.generationId != ready.coverage.generationId
+    ) {
+        return null
+    }
+    return runCatching {
+        ConversationSubscriptionScope(
+            participantSetKey = ConversationSubscriptionParticipantSetKey.fromParticipants(
+                identity.participants,
+            ),
+            providerThreadId = identity.providerThreadId,
+        )
+    }.getOrNull()
+}
+
+internal fun trustedMessageSignatureConversationKey(
+    providerThreadId: ProviderThreadId,
+    state: ThreadUiState,
+): MessageSignatureConversationKey? {
+    val ready = state as? ThreadUiState.Ready ?: return null
+    if (!ready.verifiedConversationIdentityResolved) return null
+    val identity = ready.verifiedConversationIdentity ?: return null
+    if (
+        !ready.coverage.verifiedComplete ||
+        identity.providerThreadId != providerThreadId ||
+        identity.generationId != ready.coverage.generationId
+    ) return null
+    return runCatching {
+        MessageSignatureConversationKey.fromParticipants(identity.participants)
+    }.getOrNull()
+}
+
+private sealed interface AppConversationSubscriptionPreferenceState {
+    data object Loading : AppConversationSubscriptionPreferenceState
+    data object NoPreference : AppConversationSubscriptionPreferenceState
+    data class Stored(
+        val preference: ConversationSubscriptionPreference,
+    ) : AppConversationSubscriptionPreferenceState
+    data object Failed : AppConversationSubscriptionPreferenceState
+    data object Unavailable : AppConversationSubscriptionPreferenceState
+}
+
+private fun ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference>
+    .toAppPreferenceState(): AppConversationSubscriptionPreferenceState = when (this) {
+    is ConversationSubscriptionRepositoryResult.Success ->
+        AppConversationSubscriptionPreferenceState.Stored(value)
+    ConversationSubscriptionRepositoryResult.NotFound ->
+        AppConversationSubscriptionPreferenceState.NoPreference
+    ConversationSubscriptionRepositoryResult.StaleWrite,
+    ConversationSubscriptionRepositoryResult.CorruptData,
+    ConversationSubscriptionRepositoryResult.InvalidTimestamp,
+    is ConversationSubscriptionRepositoryResult.StorageFailure,
+    -> AppConversationSubscriptionPreferenceState.Failed
+}
+
+private fun resolveConversationSubscriptionUiState(
+    ready: ThreadUiState.Ready?,
+    preferenceState: AppConversationSubscriptionPreferenceState,
+    saving: Boolean,
+): ConversationSubscriptionUiState {
+    val options = ready?.activeSubscriptions.orEmpty()
+        .filter { it.smsCapable }
+        .distinctBy { it.id }
+    val stored = preferenceState as? AppConversationSubscriptionPreferenceState.Stored
+    val selected = when (preferenceState) {
+        AppConversationSubscriptionPreferenceState.NoPreference -> ready?.activeSubscription
+            ?.takeIf { associated -> options.any { it.id == associated.id } }
+        is AppConversationSubscriptionPreferenceState.Stored -> options.singleOrNull {
+            it.id == preferenceState.preference.subscriptionId
+        }
+        AppConversationSubscriptionPreferenceState.Failed,
+        AppConversationSubscriptionPreferenceState.Loading,
+        AppConversationSubscriptionPreferenceState.Unavailable,
+        -> null
+    }
+    return ConversationSubscriptionUiState(
+        options = options,
+        selected = selected,
+        loading = preferenceState == AppConversationSubscriptionPreferenceState.Loading ||
+            preferenceState == AppConversationSubscriptionPreferenceState.Unavailable,
+        saving = saving,
+        rememberedSelectionUnavailable = stored != null && selected == null,
+        storageFailed = preferenceState == AppConversationSubscriptionPreferenceState.Failed,
+    )
 }
 
 private fun AppAppearanceState.activeProfileName(canonicalName: String): String = activeProfileId
@@ -867,18 +2297,403 @@ internal fun AppearanceScope.privateScopedAppearanceRestorationKey(): String = w
         "conversation:${providerThreadId.value}:${participantSetKey.toPrivateStorageToken()}"
 }
 
-private fun DraftWriteStatus.toComposerUiState(restoredBody: String): ComposerUiState = when (this) {
-    DraftWriteStatus.Loading -> ComposerUiState(body = restoredBody, saving = true, failed = false)
-    is DraftWriteStatus.Active -> ComposerUiState(
-        body = latest.body.orEmpty(),
+private data class SavedDraftRestoration(
+    val token: DraftRestorationToken? = null,
+)
+
+private val SAVED_DRAFT_RESTORATION_SAVER: Saver<SavedDraftRestoration, Bundle> = Saver(
+    save = { state ->
+        Bundle().apply {
+            val token = state.token
+            putBoolean(SAVED_DRAFT_TOKEN_PRESENT_KEY, token != null)
+            if (token != null) {
+                putString(SAVED_DRAFT_BODY_KEY, token.content.body)
+                putString(SAVED_DRAFT_SUBJECT_KEY, token.content.subject)
+                val hasBase = token.expectedDraftId != null
+                putBoolean(SAVED_DRAFT_BASE_PRESENT_KEY, hasBase)
+                if (hasBase) {
+                    putLong(SAVED_DRAFT_ID_KEY, checkNotNull(token.expectedDraftId).value)
+                    putLong(
+                        SAVED_DRAFT_REVISION_KEY,
+                        checkNotNull(token.expectedRevision).updatedTimestampMillis,
+                    )
+                }
+            }
+        }
+    },
+    restore = { bundle ->
+        if (!bundle.getBoolean(SAVED_DRAFT_TOKEN_PRESENT_KEY)) {
+            SavedDraftRestoration()
+        } else {
+            runCatching {
+                val hasBase = bundle.getBoolean(SAVED_DRAFT_BASE_PRESENT_KEY)
+                SavedDraftRestoration(
+                    DraftRestorationToken(
+                        content = DraftEditorContent(
+                            body = bundle.getString(SAVED_DRAFT_BODY_KEY),
+                            subject = bundle.getString(SAVED_DRAFT_SUBJECT_KEY),
+                        ),
+                        expectedDraftId = if (hasBase) {
+                            DraftId(bundle.getLong(SAVED_DRAFT_ID_KEY))
+                        } else {
+                            null
+                        },
+                        expectedRevision = if (hasBase) {
+                            DraftRevision(bundle.getLong(SAVED_DRAFT_REVISION_KEY))
+                        } else {
+                            null
+                        },
+                    ),
+                )
+            }.getOrDefault(SavedDraftRestoration())
+        }
+    },
+)
+
+private fun DraftWriteStatus.Active.toRestorationToken(): DraftRestorationToken =
+    DraftRestorationToken(
+        content = latest,
+        expectedDraftId = acknowledgedDraftId,
+        expectedRevision = acknowledgedRevision,
+    )
+
+private fun DraftWriteStatus.Failed.toRestorationToken(): DraftRestorationToken =
+    DraftRestorationToken(
+        content = latest,
+        expectedDraftId = acknowledgedDraftId,
+        expectedRevision = acknowledgedRevision,
+    )
+
+internal fun FrozenDraftSnapshot.toExactRestorationToken(): DraftRestorationToken =
+    DraftRestorationToken(
+        content = content,
+        expectedDraftId = draftId,
+        expectedRevision = revision,
+    )
+
+private fun VoiceMemoCaptureState.toVoiceMemoUiState(
+    currentThreadId: ProviderThreadId,
+    recordEligible: Boolean,
+    permissionDenied: Boolean,
+): VoiceMemoUiState {
+    if (permissionDenied && this is VoiceMemoCaptureState.Idle) {
+        return VoiceMemoUiState(
+            phase = VoiceMemoUiPhase.FAILED,
+            failure = VoiceMemoUiFailure.PERMISSION_DENIED,
+        )
+    }
+    if (providerThreadId != null && providerThreadId != currentThreadId) {
+        return VoiceMemoUiState()
+    }
+    return when (this) {
+        VoiceMemoCaptureState.Idle -> VoiceMemoUiState(recordEnabled = recordEligible)
+        is VoiceMemoCaptureState.Preparing -> VoiceMemoUiState(phase = VoiceMemoUiPhase.PREPARING)
+        is VoiceMemoCaptureState.Recording -> VoiceMemoUiState(
+            phase = VoiceMemoUiPhase.RECORDING,
+            elapsedMillis = elapsedMillis,
+        )
+        is VoiceMemoCaptureState.Ready -> VoiceMemoUiState(
+            phase = VoiceMemoUiPhase.READY,
+            durationMillis = durationMillis,
+            sizeBytes = sizeBytes,
+            retryAfterKnownFailure = retryAfterKnownFailure,
+        )
+        is VoiceMemoCaptureState.Sending -> VoiceMemoUiState(phase = VoiceMemoUiPhase.SENDING)
+        is VoiceMemoCaptureState.AwaitingCallback ->
+            VoiceMemoUiState(phase = VoiceMemoUiPhase.AWAITING_RESULT)
+        is VoiceMemoCaptureState.Sent -> VoiceMemoUiState(phase = VoiceMemoUiPhase.SENT)
+        is VoiceMemoCaptureState.Failed -> VoiceMemoUiState(
+            phase = VoiceMemoUiPhase.FAILED,
+            failure = when (reason) {
+                VoiceMemoFailure.PERMISSION_DENIED -> VoiceMemoUiFailure.PERMISSION_DENIED
+                VoiceMemoFailure.CAPTURE_UNAVAILABLE,
+                VoiceMemoFailure.CAPTURE_TOO_SHORT,
+                VoiceMemoFailure.CAPTURE_INVALID,
+                -> VoiceMemoUiFailure.CAPTURE_FAILED
+                VoiceMemoFailure.SEND_REJECTED -> VoiceMemoUiFailure.SEND_REJECTED
+                VoiceMemoFailure.SUBMISSION_UNKNOWN -> VoiceMemoUiFailure.SUBMISSION_UNKNOWN
+                VoiceMemoFailure.SEND_FAILED -> VoiceMemoUiFailure.SEND_FAILED
+            },
+        )
+    }
+}
+
+private fun DraftWriteStatus.toComposerUiState(
+    restoredBody: String,
+    threadState: ThreadUiState,
+    sendObservation: ThreadSmsSendObservation,
+    sendAttemptInFlight: Boolean,
+    segmentCount: Int?,
+    unsignedSegmentCount: Int? = segmentCount,
+    signatureApplied: Boolean = false,
+    signatureStateAllowsSend: Boolean = true,
+    selectedSubscriptionAvailable: Boolean,
+    scheduleObservation: ScheduledSmsObservation = ScheduledSmsObservation.None,
+    scheduleAttemptInFlight: Boolean = false,
+    sendDelayObservation: SendDelayObservation = SendDelayObservation.None,
+    sendDelayAttemptInFlight: Boolean = false,
+    permanentDeletionActive: Boolean = false,
+    attachments: List<ComposerAttachmentUiItem> = emptyList(),
+    attachmentImporting: Boolean = false,
+    attachmentStorageAvailable: Boolean = true,
+    attachmentFailure: ComposerAttachmentFailure? = null,
+): ComposerUiState {
+    val body = when (this) {
+        DraftWriteStatus.Loading -> restoredBody
+        is DraftWriteStatus.Active -> latest.body.orEmpty()
+        is DraftWriteStatus.Failed -> latest.body.orEmpty()
+    }
+    val subject = when (this) {
+        DraftWriteStatus.Loading -> ""
+        is DraftWriteStatus.Active -> latest.subject.orEmpty()
+        is DraftWriteStatus.Failed -> latest.subject.orEmpty()
+    }
+    val saving = this is DraftWriteStatus.Loading ||
+        (this is DraftWriteStatus.Active && this.saving)
+    val failed = this is DraftWriteStatus.Failed
+    val ready = threadState as? ThreadUiState.Ready
+    val verifiedIdentity = ready?.verifiedConversationIdentity
+    val mmsRequired = verifiedIdentity?.let { identity ->
+        identity.participants.size > 1 ||
+            subject.isNotBlank() ||
+            attachments.isNotEmpty() ||
+            (segmentCount ?: 1) != 1
+    } ?: false
+    val unavailableReason = when {
+        sendObservation.phase == ThreadSmsSendPhase.RECOVERY_PENDING ->
+            ComposerUnavailableReason.RECOVERY_PENDING
+        sendDelayObservation is SendDelayObservation.Loading ->
+            ComposerUnavailableReason.RECOVERY_PENDING
+        permanentDeletionActive -> ComposerUnavailableReason.PERMANENT_DELETION_ACTIVE
+        attachmentImporting -> ComposerUnavailableReason.ATTACHMENT_PROCESSING
+        !attachmentStorageAvailable ->
+            ComposerUnavailableReason.ATTACHMENT_STORAGE_UNAVAILABLE
+        failed || saving ->
+            ComposerUnavailableReason.DRAFT_NOT_DURABLE
+        body.isBlank() && attachments.isEmpty() -> ComposerUnavailableReason.EMPTY_MESSAGE
+        (this as? DraftWriteStatus.Active)?.acknowledgedRevision == null ->
+            ComposerUnavailableReason.DRAFT_NOT_DURABLE
+        !signatureStateAllowsSend -> ComposerUnavailableReason.SIGNATURE_STATE_UNAVAILABLE
+        ready == null || !ready.verifiedConversationIdentityResolved || verifiedIdentity == null ->
+            ComposerUnavailableReason.CONVERSATION_UNVERIFIED
+        !selectedSubscriptionAvailable ->
+            ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE
+        segmentCount == null && body.isNotBlank() ->
+            ComposerUnavailableReason.MESSAGING_UNAVAILABLE
+        else -> null
+    }
+    val sendState = when {
+        scheduleAttemptInFlight || scheduleObservation !is ScheduledSmsObservation.None ->
+            ComposerSendState.UNAVAILABLE
+        sendDelayObservation is SendDelayObservation.Pending ->
+            ComposerSendState.DELAY_PENDING
+        sendDelayObservation is SendDelayObservation.ReviewRequired ->
+            ComposerSendState.DELAY_REVIEW
+        sendAttemptInFlight || sendDelayAttemptInFlight ||
+            sendDelayObservation is SendDelayObservation.Dispatching ||
+            sendObservation.phase == ThreadSmsSendPhase.SENDING ->
+            ComposerSendState.SENDING
+        sendObservation.phase == ThreadSmsSendPhase.SUBMISSION_UNKNOWN ->
+            ComposerSendState.SUBMISSION_UNKNOWN
+        (this as? DraftWriteStatus.Active)?.frozenForSend == true ->
+            ComposerSendState.SENDING
+        unavailableReason != null -> ComposerSendState.UNAVAILABLE
+        sendObservation.phase == ThreadSmsSendPhase.KNOWN_UNSENT ->
+            ComposerSendState.KNOWN_UNSENT
+        else -> ComposerSendState.READY
+    }
+    return ComposerUiState(
+        body = body,
+        subject = subject,
         saving = saving,
-        failed = false,
+        failed = failed,
+        sendState = sendState,
+        unavailableReason = unavailableReason.takeIf { sendState == ComposerSendState.UNAVAILABLE },
+        segmentCount = segmentCount,
+        unsignedSegmentCount = unsignedSegmentCount,
+        signatureApplied = signatureApplied,
+        mmsRequired = mmsRequired,
+        attachments = attachments,
+        attachmentImporting = attachmentImporting,
+        attachmentFailure = attachmentFailure,
+        scheduleState = scheduleObservation.toComposerScheduleState(),
+        sendDelayDueTimestampMillis = when (sendState) {
+            ComposerSendState.DELAY_PENDING ->
+                (sendDelayObservation as SendDelayObservation.Pending).dueTimestampMillis
+            ComposerSendState.DELAY_REVIEW ->
+                (sendDelayObservation as SendDelayObservation.ReviewRequired).dueTimestampMillis
+            else -> null
+        },
     )
-    is DraftWriteStatus.Failed -> ComposerUiState(
-        body = latest.body.orEmpty(),
-        saving = false,
-        failed = true,
+}
+
+private fun ScheduledSmsObservation.toComposerScheduleState(): ComposerScheduleState = when (this) {
+    ScheduledSmsObservation.Loading -> ComposerScheduleState.Loading
+    ScheduledSmsObservation.None -> ComposerScheduleState.None
+    is ScheduledSmsObservation.Pending -> ComposerScheduleState.Pending(
+        dueTimestampMillis = dueTimestampMillis,
+        exact = precision == ScheduledSmsPrecision.EXACT,
     )
+    is ScheduledSmsObservation.Dispatching ->
+        ComposerScheduleState.Dispatching(dueTimestampMillis)
+    is ScheduledSmsObservation.ReviewRequired ->
+        ComposerScheduleState.ReviewRequired(dueTimestampMillis)
+}
+
+private fun PermanentDeletionObservation.toDeletionUiState(): PermanentDeletionUiState = when (this) {
+    PermanentDeletionObservation.Loading -> PermanentDeletionUiState.Loading
+    PermanentDeletionObservation.None,
+    is PermanentDeletionObservation.Completed,
+    -> PermanentDeletionUiState.None
+    is PermanentDeletionObservation.Pending -> PermanentDeletionUiState.Pending(
+        targetKind = targetKind.toDeletionUiKind(),
+        providerMessageId = providerMessageId,
+        dueTimestampMillis = dueTimestampMillis,
+    )
+    is PermanentDeletionObservation.Committing -> PermanentDeletionUiState.Committing(
+        targetKind = targetKind.toDeletionUiKind(),
+    )
+    is PermanentDeletionObservation.ReviewRequired -> PermanentDeletionUiState.ReviewRequired(
+        targetKind = targetKind.toDeletionUiKind(),
+        commitMayHaveStarted = commitMayHaveStarted,
+    )
+}
+
+private fun PermanentDeletionTargetKind.toDeletionUiKind(): PermanentDeletionTargetUiKind =
+    when (this) {
+        PermanentDeletionTargetKind.MESSAGE -> PermanentDeletionTargetUiKind.MESSAGE
+        PermanentDeletionTargetKind.THREAD -> PermanentDeletionTargetUiKind.THREAD
+    }
+
+private fun showScheduledSmsDateTimePicker(
+    context: Context,
+    onSelected: (Long) -> Unit,
+) {
+    val zone = ZoneId.systemDefault()
+    val initial = Instant.ofEpochMilli(
+        System.currentTimeMillis() + DEFAULT_SCHEDULE_LEAD_MILLIS,
+    ).atZone(zone)
+    DatePickerDialog(
+        context,
+        { _, year, month, day ->
+            TimePickerDialog(
+                context,
+                { _, hour, minute ->
+                    val local = LocalDateTime.of(
+                        LocalDate.of(year, month + 1, day),
+                        LocalTime.of(hour, minute),
+                    )
+                    val offsets = zone.rules.getValidOffsets(local)
+                    val due = offsets.singleOrNull()?.let { offset ->
+                        local.toInstant(offset).toEpochMilli()
+                    }
+                    if (
+                        due == null ||
+                        due < System.currentTimeMillis() + MINIMUM_PICKER_LEAD_MILLIS
+                    ) {
+                        Toast.makeText(context, R.string.schedule_time_invalid, Toast.LENGTH_LONG).show()
+                    } else {
+                        onSelected(due)
+                    }
+                },
+                initial.hour,
+                initial.minute,
+                DateFormat.is24HourFormat(context),
+            ).show()
+        },
+        initial.year,
+        initial.monthValue - 1,
+        initial.dayOfMonth,
+    ).apply {
+        datePicker.minDate = System.currentTimeMillis()
+        datePicker.maxDate = System.currentTimeMillis() + MAXIMUM_PICKER_LEAD_MILLIS
+    }.show()
+}
+
+internal fun shouldUnfreezeComposerAsRefused(
+    coordinatorEntered: Boolean,
+    attempt: ThreadSmsSendAttempt?,
+): Boolean = !coordinatorEntered || attempt == ThreadSmsSendAttempt.REFUSED
+
+private suspend fun replaceDurableComposerAttachments(
+    writer: SerializedDraftWriter,
+    repository: DraftAttachmentRepository,
+    attachments: List<OutgoingMmsAttachment>,
+): Boolean {
+    val durable = attachments.map { attachment ->
+        when (
+            val result = DraftAttachment.create(
+                attachment.contentType,
+                attachment.copyBytes(),
+            )
+        ) {
+            is DraftAttachment.CreationResult.Valid -> result.attachment
+            is DraftAttachment.CreationResult.Rejected -> return false
+        }
+    }
+    if (!DraftAttachment.isValidSet(durable)) return false
+    repeat(MAXIMUM_ATTACHMENT_REPLACE_ATTEMPTS) {
+        var active = writer.status.value as? DraftWriteStatus.Active ?: return false
+        if (!active.initialized) return false
+        if (active.acknowledgedDraftId == null && !active.saving) {
+            if (!writer.submit(active.latest)) return false
+        }
+        if (!writer.flush()) return false
+        active = writer.status.value as? DraftWriteStatus.Active ?: return false
+        val draftId = active.acknowledgedDraftId ?: return false
+        val revision = active.acknowledgedRevision ?: return false
+        when (safeReplaceDraftAttachments(repository, draftId, revision, durable)) {
+            is DraftRepositoryResult.Success -> return true
+            DraftRepositoryResult.StaleWrite -> Unit
+            else -> return false
+        }
+    }
+    return false
+}
+
+private suspend fun safeReadDraftAttachments(
+    repository: DraftAttachmentRepository,
+    draftId: DraftId,
+): DraftRepositoryResult<List<DraftAttachment>> = try {
+    repository.read(draftId)
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: RuntimeException) {
+    DraftRepositoryResult.StorageFailure(DraftStorageOperation.READ)
+}
+
+private suspend fun safeReplaceDraftAttachments(
+    repository: DraftAttachmentRepository,
+    draftId: DraftId,
+    revision: DraftRevision,
+    attachments: List<DraftAttachment>,
+): DraftRepositoryResult<List<DraftAttachment>> = try {
+    repository.replace(draftId, revision, attachments)
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: RuntimeException) {
+    DraftRepositoryResult.StorageFailure(DraftStorageOperation.UPDATE)
+}
+
+private fun List<DraftAttachment>.toOutgoingMmsAttachmentsOrNull():
+    List<OutgoingMmsAttachment>? {
+    if (!DraftAttachment.isValidSet(this)) return null
+    val converted = map { attachment ->
+        when (
+            val result = OutgoingMmsAttachment.create(
+                attachment.contentType,
+                attachment.copyBytes(),
+            )
+        ) {
+            is OutgoingMmsAttachment.CreationResult.Valid -> result.attachment
+            is OutgoingMmsAttachment.CreationResult.Rejected -> return null
+        }
+    }
+    return converted.takeIf { attachments ->
+        attachments.size <= OutgoingMmsPayload.Message.MAX_ATTACHMENTS &&
+            attachments.sumOf { it.size.toLong() } <=
+            OutgoingMmsPayload.Message.MAX_ATTACHMENT_BYTES_TOTAL
+    }
 }
 
 private fun isConservativeDialAddress(address: ParticipantAddress): Boolean {
@@ -905,7 +2720,11 @@ private fun launchSystemDialer(context: Context, address: ParticipantAddress) {
 
 private fun AppRoute.saveableScreenKey(): String = when (this) {
     AppRoute.Inbox -> "inbox"
+    AppRoute.NewChat -> "new-chat"
     AppRoute.Appearance -> "appearance"
+    AppRoute.Settings -> "settings"
+    AppRoute.BackupRestore -> "backup-restore"
+    AppRoute.SpamBlocked -> "spam-blocked"
     is AppRoute.Search -> "search"
     is AppRoute.Thread -> "thread-entry-$stateEntryId"
 }
@@ -971,7 +2790,11 @@ internal fun normalizeRestoredRoutes(routes: List<AppRoute>): List<AppRoute>? = 
 private fun saveRoute(route: AppRoute): Bundle = Bundle().apply {
     when (route) {
         AppRoute.Inbox -> putString(ROUTE_TYPE_KEY, ROUTE_INBOX)
+        AppRoute.NewChat -> putString(ROUTE_TYPE_KEY, ROUTE_NEW_CHAT)
         AppRoute.Appearance -> putString(ROUTE_TYPE_KEY, ROUTE_APPEARANCE)
+        AppRoute.Settings -> putString(ROUTE_TYPE_KEY, ROUTE_SETTINGS)
+        AppRoute.BackupRestore -> putString(ROUTE_TYPE_KEY, ROUTE_BACKUP_RESTORE)
+        AppRoute.SpamBlocked -> putString(ROUTE_TYPE_KEY, ROUTE_SPAM_BLOCKED)
         is AppRoute.Search -> {
             putString(ROUTE_TYPE_KEY, ROUTE_SEARCH)
             putString(ROUTE_QUERY_KEY, route.query)
@@ -992,7 +2815,11 @@ private fun saveRoute(route: AppRoute): Bundle = Bundle().apply {
 private fun restoreRoute(bundle: Bundle): AppRoute? = try {
     when (bundle.getString(ROUTE_TYPE_KEY)) {
         ROUTE_INBOX -> AppRoute.Inbox
+        ROUTE_NEW_CHAT -> AppRoute.NewChat
         ROUTE_APPEARANCE -> AppRoute.Appearance
+        ROUTE_SETTINGS -> AppRoute.Settings
+        ROUTE_BACKUP_RESTORE -> AppRoute.BackupRestore
+        ROUTE_SPAM_BLOCKED -> AppRoute.SpamBlocked
         ROUTE_SEARCH -> AppRoute.Search(bundle.getString(ROUTE_QUERY_KEY).orEmpty())
         ROUTE_THREAD -> {
             val threadId = ProviderThreadId(bundle.getLong(ROUTE_THREAD_ID_KEY))
@@ -1026,6 +2853,7 @@ private fun restoreRoute(bundle: Bundle): AppRoute? = try {
 private val DIAL_PUNCTUATION: Set<Char> = setOf('+', '*', '#', '(', ')', '-', '.', ' ')
 private const val MAXIMUM_DIAL_ADDRESS_CHARACTERS: Int = 64
 private const val MAXIMUM_RETAINED_ROUTES: Int = 16
+private const val MAXIMUM_ATTACHMENT_REPLACE_ATTEMPTS: Int = 3
 private const val ROUTES_KEY: String = "routes"
 private const val ROUTE_TYPE_KEY: String = "type"
 private const val ROUTE_QUERY_KEY: String = "query"
@@ -1034,8 +2862,21 @@ private const val ROUTE_THREAD_STATE_ENTRY_KEY: String = "thread_state_entry_id"
 private const val ROUTE_ANCHOR_ROW_KEY: String = "anchor_row"
 private const val ROUTE_ANCHOR_KIND_KEY: String = "anchor_kind"
 private const val ROUTE_ANCHOR_PROVIDER_ID_KEY: String = "anchor_provider_id"
+private const val SAVED_DRAFT_TOKEN_PRESENT_KEY: String = "draft_token_present"
+private const val SAVED_DRAFT_BODY_KEY: String = "draft_body"
+private const val SAVED_DRAFT_SUBJECT_KEY: String = "draft_subject"
+private const val SAVED_DRAFT_BASE_PRESENT_KEY: String = "draft_base_present"
+private const val SAVED_DRAFT_ID_KEY: String = "draft_id"
+private const val SAVED_DRAFT_REVISION_KEY: String = "draft_revision"
 private const val ROUTE_INBOX: String = "inbox"
+private const val ROUTE_NEW_CHAT: String = "new-chat"
 private const val ROUTE_APPEARANCE: String = "appearance"
+private const val ROUTE_SETTINGS: String = "settings"
+private const val ROUTE_BACKUP_RESTORE: String = "backup_restore"
+private const val ROUTE_SPAM_BLOCKED: String = "spam_blocked"
 private const val ROUTE_SEARCH: String = "search"
 private const val ROUTE_THREAD: String = "thread"
 private const val INVALID_SAVED_ID: Long = -1L
+private const val DEFAULT_SCHEDULE_LEAD_MILLIS: Long = 15L * 60L * 1_000L
+private const val MINIMUM_PICKER_LEAD_MILLIS: Long = 2L * 60L * 1_000L
+private const val MAXIMUM_PICKER_LEAD_MILLIS: Long = 365L * 24L * 60L * 60L * 1_000L

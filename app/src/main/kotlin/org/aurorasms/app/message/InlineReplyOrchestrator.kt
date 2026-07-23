@@ -2,11 +2,15 @@
 
 package org.aurorasms.app.message
 
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ParticipantAddress
+import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.notifications.InlineReplyDisposition
@@ -17,17 +21,21 @@ import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.RecipientSet
 import org.aurorasms.core.telephony.SmsSendRequest
+import org.aurorasms.core.telephony.SmsSubmissionOwnership
+import org.aurorasms.core.telephony.SmsSubmissionObserver
 
-class InlineReplyOrchestrator(
+class InlineReplyOrchestrator internal constructor(
     private val roleState: DefaultSmsRoleState,
     private val replyTargets: ReplyTargetRegistry,
     private val replayGuard: ReplyReplayGuard,
+    private val replyOperations: ReplyOperationRegistry,
     private val messageTransport: MessageTransport,
     private val messageNotifier: MessageNotifier,
+    private val transportResultHandler: InlineReplyTransportResultHandler =
+        InlineReplyTransportResultHandler(replyOperations, messageNotifier),
+    private val reconcileProviderUpdate: suspend (MessageId) -> Unit = {},
     private val clockMillis: () -> Long = System::currentTimeMillis,
 ) : InlineReplyHandler {
-    private val nextOperationId = AtomicLong(clockMillis().coerceAtLeast(1L))
-
     override suspend fun handle(request: InlineReplyRequest): InlineReplyDisposition {
         val text = request.text.trim()
         if (
@@ -48,6 +56,17 @@ class InlineReplyOrchestrator(
             is RecipientSet.CreationResult.Valid -> parsed.recipients
             is RecipientSet.CreationResult.Rejected -> return InlineReplyDisposition.REJECTED
         }
+        val sourceMessageId = request.replyRequestId.toSourceMessageIdOrNull()
+            ?: return InlineReplyDisposition.REJECTED
+        val reservation = replyOperations.reserve(request.conversationId, sourceMessageId)
+        val operationId = when (reservation) {
+            is ReplyOperationReservationResult.Reserved -> reservation.operationId
+            ReplyOperationReservationResult.Full,
+            ReplyOperationReservationResult.IdentifierCollision,
+            ReplyOperationReservationResult.InvalidSource,
+            ReplyOperationReservationResult.PersistenceFailure
+            -> return InlineReplyDisposition.REJECTED
+        }
         if (
             !replayGuard.claim(
                 claim = ReplyReplayClaim(
@@ -60,38 +79,190 @@ class InlineReplyOrchestrator(
                 claimedAtMillis = nowMillis,
             )
         ) {
+            replyOperations.discard(operationId)
             return InlineReplyDisposition.REJECTED
         }
 
-        val result = messageTransport.sendSms(
-            SmsSendRequest(
-                operationId = MessageId(
-                    kind = ProviderKind.PENDING_OPERATION,
-                    value = nextOperationId.updateAndGet { current ->
-                        if (current == Long.MAX_VALUE) 1L else current + 1L
-                    },
+        if (!replyOperations.markClaimed(operationId).allowsSubmissionCheckpoint()) {
+            recoverAfterInterruption(operationId, request.conversationId)
+            return InlineReplyDisposition.ACCEPTED
+        }
+
+        val submissionObserver = object : SmsSubmissionObserver {
+            override suspend fun onPrepared(
+                providerId: ProviderMessageId,
+                providerConversationId: ConversationId,
+                unitCount: Int,
+            ): Boolean =
+                providerConversationId == request.conversationId &&
+                    replyOperations.recordPrepared(operationId, providerId, unitCount)
+                    .allowsSubmissionCheckpoint()
+
+            override suspend fun onSubmitting(
+                providerId: ProviderMessageId,
+                providerConversationId: ConversationId,
+                unitCount: Int,
+            ): Boolean =
+                providerConversationId == request.conversationId &&
+                    replyOperations.recordSubmitting(operationId, providerId, unitCount)
+                    .allowsSubmissionCheckpoint()
+        }
+        val result = try {
+            messageTransport.sendSms(
+                request = SmsSendRequest(
+                    operationId = operationId,
+                    recipients = recipients,
+                    body = text,
+                    subscriptionId = target.subscriptionId,
+                    operationOrigin = TransportResult.OperationOrigin.INLINE_REPLY,
                 ),
-                recipients = recipients,
-                body = text,
-                subscriptionId = target.subscriptionId,
-            ),
-        )
+                ownership = SmsSubmissionOwnership.CallerOwned(submissionObserver),
+            )
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) {
+                recoverAfterInterruption(operationId, request.conversationId)
+            }
+            throw cancelled
+        } catch (_: RuntimeException) {
+            recoverAfterInterruption(operationId, request.conversationId)
+            return InlineReplyDisposition.ACCEPTED
+        }
+        if (
+            result.operationId != operationId ||
+            result.transport != MessageTransportKind.SMS ||
+            result.operationOrigin != TransportResult.OperationOrigin.INLINE_REPLY ||
+            !result.matchesProviderConversation(request.conversationId)
+        ) {
+            recoverAfterInterruption(operationId, request.conversationId)
+            return InlineReplyDisposition.ACCEPTED
+        }
         when (result) {
-            is TransportResult.Submitted,
-            is TransportResult.Sent,
-            is TransportResult.Delivered ->
-                messageNotifier.cancelConversation(request.conversationId)
+            is TransportResult.Submitted -> {
+                when (
+                    replyOperations.recordSubmitted(
+                        operationId = operationId,
+                        unitCount = result.unitCount,
+                        providerMessageId = result.providerMessageId,
+                    )
+                ) {
+                    ReplyOperationSubmittedResult.SuccessPending ->
+                        transportResultHandler.handleOwnedSuccess(operationId)
+                    ReplyOperationSubmittedResult.Tracked,
+                    ReplyOperationSubmittedResult.FailureNotified,
+                    ReplyOperationSubmittedResult.SubmissionUnknownNotified,
+                    ReplyOperationSubmittedResult.SuccessComplete,
+                    -> Unit
+                    ReplyOperationSubmittedResult.FailurePending ->
+                        transportResultHandler.handleOwnedFailure(
+                            operationId = operationId,
+                            fallbackConversationId = request.conversationId,
+                            providerMessageId = result.providerMessageId,
+                            unitCount = result.unitCount,
+                        )
+                    ReplyOperationSubmittedResult.SubmissionUnknownPending ->
+                        transportResultHandler.reconcilePendingOperations()
+                    ReplyOperationSubmittedResult.Invalid,
+                    ReplyOperationSubmittedResult.PersistenceFailure,
+                    ReplyOperationSubmittedResult.ProviderMismatch,
+                    ReplyOperationSubmittedResult.UnitCountMismatch,
+                    ReplyOperationSubmittedResult.PhaseMismatch,
+                    ReplyOperationSubmittedResult.CorruptOwnership,
+                    ReplyOperationSubmittedResult.Untracked ->
+                        recoverAfterInterruption(operationId, request.conversationId)
+                }
+            }
+            is TransportResult.Sent -> {
+                transportResultHandler.handle(result)
+                reconcileProviderUpdate(operationId)
+            }
+            is TransportResult.Delivered -> {
+                transportResultHandler.handle(result)
+                reconcileProviderUpdate(operationId)
+            }
+            is TransportResult.Failed -> {
+                when (result.stage) {
+                    TransportResult.FailureStage.SUBMISSION_UNKNOWN,
+                    TransportResult.FailureStage.DOWNLOAD_CALLBACK ->
+                        recoverAfterInterruption(operationId, request.conversationId)
+                    TransportResult.FailureStage.DELIVERY_CALLBACK ->
+                        transportResultHandler.handle(result)
+                    TransportResult.FailureStage.SUBMISSION,
+                    TransportResult.FailureStage.SENT_CALLBACK ->
+                        transportResultHandler.handleOwnedFailure(
+                            operationId = operationId,
+                            fallbackConversationId = request.conversationId,
+                            providerMessageId = result.providerMessageId,
+                            unitIndex = result.unitIndex,
+                            unitCount = result.unitCount,
+                            operationOrigin = result.operationOrigin,
+                        )
+                }
+                reconcileProviderUpdate(operationId)
+            }
             is TransportResult.Downloaded,
-            is TransportResult.Failed,
-            is TransportResult.Rejected ->
-                messageNotifier.notifyInlineReplyFailure(request.conversationId)
+            is TransportResult.Rejected -> {
+                notifyFailure(operationId, request.conversationId)
+                reconcileProviderUpdate(operationId)
+            }
         }
         return InlineReplyDisposition.ACCEPTED
+    }
+
+    private suspend fun recoverAfterInterruption(
+        operationId: MessageId,
+        fallbackConversationId: ConversationId,
+    ) {
+        transportResultHandler.recoverInterruptedOperation(
+            operationId = operationId,
+            fallbackConversationId = fallbackConversationId,
+        )
+        reconcileProviderUpdate(operationId)
+    }
+
+    private fun notifyFailure(
+        operationId: MessageId,
+        fallbackConversationId: ConversationId,
+    ) {
+        transportResultHandler.handleOwnedFailure(operationId, fallbackConversationId)
     }
 
     private companion object {
         const val MAX_REPLY_CHARACTERS = 4_000
     }
+}
+
+private fun ReplyOperationPhaseTransitionResult.allowsSubmissionCheckpoint(): Boolean =
+    this == ReplyOperationPhaseTransitionResult.Transitioned ||
+        this == ReplyOperationPhaseTransitionResult.AlreadyInPhase
+
+private fun TransportResult.matchesProviderConversation(expected: ConversationId): Boolean =
+    when (this) {
+        is TransportResult.Submitted ->
+            providerMessageId == null || providerConversationId == expected
+        is TransportResult.Sent ->
+            providerMessageId == null || providerConversationId == expected
+        is TransportResult.Delivered ->
+            providerMessageId == null || providerConversationId == expected
+        is TransportResult.Failed ->
+            providerMessageId == null || providerConversationId == expected
+        is TransportResult.Downloaded,
+        is TransportResult.Rejected,
+        -> true
+    }
+
+private fun String.toSourceMessageIdOrNull(): MessageId? {
+    val separator = indexOf(':')
+    if (separator <= 0 || separator != lastIndexOf(':')) return null
+    val kind = when (substring(0, separator)) {
+        ProviderKind.SMS.name -> ProviderKind.SMS
+        ProviderKind.MMS.name -> ProviderKind.MMS
+        else -> return null
+    }
+    val valueText = substring(separator + 1)
+    val value = valueText.toLongOrNull()
+        ?.takeIf { it > 0L && valueText == it.toString() }
+        ?: return null
+    return MessageId(kind, value)
 }
 
 fun interface ReplyReplayGuard {
@@ -160,6 +331,9 @@ class ReplyTargetRegistry(
         return target
     }
 
+    fun forget(requestId: String, conversationId: ConversationId): Boolean =
+        targetStore.remove(requestId, conversationId)
+
     fun clear() {
         targetStore.clear()
     }
@@ -176,6 +350,7 @@ data class ReplyTarget(
 interface ReplyTargetStore {
     fun put(target: ReplyTarget, nowMillis: Long): Boolean
     fun get(requestId: String, nowMillis: Long): ReplyTarget?
+    fun remove(requestId: String, conversationId: ConversationId): Boolean
     fun clear(): Boolean
 }
 
@@ -201,6 +376,14 @@ internal class InMemoryReplyTargetStore(
             return null
         }
         return target
+    }
+
+    @Synchronized
+    override fun remove(requestId: String, conversationId: ConversationId): Boolean {
+        val target = targets[requestId] ?: return true
+        if (target.conversationId != conversationId) return false
+        targets.remove(requestId)
+        return true
     }
 
     @Synchronized

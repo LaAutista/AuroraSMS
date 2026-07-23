@@ -1,0 +1,29 @@
+AuroraSMS is a clean-room Android messaging app built for private,
+local-first use. It has no ads, analytics, trackers, accounts, or Internet
+permission. Android's Telephony provider remains the authority for messages.
+
+The app includes a paged inbox and conversation view, local paged indexing and
+search with coverage diagnostics, durable drafts and existing-thread SMS/MMS sending,
+scheduled and short-delay SMS, message deletion safeguards, notification
+replies and reminders, local explainable spam warnings, encrypted backup and
+restore, appearance profiles, per-conversation wallpapers, and Android Auto
+messaging notification metadata.
+
+Inbox New chat and external SMS/MMS links share a draft-safe review surface.
+Recipients are entered manually, bounded and validated. Message text entered
+inside Aurora is saved locally under the participant set.
+Caller-supplied text stays review-only.
+It is saved only after an edit inside Aurora.
+External input never auto-sends, and an unedited external prefill cannot replace a saved draft.
+
+Bounded synthetic incoming and general/group outgoing MMS paths are implemented,
+but physical carrier/OEM acceptance is not complete.
+Sending from New chat is disabled: there is no contact picker,
+provider-thread creation/write, or first-contact transport yet. Archive/pin and
+other required product surfaces also remain unfinished.
+Complete provider-history coverage on the owner's nonempty device is not yet
+physically verified.
+This source is still a pre-release; physical-device, accessibility, performance,
+release-signing, and publication gates remain open. AuroraSMS does not provide
+RCS. Review the current status and known limitations before using it as a
+primary messaging app.

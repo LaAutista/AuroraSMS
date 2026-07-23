@@ -2,6 +2,7 @@
 
 package org.aurorasms.core.telephony
 
+import android.net.Uri
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.TransportResult
 
@@ -13,7 +14,17 @@ interface TelephonyEntryPoint {
 
     suspend fun onTransportResult(result: TransportResult)
 
-    suspend fun onDownloadedMms(operationId: MessageId, pdu: EncodedMmsPdu)
+    suspend fun onDownloadedMms(
+        operationId: MessageId,
+        stagedUri: Uri,
+        pdu: EncodedMmsPdu,
+    ): MmsStagedPduDisposition
+
+    suspend fun onFailedMmsDownload(
+        operationId: MessageId,
+        stagedUri: Uri,
+        result: TransportResult.Failed,
+    ): MmsStagedPduDisposition
 
     suspend fun onDefaultSmsRoleChanged(isDefaultSmsApp: Boolean)
 

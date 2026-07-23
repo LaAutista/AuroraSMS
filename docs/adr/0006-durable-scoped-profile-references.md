@@ -53,7 +53,7 @@ Eligible screen targets use these exact stable storage codes:
 | Inbox | `inbox` | Reachable |
 | Archive | `archive` | Model only; no control until its route exists |
 | Settings | `settings` | Model only; Theme Studio is not this target |
-| Spam & Blocked | `spam_blocked` | Model only; no control until its route exists |
+| Spam & Blocked | `spam_blocked` | Reachable from Inbox More |
 | Global thread fallback | `global_thread` | Reachable as `Conversation defaults` from Inbox More |
 
 Search and Theme Studio have no storage codes and cannot receive scoped

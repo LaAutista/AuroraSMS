@@ -8,6 +8,7 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.BaseColumns
@@ -29,9 +30,14 @@ import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.DefaultSmsRoleState
+import org.aurorasms.core.telephony.ConversationReadThroughOutcome
 import org.aurorasms.core.telephony.IncomingSmsRecord
 import org.aurorasms.core.telephony.IncomingDeliveryDisposition
+import org.aurorasms.core.telephony.IncomingSmsNotificationReplay
+import org.aurorasms.core.telephony.IncomingSmsNotificationReplayRequest
 import org.aurorasms.core.telephony.OutgoingSmsRecord
+import org.aurorasms.core.telephony.OutgoingSmsRollbackOutcome
+import org.aurorasms.core.telephony.OutgoingSmsStatusUpdateOutcome
 import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderPage
 import org.aurorasms.core.telephony.ProviderPageCursor
@@ -56,7 +62,7 @@ class AndroidSmsProviderDataSource(
         resolver.query(
             Telephony.Sms.CONTENT_URI,
             arrayOf(BaseColumns._ID),
-            null,
+            SMS_INDEX_ELIGIBILITY_SELECTION,
             null,
             null,
         )?.use { cursor ->
@@ -67,12 +73,11 @@ class AndroidSmsProviderDataSource(
     override suspend fun readPage(
         request: ProviderPageRequest,
     ): ProviderAccessResult<ProviderPage<SmsProviderMessage>> = withReadAccess("read SMS page") {
-        val eligibleRows = "${BaseColumns._ID} > 0 AND ${Telephony.Sms.DATE} >= 0"
         val selection = request.before?.let {
-            "$eligibleRows AND " +
+            "$SMS_INDEX_ELIGIBILITY_SELECTION AND " +
                 "((${Telephony.Sms.DATE} < ?) OR " +
                 "(${Telephony.Sms.DATE} = ? AND ${BaseColumns._ID} < ?))"
-        } ?: eligibleRows
+        } ?: SMS_INDEX_ELIGIBILITY_SELECTION
         val selectionArgs = request.before?.let {
             arrayOf(
                 it.timestampMillis.toString(),
@@ -150,6 +155,55 @@ class AndroidSmsProviderDataSource(
         } ?: ProviderAccessResult.Unavailable("read SMS page")
     }
 
+    override suspend fun readExact(
+        id: ProviderMessageId,
+    ): ProviderAccessResult<SmsProviderMessage?> = withReadAccess("read exact SMS") {
+        if (id.kind != ProviderKind.SMS) {
+            return@withReadAccess ProviderAccessResult.InvalidInput("provider message kind")
+        }
+        val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id.value)
+        val projection = arrayOf(
+            BaseColumns._ID,
+            Telephony.Sms.THREAD_ID,
+            Telephony.Sms.ADDRESS,
+            Telephony.Sms.BODY,
+            Telephony.Sms.TYPE,
+            Telephony.Sms.DATE,
+            Telephony.Sms.DATE_SENT,
+            Telephony.Sms.SUBSCRIPTION_ID,
+            Telephony.Sms.READ,
+            Telephony.Sms.SEEN,
+            Telephony.Sms.LOCKED,
+            Telephony.Sms.STATUS,
+            Telephony.Sms.ERROR_CODE,
+        )
+        resolver.query(uri, projection, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use ProviderAccessResult.Success(null)
+            val raw = RawSmsProviderRow(
+                id = cursor.getLong(cursor.getColumnIndexOrThrow(BaseColumns._ID)),
+                threadId = cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID)),
+                address = cursor.getString(cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)),
+                body = cursor.getString(cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)),
+                type = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.TYPE)),
+                timestampMillis = cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Sms.DATE)),
+                sentTimestampMillis = cursor.nullableLong(
+                    cursor.getColumnIndexOrThrow(Telephony.Sms.DATE_SENT),
+                ),
+                subscriptionId = cursor.nullableInt(
+                    cursor.getColumnIndexOrThrow(Telephony.Sms.SUBSCRIPTION_ID),
+                ),
+                read = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.READ)) != 0,
+                seen = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.SEEN)) != 0,
+                locked = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.LOCKED)) != 0,
+                rawStatus = cursor.nullableInt(cursor.getColumnIndexOrThrow(Telephony.Sms.STATUS)),
+                rawErrorCode = cursor.nullableInt(
+                    cursor.getColumnIndexOrThrow(Telephony.Sms.ERROR_CODE),
+                ),
+            )
+            ProviderAccessResult.Success(raw.toProviderMessageOrNull())
+        } ?: ProviderAccessResult.Unavailable("read exact SMS")
+    }
+
     override suspend fun insertIncoming(
         message: IncomingSmsRecord,
     ): ProviderAccessResult<ProviderStoredMessage> = incomingInsertMutex.withLock {
@@ -158,14 +212,144 @@ class AndroidSmsProviderDataSource(
         }
     }
 
+    override suspend fun readPendingIncomingNotifications(
+        request: IncomingSmsNotificationReplayRequest,
+    ): ProviderAccessResult<List<IncomingSmsNotificationReplay>> = incomingInsertMutex.withLock {
+        withReadAccess("recover pending incoming SMS notifications") {
+            val entries = when (
+                val journal = incomingReplayJournal.recoveryEntries(
+                    IncomingSmsReplayJournal.MAXIMUM_ENTRIES,
+                )
+            ) {
+                IncomingSmsReplayJournal.RecoveryEntriesResult.Corrupt -> {
+                    return@withReadAccess ProviderAccessResult.Unavailable(
+                        "read incoming SMS delivery journal",
+                    )
+                }
+                is IncomingSmsReplayJournal.RecoveryEntriesResult.Success -> journal.entries
+            }
+            val replays = ArrayList<IncomingSmsNotificationReplay>(request.limit)
+            var hasDeferredEntry = false
+            for (entry in entries) {
+                val recovered = if (entry.state == IncomingSmsReplayJournal.State.PENDING) {
+                    if (
+                        !canVerifyPendingIncomingProviderOwnership(entry.providerContentDigest)
+                    ) {
+                        hasDeferredEntry = true
+                        continue
+                    }
+                    when (val pending = recoverPendingNotificationProviderRow(entry)) {
+                        is PendingRecovery.Found -> {
+                            if (
+                                !incomingReplayJournal.markStored(
+                                    entry.fingerprint,
+                                    pending.message.providerId,
+                                    pending.message.conversationId,
+                                )
+                            ) {
+                                hasDeferredEntry = true
+                                continue
+                            }
+                            pending.message
+                        }
+                        PendingRecovery.None -> {
+                            hasDeferredEntry = true
+                            continue
+                        }
+                        PendingRecovery.Ambiguous -> {
+                            hasDeferredEntry = true
+                            continue
+                        }
+                        PendingRecovery.Unavailable -> {
+                            hasDeferredEntry = true
+                            continue
+                        }
+                    }
+                } else {
+                    val providerId = entry.providerId
+                    val conversationId = entry.conversationId
+                    if (providerId == null || conversationId == null) {
+                        if (
+                            !incomingReplayJournal.quarantine(
+                                entry.fingerprint,
+                                IncomingSmsReplayJournal.QuarantineReason.MALFORMED_JOURNAL_RECORD,
+                            )
+                        ) {
+                            hasDeferredEntry = true
+                        }
+                        continue
+                    }
+                    ProviderStoredMessage(providerId, conversationId)
+                }
+                val providerId = recovered.providerId
+                val conversationId = recovered.conversationId
+                val row = when (val exact = incomingNotificationReplayRow(providerId)) {
+                    is ExactIncomingNotificationReplayRow.Found -> exact.row
+                    ExactIncomingNotificationReplayRow.Invalid -> {
+                        if (
+                            !quarantineTerminalIncomingReplayFailure(
+                                entry,
+                                IncomingStoredReplayRowFailure.INVALID,
+                            )
+                        ) {
+                            hasDeferredEntry = true
+                        }
+                        continue
+                    }
+                    ExactIncomingNotificationReplayRow.Missing -> {
+                        if (
+                            !quarantineTerminalIncomingReplayFailure(
+                                entry,
+                                IncomingStoredReplayRowFailure.MISSING,
+                            )
+                        ) {
+                            hasDeferredEntry = true
+                        }
+                        continue
+                    }
+                    ExactIncomingNotificationReplayRow.Unavailable -> {
+                        hasDeferredEntry = true
+                        continue
+                    }
+                }
+                val replay = row.toIncomingSmsNotificationReplayOrNull(
+                    fingerprint = entry.fingerprint,
+                    expectedProviderId = providerId,
+                    expectedConversationId = conversationId,
+                    expectedReceivedTimestampMillis = entry.receivedTimestampMillis,
+                    expectedSentTimestampMillis = entry.sentTimestampMillis,
+                    expectedSubscriptionId = entry.subscriptionId,
+                    expectedProviderContentDigest = entry.providerContentDigest,
+                )
+                if (replay == null) {
+                    if (
+                        !quarantineTerminalIncomingReplayFailure(
+                            entry,
+                            IncomingStoredReplayRowFailure.VALIDATION_MISMATCH,
+                        )
+                    ) {
+                        hasDeferredEntry = true
+                    }
+                    continue
+                }
+                replays += replay
+                if (replays.size == request.limit) break
+            }
+            pendingIncomingNotificationReadResult(
+                replays = replays,
+                hasUnresolvedPendingEntry = hasDeferredEntry,
+            )
+        }
+    }
+
     override suspend fun markIncomingHandled(
         deliveryFingerprint: MessageDeliveryFingerprint,
         providerId: ProviderMessageId,
         conversationId: ConversationId,
     ): ProviderAccessResult<Unit> = incomingInsertMutex.withLock {
-        withContext(ioDispatcher) {
+        withWriteAccess("complete incoming SMS delivery journal") {
             if (providerId.kind != ProviderKind.SMS) {
-                return@withContext ProviderAccessResult.InvalidInput("provider message kind")
+                return@withWriteAccess ProviderAccessResult.InvalidInput("provider message kind")
             }
             if (incomingReplayJournal.markComplete(deliveryFingerprint, providerId, conversationId)) {
                 ProviderAccessResult.Success(Unit)
@@ -175,26 +359,177 @@ class AndroidSmsProviderDataSource(
         }
     }
 
+    override suspend fun markConversationReadThrough(
+        conversationId: ConversationId,
+        throughMessageId: ProviderMessageId,
+    ): ProviderAccessResult<ConversationReadThroughOutcome> = incomingInsertMutex.withLock {
+        withWriteAccess("mark SMS conversation read") {
+            if (throughMessageId.kind != ProviderKind.SMS) {
+                return@withWriteAccess ProviderAccessResult.InvalidInput("provider message kind")
+            }
+            val sourceUri = ContentUris.withAppendedId(
+                Telephony.Sms.CONTENT_URI,
+                throughMessageId.value,
+            )
+            val source = readIncomingReadSource(sourceUri, throughMessageId.value)
+                ?: return@withWriteAccess ProviderAccessResult.Success(
+                    ConversationReadThroughOutcome.SOURCE_ABSENT_OR_MISMATCH,
+                )
+            if (source.threadId != conversationId.value) {
+                return@withWriteAccess ProviderAccessResult.Success(
+                    ConversationReadThroughOutcome.SOURCE_ABSENT_OR_MISMATCH,
+                )
+            }
+            val values = ContentValues().apply {
+                put(Telephony.Sms.READ, 1)
+                put(Telephony.Sms.SEEN, 1)
+            }
+            val updated = resolver.update(
+                Telephony.Sms.CONTENT_URI,
+                values,
+                "${Telephony.Sms.THREAD_ID} = ? AND ${Telephony.Sms.TYPE} = ? AND " +
+                    "${BaseColumns._ID} <= ? AND " +
+                    "(${Telephony.Sms.READ} = 0 OR ${Telephony.Sms.SEEN} = 0)",
+                arrayOf(
+                    conversationId.value.toString(),
+                    Telephony.Sms.MESSAGE_TYPE_INBOX.toString(),
+                    throughMessageId.value.toString(),
+                ),
+            )
+            if (updated < 0) {
+                return@withWriteAccess ProviderAccessResult.Unavailable("mark SMS conversation read")
+            }
+            val verifiedSource = readIncomingReadSource(sourceUri, throughMessageId.value)
+                ?: return@withWriteAccess ProviderAccessResult.Unavailable(
+                    "verify marked SMS conversation",
+                )
+            if (
+                verifiedSource.threadId != conversationId.value ||
+                !verifiedSource.read ||
+                !verifiedSource.seen
+            ) {
+                return@withWriteAccess ProviderAccessResult.Unavailable(
+                    "verify marked SMS conversation",
+                )
+            }
+            ProviderAccessResult.Success(ConversationReadThroughOutcome.APPLIED_OR_ALREADY_READ)
+        }
+    }
+
     override suspend fun insertOutgoing(
         message: OutgoingSmsRecord,
     ): ProviderAccessResult<ProviderStoredMessage> = withWriteAccess("insert outgoing SMS") {
+        val failed = SmsProviderStatus.FAILED.toSmsProviderStatusProjection()
         val values = ContentValues().apply {
             put(Telephony.Sms.ADDRESS, message.recipient.value)
             put(Telephony.Sms.BODY, message.body)
             put(Telephony.Sms.DATE, message.timestampMillis)
-            put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_OUTBOX)
-            put(Telephony.Sms.STATUS, Telephony.Sms.STATUS_PENDING)
+            put(Telephony.Sms.TYPE, failed.messageType)
+            put(Telephony.Sms.STATUS, failed.rawStatus)
+            put(Telephony.Sms.ERROR_CODE, OUTGOING_STAGING_ERROR_CODE)
             put(Telephony.Sms.READ, 1)
             put(Telephony.Sms.SEEN, 1)
             put(Telephony.Sms.SUBSCRIPTION_ID, message.subscriptionId.value)
             put(Telephony.Sms.CREATOR, appContext.packageName)
         }
-        val uri = resolver.insert(Telephony.Sms.Outbox.CONTENT_URI, values)
+        // Box-specific provider URIs are allowed to replace TYPE. The base URI
+        // preserves the fail-safe state in the same atomic provider insert.
+        val uri = resolver.insert(Telephony.Sms.CONTENT_URI, values)
             ?: return@withWriteAccess ProviderAccessResult.Unavailable("insert outgoing SMS")
         val id = runCatching { ContentUris.parseId(uri) }.getOrNull()
             ?.takeIf { it > 0L }
             ?: return@withWriteAccess ProviderAccessResult.Unavailable("read inserted SMS ID")
-        insertedReference(id, incomingDisposition = null)
+        insertedOutgoingReference(id)
+    }
+
+    override suspend fun armOutgoing(
+        id: ProviderMessageId,
+    ): ProviderAccessResult<Unit> = withWriteAccess("arm outgoing SMS") {
+        if (id.kind != ProviderKind.SMS) {
+            return@withWriteAccess ProviderAccessResult.InvalidInput("provider message kind")
+        }
+        val failed = SmsProviderStatus.FAILED.toSmsProviderStatusProjection()
+        val pending = SmsProviderStatus.PENDING.toSmsProviderStatusProjection()
+        val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id.value)
+        val result = armOutgoingSmsProviderRow {
+            val values = ContentValues().apply {
+                put(Telephony.Sms.TYPE, pending.messageType)
+                put(Telephony.Sms.STATUS, pending.rawStatus)
+                put(Telephony.Sms.ERROR_CODE, CLEARED_OUTGOING_ERROR_CODE)
+            }
+            when (
+                resolver.update(
+                    uri,
+                    values,
+                    "${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.STATUS} = ? AND " +
+                        "${Telephony.Sms.ERROR_CODE} = ? AND ${Telephony.Sms.CREATOR} = ?",
+                    arrayOf(
+                        failed.messageType.toString(),
+                        failed.rawStatus.toString(),
+                        OUTGOING_STAGING_ERROR_CODE.toString(),
+                        appContext.packageName,
+                    ),
+                )
+            ) {
+                1 -> ConditionalSmsStatusWriteResult.UPDATED
+                0 -> ConditionalSmsStatusWriteResult.STALE
+                else -> ConditionalSmsStatusWriteResult.UNAVAILABLE
+            }
+        }
+        when (result) {
+            OutgoingSmsArmResult.ARMED -> ProviderAccessResult.Success(Unit)
+            OutgoingSmsArmResult.UNAVAILABLE -> {
+                ProviderAccessResult.Unavailable("arm outgoing SMS")
+            }
+        }
+    }
+
+    override suspend fun rollbackOutgoing(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+    ): ProviderAccessResult<OutgoingSmsRollbackOutcome> = withWriteAccess("rollback outgoing SMS") {
+        if (id.kind != ProviderKind.SMS || conversationId.value <= 0L) {
+            return@withWriteAccess ProviderAccessResult.InvalidInput("provider message kind")
+        }
+        val failed = SmsProviderStatus.FAILED.toSmsProviderStatusProjection()
+        val pending = SmsProviderStatus.PENDING.toSmsProviderStatusProjection()
+        val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id.value)
+        val values = ContentValues().apply {
+            put(Telephony.Sms.TYPE, failed.messageType)
+            put(Telephony.Sms.STATUS, failed.rawStatus)
+            put(Telephony.Sms.ERROR_CODE, CLEARED_OUTGOING_ERROR_CODE)
+        }
+        val ownedStaging = "(${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.STATUS} = ? AND " +
+            "${Telephony.Sms.ERROR_CODE} = ?)"
+        val ownedArmed = "(${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.STATUS} = ? AND " +
+            "${Telephony.Sms.ERROR_CODE} = ?)"
+        val ownedTerminal = "(${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.STATUS} = ? AND " +
+            "${Telephony.Sms.ERROR_CODE} = ?)"
+        when (
+            resolver.update(
+                uri,
+                values,
+                "${Telephony.Sms.CREATOR} = ? AND ${Telephony.Sms.THREAD_ID} = ? AND " +
+                    "($ownedStaging OR $ownedArmed OR $ownedTerminal)",
+                arrayOf(
+                    appContext.packageName,
+                    conversationId.value.toString(),
+                    failed.messageType.toString(),
+                    failed.rawStatus.toString(),
+                    OUTGOING_STAGING_ERROR_CODE.toString(),
+                    pending.messageType.toString(),
+                    pending.rawStatus.toString(),
+                    CLEARED_OUTGOING_ERROR_CODE.toString(),
+                    failed.messageType.toString(),
+                    failed.rawStatus.toString(),
+                    CLEARED_OUTGOING_ERROR_CODE.toString(),
+                ),
+            )
+        ) {
+            1 -> ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.TERMINALIZED)
+            0 -> outgoingRollbackZeroWriteDisposition(uri, conversationId)
+            else -> ProviderAccessResult.Unavailable("rollback outgoing SMS")
+        }
     }
 
     override suspend fun updateStatus(
@@ -204,32 +539,291 @@ class AndroidSmsProviderDataSource(
         if (id.kind != ProviderKind.SMS) {
             return@withWriteAccess ProviderAccessResult.InvalidInput("provider message kind")
         }
-        val values = ContentValues().apply {
-            when (status) {
-                SmsProviderStatus.COMPLETE -> {
-                    put(Telephony.Sms.STATUS, Telephony.Sms.STATUS_COMPLETE)
-                    put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_SENT)
+        if (
+            ContextCompat.checkSelfPermission(appContext, Manifest.permission.READ_SMS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return@withWriteAccess ProviderAccessResult.PermissionDenied
+        }
+        val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id.value)
+        when (
+            updateSmsStatusMonotonically(
+                requested = status,
+                maxWriteAttempts = MAX_STATUS_UPDATE_ATTEMPTS,
+                readCurrent = { readSmsProviderStatus(uri) },
+                conditionalWrite = { expected, requested ->
+                    writeSmsProviderStatusConditionally(uri, expected, requested)
+                },
+            )
+        ) {
+            MonotonicSmsStatusUpdateResult.SUCCESS -> ProviderAccessResult.Success(Unit)
+            MonotonicSmsStatusUpdateResult.UNAVAILABLE -> {
+                ProviderAccessResult.Unavailable("update SMS status")
+            }
+        }
+    }
+
+    override suspend fun updateOutgoingStatus(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+        status: SmsProviderStatus,
+    ): ProviderAccessResult<OutgoingSmsStatusUpdateOutcome> =
+        withWriteAccess("update exact outgoing SMS status") {
+            if (id.kind != ProviderKind.SMS || conversationId.value <= 0L) {
+                return@withWriteAccess ProviderAccessResult.InvalidInput("provider message identity")
+            }
+            if (
+                ContextCompat.checkSelfPermission(appContext, Manifest.permission.READ_SMS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                return@withWriteAccess ProviderAccessResult.PermissionDenied
+            }
+            val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id.value)
+            when (
+                updateExactOutgoingSmsStatusMonotonically(
+                    requested = status,
+                    maxWriteAttempts = MAX_STATUS_UPDATE_ATTEMPTS,
+                    readCurrent = {
+                        readExactOwnedOutgoingSmsStatus(uri, conversationId)
+                    },
+                    conditionalWrite = { expected, requested ->
+                        writeExactOwnedSmsProviderStatusConditionally(
+                            uri = uri,
+                            conversationId = conversationId,
+                            expected = expected,
+                            requested = requested,
+                        )
+                    },
+                )
+            ) {
+                ExactOutgoingSmsStatusUpdateResult.APPLIED ->
+                    ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.APPLIED)
+                ExactOutgoingSmsStatusUpdateResult.ROW_ABSENT ->
+                    ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.ROW_ABSENT)
+                ExactOutgoingSmsStatusUpdateResult.OWNERSHIP_CONFLICT ->
+                    ProviderAccessResult.Success(OutgoingSmsStatusUpdateOutcome.OWNERSHIP_CONFLICT)
+                ExactOutgoingSmsStatusUpdateResult.UNAVAILABLE ->
+                    ProviderAccessResult.Unavailable("update exact outgoing SMS status")
+            }
+        }
+
+    private fun readSmsProviderStatus(uri: Uri): SmsProviderStatus? {
+        val cursor = resolver.query(
+            uri,
+            arrayOf(Telephony.Sms.TYPE, Telephony.Sms.STATUS),
+            null,
+            null,
+            null,
+        ) ?: return null
+        return cursor.use {
+            if (!it.moveToFirst()) return@use null
+            val messageTypeIndex = it.getColumnIndexOrThrow(Telephony.Sms.TYPE)
+            val rawStatusIndex = it.getColumnIndexOrThrow(Telephony.Sms.STATUS)
+            if (it.isNull(messageTypeIndex) || it.isNull(rawStatusIndex)) return@use null
+            val current = smsProviderStatusFromRaw(
+                messageType = it.getInt(messageTypeIndex),
+                rawStatus = it.getInt(rawStatusIndex),
+            )
+            if (it.moveToNext()) null else current
+        }
+    }
+
+    private fun readExactOwnedOutgoingSmsStatus(
+        uri: Uri,
+        conversationId: ConversationId,
+    ): ExactOutgoingSmsStatusReadResult {
+        val cursor = resolver.query(
+            uri,
+            arrayOf(
+                Telephony.Sms.THREAD_ID,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.STATUS,
+                Telephony.Sms.ERROR_CODE,
+                Telephony.Sms.CREATOR,
+            ),
+            null,
+            null,
+            null,
+        ) ?: return ExactOutgoingSmsStatusReadResult.Unavailable
+        return cursor.use {
+            if (!it.moveToFirst()) return@use ExactOutgoingSmsStatusReadResult.RowAbsent
+            val threadId = it.getLong(it.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID))
+            val typeIndex = it.getColumnIndexOrThrow(Telephony.Sms.TYPE)
+            val statusIndex = it.getColumnIndexOrThrow(Telephony.Sms.STATUS)
+            val errorIndex = it.getColumnIndexOrThrow(Telephony.Sms.ERROR_CODE)
+            val creator = it.getString(it.getColumnIndexOrThrow(Telephony.Sms.CREATOR))
+            val messageType = if (it.isNull(typeIndex)) null else it.getInt(typeIndex)
+            val rawStatus = if (it.isNull(statusIndex)) null else it.getInt(statusIndex)
+            val rawErrorCode = if (it.isNull(errorIndex)) null else it.getInt(errorIndex)
+            if (it.moveToNext()) return@use ExactOutgoingSmsStatusReadResult.Unavailable
+            if (
+                threadId != conversationId.value ||
+                creator != appContext.packageName ||
+                messageType == null ||
+                rawStatus == null ||
+                rawErrorCode != CLEARED_OUTGOING_ERROR_CODE
+            ) {
+                return@use ExactOutgoingSmsStatusReadResult.OwnershipConflict
+            }
+            val current = smsProviderStatusFromRaw(
+                messageType = messageType,
+                rawStatus = rawStatus,
+            ) ?: return@use ExactOutgoingSmsStatusReadResult.OwnershipConflict
+            ExactOutgoingSmsStatusReadResult.Found(current)
+        }
+    }
+
+    /** Classifies only the exact provider URI after a zero-row conditional update. */
+    private fun outgoingRollbackZeroWriteDisposition(
+        uri: Uri,
+        conversationId: ConversationId,
+    ): ProviderAccessResult<OutgoingSmsRollbackOutcome> {
+        val cursor = resolver.query(
+            uri,
+            arrayOf(
+                Telephony.Sms.THREAD_ID,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.STATUS,
+                Telephony.Sms.ERROR_CODE,
+                Telephony.Sms.CREATOR,
+            ),
+            null,
+            null,
+            null,
+        ) ?: return ProviderAccessResult.Unavailable("verify outgoing SMS rollback conflict")
+        return cursor.use {
+            if (!it.moveToFirst()) {
+                return@use ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.ROW_ABSENT)
+            }
+            val threadId = it.getLong(it.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID))
+            val messageType = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.TYPE))
+            val rawStatus = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.STATUS))
+            val rawErrorCode = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.ERROR_CODE))
+            val creator = it.getString(it.getColumnIndexOrThrow(Telephony.Sms.CREATOR))
+            if (it.moveToNext()) {
+                return@use ProviderAccessResult.Unavailable("verify exact outgoing SMS rollback row")
+            }
+            val failed = SmsProviderStatus.FAILED.toSmsProviderStatusProjection()
+            val pending = SmsProviderStatus.PENDING.toSmsProviderStatusProjection()
+            val exactOwner = creator == appContext.packageName &&
+                threadId == conversationId.value
+            val exactTerminal = exactOwner &&
+                messageType == failed.messageType &&
+                rawStatus == failed.rawStatus &&
+                rawErrorCode == CLEARED_OUTGOING_ERROR_CODE
+            val exactRetryablePreSubmissionState = exactOwner &&
+                (
+                    (messageType == failed.messageType &&
+                        rawStatus == failed.rawStatus &&
+                        rawErrorCode == OUTGOING_STAGING_ERROR_CODE) ||
+                        (messageType == pending.messageType &&
+                            rawStatus == pending.rawStatus &&
+                            rawErrorCode == CLEARED_OUTGOING_ERROR_CODE)
+                    )
+            when {
+                exactTerminal -> {
+                    ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.TERMINALIZED)
                 }
-                SmsProviderStatus.FAILED -> {
-                    put(Telephony.Sms.STATUS, Telephony.Sms.STATUS_FAILED)
-                    put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_FAILED)
+                exactRetryablePreSubmissionState -> {
+                    ProviderAccessResult.Unavailable("terminalize outgoing SMS")
                 }
-                SmsProviderStatus.PENDING -> {
-                    put(Telephony.Sms.STATUS, Telephony.Sms.STATUS_PENDING)
-                    put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_OUTBOX)
+                else -> {
+                    ProviderAccessResult.Success(OutgoingSmsRollbackOutcome.OWNERSHIP_CONFLICT)
                 }
             }
         }
+    }
+
+    private fun writeSmsProviderStatusConditionally(
+        uri: Uri,
+        expected: SmsProviderStatus,
+        requested: SmsProviderStatus,
+    ): ConditionalSmsStatusWriteResult {
+        val expectedProjection = expected.toSmsProviderStatusProjection()
+        val requestedProjection = requested.toSmsProviderStatusProjection()
+        val values = ContentValues().apply {
+            put(Telephony.Sms.STATUS, requestedProjection.rawStatus)
+            put(Telephony.Sms.TYPE, requestedProjection.messageType)
+        }
         val updated = resolver.update(
-            ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, id.value),
+            uri,
             values,
-            null,
-            null,
+            "${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.STATUS} = ?",
+            arrayOf(
+                expectedProjection.messageType.toString(),
+                expectedProjection.rawStatus.toString(),
+            ),
         )
-        if (updated == 1) {
-            ProviderAccessResult.Success(Unit)
+        return when (updated) {
+            0 -> ConditionalSmsStatusWriteResult.STALE
+            1 -> ConditionalSmsStatusWriteResult.UPDATED
+            else -> ConditionalSmsStatusWriteResult.UNAVAILABLE
+        }
+    }
+
+    private fun readIncomingReadSource(
+        uri: Uri,
+        expectedId: Long,
+    ): IncomingReadSource? = resolver.query(
+        uri,
+        arrayOf(
+            BaseColumns._ID,
+            Telephony.Sms.THREAD_ID,
+            Telephony.Sms.TYPE,
+            Telephony.Sms.READ,
+            Telephony.Sms.SEEN,
+        ),
+        null,
+        null,
+        null,
+    )?.use { cursor ->
+        if (
+            cursor.count != 1 ||
+            !cursor.moveToFirst() ||
+            cursor.getLong(cursor.getColumnIndexOrThrow(BaseColumns._ID)) != expectedId ||
+            cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.TYPE)) !=
+                Telephony.Sms.MESSAGE_TYPE_INBOX
+        ) {
+            null
         } else {
-            ProviderAccessResult.Unavailable("update SMS status")
+            IncomingReadSource(
+                threadId = cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID)),
+                read = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.READ)) != 0,
+                seen = cursor.getInt(cursor.getColumnIndexOrThrow(Telephony.Sms.SEEN)) != 0,
+            )
+        }
+    }
+
+    private fun writeExactOwnedSmsProviderStatusConditionally(
+        uri: Uri,
+        conversationId: ConversationId,
+        expected: SmsProviderStatus,
+        requested: SmsProviderStatus,
+    ): ConditionalSmsStatusWriteResult {
+        val expectedProjection = expected.toSmsProviderStatusProjection()
+        val requestedProjection = requested.toSmsProviderStatusProjection()
+        val values = ContentValues().apply {
+            put(Telephony.Sms.STATUS, requestedProjection.rawStatus)
+            put(Telephony.Sms.TYPE, requestedProjection.messageType)
+        }
+        val updated = resolver.update(
+            uri,
+            values,
+            "${Telephony.Sms.CREATOR} = ? AND ${Telephony.Sms.THREAD_ID} = ? AND " +
+                "${Telephony.Sms.ERROR_CODE} = ? AND ${Telephony.Sms.TYPE} = ? AND " +
+                "${Telephony.Sms.STATUS} = ?",
+            arrayOf(
+                appContext.packageName,
+                conversationId.value.toString(),
+                CLEARED_OUTGOING_ERROR_CODE.toString(),
+                expectedProjection.messageType.toString(),
+                expectedProjection.rawStatus.toString(),
+            ),
+        )
+        return when (updated) {
+            0 -> ConditionalSmsStatusWriteResult.STALE
+            1 -> ConditionalSmsStatusWriteResult.UPDATED
+            else -> ConditionalSmsStatusWriteResult.UNAVAILABLE
         }
     }
 
@@ -268,11 +862,18 @@ class AndroidSmsProviderDataSource(
     private fun insertIncomingSerialized(
         message: IncomingSmsRecord,
     ): ProviderAccessResult<ProviderStoredMessage> {
+        val providerContentDigest = IncomingSmsProviderContentDigest.fromContent(
+            sender = message.sender.value,
+            body = message.body,
+        )
         var existingEntry = true
         var entry = when (val lookup = incomingReplayJournal.lookup(message.deliveryFingerprint)) {
             is IncomingSmsReplayJournal.LookupResult.Found -> lookup.entry
             IncomingSmsReplayJournal.LookupResult.Corrupt -> {
                 return ProviderAccessResult.Unavailable("read incoming SMS delivery journal")
+            }
+            is IncomingSmsReplayJournal.LookupResult.Quarantined -> {
+                return ProviderAccessResult.Unavailable("incoming SMS delivery is quarantined")
             }
             IncomingSmsReplayJournal.LookupResult.Missing -> {
                 existingEntry = false
@@ -281,6 +882,7 @@ class AndroidSmsProviderDataSource(
                     receivedTimestampMillis = message.receivedTimestampMillis,
                     sentTimestampMillis = message.sentTimestampMillis,
                     subscriptionId = message.subscriptionId,
+                    providerContentDigest = providerContentDigest,
                 )
                 if (!began) {
                     return ProviderAccessResult.Unavailable("begin incoming SMS delivery journal")
@@ -291,7 +893,8 @@ class AndroidSmsProviderDataSource(
             }
         }
         if (entry.sentTimestampMillis != message.sentTimestampMillis ||
-            entry.subscriptionId != message.subscriptionId
+            entry.subscriptionId != message.subscriptionId ||
+            (entry.providerContentDigest != null && entry.providerContentDigest != providerContentDigest)
         ) {
             return ProviderAccessResult.Unavailable("incoming SMS fingerprint metadata mismatch")
         }
@@ -328,11 +931,17 @@ class AndroidSmsProviderDataSource(
         if (existingEntry) {
             when (val recovery = recoverPendingProviderRow(message, entry)) {
                 is PendingRecovery.Found -> {
-                    incomingReplayJournal.markStored(
-                        message.deliveryFingerprint,
-                        recovery.message.providerId,
-                        recovery.message.conversationId,
-                    )
+                    if (
+                        !incomingReplayJournal.markStored(
+                            message.deliveryFingerprint,
+                            recovery.message.providerId,
+                            recovery.message.conversationId,
+                        )
+                    ) {
+                        return ProviderAccessResult.Unavailable(
+                            "checkpoint recovered incoming SMS provider row",
+                        )
+                    }
                     return ProviderAccessResult.Success(
                         recovery.message.copy(
                             incomingDisposition = IncomingDeliveryDisposition.RECOVERED_UNACKNOWLEDGED,
@@ -376,12 +985,76 @@ class AndroidSmsProviderDataSource(
             ExactProviderReference.Unavailable
             -> return ProviderAccessResult.Unavailable("resolve inserted SMS conversation")
         }
-        incomingReplayJournal.markStored(
-            message.deliveryFingerprint,
-            stored.providerId,
-            stored.conversationId,
-        )
+        if (
+            !incomingReplayJournal.markStored(
+                message.deliveryFingerprint,
+                stored.providerId,
+                stored.conversationId,
+            )
+        ) {
+            return ProviderAccessResult.Unavailable("checkpoint inserted incoming SMS provider row")
+        }
         return ProviderAccessResult.Success(stored)
+    }
+
+    private fun recoverPendingNotificationProviderRow(
+        entry: IncomingSmsReplayJournal.Entry,
+    ): PendingRecovery {
+        val expectedDigest = entry.providerContentDigest ?: return PendingRecovery.Unavailable
+        val subscriptionClause = if (entry.subscriptionId == null) {
+            "(${Telephony.Sms.SUBSCRIPTION_ID} IS NULL OR ${Telephony.Sms.SUBSCRIPTION_ID} < 0)"
+        } else {
+            "${Telephony.Sms.SUBSCRIPTION_ID} = ?"
+        }
+        val selection = "${Telephony.Sms.TYPE} = ? AND ${Telephony.Sms.DATE} = ? AND " +
+            "${Telephony.Sms.DATE_SENT} = ? AND $subscriptionClause"
+        val selectionArgs = mutableListOf(
+            Telephony.Sms.MESSAGE_TYPE_INBOX.toString(),
+            entry.receivedTimestampMillis.toString(),
+            entry.sentTimestampMillis.toString(),
+        ).apply {
+            entry.subscriptionId?.let { add(it.value.toString()) }
+        }.toTypedArray()
+        val queryArgs = Bundle().apply {
+            putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+            putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+            putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, "${BaseColumns._ID} DESC")
+            putInt(ContentResolver.QUERY_ARG_LIMIT, MAX_RECOVERY_CANDIDATES + 1)
+        }
+        val cursor = resolver.query(
+            Telephony.Sms.CONTENT_URI,
+            INCOMING_REPLAY_PROJECTION,
+            queryArgs,
+            null,
+        ) ?: return PendingRecovery.Unavailable
+        var candidateOverflow = false
+        val candidates = cursor.use {
+            val rows = ArrayList<ProviderStoredMessage>(MAX_RECOVERY_CANDIDATES + 1)
+            val indices = IncomingReplayProjectionIndices.from(it)
+            var scannedRows = 0
+            while (it.moveToNext()) {
+                if (scannedRows == MAX_RECOVERY_CANDIDATES) {
+                    candidateOverflow = true
+                    break
+                }
+                scannedRows += 1
+                indices.read(it).toPendingRecoveryCandidateOrNull(
+                    expectedReceivedTimestampMillis = entry.receivedTimestampMillis,
+                    expectedSentTimestampMillis = entry.sentTimestampMillis,
+                    expectedSubscriptionId = entry.subscriptionId,
+                    expectedProviderContentDigest = expectedDigest,
+                )?.let(rows::add)
+            }
+            rows
+        }
+        if (candidateOverflow) return PendingRecovery.Ambiguous
+        val claimed = incomingReplayJournal.claimedProviderIds(entry.fingerprint)
+            ?: return PendingRecovery.Unavailable
+        return when (val selectionResult = IncomingProviderRecoveryPolicy.select(candidates, claimed)) {
+            IncomingProviderRecoveryPolicy.Result.None -> PendingRecovery.None
+            IncomingProviderRecoveryPolicy.Result.Ambiguous -> PendingRecovery.Ambiguous
+            is IncomingProviderRecoveryPolicy.Result.Found -> PendingRecovery.Found(selectionResult.message)
+        }
     }
 
     private fun recoverPendingProviderRow(
@@ -424,11 +1097,18 @@ class AndroidSmsProviderDataSource(
             queryArgs,
             null,
         ) ?: return PendingRecovery.Unavailable
+        var candidateOverflow = false
         val candidates = cursor.use {
             val rows = ArrayList<ProviderStoredMessage>(MAX_RECOVERY_CANDIDATES + 1)
             val idIndex = it.getColumnIndexOrThrow(BaseColumns._ID)
             val threadIndex = it.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID)
-            while (it.moveToNext() && rows.size <= MAX_RECOVERY_CANDIDATES) {
+            var scannedRows = 0
+            while (it.moveToNext()) {
+                if (scannedRows == MAX_RECOVERY_CANDIDATES) {
+                    candidateOverflow = true
+                    break
+                }
+                scannedRows += 1
                 val providerId = it.getLong(idIndex)
                 val conversationId = it.getLong(threadIndex)
                 if (providerId > 0L && conversationId > 0L) {
@@ -440,6 +1120,7 @@ class AndroidSmsProviderDataSource(
             }
             rows
         }
+        if (candidateOverflow) return PendingRecovery.Ambiguous
         val claimed = incomingReplayJournal.claimedProviderIds(message.deliveryFingerprint)
             ?: return PendingRecovery.Unavailable
         return when (val selectionResult = IncomingProviderRecoveryPolicy.select(candidates, claimed)) {
@@ -471,16 +1152,78 @@ class AndroidSmsProviderDataSource(
         }
     }
 
-    private fun insertedReference(
+    private fun incomingNotificationReplayRow(
+        providerId: ProviderMessageId,
+    ): ExactIncomingNotificationReplayRow {
+        if (providerId.kind != ProviderKind.SMS) return ExactIncomingNotificationReplayRow.Invalid
+        val cursor = resolver.query(
+            ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, providerId.value),
+            INCOMING_REPLAY_PROJECTION,
+            null,
+            null,
+            null,
+        ) ?: return ExactIncomingNotificationReplayRow.Unavailable
+        return cursor.use {
+            if (!it.moveToFirst()) return@use ExactIncomingNotificationReplayRow.Missing
+            val row = IncomingReplayProjectionIndices.from(it).read(it)
+            if (it.moveToNext()) {
+                ExactIncomingNotificationReplayRow.Invalid
+            } else {
+                ExactIncomingNotificationReplayRow.Found(row)
+            }
+        }
+    }
+
+    private fun quarantineTerminalIncomingReplayFailure(
+        entry: IncomingSmsReplayJournal.Entry,
+        failure: IncomingStoredReplayRowFailure,
+    ): Boolean {
+        val reason = incomingStoredReplayQuarantineReason(failure) ?: return false
+        return incomingReplayJournal.quarantine(entry.fingerprint, reason)
+    }
+
+    private fun insertedOutgoingReference(
         providerId: Long,
-        incomingDisposition: IncomingDeliveryDisposition?,
-    ): ProviderAccessResult<ProviderStoredMessage> = when (val reference = providerReference(providerId)) {
-        is ExactProviderReference.Found -> ProviderAccessResult.Success(
-            reference.message.copy(incomingDisposition = incomingDisposition),
-        )
-        ExactProviderReference.Missing,
-        ExactProviderReference.Unavailable
-        -> ProviderAccessResult.Unavailable("resolve inserted SMS conversation")
+    ): ProviderAccessResult<ProviderStoredMessage> {
+        val uri = ContentUris.withAppendedId(Telephony.Sms.CONTENT_URI, providerId)
+        val cursor = resolver.query(
+            uri,
+            arrayOf(
+                Telephony.Sms.THREAD_ID,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.STATUS,
+                Telephony.Sms.ERROR_CODE,
+                Telephony.Sms.CREATOR,
+            ),
+            null,
+            null,
+            null,
+        ) ?: return ProviderAccessResult.Unavailable("validate inserted outgoing SMS")
+        return cursor.use {
+            if (!it.moveToFirst()) {
+                return@use ProviderAccessResult.Unavailable("validate inserted outgoing SMS")
+            }
+            val threadId = it.getLong(it.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID))
+            val messageType = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.TYPE))
+            val rawStatus = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.STATUS))
+            val rawErrorCode = it.getInt(it.getColumnIndexOrThrow(Telephony.Sms.ERROR_CODE))
+            val creator = it.getString(it.getColumnIndexOrThrow(Telephony.Sms.CREATOR))
+            val exact = threadId > 0L &&
+                smsProviderStatusFromRaw(messageType, rawStatus) == SmsProviderStatus.FAILED &&
+                rawErrorCode == OUTGOING_STAGING_ERROR_CODE &&
+                creator == appContext.packageName &&
+                !it.moveToNext()
+            if (!exact) {
+                ProviderAccessResult.Unavailable("validate inserted outgoing SMS")
+            } else {
+                ProviderAccessResult.Success(
+                    ProviderStoredMessage(
+                        providerId = ProviderMessageId(ProviderKind.SMS, providerId),
+                        conversationId = ConversationId(threadId),
+                    ),
+                )
+            }
+        }
     }
 
     private fun IncomingSmsReplayJournal.Entry.storedMessage(
@@ -500,6 +1243,13 @@ class AndroidSmsProviderDataSource(
         data class Found(val message: ProviderStoredMessage) : ExactProviderReference
     }
 
+    private sealed interface ExactIncomingNotificationReplayRow {
+        data object Invalid : ExactIncomingNotificationReplayRow
+        data object Missing : ExactIncomingNotificationReplayRow
+        data object Unavailable : ExactIncomingNotificationReplayRow
+        data class Found(val row: RawIncomingSmsNotificationReplayRow) : ExactIncomingNotificationReplayRow
+    }
+
     private sealed interface PendingRecovery {
         data object None : PendingRecovery
         data object Ambiguous : PendingRecovery
@@ -510,11 +1260,107 @@ class AndroidSmsProviderDataSource(
     companion object {
         private const val TRANSACTION_ID_COLUMN = "tr_id"
         private const val TRANSACTION_ID_PREFIX = "aurora-sms-delivery-v1:"
+        private const val OUTGOING_STAGING_ERROR_CODE = Int.MIN_VALUE
+        private const val CLEARED_OUTGOING_ERROR_CODE = 0
         private const val MAX_RECOVERY_CANDIDATES = 8
+        private const val MAX_STATUS_UPDATE_ATTEMPTS = 4
+        private val INCOMING_REPLAY_PROJECTION = arrayOf(
+            BaseColumns._ID,
+            Telephony.Sms.THREAD_ID,
+            Telephony.Sms.ADDRESS,
+            Telephony.Sms.BODY,
+            Telephony.Sms.TYPE,
+            Telephony.Sms.DATE,
+            Telephony.Sms.DATE_SENT,
+            Telephony.Sms.SUBSCRIPTION_ID,
+        )
 
         private fun transactionId(providerRecoveryToken: String): String =
             TRANSACTION_ID_PREFIX + providerRecoveryToken
     }
+}
+
+private data class IncomingReadSource(
+    val threadId: Long,
+    val read: Boolean,
+    val seen: Boolean,
+)
+
+internal fun canVerifyPendingIncomingProviderOwnership(
+    providerContentDigest: IncomingSmsProviderContentDigest?,
+): Boolean = providerContentDigest != null
+
+internal fun pendingIncomingNotificationReadResult(
+    replays: List<IncomingSmsNotificationReplay>,
+    hasUnresolvedPendingEntry: Boolean,
+): ProviderAccessResult<List<IncomingSmsNotificationReplay>> = when {
+    replays.isNotEmpty() -> ProviderAccessResult.Success(replays)
+    hasUnresolvedPendingEntry -> ProviderAccessResult.Unavailable(
+        "resolve pending incoming SMS provider row",
+    )
+    else -> ProviderAccessResult.Success(emptyList())
+}
+
+internal enum class IncomingStoredReplayRowFailure {
+    MISSING,
+    INVALID,
+    VALIDATION_MISMATCH,
+    UNAVAILABLE,
+}
+
+internal fun incomingStoredReplayQuarantineReason(
+    failure: IncomingStoredReplayRowFailure,
+): IncomingSmsReplayJournal.QuarantineReason? = when (failure) {
+    IncomingStoredReplayRowFailure.MISSING ->
+        IncomingSmsReplayJournal.QuarantineReason.PROVIDER_ROW_MISSING
+    IncomingStoredReplayRowFailure.INVALID ->
+        IncomingSmsReplayJournal.QuarantineReason.PROVIDER_ROW_INVALID
+    IncomingStoredReplayRowFailure.VALIDATION_MISMATCH ->
+        IncomingSmsReplayJournal.QuarantineReason.PROVIDER_ROW_MISMATCH
+    IncomingStoredReplayRowFailure.UNAVAILABLE -> null
+}
+
+internal data class SmsProviderStatusProjection(
+    val messageType: Int,
+    val rawStatus: Int,
+)
+
+internal fun SmsProviderStatus.toSmsProviderStatusProjection(): SmsProviderStatusProjection = when (this) {
+    SmsProviderStatus.COMPLETE -> SmsProviderStatusProjection(
+        messageType = Telephony.Sms.MESSAGE_TYPE_SENT,
+        rawStatus = Telephony.Sms.STATUS_COMPLETE,
+    )
+    SmsProviderStatus.DELIVERY_FAILED -> SmsProviderStatusProjection(
+        messageType = Telephony.Sms.MESSAGE_TYPE_SENT,
+        rawStatus = Telephony.Sms.STATUS_FAILED,
+    )
+    SmsProviderStatus.FAILED -> SmsProviderStatusProjection(
+        messageType = Telephony.Sms.MESSAGE_TYPE_FAILED,
+        rawStatus = Telephony.Sms.STATUS_FAILED,
+    )
+    SmsProviderStatus.PENDING -> SmsProviderStatusProjection(
+        messageType = Telephony.Sms.MESSAGE_TYPE_OUTBOX,
+        rawStatus = Telephony.Sms.STATUS_PENDING,
+    )
+}
+
+internal fun smsProviderStatusFromRaw(
+    messageType: Int,
+    rawStatus: Int,
+): SmsProviderStatus? = when {
+    messageType == Telephony.Sms.MESSAGE_TYPE_OUTBOX && rawStatus == Telephony.Sms.STATUS_PENDING -> {
+        SmsProviderStatus.PENDING
+    }
+    messageType == Telephony.Sms.MESSAGE_TYPE_SENT && rawStatus == Telephony.Sms.STATUS_COMPLETE -> {
+        SmsProviderStatus.COMPLETE
+    }
+    messageType == Telephony.Sms.MESSAGE_TYPE_SENT && rawStatus == Telephony.Sms.STATUS_FAILED -> {
+        SmsProviderStatus.DELIVERY_FAILED
+    }
+    messageType == Telephony.Sms.MESSAGE_TYPE_FAILED && rawStatus == Telephony.Sms.STATUS_FAILED -> {
+        SmsProviderStatus.FAILED
+    }
+    else -> null
 }
 
 internal object IncomingProviderRecoveryPolicy {
@@ -542,6 +1388,142 @@ private fun android.database.Cursor.nullableLong(index: Int): Long? =
 
 private fun android.database.Cursor.nullableInt(index: Int): Int? =
     if (isNull(index)) null else getInt(index)
+
+internal data class RawIncomingSmsNotificationReplayRow(
+    val providerId: Long?,
+    val providerThreadId: Long?,
+    val sender: String?,
+    val body: String?,
+    val messageType: Int?,
+    val receivedTimestampMillis: Long?,
+    val sentTimestampMillis: Long?,
+    val subscriptionId: Int?,
+) {
+    override fun toString(): String = "RawIncomingSmsNotificationReplayRow(REDACTED)"
+}
+
+private data class IncomingReplayProjectionIndices(
+    val providerId: Int,
+    val providerThreadId: Int,
+    val sender: Int,
+    val body: Int,
+    val messageType: Int,
+    val receivedTimestampMillis: Int,
+    val sentTimestampMillis: Int,
+    val subscriptionId: Int,
+) {
+    fun read(cursor: android.database.Cursor): RawIncomingSmsNotificationReplayRow =
+        RawIncomingSmsNotificationReplayRow(
+            providerId = cursor.nullableLong(providerId),
+            providerThreadId = cursor.nullableLong(providerThreadId),
+            sender = if (cursor.isNull(sender)) null else cursor.getString(sender),
+            body = if (cursor.isNull(body)) null else cursor.getString(body),
+            messageType = cursor.nullableInt(messageType),
+            receivedTimestampMillis = cursor.nullableLong(receivedTimestampMillis),
+            sentTimestampMillis = cursor.nullableLong(sentTimestampMillis),
+            subscriptionId = cursor.nullableInt(subscriptionId),
+        )
+
+    companion object {
+        fun from(cursor: android.database.Cursor): IncomingReplayProjectionIndices =
+            IncomingReplayProjectionIndices(
+                providerId = cursor.getColumnIndexOrThrow(BaseColumns._ID),
+                providerThreadId = cursor.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID),
+                sender = cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS),
+                body = cursor.getColumnIndexOrThrow(Telephony.Sms.BODY),
+                messageType = cursor.getColumnIndexOrThrow(Telephony.Sms.TYPE),
+                receivedTimestampMillis = cursor.getColumnIndexOrThrow(Telephony.Sms.DATE),
+                sentTimestampMillis = cursor.getColumnIndexOrThrow(Telephony.Sms.DATE_SENT),
+                subscriptionId = cursor.getColumnIndexOrThrow(Telephony.Sms.SUBSCRIPTION_ID),
+            )
+    }
+}
+
+internal fun RawIncomingSmsNotificationReplayRow.toPendingRecoveryCandidateOrNull(
+    expectedReceivedTimestampMillis: Long,
+    expectedSentTimestampMillis: Long,
+    expectedSubscriptionId: AuroraSubscriptionId?,
+    expectedProviderContentDigest: IncomingSmsProviderContentDigest,
+): ProviderStoredMessage? {
+    val id = providerId?.takeIf { it > 0L } ?: return null
+    val threadId = providerThreadId?.takeIf { it > 0L } ?: return null
+    if (messageType != Telephony.Sms.MESSAGE_TYPE_INBOX) return null
+    if (receivedTimestampMillis != expectedReceivedTimestampMillis) return null
+    if (sentTimestampMillis != expectedSentTimestampMillis) return null
+    val normalizedSubscriptionId = when {
+        subscriptionId == null || subscriptionId == NO_PROVIDER_SUBSCRIPTION -> null
+        subscriptionId >= 0 -> AuroraSubscriptionId(subscriptionId)
+        else -> return null
+    }
+    if (normalizedSubscriptionId != expectedSubscriptionId) return null
+    val boundedBody = body
+        ?.takeIf { it.length <= IncomingSmsRecord.MAX_SMS_BODY_CHARACTERS }
+        ?: return null
+    val participant = try {
+        ParticipantAddress(sender ?: return null)
+    } catch (_: IllegalArgumentException) {
+        return null
+    }
+    if (
+        IncomingSmsProviderContentDigest.fromContent(participant.value, boundedBody) !=
+        expectedProviderContentDigest
+    ) {
+        return null
+    }
+    return ProviderStoredMessage(
+        providerId = ProviderMessageId(ProviderKind.SMS, id),
+        conversationId = ConversationId(threadId),
+    )
+}
+
+internal fun RawIncomingSmsNotificationReplayRow.toIncomingSmsNotificationReplayOrNull(
+    fingerprint: MessageDeliveryFingerprint,
+    expectedProviderId: ProviderMessageId,
+    expectedConversationId: ConversationId,
+    expectedReceivedTimestampMillis: Long,
+    expectedSentTimestampMillis: Long,
+    expectedSubscriptionId: AuroraSubscriptionId?,
+    expectedProviderContentDigest: IncomingSmsProviderContentDigest? = null,
+): IncomingSmsNotificationReplay? {
+    if (expectedProviderId.kind != ProviderKind.SMS || providerId != expectedProviderId.value) return null
+    if (providerThreadId != expectedConversationId.value) return null
+    if (messageType != Telephony.Sms.MESSAGE_TYPE_INBOX) return null
+    if (receivedTimestampMillis != expectedReceivedTimestampMillis) return null
+    if (sentTimestampMillis != expectedSentTimestampMillis) return null
+    val normalizedSubscriptionId = when {
+        subscriptionId == null || subscriptionId == NO_PROVIDER_SUBSCRIPTION -> null
+        subscriptionId >= 0 -> AuroraSubscriptionId(subscriptionId)
+        else -> return null
+    }
+    if (normalizedSubscriptionId != expectedSubscriptionId) return null
+    val boundedBody = body
+        ?.takeIf { it.length <= IncomingSmsRecord.MAX_SMS_BODY_CHARACTERS }
+        ?: return null
+    val participant = try {
+        ParticipantAddress(sender ?: return null)
+    } catch (_: IllegalArgumentException) {
+        return null
+    }
+    if (
+        expectedProviderContentDigest != null &&
+        IncomingSmsProviderContentDigest.fromContent(participant.value, boundedBody) !=
+        expectedProviderContentDigest
+    ) {
+        return null
+    }
+    return IncomingSmsNotificationReplay(
+        deliveryFingerprint = fingerprint,
+        providerId = expectedProviderId,
+        conversationId = expectedConversationId,
+        sender = participant,
+        body = boundedBody,
+        receivedTimestampMillis = expectedReceivedTimestampMillis,
+        sentTimestampMillis = expectedSentTimestampMillis,
+        subscriptionId = expectedSubscriptionId,
+    )
+}
+
+private const val NO_PROVIDER_SUBSCRIPTION = -1
 
 private data class RawSmsProviderRow(
     val id: Long,

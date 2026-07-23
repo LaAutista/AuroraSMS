@@ -258,7 +258,8 @@ class BenchmarkFixtureProvider : ContentProvider() {
 
     companion object {
         const val AUTHORITY: String = "org.aurorasms.app.benchmark.fixture"
-        const val CONTROL_PERMISSION: String = "org.aurorasms.app.permission.BENCHMARK_CONTROL"
+        const val CONTROL_PERMISSION: String =
+            "org.aurorasms.app.benchmark.permission.BENCHMARK_CONTROL"
         const val METHOD_SEED: String = "seed"
         const val METHOD_CLEANUP: String = "cleanup"
         const val KEY_SHAPE: String = "shape"

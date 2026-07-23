@@ -3,16 +3,19 @@
 package org.aurorasms.app
 
 import android.app.Application
+import android.net.Uri
 import org.aurorasms.app.benchmark.BuildVariantBenchmarkPolicy
 import org.aurorasms.app.strictmode.BuildVariantStrictMode
 import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.notifications.InlineReplyHandler
+import org.aurorasms.core.notifications.MarkConversationReadHandler
 import org.aurorasms.core.notifications.NotificationEntryPoint
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.EncodedMmsPdu
 import org.aurorasms.core.telephony.IncomingMessageSink
 import org.aurorasms.core.telephony.MessageTransport
+import org.aurorasms.core.telephony.MmsStagedPduDisposition
 import org.aurorasms.core.telephony.TelephonyEntryPoint
 
 class AuroraSmsApplication : Application(), TelephonyEntryPoint, NotificationEntryPoint {
@@ -50,13 +53,24 @@ class AuroraSmsApplication : Application(), TelephonyEntryPoint, NotificationEnt
     override val inlineReplyHandler: InlineReplyHandler
         get() = container.inlineReplyHandler
 
+    override val markConversationReadHandler: MarkConversationReadHandler
+        get() = container.markConversationReadHandler
+
     override suspend fun onTransportResult(result: TransportResult) {
         container.onTransportResult(result)
     }
 
-    override suspend fun onDownloadedMms(operationId: MessageId, pdu: EncodedMmsPdu) {
-        container.onDownloadedMms(operationId, pdu)
-    }
+    override suspend fun onDownloadedMms(
+        operationId: MessageId,
+        stagedUri: Uri,
+        pdu: EncodedMmsPdu,
+    ): MmsStagedPduDisposition = container.onDownloadedMms(operationId, stagedUri, pdu)
+
+    override suspend fun onFailedMmsDownload(
+        operationId: MessageId,
+        stagedUri: Uri,
+        result: TransportResult.Failed,
+    ): MmsStagedPduDisposition = container.onFailedMmsDownload(operationId, stagedUri, result)
 
     override suspend fun onDefaultSmsRoleChanged(isDefaultSmsApp: Boolean) {
         container.onDefaultSmsRoleChanged(isDefaultSmsApp)

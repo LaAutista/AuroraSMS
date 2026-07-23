@@ -16,6 +16,7 @@ import org.aurorasms.core.index.storage.toIndexedProviderKind
 import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageBox
 import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.MessageSyncFingerprint
 import org.aurorasms.core.model.ParticipantAddress
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
@@ -43,15 +44,17 @@ class RoomThreadTimelineRepository(
                     messageDao.count()
                 },
             )
+            val includeUnverifiedCache = !coverage.verifiedComplete
             if (request.cursor != null && request.cursor.generationId != generation.generationId) {
                 return@withTransaction TimelinePageResult.StaleGeneration(coverage)
             }
             val requestedRows = request.limit + 1
             val stored = when (request.direction) {
                 TimelinePageDirection.LATEST -> conversationDao.timelineLatest(
-                    request.providerThreadId.value,
-                    generation.generationId,
-                    requestedRows,
+                    providerThreadId = request.providerThreadId.value,
+                    generationId = generation.generationId,
+                    limit = requestedRows,
+                    includeUnverifiedCache = includeUnverifiedCache,
                 )
                 TimelinePageDirection.OLDER -> conversationDao.timelineOlder(
                     providerThreadId = request.providerThreadId.value,
@@ -59,6 +62,7 @@ class RoomThreadTimelineRepository(
                     timestampMillis = requireNotNull(request.cursor).timestampMillis,
                     rowId = request.cursor.localRowId,
                     limit = requestedRows,
+                    includeUnverifiedCache = includeUnverifiedCache,
                 )
                 TimelinePageDirection.NEWER -> conversationDao.timelineNewer(
                     providerThreadId = request.providerThreadId.value,
@@ -66,14 +70,18 @@ class RoomThreadTimelineRepository(
                     timestampMillis = requireNotNull(request.cursor).timestampMillis,
                     rowId = request.cursor.localRowId,
                     limit = requestedRows,
+                    includeUnverifiedCache = includeUnverifiedCache,
                 )
             }
-            if (
-                stored.isEmpty() &&
-                request.direction == TimelinePageDirection.LATEST &&
-                conversationDao.conversation(request.providerThreadId.value, generation.generationId) == null
-            ) {
-                return@withTransaction TimelinePageResult.MissingThread(coverage)
+            if (stored.isEmpty() && request.direction == TimelinePageDirection.LATEST) {
+                val conversationExists = if (includeUnverifiedCache) {
+                    conversationDao.cachedConversation(request.providerThreadId.value) != null
+                } else {
+                    conversationDao.conversation(request.providerThreadId.value, generation.generationId) != null
+                }
+                if (!conversationExists) {
+                    return@withTransaction TimelinePageResult.MissingThread(coverage)
+                }
             }
             val queryOrderedPage = stored.take(request.limit)
             val canonicalPage = if (request.direction == TimelinePageDirection.NEWER) {
@@ -118,11 +126,13 @@ class RoomThreadTimelineRepository(
                     messageDao.count()
                 },
             )
+            val includeUnverifiedCache = !coverage.verifiedComplete
             val stored = conversationDao.timelineContent(
                 providerKind = providerMessageId.kind.toIndexStorageCode(),
                 providerId = providerMessageId.value,
                 providerThreadId = providerThreadId.value,
                 generationId = generation.generationId,
+                includeUnverifiedCache = includeUnverifiedCache,
             ) ?: return@withTransaction TimelineContentResult.Missing(coverage)
             TimelineContentResult.Found(
                 content = TimelineMessageContent(
@@ -174,4 +184,5 @@ private fun StoredTimelineMessage.toTimelineMessage(): TimelineMessage = Timelin
     read = isRead,
     seen = isSeen,
     locked = isLocked,
+    syncFingerprint = MessageSyncFingerprint.fromStorageToken(syncFingerprint),
 )

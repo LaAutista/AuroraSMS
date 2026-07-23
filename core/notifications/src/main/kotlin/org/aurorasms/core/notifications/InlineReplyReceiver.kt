@@ -7,8 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.app.RemoteInput
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -19,32 +21,69 @@ class InlineReplyReceiver : BroadcastReceiver() {
         if (intent.action != NotificationProtocol.ACTION_INLINE_REPLY) return
 
         val entryPoint = context.applicationContext as? NotificationEntryPoint ?: return
-        val entryPointMaximum = entryPoint.maximumInlineReplyCharacters
-        if (entryPointMaximum !in 1..NotificationConfig.ABSOLUTE_MAXIMUM_REPLY_CHARACTERS) return
-        val protocolData = parseInlineReplyData(intent.data) ?: return
-        val maximumCharacters = minOf(entryPointMaximum, protocolData.maximumCharacters)
-        val remoteInput = RemoteInput.getResultsFromIntent(intent) ?: return
-        val reply = remoteInput.getCharSequence(NotificationProtocol.REMOTE_INPUT_REPLY)?.toString()
-        val request = validatedInlineReplyRequest(
-            conversationValue = protocolData.conversationValue,
-            notificationId = notificationIdForConversation(
-                ConversationId(protocolData.conversationValue),
-            ),
-            requestId = protocolData.requestId,
-            reply = reply,
-            maximumCharacters = maximumCharacters,
-        ) ?: return
+        val request = inlineReplyRequestFromIntent(entryPoint, intent) ?: return
 
         val pendingResult = goAsync()
-        InlineReplyReceiverScope.scope.launch {
-            try {
-                withTimeoutOrNull(InlineReplyReceiverScope.MAXIMUM_WORK_MILLIS) {
-                    entryPoint.inlineReplyHandler.handle(request)
-                }
-            } finally {
-                pendingResult.finish()
-            }
+        val handlerWork = InlineReplyReceiverScope.scope.launch {
+            runInlineReplyHandlerSafely(entryPoint.inlineReplyHandler, request)
         }
+        InlineReplyReceiverScope.scope.launch {
+            finishAfterBoundedSiblingJoin(
+                sibling = handlerWork,
+                maximumWaitMillis = InlineReplyReceiverScope.MAXIMUM_WORK_MILLIS,
+                finish = pendingResult::finish,
+            )
+        }
+    }
+}
+
+internal fun inlineReplyRequestFromIntent(
+    entryPoint: NotificationEntryPoint,
+    intent: Intent,
+): InlineReplyRequest? {
+    val entryPointMaximum = entryPoint.maximumInlineReplyCharacters
+    if (entryPointMaximum !in 1..NotificationConfig.ABSOLUTE_MAXIMUM_REPLY_CHARACTERS) return null
+    val protocolData = parseInlineReplyData(intent.data) ?: return null
+    val maximumCharacters = minOf(entryPointMaximum, protocolData.maximumCharacters)
+    val remoteInput = RemoteInput.getResultsFromIntent(intent) ?: return null
+    val reply = remoteInput.getCharSequence(NotificationProtocol.REMOTE_INPUT_REPLY)?.toString()
+    return validatedInlineReplyRequest(
+        conversationValue = protocolData.conversationValue,
+        notificationId = notificationIdForConversation(
+            ConversationId(protocolData.conversationValue),
+        ),
+        requestId = protocolData.requestId,
+        reply = reply,
+        maximumCharacters = maximumCharacters,
+    )
+}
+
+internal suspend fun runInlineReplyHandlerSafely(
+    handler: InlineReplyHandler,
+    request: InlineReplyRequest,
+) {
+    try {
+        handler.handle(request)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: RuntimeException) {
+        // A corrupt local record or platform runtime failure must not crash the
+        // broadcast process. Durable operation recovery owns any accepted work.
+    }
+}
+
+internal suspend fun finishAfterBoundedSiblingJoin(
+    sibling: Job,
+    maximumWaitMillis: Long,
+    finish: () -> Unit,
+) {
+    require(maximumWaitMillis > 0L) { "maximumWaitMillis must be positive" }
+    try {
+        withTimeoutOrNull(maximumWaitMillis) {
+            sibling.join()
+        }
+    } finally {
+        finish()
     }
 }
 

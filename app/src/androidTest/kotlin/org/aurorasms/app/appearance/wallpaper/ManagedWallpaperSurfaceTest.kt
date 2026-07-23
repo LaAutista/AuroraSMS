@@ -173,6 +173,48 @@ class ManagedWallpaperSurfaceTest {
         waitUntil { secondBitmap.native.isRecycled }
     }
 
+    @Test
+    fun unavailableConversationFallsThroughToGlobalThenUnavailableGlobalClearsStalePixels() {
+        val store = ControlledWallpaperMediaStore()
+        val conversationALoad = store.enqueue(ASSIGNMENT_A.mediaId)
+        val initialGlobalLoad = store.enqueue(GLOBAL_ASSIGNMENT.mediaId)
+        val conversationBLoad = store.enqueue(ASSIGNMENT_B.mediaId)
+        val unavailableGlobalLoad = store.enqueue(GLOBAL_ASSIGNMENT.mediaId)
+        val harness = showSurface(store, listOf(ASSIGNMENT_A, GLOBAL_ASSIGNMENT))
+        val globalBitmap = TestBitmap(Color.Blue)
+
+        conversationALoad.awaitStarted()
+        assertSolid()
+        conversationALoad.completeUnavailable()
+        conversationALoad.awaitReturned()
+
+        initialGlobalLoad.awaitStarted()
+        assertSolid()
+        initialGlobalLoad.completeReady(globalBitmap)
+        initialGlobalLoad.awaitReturned()
+        waitForDominant(red = false)
+        assertFalse(globalBitmap.native.isRecycled)
+
+        compose.runOnIdle {
+            harness.targetKey.value = SYNTHETIC_TARGET_B
+            harness.candidates.value = listOf(ASSIGNMENT_B, GLOBAL_ASSIGNMENT)
+        }
+        conversationBLoad.awaitStarted()
+        assertSolid()
+        assertTrue(globalBitmap.native.isRecycled)
+
+        conversationBLoad.completeUnavailable()
+        conversationBLoad.awaitReturned()
+        unavailableGlobalLoad.awaitStarted()
+        assertSolid()
+
+        unavailableGlobalLoad.completeUnavailable()
+        unavailableGlobalLoad.awaitReturned()
+        assertSolid()
+
+        disposeSurface()
+    }
+
     private fun showSurface(
         store: ControlledWallpaperMediaStore,
         initialCandidates: List<AppWallpaperAssignment>,

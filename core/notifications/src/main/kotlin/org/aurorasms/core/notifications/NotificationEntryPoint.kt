@@ -6,6 +6,8 @@ package org.aurorasms.core.notifications
 interface NotificationEntryPoint {
     val inlineReplyHandler: InlineReplyHandler
 
+    val markConversationReadHandler: MarkConversationReadHandler
+
     val maximumInlineReplyCharacters: Int
         get() = NotificationConfig.DEFAULT_MAXIMUM_REPLY_CHARACTERS
 }

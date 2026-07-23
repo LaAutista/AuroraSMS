@@ -249,6 +249,187 @@ class ConversationProjectionTest {
         assertFalse(pending.coverage.verifiedComplete)
         assertNull(pending.verifiedIdentity)
     }
+
+    @Test
+    fun completeLargeHistoryPagesEveryConversationAndThreadMessageExactlyOnce() = runBlocking {
+        val generation = database.indexSyncDao().startGeneration(10L)
+        val conversationProjections = (1L..152L).map { index ->
+            projection(
+                providerId = index,
+                threadId = 1_000L + index,
+                timestampMillis = 50_000L - index,
+                body = "synthetic conversation $index",
+                participants = listOf("+15550100000"),
+                fingerprintSeed = 'a',
+            )
+        }
+        val timelineProjections = (1_000L..1_150L).map { providerId ->
+            projection(
+                providerId = providerId,
+                threadId = 9_999L,
+                timestampMillis = 60_000L + providerId,
+                body = "synthetic timeline $providerId",
+                participants = listOf("+15550100001"),
+                fingerprintSeed = 'b',
+            )
+        }
+        val projections = conversationProjections + timelineProjections
+        database.indexedMessageDao().commitScanningProjectionBatch(
+            generationId = generation,
+            projections = projections,
+            smsCheckpoint = checkpoint(
+                generation,
+                1,
+                providerId = 1_150L,
+                count = projections.size.toLong(),
+                exhausted = true,
+            ),
+            mmsCheckpoint = checkpoint(generation, 2, count = 0L, exhausted = true),
+            nowMillis = 20L,
+            targetBatchSize = 500,
+        )
+        assertEquals(1, database.indexSyncDao().markVerifying(generation, 30L))
+        assertNotNull(
+            database.indexSyncDao().finishVerifiedGeneration(
+                generationId = generation,
+                nowMillis = 40L,
+                smsProviderCount = projections.size.toLong(),
+                mmsProviderCount = 0L,
+            ),
+        )
+
+        val conversationRepository = RoomConversationRepository(database)
+        val conversationIds = mutableListOf<Long>()
+        var conversationCursor: org.aurorasms.core.index.conversation.ConversationCursor? = null
+        do {
+            val page = conversationRepository.loadInbox(
+                ConversationPageRequest(limit = 50, cursor = conversationCursor),
+            ) as ConversationPageResult.Page
+            conversationIds += page.page.items.map { it.providerThreadId.value }
+            conversationCursor = page.page.next
+        } while (conversationCursor != null)
+
+        assertEquals(153, conversationIds.size)
+        assertEquals(153, conversationIds.distinct().size)
+        assertTrue(9_999L in conversationIds)
+        assertTrue((1L..152L).all { 1_000L + it in conversationIds })
+
+        val timelineRepository = RoomThreadTimelineRepository(database)
+        val messageIds = mutableListOf<Long>()
+        var timelineCursor: org.aurorasms.core.index.timeline.TimelineCursor? = null
+        var direction = TimelinePageDirection.LATEST
+        do {
+            val page = timelineRepository.load(
+                TimelinePageRequest(
+                    providerThreadId = ProviderThreadId(9_999L),
+                    limit = 50,
+                    cursor = timelineCursor,
+                    direction = direction,
+                ),
+            ) as TimelinePageResult.Page
+            messageIds += page.page.items.map { it.providerMessageId.value }
+            timelineCursor = page.page.next
+            direction = TimelinePageDirection.OLDER
+        } while (timelineCursor != null)
+
+        assertEquals(151, messageIds.size)
+        assertEquals((1_000L..1_150L).toSet(), messageIds.toSet())
+    }
+
+    @Test
+    fun incompleteRefreshPresentsBestKnownRowsAcrossDurableGenerations() = runBlocking {
+        val firstGeneration = database.indexSyncDao().startGeneration(10L)
+        database.indexedMessageDao().commitScanningProjectionBatch(
+            generationId = firstGeneration,
+            projections = listOf(
+                projection(
+                    providerId = 10L,
+                    threadId = 100L,
+                    timestampMillis = 100L,
+                    body = "cached older message",
+                    participants = listOf("+15550000001"),
+                    fingerprintSeed = 'c',
+                    generationId = firstGeneration,
+                ),
+                projection(
+                    providerId = 20L,
+                    threadId = 200L,
+                    timestampMillis = 200L,
+                    body = "cached conversation",
+                    participants = listOf("+15550000002"),
+                    fingerprintSeed = 'd',
+                    generationId = firstGeneration,
+                ),
+            ),
+            smsCheckpoint = checkpoint(firstGeneration, 1, providerId = 10L, count = 2L, exhausted = true),
+            mmsCheckpoint = checkpoint(firstGeneration, 2, count = 0L, exhausted = true),
+            nowMillis = 20L,
+            targetBatchSize = 500,
+        )
+        assertEquals(1, database.indexSyncDao().markVerifying(firstGeneration, 30L))
+        assertNotNull(
+            database.indexSyncDao().finishVerifiedGeneration(
+                generationId = firstGeneration,
+                nowMillis = 40L,
+                smsProviderCount = 2L,
+                mmsProviderCount = 0L,
+            ),
+        )
+
+        val refreshGeneration = database.indexSyncDao().startGeneration(50L)
+        database.indexedMessageDao().commitScanningProjectionBatch(
+            generationId = refreshGeneration,
+            projections = listOf(
+                projection(
+                    providerId = 11L,
+                    threadId = 100L,
+                    timestampMillis = 300L,
+                    body = "new refresh row",
+                    participants = listOf("+15550000001"),
+                    fingerprintSeed = 'e',
+                    generationId = refreshGeneration,
+                ),
+            ),
+            smsCheckpoint = checkpoint(refreshGeneration, 1, providerId = 11L, count = 1L),
+            mmsCheckpoint = checkpoint(refreshGeneration, 2),
+            nowMillis = 60L,
+            targetBatchSize = 500,
+        )
+
+        val conversations = RoomConversationRepository(database)
+        val firstPage = conversations.loadInbox(
+            ConversationPageRequest(limit = 1),
+        ) as ConversationPageResult.Page
+        assertFalse(firstPage.page.coverage.verifiedComplete)
+        assertEquals(3L, firstPage.page.coverage.indexedMessageCount)
+        assertEquals(listOf(100L), firstPage.page.items.map { it.providerThreadId.value })
+        val olderPage = conversations.loadInbox(
+            ConversationPageRequest(
+                limit = 1,
+                cursor = requireNotNull(firstPage.page.next),
+                direction = ConversationPageDirection.OLDER,
+            ),
+        ) as ConversationPageResult.Page
+        assertEquals(listOf(200L), olderPage.page.items.map { it.providerThreadId.value })
+        assertTrue(
+            conversations.loadConversation(ProviderThreadId(200L)) is ConversationLookupResult.Found,
+        )
+
+        val timeline = RoomThreadTimelineRepository(database)
+        val thread = timeline.load(
+            TimelinePageRequest(
+                providerThreadId = ProviderThreadId(100L),
+                limit = 10,
+            ),
+        ) as TimelinePageResult.Page
+        assertEquals(listOf(10L, 11L), thread.page.items.map { it.providerMessageId.value })
+        assertTrue(
+            timeline.loadContent(
+                providerThreadId = ProviderThreadId(100L),
+                providerMessageId = thread.page.items.first().providerMessageId,
+            ) is TimelineContentResult.Found,
+        )
+    }
 }
 
 private fun projection(
@@ -260,6 +441,7 @@ private fun projection(
     fingerprintSeed: Char,
     participantsTruncated: Boolean = false,
     read: Boolean = false,
+    generationId: Long = 1L,
 ): IndexedProviderProjection = IndexedProviderProjection(
     message = entity(
         kind = ProviderKind.SMS,
@@ -268,6 +450,7 @@ private fun projection(
         timestampMillis = timestampMillis,
         body = body,
         fingerprintSeed = fingerprintSeed,
+        generationId = generationId,
     ).copy(isRead = read),
     participantAddresses = participants,
     participantsTruncated = participantsTruncated,

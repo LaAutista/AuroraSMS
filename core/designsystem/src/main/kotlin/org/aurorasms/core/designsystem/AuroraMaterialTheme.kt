@@ -60,9 +60,11 @@ fun AuroraMaterialTheme(
             (profile.palette != AuroraPalette.SYSTEM_DYNAMIC || systemDark),
     )
     val tokens = tokensFor(profile)
+    val visualTokens = visualTokensFor(profile, colorScheme)
     CompositionLocalProvider(
         LocalAuroraMaterialProfile provides profile,
         LocalAuroraMaterialTokens provides tokens,
+        LocalAuroraVisualTokens provides visualTokens,
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
@@ -80,22 +82,105 @@ internal fun staticColorScheme(
 ): ColorScheme = when (palette) {
     AuroraPalette.AURORA_DARK -> darkColorScheme(
         primary = auroraPrimary(palette, hueDegrees),
+        onPrimary = AURORA_DARK_ON_PRIMARY,
+        primaryContainer = AURORA_DARK_PRIMARY_CONTAINER,
+        onPrimaryContainer = AURORA_DARK_ON_PRIMARY_CONTAINER,
+        inversePrimary = AURORA_DARK_INVERSE_PRIMARY,
         secondary = auroraSecondary(palette, hueDegrees),
+        onSecondary = AURORA_DARK_ON_SECONDARY,
+        secondaryContainer = AURORA_DARK_SECONDARY_CONTAINER,
+        onSecondaryContainer = AURORA_DARK_ON_SECONDARY_CONTAINER,
+        tertiary = AURORA_CYAN,
+        onTertiary = AURORA_DARK_ON_TERTIARY,
+        tertiaryContainer = AURORA_DARK_TERTIARY_CONTAINER,
+        onTertiaryContainer = AURORA_DARK_ON_TERTIARY_CONTAINER,
         background = AURORA_DARK_BACKGROUND,
+        onBackground = AURORA_ON_SURFACE,
         surface = AURORA_DARK_SURFACE,
+        onSurface = AURORA_ON_SURFACE,
+        surfaceVariant = AURORA_SURFACE_VARIANT,
+        onSurfaceVariant = AURORA_DARK_ON_SURFACE_VARIANT,
+        surfaceTint = auroraPrimary(palette, hueDegrees),
+        inverseSurface = AURORA_DARK_INVERSE_SURFACE,
+        inverseOnSurface = AURORA_DARK_INVERSE_ON_SURFACE,
+        outline = AURORA_DARK_OUTLINE,
+        outlineVariant = AURORA_DARK_OUTLINE_VARIANT,
+        scrim = Color.Black,
+        surfaceBright = AURORA_DARK_SURFACE_BRIGHT,
+        surfaceDim = AURORA_DARK_BACKGROUND,
+        surfaceContainerLowest = AURORA_DARK_SURFACE_LOWEST,
+        surfaceContainerLow = AURORA_DARK_SURFACE_LOW,
+        surfaceContainer = AURORA_DARK_SURFACE_CONTAINER,
+        surfaceContainerHigh = AURORA_SURFACE_CONTAINER_HIGH,
+        surfaceContainerHighest = AURORA_MENU_SURFACE,
     )
     AuroraPalette.AMOLED_BLACK -> darkColorScheme(
         primary = auroraPrimary(palette, hueDegrees),
+        onPrimary = AURORA_DARK_ON_PRIMARY,
+        primaryContainer = AURORA_DARK_PRIMARY_CONTAINER,
+        onPrimaryContainer = AURORA_DARK_ON_PRIMARY_CONTAINER,
+        inversePrimary = AURORA_DARK_INVERSE_PRIMARY,
         secondary = auroraSecondary(palette, hueDegrees),
+        onSecondary = AURORA_DARK_ON_SECONDARY,
+        secondaryContainer = AURORA_DARK_SECONDARY_CONTAINER,
+        onSecondaryContainer = AURORA_DARK_ON_SECONDARY_CONTAINER,
+        tertiary = AURORA_CYAN,
+        onTertiary = AURORA_DARK_ON_TERTIARY,
+        tertiaryContainer = AURORA_DARK_TERTIARY_CONTAINER,
+        onTertiaryContainer = AURORA_DARK_ON_TERTIARY_CONTAINER,
         background = Color.Black,
+        onBackground = AURORA_ON_SURFACE,
         surface = Color.Black,
+        onSurface = AURORA_ON_SURFACE,
         surfaceVariant = AMOLED_SURFACE_VARIANT,
+        onSurfaceVariant = AURORA_DARK_ON_SURFACE_VARIANT,
+        surfaceTint = auroraPrimary(palette, hueDegrees),
+        inverseSurface = AURORA_DARK_INVERSE_SURFACE,
+        inverseOnSurface = AURORA_DARK_INVERSE_ON_SURFACE,
+        outline = AURORA_DARK_OUTLINE,
+        outlineVariant = AURORA_DARK_OUTLINE_VARIANT,
+        scrim = Color.Black,
+        surfaceBright = AMOLED_SURFACE_CONTAINER_HIGHEST,
+        surfaceDim = Color.Black,
+        surfaceContainerLowest = Color.Black,
+        surfaceContainerLow = Color.Black,
+        surfaceContainer = AMOLED_SURFACE_VARIANT,
+        surfaceContainerHigh = AMOLED_SURFACE_CONTAINER_HIGH,
+        surfaceContainerHighest = AMOLED_SURFACE_CONTAINER_HIGHEST,
     )
     AuroraPalette.LIGHT -> lightColorScheme(
         primary = auroraPrimary(palette, hueDegrees),
+        onPrimary = Color.White,
+        primaryContainer = AURORA_LIGHT_PRIMARY_CONTAINER,
+        onPrimaryContainer = AURORA_LIGHT_ON_PRIMARY_CONTAINER,
+        inversePrimary = AURORA_PRIMARY,
         secondary = auroraSecondary(palette, hueDegrees),
+        onSecondary = Color.White,
+        secondaryContainer = AURORA_LIGHT_SECONDARY_CONTAINER,
+        onSecondaryContainer = AURORA_LIGHT_ON_SECONDARY_CONTAINER,
+        tertiary = AURORA_LIGHT_TERTIARY,
+        onTertiary = Color.White,
+        tertiaryContainer = AURORA_LIGHT_TERTIARY_CONTAINER,
+        onTertiaryContainer = AURORA_LIGHT_ON_TERTIARY_CONTAINER,
         background = AURORA_LIGHT_BACKGROUND,
+        onBackground = AURORA_LIGHT_ON_SURFACE,
         surface = AURORA_LIGHT_SURFACE,
+        onSurface = AURORA_LIGHT_ON_SURFACE,
+        surfaceVariant = AURORA_LIGHT_SURFACE_VARIANT,
+        onSurfaceVariant = AURORA_LIGHT_ON_SURFACE_VARIANT,
+        surfaceTint = auroraPrimary(palette, hueDegrees),
+        inverseSurface = AURORA_LIGHT_INVERSE_SURFACE,
+        inverseOnSurface = AURORA_LIGHT_INVERSE_ON_SURFACE,
+        outline = AURORA_LIGHT_OUTLINE,
+        outlineVariant = AURORA_LIGHT_OUTLINE_VARIANT,
+        scrim = Color.Black,
+        surfaceBright = AURORA_LIGHT_SURFACE,
+        surfaceDim = AURORA_LIGHT_SURFACE_DIM,
+        surfaceContainerLowest = Color.White,
+        surfaceContainerLow = AURORA_LIGHT_SURFACE_LOW,
+        surfaceContainer = AURORA_LIGHT_SURFACE_CONTAINER,
+        surfaceContainerHigh = AURORA_LIGHT_SURFACE_HIGH,
+        surfaceContainerHighest = AURORA_LIGHT_SURFACE_HIGHEST,
     )
     AuroraPalette.SYSTEM_DYNAMIC -> if (systemDark) {
         staticColorScheme(
@@ -246,11 +331,22 @@ private fun ColorScheme.withHighContrast(enabled: Boolean, dark: Boolean): Color
             background = Color.Black,
             surface = Color.Black,
             surfaceVariant = HIGH_CONTRAST_DARK_SURFACE,
+            surfaceDim = Color.Black,
+            surfaceBright = Color.Black,
+            surfaceContainerLowest = Color.Black,
+            surfaceContainerLow = Color.Black,
+            surfaceContainer = Color.Black,
+            surfaceContainerHigh = Color.Black,
+            surfaceContainerHighest = Color.Black,
             onBackground = Color.White,
             onSurface = Color.White,
             onSurfaceVariant = Color.White,
+            inverseSurface = Color.White,
+            inverseOnSurface = Color.Black,
+            surfaceTint = Color.White,
             outline = Color.White,
             outlineVariant = HIGH_CONTRAST_DARK_OUTLINE_VARIANT,
+            scrim = Color.Black,
         )
     } else {
         copy(
@@ -269,11 +365,22 @@ private fun ColorScheme.withHighContrast(enabled: Boolean, dark: Boolean): Color
             background = Color.White,
             surface = Color.White,
             surfaceVariant = HIGH_CONTRAST_LIGHT_SURFACE,
+            surfaceDim = Color.White,
+            surfaceBright = Color.White,
+            surfaceContainerLowest = Color.White,
+            surfaceContainerLow = Color.White,
+            surfaceContainer = Color.White,
+            surfaceContainerHigh = Color.White,
+            surfaceContainerHighest = Color.White,
             onBackground = Color.Black,
             onSurface = Color.Black,
             onSurfaceVariant = Color.Black,
+            inverseSurface = Color.Black,
+            inverseOnSurface = Color.White,
+            surfaceTint = Color.Black,
             outline = Color.Black,
             outlineVariant = HIGH_CONTRAST_LIGHT_OUTLINE_VARIANT,
+            scrim = Color.Black,
         )
     }
 }
@@ -287,15 +394,43 @@ private data class DensityDimensions(
 )
 
 private val MINIMUM_TOUCH_TARGET: Dp = 48.dp
-private val AURORA_PRIMARY = Color(0xFF78D6C6)
-private val AURORA_SECONDARY = Color(0xFF9CB8FF)
-private val AURORA_DARK_BACKGROUND = Color(0xFF101419)
-private val AURORA_DARK_SURFACE = Color(0xFF171C22)
-private val AMOLED_SURFACE_VARIANT = Color(0xFF111418)
-private val AURORA_LIGHT_PRIMARY = Color(0xFF006A60)
-private val AURORA_LIGHT_SECONDARY = Color(0xFF405E91)
-private val AURORA_LIGHT_BACKGROUND = Color(0xFFF6FAF8)
-private val AURORA_LIGHT_SURFACE = Color(0xFFF6FAF8)
+private val AURORA_DARK_ON_PRIMARY = Color(0xFF210033)
+private val AURORA_DARK_PRIMARY_CONTAINER = Color(0xFF4D1378)
+private val AURORA_DARK_ON_PRIMARY_CONTAINER = Color(0xFFF1DCFF)
+private val AURORA_DARK_INVERSE_PRIMARY = Color(0xFF7A20B4)
+private val AURORA_DARK_ON_SECONDARY = Color(0xFF301743)
+private val AURORA_DARK_SECONDARY_CONTAINER = Color(0xFF49315D)
+private val AURORA_DARK_ON_SECONDARY_CONTAINER = Color(0xFFF0DCFF)
+private val AURORA_DARK_ON_TERTIARY = Color(0xFF00363A)
+private val AURORA_DARK_TERTIARY_CONTAINER = Color(0xFF004F55)
+private val AURORA_DARK_ON_TERTIARY_CONTAINER = Color(0xFF8FF5FC)
+private val AURORA_DARK_ON_SURFACE_VARIANT = Color(0xFFD1C6D7)
+private val AURORA_DARK_INVERSE_SURFACE = Color(0xFFF1ECF4)
+private val AURORA_DARK_INVERSE_ON_SURFACE = Color(0xFF302D33)
+private val AURORA_DARK_OUTLINE = Color(0xFF998DA0)
+private val AURORA_DARK_OUTLINE_VARIANT = Color(0xFF4C4352)
+private val AURORA_DARK_SURFACE_BRIGHT = Color(0xFF332E39)
+private val AURORA_DARK_SURFACE_LOWEST = Color(0xFF03020A)
+private val AURORA_DARK_SURFACE_LOW = Color(0xFF0A0815)
+private val AURORA_DARK_SURFACE_CONTAINER = Color(0xFF11101D)
+private val AURORA_LIGHT_PRIMARY_CONTAINER = Color(0xFFF0DBFF)
+private val AURORA_LIGHT_ON_PRIMARY_CONTAINER = Color(0xFF2D0047)
+private val AURORA_LIGHT_SECONDARY_CONTAINER = Color(0xFFEFDCFF)
+private val AURORA_LIGHT_ON_SECONDARY_CONTAINER = Color(0xFF251532)
+private val AURORA_LIGHT_TERTIARY_CONTAINER = Color(0xFF9CF1FB)
+private val AURORA_LIGHT_ON_TERTIARY_CONTAINER = Color(0xFF001F23)
+private val AURORA_LIGHT_ON_SURFACE = Color(0xFF211A23)
+private val AURORA_LIGHT_SURFACE_VARIANT = Color(0xFFEBDDEA)
+private val AURORA_LIGHT_ON_SURFACE_VARIANT = Color(0xFF4C444D)
+private val AURORA_LIGHT_INVERSE_SURFACE = Color(0xFF362F37)
+private val AURORA_LIGHT_INVERSE_ON_SURFACE = Color(0xFFFAECF8)
+private val AURORA_LIGHT_OUTLINE = Color(0xFF7D747E)
+private val AURORA_LIGHT_OUTLINE_VARIANT = Color(0xFFCFC3CF)
+private val AURORA_LIGHT_SURFACE_DIM = Color(0xFFE4D7E3)
+private val AURORA_LIGHT_SURFACE_LOW = Color(0xFFFFF0FC)
+private val AURORA_LIGHT_SURFACE_CONTAINER = Color(0xFFF9EAF6)
+private val AURORA_LIGHT_SURFACE_HIGH = Color(0xFFF3E4F0)
+private val AURORA_LIGHT_SURFACE_HIGHEST = Color(0xFFEDDFEA)
 private val HIGH_CONTRAST_DARK_SURFACE = Color(0xFF0E1211)
 private val HIGH_CONTRAST_DARK_OUTLINE_VARIANT = Color(0xFFBFC9C7)
 private val HIGH_CONTRAST_LIGHT_SURFACE = Color(0xFFF2F7F5)

@@ -13,7 +13,14 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.aurorasms.core.state.storage.AuroraStateDatabase
 import org.aurorasms.core.state.storage.AppearanceSelectionEnforcement
 import org.aurorasms.core.state.storage.AppearanceOverrideSequenceEnforcement
+import org.aurorasms.core.state.storage.ComposerSmsOperationEnforcement
+import org.aurorasms.core.state.storage.ConversationSubscriptionPreferenceEnforcement
+import org.aurorasms.core.state.storage.DraftAttachmentEnforcement
 import org.aurorasms.core.state.storage.DraftIdentityEnforcement
+import org.aurorasms.core.state.storage.FirstContactOperationEnforcement
+import org.aurorasms.core.state.storage.ScheduledSmsEnforcement
+import org.aurorasms.core.state.storage.SendDelayEnforcement
+import org.aurorasms.core.state.storage.PermanentDeletionEnforcement
 import org.aurorasms.core.state.storage.StateDatabaseFactory
 import org.aurorasms.core.state.storage.StateDatabaseOpenFailureReason
 import org.aurorasms.core.state.storage.StateDatabaseOpenResult
@@ -51,11 +58,11 @@ class StateSchemaCurrentTest {
     }
 
     @Test
-    fun schemaVersionFour_hasBoundedDraftAndAppearanceTables() {
+    fun schemaVersionFifteen_hasBoundedStateTablesAndFirstContactOwnership() {
         val database = openStateDatabase()
         val sqlite = database.openHelper.writableDatabase
         try {
-            assertEquals(4, AuroraStateDatabase.VERSION)
+            assertEquals(16, AuroraStateDatabase.VERSION)
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertEquals(
                 setOf(
@@ -84,6 +91,10 @@ class StateSchemaCurrentTest {
             assertTrue(indices.contains("index_drafts_provider_thread_id"))
             assertTrue(indices.contains("index_drafts_participant_set_key"))
             assertTrue(indices.contains("index_drafts_updated_timestamp_ms_draft_id"))
+            assertEquals(
+                setOf("draft_id", "attachment_index", "content_type", "content_bytes"),
+                sqlite.tableColumns("draft_attachments"),
+            )
             assertTrue(
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
@@ -207,18 +218,263 @@ class StateSchemaCurrentTest {
                     cursor.getLong(0)
                 },
             )
+            assertEquals(
+                setOf(
+                    "local_operation_id",
+                    "provider_thread_id",
+                    "draft_id",
+                    "draft_revision_ms",
+                    "subscription_id",
+                    "transport_code",
+                    "phase_code",
+                    "provider_message_id",
+                    "provider_conversation_id",
+                    "unit_count",
+                    "signature_text",
+                    "created_timestamp_ms",
+                    "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("composer_sms_operations"),
+            )
+            assertTrue(
+                sqlite.indexNames("composer_sms_operations")
+                    .contains("index_composer_sms_operations_provider_thread_id"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "composer_sms_operations",
+                    "index_composer_sms_operations_provider_thread_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "composer_sms_operations",
+                    "index_composer_sms_operations_transport_code_provider_message_id",
+                ),
+            )
+            assertEquals(
+                setOf(
+                    "local_operation_id",
+                    "provider_message_id",
+                    "provider_kind_code",
+                    "provider_conversation_id",
+                    "unit_count",
+                    "callback_proof_code",
+                    "acknowledged_timestamp_ms",
+                    "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("acknowledged_composer_sms_receipts"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "acknowledged_composer_sms_receipts",
+                    "index_acknowledged_composer_sms_receipts_provider_kind_code_provider_message_id",
+                ),
+            )
+            assertEquals(
+                setOf(
+                    "participant_set_key",
+                    "provider_thread_id",
+                    "subscription_id",
+                    "revision",
+                    "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("conversation_subscription_preferences"),
+            )
+            assertTrue(
+                sqlite.indexNames("conversation_subscription_preferences")
+                    .contains(
+                        "index_conversation_subscription_preferences_provider_thread_id",
+                    ),
+            )
+            assertEquals(
+                setOf(
+                    "schedule_id",
+                    "participant_set_key",
+                    "provider_thread_id",
+                    "draft_id",
+                    "draft_revision_ms",
+                    "subscription_id",
+                    "due_timestamp_ms",
+                    "phase_code",
+                    "precision_code",
+                    "review_reason_code",
+                    "signature_text",
+                    "armed_wall_timestamp_ms",
+                    "armed_elapsed_realtime_ms",
+                    "created_timestamp_ms",
+                    "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("scheduled_sms_operations"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "scheduled_sms_operations",
+                    "index_scheduled_sms_operations_provider_thread_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "scheduled_sms_operations",
+                    "index_scheduled_sms_operations_draft_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexNames("scheduled_sms_operations")
+                    .contains("index_scheduled_sms_operations_due_timestamp_ms_schedule_id"),
+            )
+            assertEquals(
+                setOf(
+                    "send_delay_id",
+                    "participant_set_key",
+                    "provider_thread_id",
+                    "draft_id",
+                    "draft_revision_ms",
+                    "subscription_id",
+                    "due_timestamp_ms",
+                    "phase_code",
+                    "review_reason_code",
+                    "signature_text",
+                    "armed_wall_timestamp_ms",
+                    "armed_elapsed_realtime_ms",
+                    "created_timestamp_ms",
+                    "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("send_delay_operations"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "send_delay_operations",
+                    "index_send_delay_operations_provider_thread_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "send_delay_operations",
+                    "index_send_delay_operations_draft_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexNames("send_delay_operations")
+                    .contains("index_send_delay_operations_due_timestamp_ms_send_delay_id"),
+            )
+            assertEquals(
+                setOf(
+                    "first_contact_id",
+                    "participant_set_key",
+                    "draft_id",
+                    "source_draft_revision_ms",
+                    "attachment_set_evidence",
+                    "subscription_id",
+                    "transport_code",
+                    "phase_code",
+                    "provider_thread_id",
+                    "handoff_draft_revision_ms",
+                    "created_timestamp_ms",
+                    "updated_timestamp_ms",
+                    "signature_text",
+                ),
+                sqlite.tableColumns("first_contact_operations"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "first_contact_operations",
+                    "index_first_contact_operations_participant_set_key",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "first_contact_operations",
+                    "index_first_contact_operations_draft_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "first_contact_operations",
+                    "index_first_contact_operations_provider_thread_id",
+                ),
+            )
+            assertEquals(
+                setOf(
+                    "deletion_id", "target_kind_code", "provider_thread_id", "provider_kind",
+                    "provider_message_id", "sync_fingerprint", "sms_count", "latest_sms_id",
+                    "mms_count", "latest_mms_id", "draft_id", "draft_revision_ms",
+                    "due_timestamp_ms", "phase_code", "review_reason_code",
+                    "armed_wall_timestamp_ms", "armed_elapsed_realtime_ms",
+                    "created_timestamp_ms", "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("permanent_deletion_operations"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "permanent_deletion_operations",
+                    "index_permanent_deletion_operations_provider_thread_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "permanent_deletion_operations",
+                    "index_permanent_deletion_operations_provider_kind_provider_message_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexNames("permanent_deletion_operations").contains(
+                    "index_permanent_deletion_operations_due_timestamp_ms_deletion_id",
+                ),
+            )
+            assertEquals(
+                setOf(
+                    "participant_set_key", "provider_thread_id", "single_sender_key",
+                    "classification_code", "blocked", "revision", "updated_timestamp_ms",
+                ),
+                sqlite.tableColumns("spam_safety_decisions"),
+            )
+            assertTrue(
+                sqlite.indexIsUnique(
+                    "spam_safety_decisions",
+                    "index_spam_safety_decisions_provider_thread_id",
+                ),
+            )
+            assertTrue(
+                sqlite.indexNames("spam_safety_decisions")
+                    .contains("index_spam_safety_decisions_single_sender_key"),
+            )
         } finally {
             database.close()
         }
     }
 
     @Test
-    fun exportedVersionFourStructureValidatesWithoutRepairingMissingSemanticSelection() {
+    fun exportedCurrentStructureValidatesWithoutRepairingMissingSemanticSelection() {
         migrationHelper.createDatabase(MIGRATION_DATABASE_NAME, AuroraStateDatabase.VERSION).use { sqlite ->
             assertEquals(AuroraStateDatabase.VERSION, sqlite.version)
             assertTrue(
                 sqlite.query(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'drafts'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'draft_attachments'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'spam_safety_decisions'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'permanent_deletion_operations'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'composer_sms_operations'",
                 ).use { it.moveToFirst() },
             )
             assertTrue(
@@ -257,6 +513,30 @@ class StateSchemaCurrentTest {
                         "AND name = 'appearance_conversation_wallpapers'",
                 ).use { it.moveToFirst() },
             )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'conversation_subscription_preferences'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'scheduled_sms_operations'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'send_delay_operations'",
+                ).use { it.moveToFirst() },
+            )
+            assertTrue(
+                sqlite.query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                        "AND name = 'first_contact_operations'",
+                ).use { it.moveToFirst() },
+            )
         }
 
         val database = Room.databaseBuilder(
@@ -265,8 +545,15 @@ class StateSchemaCurrentTest {
             MIGRATION_DATABASE_NAME,
         )
             .addCallback(DraftIdentityEnforcement.callback)
+            .addCallback(DraftAttachmentEnforcement.callback)
             .addCallback(AppearanceSelectionEnforcement.callback)
             .addCallback(AppearanceOverrideSequenceEnforcement.callback)
+            .addCallback(ComposerSmsOperationEnforcement.callback)
+            .addCallback(ConversationSubscriptionPreferenceEnforcement.callback)
+            .addCallback(ScheduledSmsEnforcement.callback)
+            .addCallback(SendDelayEnforcement.callback)
+            .addCallback(PermanentDeletionEnforcement.callback)
+            .addCallback(FirstContactOperationEnforcement.callback)
             .build()
         try {
             assertEquals(AuroraStateDatabase.VERSION, database.openHelper.writableDatabase.version)
@@ -299,11 +586,37 @@ class StateSchemaCurrentTest {
         var sqlite = database.openHelper.writableDatabase
         assertTriggerExists(sqlite, DraftIdentityEnforcement.INSERT_TRIGGER_NAME)
         assertTriggerExists(sqlite, DraftIdentityEnforcement.UPDATE_TRIGGER_NAME)
+        assertTriggerExists(sqlite, DraftAttachmentEnforcement.INSERT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, DraftAttachmentEnforcement.UPDATE_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.UPDATE_TRIGGER_NAME)
         assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.DELETE_TRIGGER_NAME)
+        assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(
+            sqlite,
+            ConversationSubscriptionPreferenceEnforcement.INSERT_INTEGRITY_TRIGGER_NAME,
+        )
+        assertTriggerExists(
+            sqlite,
+            ConversationSubscriptionPreferenceEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME,
+        )
+        assertTriggerExists(sqlite, ScheduledSmsEnforcement.INSERT_LIMIT_TRIGGER)
+        assertTriggerExists(sqlite, ScheduledSmsEnforcement.INSERT_INTEGRITY_TRIGGER)
+        assertTriggerExists(sqlite, ScheduledSmsEnforcement.UPDATE_INTEGRITY_TRIGGER)
+        assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, PermanentDeletionEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, FirstContactOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+        assertTriggerExists(sqlite, FirstContactOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, FirstContactOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+        assertTriggerExists(sqlite, FirstContactOperationEnforcement.DELETE_INTEGRITY_TRIGGER_NAME)
 
         assertThrows(SQLiteConstraintException::class.java) {
             sqlite.execSQL(
@@ -322,11 +635,37 @@ class StateSchemaCurrentTest {
 
         sqlite.execSQL("DROP TRIGGER ${DraftIdentityEnforcement.INSERT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${DraftIdentityEnforcement.UPDATE_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${DraftAttachmentEnforcement.INSERT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${DraftAttachmentEnforcement.UPDATE_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceOverrideSequenceEnforcement.UPDATE_TRIGGER_NAME}")
         sqlite.execSQL("DROP TRIGGER ${AppearanceOverrideSequenceEnforcement.DELETE_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${ComposerSmsOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL(
+            "DROP TRIGGER " +
+                ConversationSubscriptionPreferenceEnforcement.INSERT_INTEGRITY_TRIGGER_NAME,
+        )
+        sqlite.execSQL(
+            "DROP TRIGGER " +
+                ConversationSubscriptionPreferenceEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME,
+        )
+        sqlite.execSQL("DROP TRIGGER ${ScheduledSmsEnforcement.INSERT_LIMIT_TRIGGER}")
+        sqlite.execSQL("DROP TRIGGER ${ScheduledSmsEnforcement.INSERT_INTEGRITY_TRIGGER}")
+        sqlite.execSQL("DROP TRIGGER ${ScheduledSmsEnforcement.UPDATE_INTEGRITY_TRIGGER}")
+        sqlite.execSQL("DROP TRIGGER ${SendDelayEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${PermanentDeletionEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${PermanentDeletionEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${PermanentDeletionEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${FirstContactOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${FirstContactOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${FirstContactOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME}")
+        sqlite.execSQL("DROP TRIGGER ${FirstContactOperationEnforcement.DELETE_INTEGRITY_TRIGGER_NAME}")
         database.close()
 
         database = openStateDatabase()
@@ -334,11 +673,46 @@ class StateSchemaCurrentTest {
             sqlite = database.openHelper.writableDatabase
             assertTriggerExists(sqlite, DraftIdentityEnforcement.INSERT_TRIGGER_NAME)
             assertTriggerExists(sqlite, DraftIdentityEnforcement.UPDATE_TRIGGER_NAME)
+            assertTriggerExists(sqlite, DraftAttachmentEnforcement.INSERT_TRIGGER_NAME)
+            assertTriggerExists(sqlite, DraftAttachmentEnforcement.UPDATE_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceSelectionEnforcement.INSERT_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceSelectionEnforcement.UPDATE_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.INSERT_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.UPDATE_TRIGGER_NAME)
             assertTriggerExists(sqlite, AppearanceOverrideSequenceEnforcement.DELETE_TRIGGER_NAME)
+            assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+            assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(sqlite, ComposerSmsOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(
+                sqlite,
+                ConversationSubscriptionPreferenceEnforcement.INSERT_INTEGRITY_TRIGGER_NAME,
+            )
+            assertTriggerExists(
+                sqlite,
+                ConversationSubscriptionPreferenceEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME,
+            )
+            assertTriggerExists(sqlite, ScheduledSmsEnforcement.INSERT_LIMIT_TRIGGER)
+            assertTriggerExists(sqlite, ScheduledSmsEnforcement.INSERT_INTEGRITY_TRIGGER)
+            assertTriggerExists(sqlite, ScheduledSmsEnforcement.UPDATE_INTEGRITY_TRIGGER)
+            assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+            assertTriggerExists(sqlite, SendDelayEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(sqlite, SendDelayEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+            assertTriggerExists(sqlite, PermanentDeletionEnforcement.INSERT_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(sqlite, PermanentDeletionEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME)
+            assertTriggerExists(sqlite, FirstContactOperationEnforcement.INSERT_LIMIT_TRIGGER_NAME)
+            assertTriggerExists(
+                sqlite,
+                FirstContactOperationEnforcement.INSERT_INTEGRITY_TRIGGER_NAME,
+            )
+            assertTriggerExists(
+                sqlite,
+                FirstContactOperationEnforcement.UPDATE_INTEGRITY_TRIGGER_NAME,
+            )
+            assertTriggerExists(
+                sqlite,
+                FirstContactOperationEnforcement.DELETE_INTEGRITY_TRIGGER_NAME,
+            )
             assertThrows(SQLiteConstraintException::class.java) {
                 sqlite.execSQL(
                     "INSERT INTO appearance_selection(" +

@@ -51,6 +51,8 @@ sealed interface ThreadUiState {
         val verifiedConversationIdentity: VerifiedConversationIdentity? = null,
         val verifiedConversationIdentityResolved: Boolean = false,
         val activeSubscription: ActiveSubscription?,
+        val activeSubscriptions: List<ActiveSubscription> =
+            activeSubscription?.let(::listOf).orEmpty(),
         val contacts: Map<ParticipantAddress, ResolvedContact>,
         val loadingOlder: Boolean,
         val loadingNewer: Boolean,
@@ -64,6 +66,14 @@ sealed interface ThreadUiState {
         init {
             require(verifiedConversationIdentity == null || verifiedConversationIdentityResolved) {
                 "A verified conversation identity requires a completed identity lookup"
+            }
+            require(activeSubscriptions.distinctBy { it.id }.size == activeSubscriptions.size) {
+                "Active subscriptions must be unique"
+            }
+            require(activeSubscription == null || activeSubscriptions.any {
+                it.id == activeSubscription.id
+            }) {
+                "The associated subscription must be active"
             }
             require(expandedContent == null || expandedContent.providerMessageId == expandedMessageId)
             require(
@@ -122,11 +132,226 @@ sealed interface SearchUiState {
 
 data class ComposerUiState(
     val body: String,
+    val subject: String = "",
     val saving: Boolean,
     val failed: Boolean,
+    val sendState: ComposerSendState = ComposerSendState.UNAVAILABLE,
+    val unavailableReason: ComposerUnavailableReason? = null,
+    val segmentCount: Int? = null,
+    val unsignedSegmentCount: Int? = null,
+    val signatureApplied: Boolean = false,
+    val mmsRequired: Boolean = false,
+    val attachments: List<ComposerAttachmentUiItem> = emptyList(),
+    val attachmentImporting: Boolean = false,
+    val attachmentFailure: ComposerAttachmentFailure? = null,
+    val scheduleState: ComposerScheduleState = ComposerScheduleState.None,
+    val sendDelayDueTimestampMillis: Long? = null,
 ) {
+    init {
+        require(segmentCount == null || segmentCount > 0) { "SMS segment count must be positive" }
+        require(unsignedSegmentCount == null || unsignedSegmentCount > 0) {
+            "Unsigned SMS segment count must be positive"
+        }
+        require(!signatureApplied || segmentCount != null) {
+            "An applied signature requires an exact outgoing segment count"
+        }
+        require(sendState != ComposerSendState.READY || unavailableReason == null) {
+            "A ready composer cannot have an unavailable reason"
+        }
+        require(sendState == ComposerSendState.UNAVAILABLE || unavailableReason == null) {
+            "Only an unavailable composer can have an unavailable reason"
+        }
+        require(
+            (sendState == ComposerSendState.DELAY_PENDING ||
+                sendState == ComposerSendState.DELAY_REVIEW) ==
+                (sendDelayDueTimestampMillis != null),
+        ) { "A delayed-send UI phase requires its due timestamp" }
+        require(attachments.size <= 10) { "The composer attachment list is out of bounds" }
+        require(attachments.map(ComposerAttachmentUiItem::index).distinct().size == attachments.size) {
+            "Composer attachment indices must be unique"
+        }
+    }
+
     override fun toString(): String =
-        "ComposerUiState(bodyLength=${body.length}, saving=$saving, failed=$failed, REDACTED)"
+        "ComposerUiState(bodyLength=${body.length}, saving=$saving, failed=$failed, " +
+            "subjectLength=${subject.length}, mmsRequired=$mmsRequired, " +
+            "attachmentCount=${attachments.size}, attachmentImporting=$attachmentImporting, " +
+            "attachmentFailure=$attachmentFailure, " +
+            "sendState=$sendState, unavailableReason=$unavailableReason, " +
+            "segmentCount=$segmentCount, unsignedSegmentCount=$unsignedSegmentCount, " +
+            "signatureApplied=$signatureApplied, scheduleState=$scheduleState, " +
+            "hasSendDelay=${sendDelayDueTimestampMillis != null}, REDACTED)"
+}
+
+data class ComposerAttachmentUiItem(
+    val index: Int,
+    val contentType: String,
+    val sizeBytes: Int,
+) {
+    init {
+        require(index >= 0)
+        require(contentType.isNotBlank() && contentType.length <= 127)
+        require(sizeBytes > 0)
+    }
+
+    override fun toString(): String =
+        "ComposerAttachmentUiItem(index=$index, contentType=$contentType, sizeBytes=$sizeBytes)"
+}
+
+enum class ComposerAttachmentFailure {
+    UNREADABLE,
+    UNSUPPORTED,
+    TOO_LARGE,
+    LIMIT_REACHED,
+    STORAGE,
+}
+
+sealed interface ComposerScheduleState {
+    data object Loading : ComposerScheduleState
+    data object None : ComposerScheduleState
+    data class Pending(val dueTimestampMillis: Long, val exact: Boolean) : ComposerScheduleState {
+        init { require(dueTimestampMillis >= 0L) }
+        override fun toString(): String = "ComposerScheduleState.Pending(exact=$exact, REDACTED)"
+    }
+    data class Dispatching(val dueTimestampMillis: Long) : ComposerScheduleState {
+        init { require(dueTimestampMillis >= 0L) }
+        override fun toString(): String = "ComposerScheduleState.Dispatching(REDACTED)"
+    }
+    data class ReviewRequired(val dueTimestampMillis: Long) : ComposerScheduleState {
+        init { require(dueTimestampMillis >= 0L) }
+        override fun toString(): String = "ComposerScheduleState.ReviewRequired(REDACTED)"
+    }
+}
+
+data class ConversationSubscriptionUiState(
+    val options: List<ActiveSubscription> = emptyList(),
+    val selected: ActiveSubscription? = null,
+    val loading: Boolean = false,
+    val saving: Boolean = false,
+    val rememberedSelectionUnavailable: Boolean = false,
+    val storageFailed: Boolean = false,
+) {
+    init {
+        require(options.distinctBy { it.id }.size == options.size) {
+            "Conversation subscription options must be unique"
+        }
+        require(selected == null || options.any { it.id == selected.id }) {
+            "The selected subscription must be an available option"
+        }
+        require(!rememberedSelectionUnavailable || selected == null) {
+            "An unavailable remembered subscription cannot also be selected"
+        }
+    }
+
+    override fun toString(): String =
+        "ConversationSubscriptionUiState(optionCount=${options.size}, " +
+            "hasSelection=${selected != null}, loading=$loading, saving=$saving, " +
+            "rememberedSelectionUnavailable=$rememberedSelectionUnavailable, " +
+            "storageFailed=$storageFailed, REDACTED)"
+}
+
+enum class ComposerSendState {
+    UNAVAILABLE,
+    READY,
+    DELAY_PENDING,
+    DELAY_REVIEW,
+    SENDING,
+    KNOWN_UNSENT,
+    SUBMISSION_UNKNOWN,
+}
+
+enum class ComposerUnavailableReason {
+    EMPTY_MESSAGE,
+    DRAFT_NOT_DURABLE,
+    CONVERSATION_UNVERIFIED,
+    GROUP_REQUIRES_MMS,
+    SUBSCRIPTION_UNAVAILABLE,
+    MULTIPART_UNAVAILABLE,
+    RECOVERY_PENDING,
+    PERMANENT_DELETION_ACTIVE,
+    MESSAGING_UNAVAILABLE,
+    SIGNATURE_STATE_UNAVAILABLE,
+    ATTACHMENT_PROCESSING,
+    ATTACHMENT_STORAGE_UNAVAILABLE,
+}
+
+data class VoiceMemoUiState(
+    val phase: VoiceMemoUiPhase = VoiceMemoUiPhase.IDLE,
+    val recordEnabled: Boolean = false,
+    val elapsedMillis: Long = 0L,
+    val durationMillis: Long? = null,
+    val sizeBytes: Int? = null,
+    val retryAfterKnownFailure: Boolean = false,
+    val failure: VoiceMemoUiFailure? = null,
+) {
+    init {
+        require(elapsedMillis in 0L..60_000L)
+        require(durationMillis == null || durationMillis in 1L..60_000L)
+        require(sizeBytes == null || sizeBytes in 1..524_288)
+        require((phase == VoiceMemoUiPhase.READY) == (durationMillis != null && sizeBytes != null))
+        require((phase == VoiceMemoUiPhase.FAILED) == (failure != null))
+        require(!retryAfterKnownFailure || phase == VoiceMemoUiPhase.READY)
+        require(phase == VoiceMemoUiPhase.IDLE || !recordEnabled) {
+            "Only the idle voice-memo phase can start a recording"
+        }
+    }
+
+    override fun toString(): String =
+        "VoiceMemoUiState(phase=$phase, recordEnabled=$recordEnabled, " +
+            "elapsedMillis=$elapsedMillis, hasDuration=${durationMillis != null}, " +
+            "hasSize=${sizeBytes != null}, failure=$failure, REDACTED)"
+}
+
+enum class VoiceMemoUiPhase {
+    IDLE,
+    PREPARING,
+    RECORDING,
+    READY,
+    SENDING,
+    AWAITING_RESULT,
+    SENT,
+    FAILED,
+}
+
+enum class VoiceMemoUiFailure {
+    PERMISSION_DENIED,
+    CAPTURE_FAILED,
+    SEND_REJECTED,
+    SUBMISSION_UNKNOWN,
+    SEND_FAILED,
+}
+
+enum class PermanentDeletionTargetUiKind {
+    MESSAGE,
+    THREAD,
+}
+
+sealed interface PermanentDeletionUiState {
+    data object Loading : PermanentDeletionUiState
+    data object None : PermanentDeletionUiState
+
+    data class Pending(
+        val targetKind: PermanentDeletionTargetUiKind,
+        val providerMessageId: ProviderMessageId?,
+        val dueTimestampMillis: Long,
+    ) : PermanentDeletionUiState {
+        init {
+            require(
+                (targetKind == PermanentDeletionTargetUiKind.MESSAGE) ==
+                    (providerMessageId != null),
+            ) { "Only message deletion carries a provider message id" }
+            require(dueTimestampMillis >= 0L)
+        }
+    }
+
+    data class Committing(
+        val targetKind: PermanentDeletionTargetUiKind,
+    ) : PermanentDeletionUiState
+
+    data class ReviewRequired(
+        val targetKind: PermanentDeletionTargetUiKind,
+        val commitMayHaveStarted: Boolean,
+    ) : PermanentDeletionUiState
 }
 
 internal fun conversationAddresses(items: List<ConversationSummary>): List<ParticipantAddress> =

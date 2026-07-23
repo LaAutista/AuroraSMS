@@ -47,10 +47,35 @@ object StateDatabaseFactory {
             DATABASE_NAME,
         )
             .openHelperFactory(NonDeletingStateOpenHelperFactory)
-            .addMigrations(STATE_MIGRATION_1_2, STATE_MIGRATION_2_3, STATE_MIGRATION_3_4)
+            .addMigrations(
+                STATE_MIGRATION_1_2,
+                STATE_MIGRATION_2_3,
+                STATE_MIGRATION_3_4,
+                STATE_MIGRATION_4_5,
+                STATE_MIGRATION_5_6,
+                STATE_MIGRATION_6_7,
+                STATE_MIGRATION_7_8,
+                STATE_MIGRATION_8_9,
+                STATE_MIGRATION_9_10,
+                STATE_MIGRATION_10_11,
+                STATE_MIGRATION_11_12,
+                STATE_MIGRATION_12_13,
+                STATE_MIGRATION_13_14,
+                STATE_MIGRATION_14_15,
+                STATE_MIGRATION_15_16,
+            )
             .addCallback(DraftIdentityEnforcement.callback)
+            .addCallback(DraftAttachmentEnforcement.callback)
             .addCallback(AppearanceSelectionEnforcement.callback)
             .addCallback(AppearanceOverrideSequenceEnforcement.callback)
+            .addCallback(ComposerSmsOperationEnforcement.callback)
+            .addCallback(AcknowledgedComposerSmsEnforcement.callback)
+            .addCallback(ConversationSubscriptionPreferenceEnforcement.callback)
+            .addCallback(ScheduledSmsEnforcement.callback)
+            .addCallback(SendDelayEnforcement.callback)
+            .addCallback(PermanentDeletionEnforcement.callback)
+            .addCallback(SpamSafetyDecisionEnforcement.callback)
+            .addCallback(FirstContactOperationEnforcement.callback)
             .build()
         return try {
             database.openHelper.writableDatabase

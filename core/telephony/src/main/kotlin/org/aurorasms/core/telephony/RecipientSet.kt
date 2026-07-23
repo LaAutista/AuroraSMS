@@ -2,9 +2,9 @@
 
 package org.aurorasms.core.telephony
 
-import java.util.Locale
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ParticipantAddress
+import org.aurorasms.core.model.ParticipantAddressEquivalenceKey
 
 /** Canonical recipients and the single source of the ordinary-group policy. */
 class RecipientSet private constructor(
@@ -74,9 +74,9 @@ class RecipientSet private constructor(
         }
 
         fun from(addresses: Iterable<ParticipantAddress>): CreationResult {
-            val unique = linkedMapOf<String, ParticipantAddress>()
+            val unique = linkedMapOf<ParticipantAddressEquivalenceKey, ParticipantAddress>()
             addresses.forEachIndexed { index, address ->
-                val key = canonicalKey(address.value)
+                val key = ParticipantAddressEquivalenceKey.from(address)
                     ?: return CreationResult.Rejected(RejectionReason.INVALID_ADDRESS, index)
                 unique.putIfAbsent(key, address)
                 if (unique.size > MAX_RECIPIENTS) {
@@ -89,21 +89,5 @@ class RecipientSet private constructor(
             return CreationResult.Valid(RecipientSet(unique.values.toList()))
         }
 
-        private fun canonicalKey(value: String): String? {
-            val phoneLike = value.all { character ->
-                character.isDigit() || character in charArrayOf('+', ' ', '-', '(', ')', '.')
-            }
-            if (phoneLike) {
-                val prefix = if (value.trimStart().startsWith('+')) "+" else ""
-                val digits = value.filter(Char::isDigit)
-                return (prefix + digits).takeIf { digits.isNotEmpty() }
-            }
-            val at = value.lastIndexOf('@')
-            return if (at > 0 && at < value.lastIndex) {
-                value.substring(0, at + 1) + value.substring(at + 1).lowercase(Locale.ROOT)
-            } else {
-                value
-            }
-        }
     }
 }

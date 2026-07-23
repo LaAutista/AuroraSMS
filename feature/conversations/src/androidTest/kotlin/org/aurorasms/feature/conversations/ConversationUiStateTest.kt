@@ -2,40 +2,58 @@
 
 package org.aurorasms.feature.conversations
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInputSelection
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import kotlin.math.absoluteValue
 import kotlinx.coroutines.delay
 import org.aurorasms.core.index.IndexCoverage
 import org.aurorasms.core.index.IndexRunState
+import org.aurorasms.core.index.conversation.ConversationSummary
 import org.aurorasms.core.index.timeline.TimelineMessage
 import org.aurorasms.core.model.MessageBox
+import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.MessageDirection
 import org.aurorasms.core.model.MessageStatus
+import org.aurorasms.core.model.ParticipantAddress
+import org.aurorasms.core.model.MessageSyncFingerprint
 import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.telephony.MmsAttachmentContentReader
+import org.aurorasms.core.telephony.ActiveSubscription
 import org.aurorasms.core.telephony.MmsAttachmentId
 import org.aurorasms.core.telephony.MmsAttachmentListResult
 import org.aurorasms.core.telephony.MmsAttachmentReadResult
 import org.aurorasms.core.telephony.MmsAttachmentRepository
+import org.aurorasms.core.telephony.ResolvedContact
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -44,6 +62,76 @@ import org.junit.runner.RunWith
 class ConversationUiStateTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun voiceMemoRecordIsExplicitAndRecordingStateStaysVisible() {
+        var recordCount = 0
+        var stopCount = 0
+        var cancelCount = 0
+        val voiceState = mutableStateOf(VoiceMemoUiState(recordEnabled = true))
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "",
+                    saving = false,
+                    failed = false,
+                    unavailableReason = ComposerUnavailableReason.EMPTY_MESSAGE,
+                ),
+                voiceMemo = voiceState.value,
+                onRecordVoiceMemo = {
+                    recordCount += 1
+                    voiceState.value = VoiceMemoUiState(
+                        phase = VoiceMemoUiPhase.RECORDING,
+                        elapsedMillis = 12_000L,
+                    )
+                },
+                onStopVoiceMemo = { stopCount += 1 },
+                onCancelVoiceMemo = { cancelCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_VOICE_MEMO_TEST_TAG).assertIsEnabled().performClick()
+        compose.onNodeWithTag(VOICE_MEMO_PANEL_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("Recording · 0:12 / 1:00").assertIsDisplayed()
+        compose.onNodeWithTag(STOP_VOICE_MEMO_TEST_TAG).performClick()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.runOnIdle {
+            assertEquals(1, recordCount)
+            assertEquals(1, stopCount)
+            assertEquals(1, cancelCount)
+        }
+    }
+
+    @Test
+    fun reviewedVoiceMemoRequiresASeparateSendAction() {
+        var sendCount = 0
+        var discardCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "",
+                    saving = false,
+                    failed = false,
+                    unavailableReason = ComposerUnavailableReason.EMPTY_MESSAGE,
+                ),
+                voiceMemo = VoiceMemoUiState(
+                    phase = VoiceMemoUiPhase.READY,
+                    durationMillis = 4_000L,
+                    sizeBytes = 4_096,
+                ),
+                onCancelVoiceMemo = { discardCount += 1 },
+                onSendVoiceMemo = { sendCount += 1 },
+            )
+        }
+
+        compose.onNodeWithText("Voice memo · 0:04 · 4 KiB").assertIsDisplayed()
+        compose.onNodeWithTag(SEND_VOICE_MEMO_TEST_TAG).performClick()
+        compose.onNodeWithText("Discard").performClick()
+        compose.runOnIdle {
+            assertEquals(1, sendCount)
+            assertEquals(1, discardCount)
+        }
+    }
 
     @Test
     fun threadExposesStableListAndDisabledSendWithoutLoadingProviderMedia() {
@@ -77,9 +165,574 @@ class ConversationUiStateTest {
         compose.onNodeWithTag(THREAD_LIST_TEST_TAG).assertIsDisplayed()
         compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsDisplayed()
         compose.onNodeWithText("Send unavailable").assertIsNotEnabled()
-        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertDoesNotExist()
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).assertIsDisplayed()
         compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).assertDoesNotExist()
         compose.runOnIdle { check(repository.readAttempts == 0) }
+    }
+
+    @Test
+    fun exactReactionFallbackUsesStructuredPresentationWithoutChangingTheModelBody() {
+        val source = "Liked “Synthetic original”"
+        val state = readyThreadState(body = source)
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = state,
+                    composer = ComposerUiState(body = "", saving = false, failed = false),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag(REACTION_FALLBACK_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("Liked").assertIsDisplayed()
+        compose.onNodeWithText("“Synthetic original”").assertIsDisplayed()
+        compose.runOnIdle { check(state.window.items.single().bodyPreview == source) }
+    }
+
+    @Test
+    fun ambiguousOrTruncatedReactionLikeTextRemainsRaw() {
+        val ambiguous = "Liked “Synthetic original” trailing"
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = readyThreadState(body = ambiguous, bodyTruncated = true),
+                    composer = ComposerUiState(body = "", saving = false, failed = false),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag(REACTION_FALLBACK_TEST_TAG).assertDoesNotExist()
+        compose.onNodeWithText(ambiguous).assertIsDisplayed()
+        compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).performTouchInput {
+            longClick(topCenter + Offset(0f, 12f))
+        }
+        compose.onNodeWithTag(SELECT_MESSAGE_TEXT_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithText(
+            "Only the loaded preview is available. Show the full message first to select more.",
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun readySendInvokesOnceThenSendingLocksTheActionAndEditor() {
+        val composerState = mutableStateOf(
+            ComposerUiState(
+                body = "Synthetic ready draft",
+                saving = false,
+                failed = false,
+                sendState = ComposerSendState.READY,
+                segmentCount = 1,
+            ),
+        )
+        var sendCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = composerState.value,
+                onSend = {
+                    sendCount += 1
+                    composerState.value = composerState.value.copy(
+                        sendState = ComposerSendState.SENDING,
+                    )
+                },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG)
+            .assertIsEnabled()
+            .performClick()
+
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithText("Sending…").assertIsDisplayed()
+        compose.onNodeWithText("Submitting safely…").assertIsDisplayed()
+        compose.runOnIdle { check(sendCount == 1) }
+    }
+
+    @Test
+    fun pendingSendDelayOffersUndoAndLocksDraftUntilDecision() {
+        var undoCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic delayed draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.DELAY_PENDING,
+                    segmentCount = 1,
+                    sendDelayDueTimestampMillis = 4_000_000_000_000L,
+                ),
+                onUndoSend = { undoCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithText("Waiting briefly before send · Undo is available").assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsEnabled().performClick()
+        compose.runOnIdle { check(undoCount == 1) }
+    }
+
+    @Test
+    fun sendDelaySettingOffersOnlyApprovedChoicesAndReportsSelection() {
+        var selected: Int? = null
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic ready draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.READY,
+                    segmentCount = 1,
+                ),
+                sendDelaySeconds = 3,
+                onSetSendDelaySeconds = { selected = it },
+            )
+        }
+
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithText("Send delay · 3 seconds").performClick()
+        compose.onNodeWithText("Send immediately").assertIsDisplayed()
+        compose.onNodeWithText("Wait 1 second").assertIsDisplayed()
+        compose.onNodeWithText("Wait 3 seconds").assertIsDisplayed()
+        compose.onNodeWithText("Wait 5 seconds").assertIsDisplayed()
+        compose.onNodeWithText("Wait 10 seconds").assertIsDisplayed().performClick()
+        compose.runOnIdle { check(selected == 10) }
+    }
+
+    @Test
+    fun signatureImpactDisclosesExactUnsignedAndOutgoingPartCounts() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic one-part draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.UNAVAILABLE,
+                    unavailableReason = ComposerUnavailableReason.MULTIPART_UNAVAILABLE,
+                    segmentCount = 2,
+                    unsignedSegmentCount = 1,
+                    signatureApplied = true,
+                ),
+            )
+        }
+
+        compose.onNodeWithText(
+            "With the signature, this changes from 1 to 2 SMS parts. " +
+                "Multipart sending is not available yet.",
+        ).assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+    }
+
+    @Test
+    fun signatureStateFailurePausesSendInsteadOfSilentlyDroppingContent() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.UNAVAILABLE,
+                    unavailableReason = ComposerUnavailableReason.SIGNATURE_STATE_UNAVAILABLE,
+                    segmentCount = 1,
+                ),
+            )
+        }
+
+        compose.onNodeWithText(
+            "Signature settings are unavailable. Sending is paused to avoid changing " +
+                "outgoing text.",
+        ).assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+    }
+
+    @Test
+    fun trustedConversationSignatureActionUsesOnlyTheRouteCallback() {
+        var openCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(body = "Synthetic draft", saving = false, failed = false),
+                conversationSignatureAvailable = true,
+                onOpenConversationSignature = { openCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_SIGNATURE_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle { check(openCount == 1) }
+    }
+
+    @Test
+    fun scheduleActionAndConfirmedCancellationKeepSendLocked() {
+        val composerState = mutableStateOf(
+            ComposerUiState(
+                body = "Synthetic scheduled draft",
+                saving = false,
+                failed = false,
+                sendState = ComposerSendState.READY,
+                segmentCount = 1,
+            ),
+        )
+        var scheduleCount = 0
+        var cancelCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = composerState.value,
+                onSchedule = {
+                    scheduleCount += 1
+                    composerState.value = composerState.value.copy(
+                        sendState = ComposerSendState.UNAVAILABLE,
+                        scheduleState = ComposerScheduleState.Pending(
+                            dueTimestampMillis = 4_000_000_000_000L,
+                            exact = false,
+                        ),
+                    )
+                },
+                onCancelSchedule = { cancelCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).assertIsEnabled().performClick()
+        compose.runOnIdle { check(scheduleCount == 1) }
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithText("may send late", substring = true).assertIsDisplayed()
+
+        compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).performClick()
+        compose.onNodeWithText("Cancel schedule").performClick()
+        compose.runOnIdle { check(cancelCount == 1) }
+    }
+
+    @Test
+    fun dispatchingScheduleDoesNotOfferCancellationAfterHandoff() {
+        var cancelCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic dispatching draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.UNAVAILABLE,
+                    segmentCount = 1,
+                    scheduleState = ComposerScheduleState.Dispatching(4_000_000_000_000L),
+                ),
+                onCancelSchedule = { cancelCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).performClick()
+        compose.onNodeWithText("Scheduled message").assertIsDisplayed()
+        compose.onNodeWithText("Cancel schedule").assertDoesNotExist()
+        compose.runOnIdle { check(cancelCount == 0) }
+    }
+
+    @Test
+    fun knownUnsentOffersAnEnabledRetryThatUsesTheSendCallback() {
+        var sendCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic preserved draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.KNOWN_UNSENT,
+                    segmentCount = 1,
+                ),
+                onSend = { sendCount += 1 },
+            )
+        }
+
+        compose.onNodeWithText("Not sent. Your draft was preserved.").assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG)
+            .assertIsEnabled()
+            .performClick()
+
+        compose.runOnIdle { check(sendCount == 1) }
+    }
+
+    @Test
+    fun submissionUnknownRequiresExplicitKeepAsDraftAcknowledgement() {
+        var acknowledgementCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic uncertain draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.SUBMISSION_UNKNOWN,
+                    segmentCount = 1,
+                ),
+                onAcknowledgeSubmissionUnknown = { acknowledgementCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG)
+            .assertIsEnabled()
+            .performClick()
+        compose.onNodeWithText("Send status unknown").assertIsDisplayed()
+        compose.onNodeWithText("Keep as draft").assertIsDisplayed()
+        compose.runOnIdle { check(acknowledgementCount == 0) }
+
+        compose.onNodeWithText("Wait").performClick()
+        compose.onNodeWithText("Send status unknown").assertDoesNotExist()
+        compose.runOnIdle { check(acknowledgementCount == 0) }
+
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).performClick()
+        compose.onNodeWithText("Keep as draft").performClick()
+        compose.onNodeWithText("Send status unknown").assertDoesNotExist()
+        compose.runOnIdle { check(acknowledgementCount == 1) }
+    }
+
+    @Test
+    fun multipartUnavailableKeepsSendDisabledAndExplainsThePartCount() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic multipart draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.UNAVAILABLE,
+                    unavailableReason = ComposerUnavailableReason.MULTIPART_UNAVAILABLE,
+                    segmentCount = 3,
+                ),
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithText(
+            "This text needs 3 SMS parts. Multipart sending is not available yet.",
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun mmsComposerShowsSubjectAndKeepsImmediateSendAvailable() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic MMS draft",
+                    subject = "Synthetic subject",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.READY,
+                    segmentCount = 1,
+                    mmsRequired = true,
+                ),
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SUBJECT_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("Draft saved locally · MMS").assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsEnabled()
+        compose.onNodeWithTag(COMPOSER_SCHEDULE_TEST_TAG).assertIsNotEnabled()
+    }
+
+    @Test
+    fun subjectActionExposesBoundedDraftEditorCallback() {
+        var changedSubject: String? = null
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.READY,
+                    segmentCount = 1,
+                ),
+                onDraftSubjectChanged = { changedSubject = it },
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_SUBJECT_TEST_TAG).assertDoesNotExist()
+        compose.onNodeWithTag(COMPOSER_EXTRAS_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(COMPOSER_SUBJECT_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(COMPOSER_SUBJECT_TEST_TAG).assertIsDisplayed().performTextInput("Subject")
+        compose.runOnIdle { assertEquals("Subject", changedSubject) }
+    }
+
+    @Test
+    fun attachmentExtrasAreGenericAndCallbacksUseOnlyBoundedIndices() {
+        var addCount = 0
+        var removedIndex: Int? = null
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.READY,
+                    segmentCount = 1,
+                    mmsRequired = true,
+                    attachments = listOf(
+                        ComposerAttachmentUiItem(
+                            index = 0,
+                            contentType = "image/jpeg",
+                            sizeBytes = 1_025,
+                        ),
+                    ),
+                ),
+                onAddAttachment = { addCount += 1 },
+                onRemoveAttachment = { removedIndex = it },
+            )
+        }
+
+        compose.onNodeWithTag("$COMPOSER_ATTACHMENT_TEST_TAG_PREFIX-0").assertIsDisplayed()
+        compose.onNodeWithText("Image · 2 KiB").assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsEnabled()
+        compose.onNodeWithText("Remove").performClick()
+        compose.runOnIdle { assertEquals(0, removedIndex) }
+
+        compose.onNodeWithTag(COMPOSER_EXTRAS_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(COMPOSER_ADD_IMAGE_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle { assertEquals(1, addCount) }
+    }
+
+    @Test
+    fun recoveryPendingLocksTheEditorUntilDurableRecoveryFinishes() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(
+                    body = "Synthetic recovering draft",
+                    saving = false,
+                    failed = false,
+                    sendState = ComposerSendState.UNAVAILABLE,
+                    unavailableReason = ComposerUnavailableReason.RECOVERY_PENDING,
+                    segmentCount = 1,
+                ),
+            )
+        }
+
+        compose.onNodeWithTag(COMPOSER_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithText("Finishing safe send recovery…").assertIsDisplayed()
+    }
+
+    @Test
+    fun rememberedUnavailableSimRequiresExplicitReplacementSelection() {
+        val first = ActiveSubscription(
+            id = AuroraSubscriptionId(4),
+            slotIndex = 0,
+            displayLabel = "Work",
+            smsCapable = true,
+        )
+        val second = ActiveSubscription(
+            id = AuroraSubscriptionId(7),
+            slotIndex = 1,
+            displayLabel = "Personal",
+            smsCapable = true,
+        )
+        var selected: AuroraSubscriptionId? = null
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = readyThreadState(),
+                    composer = ComposerUiState(
+                        body = "Synthetic preserved draft",
+                        saving = false,
+                        failed = false,
+                        sendState = ComposerSendState.UNAVAILABLE,
+                        unavailableReason = ComposerUnavailableReason.SUBSCRIPTION_UNAVAILABLE,
+                        segmentCount = 1,
+                    ),
+                    subscriptionSelection = ConversationSubscriptionUiState(
+                        options = listOf(first, second),
+                        rememberedSelectionUnavailable = true,
+                    ),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                    onSelectSubscription = { selected = it },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Remembered SIM unavailable · choose another").assertIsDisplayed()
+        compose.onNodeWithTag(COMPOSER_SEND_TEST_TAG).assertIsNotEnabled()
+        compose.onNodeWithTag(THREAD_SIM_SELECTOR_TEST_TAG).performClick()
+        compose.onNodeWithText("SIM 2 · Personal").performClick()
+        compose.runOnIdle { check(selected == second.id) }
+    }
+
+    @Test
+    fun sentMessageWithFailedDeliveryReportIsNotLabeledAsSendFailure() {
+        val ready = readyThreadState()
+        val message = ready.window.items.single().copy(
+            direction = MessageDirection.OUTGOING,
+            box = MessageBox.SENT,
+            status = MessageStatus.FAILED,
+        )
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = ready.copy(window = ready.window.copy(items = listOf(message))),
+                    composer = ComposerUiState(body = "Synthetic draft", saving = false, failed = false),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                )
+            }
+        }
+
+        compose.onNodeWithText("Sent; delivery failed").assertIsDisplayed()
+        compose.onNodeWithText("Failed to send").assertDoesNotExist()
     }
 
     @Test
@@ -114,6 +767,131 @@ class ConversationUiStateTest {
         compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
         compose.onNodeWithTag(THREAD_APPEARANCE_ACTION_TEST_TAG).performClick()
         compose.runOnIdle { check(openCount == 1) }
+    }
+
+    @Test
+    fun selectedTextActionCopiesOnlyTheExplicitRange() {
+        var clipboard: ClipboardManager? = null
+        try {
+            compose.setContent {
+                SyntheticThreadScreen(
+                    composer = ComposerUiState(body = "", saving = false, failed = false),
+                )
+            }
+            compose.runOnIdle {
+                clipboard = InstrumentationRegistry.getInstrumentation()
+                    .targetContext
+                    .getSystemService(ClipboardManager::class.java)
+                checkNotNull(clipboard).setPrimaryClip(ClipData.newPlainText("AuroraSMS test reset", ""))
+            }
+
+            compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).performTouchInput { longClick() }
+            compose.onNodeWithTag(MESSAGE_ACTIONS_DIALOG_TEST_TAG).assertIsDisplayed()
+            compose.onNodeWithTag(SELECT_MESSAGE_TEXT_ACTION_TEST_TAG).performClick()
+            compose.onNodeWithTag(COPY_SELECTED_TEXT_TEST_TAG).assertIsNotEnabled()
+            compose.onNodeWithTag(MESSAGE_TEXT_SELECTION_FIELD_TEST_TAG)
+                .performTextInputSelection(TextRange(0, 9))
+            compose.onNodeWithTag(COPY_SELECTED_TEXT_TEST_TAG).assertIsEnabled().performClick()
+            compose.waitForIdle()
+
+            var copiedText: String? = null
+            compose.runOnIdle {
+                copiedText = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()
+            }
+            assertEquals("Synthetic", copiedText)
+        } finally {
+            clipboard?.let { initializedClipboard ->
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    initializedClipboard.setPrimaryClip(
+                        ClipData.newPlainText("AuroraSMS test reset", ""),
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun messageDetailsShowBoundedMetadataWithoutProviderIdentifiers() {
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(body = "", saving = false, failed = false),
+            )
+        }
+
+        compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).performTouchInput { longClick() }
+        compose.onNodeWithTag(MESSAGE_DETAILS_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(MESSAGE_DETAILS_DIALOG_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("SMS").assertIsDisplayed()
+        compose.onNodeWithText("Incoming message").assertIsDisplayed()
+        compose.onNodeWithText("Received · read").assertIsDisplayed()
+        compose.onNodeWithText("Not available").assertIsDisplayed()
+        compose.onNodeWithText("No attachments").assertIsDisplayed()
+        compose.onNodeWithText("ProviderMessageId", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun exactMessageDeletionRequiresActionChoiceAndConfirmationAfterLongPress() {
+        var requested: TimelineMessage? = null
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(body = "", saving = false, failed = false),
+                onRequestDeleteMessage = { requested = it },
+            )
+        }
+
+        compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).performTouchInput { longClick() }
+        compose.onNodeWithTag(MESSAGE_ACTIONS_DIALOG_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithTag(DELETE_MESSAGE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithText("Permanently delete this message?").assertIsDisplayed()
+        compose.onNodeWithTag(CONFIRM_DELETE_MESSAGE_TEST_TAG).performClick()
+        compose.runOnIdle { check(requested?.providerMessageId == ProviderMessageId(ProviderKind.SMS, 1L)) }
+    }
+
+    @Test
+    fun wholeConversationDeletionUsesTwoDistinctConfirmationSteps() {
+        var requests = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(body = "", saving = false, failed = false),
+                onRequestDeleteThread = { requests += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_DELETE_ACTION_TEST_TAG).assertIsEnabled().performClick()
+        compose.onNodeWithText("Delete this conversation?").assertIsDisplayed()
+        compose.onNodeWithTag(CONTINUE_DELETE_THREAD_TEST_TAG).performClick()
+        compose.onNodeWithText("Last chance").assertIsDisplayed()
+        compose.onNodeWithTag(CONFIRM_DELETE_THREAD_TEST_TAG).performClick()
+        compose.runOnIdle { check(requests == 1) }
+    }
+
+    @Test
+    fun pendingDeletionShowsUndoWhileCommittingDoesNot() {
+        val deletion = mutableStateOf<PermanentDeletionUiState>(
+            PermanentDeletionUiState.Pending(
+                targetKind = PermanentDeletionTargetUiKind.MESSAGE,
+                providerMessageId = ProviderMessageId(ProviderKind.SMS, 1L),
+                dueTimestampMillis = 5_000L,
+            ),
+        )
+        var undoCount = 0
+        compose.setContent {
+            SyntheticThreadScreen(
+                composer = ComposerUiState(body = "", saving = false, failed = false),
+                deletion = deletion.value,
+                onUndoDeletion = { undoCount += 1 },
+            )
+        }
+
+        compose.onNodeWithTag(PERMANENT_DELETION_BANNER_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithTag(UNDO_DELETION_TEST_TAG).performClick()
+        compose.runOnIdle {
+            check(undoCount == 1)
+            deletion.value = PermanentDeletionUiState.Committing(PermanentDeletionTargetUiKind.MESSAGE)
+        }
+        compose.onNodeWithText("Deleting permanently…").assertIsDisplayed()
+        compose.onNodeWithTag(UNDO_DELETION_TEST_TAG).assertDoesNotExist()
     }
 
     @Test
@@ -236,9 +1014,340 @@ class ConversationUiStateTest {
             check(defaultsCount == 1)
         }
     }
+
+    @Test
+    fun incompleteInboxProminentlyDisclosesCachedHistoryAndProgress() {
+        val partialCoverage = IndexCoverage(
+            generationId = 4L,
+            state = IndexRunState.SCANNING,
+            indexedMessageCount = 5_226L,
+            smsExhausted = false,
+            mmsExhausted = false,
+            pendingChanges = false,
+            generationCommittedCount = 2_100L,
+            smsCheckpointCommittedCount = 1_507L,
+            mmsCheckpointCommittedCount = 593L,
+        )
+        compose.setContent {
+            MaterialTheme {
+                InboxScreen(
+                    state = InboxUiState.Ready(
+                        window = BoundedInboxWindow.EMPTY,
+                        coverage = partialCoverage,
+                        contacts = emptyMap(),
+                        loadingOlder = false,
+                    ),
+                    diagnosticsAvailable = false,
+                    contactsPermissionGranted = true,
+                    onOpenConversation = {},
+                    onOpenSearch = {},
+                    onOpenAppearance = {},
+                    onOpenInboxAppearance = {},
+                    onOpenConversationDefaults = {},
+                    onOpenDiagnostics = {},
+                    onRequestContactsPermission = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag(INDEX_INCOMPLETE_NOTICE_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("History refresh is incomplete", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("showing its best-known cached history", substring = true)
+            .assertIsDisplayed()
+        compose.onNodeWithText("2100 messages checked", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun inboxSignatureActionUsesOnlyTheRouteCallback() {
+        var openCount = 0
+        compose.setContent {
+            MaterialTheme {
+                InboxScreen(
+                    state = InboxUiState.Loading,
+                    diagnosticsAvailable = false,
+                    contactsPermissionGranted = true,
+                    onOpenConversation = {},
+                    onOpenSearch = {},
+                    onOpenAppearance = {},
+                    onOpenInboxAppearance = {},
+                    onOpenConversationDefaults = {},
+                    onOpenDiagnostics = {},
+                    onRequestContactsPermission = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    signaturesAvailable = true,
+                    onOpenGlobalSignature = { openCount += 1 },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(INBOX_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(INBOX_SIGNATURE_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle { check(openCount == 1) }
+    }
+
+    @Test
+    fun inboxReminderDialogShowsCurrentChoiceAndRequiresExplicitSelection() {
+        var selectedDelay: Int? = null
+        compose.setContent {
+            MaterialTheme {
+                InboxScreen(
+                    state = InboxUiState.Loading,
+                    diagnosticsAvailable = false,
+                    contactsPermissionGranted = true,
+                    onOpenConversation = {},
+                    onOpenSearch = {},
+                    onOpenAppearance = {},
+                    onOpenInboxAppearance = {},
+                    onOpenConversationDefaults = {},
+                    onOpenDiagnostics = {},
+                    onRequestContactsPermission = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    notificationReminderDelayMinutes = 15,
+                    onSetNotificationReminderDelayMinutes = { selectedDelay = it },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(INBOX_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithText("Message reminders · 15 minutes").assertIsDisplayed()
+        compose.onNodeWithTag(INBOX_NOTIFICATION_REMINDER_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithText("Remind after 1 hour").assertIsDisplayed().performClick()
+
+        compose.runOnIdle { assertEquals(60, selectedDelay) }
+    }
+
+    @Test
+    fun inboxSpamRouteAndWarningAreVisibleButDoNotPreventOpeningTheConversation() {
+        val summary = spamConversationSummary()
+        var spamRouteCount = 0
+        var openCount = 0
+        compose.setContent {
+            MaterialTheme {
+                InboxScreen(
+                    state = InboxUiState.Ready(
+                        window = BoundedInboxWindow(listOf(summary), olderCursor = null),
+                        coverage = completeCoverage(),
+                        contacts = emptyMap(),
+                        loadingOlder = false,
+                    ),
+                    diagnosticsAvailable = false,
+                    contactsPermissionGranted = true,
+                    onOpenConversation = { openCount += 1 },
+                    onOpenSearch = {},
+                    onOpenAppearance = {},
+                    onOpenSpamBlocked = { spamRouteCount += 1 },
+                    onOpenInboxAppearance = {},
+                    onOpenConversationDefaults = {},
+                    onOpenDiagnostics = {},
+                    onRequestContactsPermission = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    spamIndicators = mapOf(
+                        summary.providerThreadId to SpamSafetyIndicator(
+                            SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST,
+                            warning = true,
+                        ),
+                    ),
+                )
+            }
+        }
+
+        compose.onNodeWithText("Caution: unknown sender", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag(INBOX_ROW_TEST_TAG).performClick()
+        compose.onNodeWithTag(INBOX_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(INBOX_SPAM_BLOCKED_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle {
+            assertEquals(1, openCount)
+            assertEquals(1, spamRouteCount)
+        }
+    }
+
+    @Test
+    fun threadSpamAndBlockControlsRequireExplicitActionsAndExplainWarning() {
+        var markSpamCount = 0
+        var blockCount = 0
+        compose.setContent {
+            MaterialTheme {
+                ThreadScreen(
+                    state = readyThreadState(),
+                    composer = ComposerUiState("", saving = false, failed = false),
+                    attachmentRepository = RejectingAttachmentRepository(),
+                    previewLoader = RejectingPreviewLoader,
+                    onBack = {},
+                    onOpenSearch = {},
+                    conversationAppearanceAvailable = false,
+                    onOpenConversationAppearance = {},
+                    isDialable = { false },
+                    onDial = {},
+                    onRetry = {},
+                    onLoadOlder = {},
+                    onLoadNewer = {},
+                    onAtNewestChanged = {},
+                    onAcceptPending = {},
+                    onViewportChanged = {},
+                    onAnchorRestored = {},
+                    onToggleMessageExpansion = {},
+                    onDraftChanged = {},
+                    spamSafety = ThreadSpamSafetyUiState(
+                        storageAvailable = true,
+                        actionsAvailable = true,
+                        blockAvailable = true,
+                        warningReason = SpamSafetyReason.SUSPICIOUS_LINK_AND_REQUEST,
+                    ),
+                    onMarkSpam = { markSpamCount += 1 },
+                    onBlockSender = { blockCount += 1 },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(THREAD_SPAM_WARNING_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_SPAM_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_MORE_ACTION_TEST_TAG).performClick()
+        compose.onNodeWithTag(THREAD_BLOCK_ACTION_TEST_TAG).performClick()
+        compose.runOnIdle {
+            assertEquals(1, markSpamCount)
+            assertEquals(0, blockCount)
+        }
+        compose.onNodeWithTag(CONFIRM_BLOCK_SENDER_TEST_TAG).performClick()
+        compose.runOnIdle { assertEquals(1, blockCount) }
+    }
+
+    @Test
+    fun spamBlockedScreenShowsReasonsAndIndependentRecoveryActions() {
+        val summary = spamConversationSummary()
+        val address = summary.participants.single()
+        var notSpamCount = 0
+        var unblockCount = 0
+        compose.setContent {
+            MaterialTheme {
+                SpamBlockedScreen(
+                    state = SpamBlockedUiState.Ready(
+                        listOf(
+                            SpamBlockedRow(
+                                summary = summary,
+                                contacts = mapOf(
+                                    address to ResolvedContact(address, "Synthetic Sender", null),
+                                ),
+                                markedSpam = true,
+                                blocked = true,
+                            ),
+                        ),
+                    ),
+                    onBack = {},
+                    onOpenConversation = {},
+                    onMarkNotSpam = { notSpamCount += 1 },
+                    onUnblock = { unblockCount += 1 },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(SPAM_BLOCKED_SCREEN_TEST_TAG).assertIsDisplayed()
+        compose.onNodeWithText("Synthetic Sender").assertIsDisplayed()
+        compose.onNodeWithText("Not spam").performClick()
+        compose.onNodeWithText("Unblock sender").performClick()
+        compose.runOnIdle {
+            assertEquals(1, notSpamCount)
+            assertEquals(1, unblockCount)
+        }
+    }
 }
 
-private fun readyThreadState(): ThreadUiState.Ready = ThreadUiState.Ready(
+@Composable
+private fun SyntheticThreadScreen(
+    composer: ComposerUiState,
+    voiceMemo: VoiceMemoUiState = VoiceMemoUiState(),
+    onRecordVoiceMemo: () -> Unit = {},
+    onStopVoiceMemo: () -> Unit = {},
+    onCancelVoiceMemo: () -> Unit = {},
+    onSendVoiceMemo: () -> Unit = {},
+    onSend: () -> Unit = {},
+    onUndoSend: () -> Unit = {},
+    sendDelaySeconds: Int = 0,
+    onSetSendDelaySeconds: (Int) -> Unit = {},
+    onAcknowledgeSubmissionUnknown: () -> Unit = {},
+    onSchedule: () -> Unit = {},
+    onCancelSchedule: () -> Unit = {},
+    deletion: PermanentDeletionUiState = PermanentDeletionUiState.None,
+    onRequestDeleteMessage: (TimelineMessage) -> Unit = {},
+    onRequestDeleteThread: () -> Unit = {},
+    onUndoDeletion: () -> Unit = {},
+    conversationSignatureAvailable: Boolean = false,
+    onOpenConversationSignature: () -> Unit = {},
+    onDraftSubjectChanged: (String) -> Unit = {},
+    onAddAttachment: () -> Unit = {},
+    onRemoveAttachment: (Int) -> Unit = {},
+) {
+    MaterialTheme {
+        ThreadScreen(
+            state = readyThreadState(),
+            composer = composer,
+            attachmentRepository = RejectingAttachmentRepository(),
+            previewLoader = RejectingPreviewLoader,
+            onBack = {},
+            onOpenSearch = {},
+            conversationAppearanceAvailable = false,
+            onOpenConversationAppearance = {},
+            conversationSignatureAvailable = conversationSignatureAvailable,
+            onOpenConversationSignature = onOpenConversationSignature,
+            isDialable = { false },
+            onDial = {},
+            onRetry = {},
+            onLoadOlder = {},
+            onLoadNewer = {},
+            onAtNewestChanged = {},
+            onAcceptPending = {},
+            onViewportChanged = {},
+            onAnchorRestored = {},
+            onToggleMessageExpansion = {},
+            onDraftChanged = {},
+            onDraftSubjectChanged = onDraftSubjectChanged,
+            onAddAttachment = onAddAttachment,
+            onRemoveAttachment = onRemoveAttachment,
+            voiceMemo = voiceMemo,
+            onRecordVoiceMemo = onRecordVoiceMemo,
+            onStopVoiceMemo = onStopVoiceMemo,
+            onCancelVoiceMemo = onCancelVoiceMemo,
+            onSendVoiceMemo = onSendVoiceMemo,
+            onSend = onSend,
+            onUndoSend = onUndoSend,
+            sendDelaySeconds = sendDelaySeconds,
+            onSetSendDelaySeconds = onSetSendDelaySeconds,
+            onSchedule = onSchedule,
+            onCancelSchedule = onCancelSchedule,
+            onAcknowledgeSubmissionUnknown = onAcknowledgeSubmissionUnknown,
+            deletion = deletion,
+            onRequestDeleteMessage = onRequestDeleteMessage,
+            onRequestDeleteThread = onRequestDeleteThread,
+            onUndoDeletion = onUndoDeletion,
+        )
+    }
+}
+
+private fun readyThreadState(
+    body: String = "Synthetic message",
+    bodyTruncated: Boolean = false,
+): ThreadUiState.Ready = ThreadUiState.Ready(
     window = BoundedThreadWindow(
         items = listOf(
             TimelineMessage(
@@ -252,14 +1361,15 @@ private fun readyThreadState(): ThreadUiState.Ready = ThreadUiState.Ready(
                 status = MessageStatus.NONE,
                 subscriptionId = null,
                 senderAddress = null,
-                bodyPreview = "Synthetic message",
-                bodyTruncated = false,
+                bodyPreview = body,
+                bodyTruncated = bodyTruncated,
                 subject = null,
                 attachmentCount = 0,
                 attachmentTypeSummary = "",
                 read = true,
                 seen = true,
                 locked = false,
+                syncFingerprint = MessageSyncFingerprint.fromSha256(ByteArray(32) { 1 }),
             ),
         ),
         olderCursor = null,
@@ -281,6 +1391,42 @@ private fun readyThreadState(): ThreadUiState.Ready = ThreadUiState.Ready(
     loadingOlder = false,
     loadingNewer = false,
 )
+
+private fun completeCoverage() = IndexCoverage(
+    generationId = 1L,
+    state = IndexRunState.COMPLETE,
+    indexedMessageCount = 1L,
+    smsExhausted = true,
+    mmsExhausted = true,
+    pendingChanges = false,
+    generationCommittedCount = 1L,
+    smsCheckpointCommittedCount = 1L,
+)
+
+private fun spamConversationSummary(): ConversationSummary {
+    val address = ParticipantAddress("+12025550199")
+    return ConversationSummary(
+        providerThreadId = ProviderThreadId(99L),
+        latestLocalRowId = 99L,
+        latestProviderMessageId = ProviderMessageId(ProviderKind.SMS, 99L),
+        latestTimestampMillis = 99L,
+        latestSentTimestampMillis = 98L,
+        latestDirection = MessageDirection.INCOMING,
+        latestBox = MessageBox.INBOX,
+        latestStatus = MessageStatus.COMPLETE,
+        latestSubscriptionId = null,
+        latestSenderAddress = address,
+        latestSnippet = "Synthetic warning preview",
+        latestAttachmentCount = 0,
+        latestAttachmentTypeSummary = "",
+        latestRead = false,
+        indexedMessageCount = 1L,
+        indexedUnreadCount = 1L,
+        participants = listOf(address),
+        indexedParticipantCount = 1,
+        participantsTruncated = false,
+    )
+}
 
 private class RejectingAttachmentRepository : MmsAttachmentRepository {
     var readAttempts: Int = 0

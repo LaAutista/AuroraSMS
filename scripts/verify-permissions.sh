@@ -69,21 +69,51 @@ from pathlib import Path
 
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 APP_ID = "org.aurorasms.app"
+BENCHMARK_APP_ID = f"{APP_ID}.benchmark"
 MACRO_ID = "org.aurorasms.macrobenchmark"
-CONTROL_PERMISSION = f"{APP_ID}.permission.BENCHMARK_CONTROL"
+CONTROL_PERMISSION = f"{BENCHMARK_APP_ID}.permission.BENCHMARK_CONTROL"
+FIXTURE_AUTHORITY = f"{BENCHMARK_APP_ID}.fixture"
+DEBUG_SMS_SNAPSHOT_AUTHORITY = f"{APP_ID}.debug.sms_snapshot"
+DEBUG_SMS_SNAPSHOT_PROVIDER = f"{APP_ID}.debug.DebugSmsSnapshotProvider"
 MACRO_DYNAMIC_RECEIVER_PERMISSION = f"{MACRO_ID}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
 
 allowed_permissions = {
     "android.permission.POST_NOTIFICATIONS",
     "android.permission.READ_CONTACTS",
     "android.permission.READ_PHONE_STATE",
+    "android.permission.RECORD_AUDIO",
     "android.permission.READ_SMS",
     "android.permission.RECEIVE_MMS",
     "android.permission.RECEIVE_SMS",
     "android.permission.RECEIVE_WAP_PUSH",
+    "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.SCHEDULE_EXACT_ALARM",
     "android.permission.SEND_SMS",
     "android.permission.VIBRATE",
-    f"{APP_ID}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+}
+benchmark_permissions = {
+    "android.permission.VIBRATE",
+    f"{BENCHMARK_APP_ID}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+}
+benchmark_disabled_components = {
+    ("activity", f"{APP_ID}.compose.ComposeMessageActivity"),
+    ("receiver", f"{APP_ID}.receiver.ScheduledSmsAlarmReceiver"),
+    ("receiver", f"{APP_ID}.receiver.SendDelayAlarmReceiver"),
+    ("receiver", f"{APP_ID}.receiver.PermanentDeletionAlarmReceiver"),
+    ("receiver", f"{APP_ID}.receiver.NotificationReminderAlarmReceiver"),
+    ("receiver", f"{APP_ID}.receiver.ScheduledSmsRecoveryReceiver"),
+    ("service", "org.aurorasms.core.notifications.MessagingNotificationActionService"),
+    ("receiver", "org.aurorasms.core.notifications.InlineReplyReceiver"),
+    ("provider", "org.aurorasms.core.telephony.internal.MmsPduFileProvider"),
+    ("receiver", "org.aurorasms.core.telephony.receiver.SmsDeliverReceiver"),
+    ("receiver", "org.aurorasms.core.telephony.receiver.MmsWapPushReceiver"),
+    ("service", "org.aurorasms.core.telephony.service.RespondViaMessageService"),
+    ("receiver", "org.aurorasms.core.telephony.receiver.SmsSentReceiver"),
+    ("receiver", "org.aurorasms.core.telephony.receiver.SmsDeliveredReceiver"),
+    ("receiver", "org.aurorasms.core.telephony.receiver.MmsSendResultReceiver"),
+    ("receiver", "org.aurorasms.core.telephony.receiver.MmsDownloadResultReceiver"),
+    ("receiver", "org.aurorasms.core.telephony.receiver.DefaultSmsRoleChangedReceiver"),
+    ("receiver", "org.aurorasms.core.telephony.receiver.ExternalProviderChangedReceiver"),
 }
 forbidden_permissions = {
     "android.permission.ACCESS_NETWORK_STATE",
@@ -132,7 +162,8 @@ def require_component(
     permission: str | None = None,
     schemes: set[str] | None = None,
     mime_type: str | None = None,
-) -> None:
+    enabled: bool = True,
+) -> ET.Element:
     candidates: list[tuple[ET.Element, list[ET.Element]]] = []
     for component in application.findall(tag):
         matching_filters = filters_with_action(component, action_name)
@@ -145,6 +176,11 @@ def require_component(
     component, matching_filters = candidates[0]
     if attr(component, "exported") != "true":
         raise AssertionError(f"{action_name} component must be explicitly exported=true")
+    actual_enabled = attr(component, "enabled") != "false"
+    if actual_enabled != enabled:
+        raise AssertionError(
+            f"{action_name} component enabled={actual_enabled}; expected {enabled}"
+        )
     if permission is not None and attr(component, "permission") != permission:
         raise AssertionError(f"{action_name} component must use guard {permission}")
     data = [item for intent_filter in matching_filters for item in intent_filter.findall("data")]
@@ -159,24 +195,41 @@ def require_component(
         actual_mime_types = {attr(item, "mimeType") for item in data if attr(item, "mimeType")}
         if mime_type not in actual_mime_types:
             raise AssertionError(f"{action_name} must declare MIME type {mime_type}")
+    return component
 
 
 def verify_manifest(path: Path) -> None:
     root = ET.parse(path).getroot()
+    is_debug = "debug" in path.parts
     is_benchmark = "benchmark" in path.parts
     has_profile_installer = is_benchmark or "release" in path.parts
+    expected_app_id = BENCHMARK_APP_ID if is_benchmark else APP_ID
+    if root.get("package") is not None and root.get("package") != expected_app_id:
+        raise AssertionError(
+            f"{path}: application ID is {root.get('package')}; expected {expected_app_id}"
+        )
     permissions = {
         attr(item, "name")
         for tag in ("uses-permission", "uses-permission-sdk-23")
         for item in root.findall(tag)
         if attr(item, "name")
     }
-    unexpected = permissions - allowed_permissions
-    if unexpected:
-        raise AssertionError(f"{path}: unexpected permissions: {sorted(unexpected)}")
+    expected_permissions = allowed_permissions | {
+        f"{expected_app_id}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+    }
+    if permissions != expected_permissions and not is_benchmark:
+        raise AssertionError(
+            f"{path}: production permissions changed: "
+            f"{sorted(permissions ^ expected_permissions)}"
+        )
     denied = permissions & forbidden_permissions
     if denied:
         raise AssertionError(f"{path}: forbidden permissions: {sorted(denied)}")
+    if is_benchmark and permissions != benchmark_permissions:
+        raise AssertionError(
+            f"{path}: isolated benchmark permissions changed: "
+            f"{sorted(permissions ^ benchmark_permissions)}"
+        )
 
     telephony_features = [
         feature
@@ -203,7 +256,13 @@ def verify_manifest(path: Path) -> None:
             ".benchmark.BenchmarkFixtureProvider",
             f"{APP_ID}.benchmark.BenchmarkFixtureProvider",
         }
-        or attr(item, "authorities") == f"{APP_ID}.benchmark.fixture"
+        or attr(item, "authorities") == FIXTURE_AUTHORITY
+    ]
+    debug_sms_snapshot_providers = [
+        item
+        for item in application.findall("provider")
+        if attr(item, "name") == DEBUG_SMS_SNAPSHOT_PROVIDER
+        or attr(item, "authorities") == DEBUG_SMS_SNAPSHOT_AUTHORITY
     ]
     startup_providers = [
         item
@@ -226,11 +285,27 @@ def verify_manifest(path: Path) -> None:
         if (
             attr(fixture, "exported") != "true"
             or attr(fixture, "permission") != CONTROL_PERMISSION
-            or attr(fixture, "authorities") != f"{APP_ID}.benchmark.fixture"
+            or attr(fixture, "authorities") != FIXTURE_AUTHORITY
         ):
             raise AssertionError(f"{path}: benchmark fixture provider boundary is invalid")
     elif control_declarations or profileable or fixture_providers:
         raise AssertionError(f"{path}: benchmark control surface leaked into a normal app variant")
+
+    if is_debug:
+        if len(debug_sms_snapshot_providers) != 1:
+            raise AssertionError(
+                f"{path}: debug build must expose exactly one SMS snapshot provider"
+            )
+        snapshot = debug_sms_snapshot_providers[0]
+        if (
+            attr(snapshot, "name") != DEBUG_SMS_SNAPSHOT_PROVIDER
+            or attr(snapshot, "authorities") != DEBUG_SMS_SNAPSHOT_AUTHORITY
+            or attr(snapshot, "exported") != "true"
+            or attr(snapshot, "permission") != "android.permission.DUMP"
+        ):
+            raise AssertionError(f"{path}: debug SMS snapshot provider boundary is invalid")
+    elif debug_sms_snapshot_providers:
+        raise AssertionError(f"{path}: debug SMS snapshot provider leaked into a non-debug build")
 
     if has_profile_installer:
         if len(startup_providers) != 1 or attr(startup_providers[0], "exported") != "false":
@@ -266,19 +341,28 @@ def verify_manifest(path: Path) -> None:
         )
 
     schemes = {"sms", "smsto", "mms", "mmsto"}
-    require_component(application, "activity", "android.intent.action.SENDTO", schemes=schemes)
+    role_components_enabled = not is_benchmark
+    require_component(
+        application,
+        "activity",
+        "android.intent.action.SENDTO",
+        schemes=schemes,
+        enabled=role_components_enabled,
+    )
     require_component(
         application,
         "service",
         "android.intent.action.RESPOND_VIA_MESSAGE",
         permission="android.permission.SEND_RESPOND_VIA_MESSAGE",
         schemes=schemes,
+        enabled=role_components_enabled,
     )
     require_component(
         application,
         "receiver",
         "android.provider.Telephony.SMS_DELIVER",
         permission="android.permission.BROADCAST_SMS",
+        enabled=role_components_enabled,
     )
     require_component(
         application,
@@ -286,7 +370,26 @@ def verify_manifest(path: Path) -> None:
         "android.provider.Telephony.WAP_PUSH_DELIVER",
         permission="android.permission.BROADCAST_WAP_PUSH",
         mime_type="application/vnd.wap.mms-message",
+        enabled=role_components_enabled,
     )
+    require_component(
+        application,
+        "receiver",
+        "android.provider.action.DEFAULT_SMS_PACKAGE_CHANGED",
+        enabled=role_components_enabled,
+    )
+
+    if is_benchmark:
+        for tag, name in benchmark_disabled_components:
+            matches = [
+                component
+                for component in application.findall(tag)
+                if attr(component, "name") == name
+            ]
+            if len(matches) != 1 or attr(matches[0], "enabled") != "false":
+                raise AssertionError(
+                    f"{path}: benchmark component must be present but disabled: {tag} {name}"
+                )
 
     allowed_exported_actions = {
         "android.intent.action.MAIN",
@@ -311,6 +414,8 @@ def verify_manifest(path: Path) -> None:
             if attr(component, "exported") != "true":
                 continue
             if component in fixture_providers:
+                continue
+            if component in debug_sms_snapshot_providers:
                 continue
             actions = {
                 attr(action, "name")
@@ -373,13 +478,16 @@ def verify_macro_manifest(path: Path) -> None:
         for item in queries.findall("provider")
         if attr(item, "authorities")
     }
-    if f"{APP_ID}.benchmark.fixture" not in queried_providers:
+    if FIXTURE_AUTHORITY not in queried_providers:
         raise AssertionError(f"{path}: macrobenchmark fixture query is missing")
     application = root.find("application")
     if application is None or attr(application, "debuggable") != "true":
         raise AssertionError(f"{path}: macrobenchmark test process must be debuggable")
-    if any(attr(item, "authorities") == f"{APP_ID}.benchmark.fixture" for item in application.findall("provider")):
+    if any(attr(item, "authorities") == FIXTURE_AUTHORITY for item in application.findall("provider")):
         raise AssertionError(f"{path}: fixture provider must live only in the target APK")
+    for tag, name in benchmark_disabled_components:
+        if any(attr(item, "name") == name for item in application.findall(tag)):
+            raise AssertionError(f"{path}: production component leaked into test APK: {tag} {name}")
 
 
 for manifest in manifests:
@@ -407,7 +515,9 @@ if aapt2:
             for match in [re.search(r"name='([^']+)'", line)]
             if match
         }
-        expected = allowed_permissions
+        expected = allowed_permissions | {
+            f"{APP_ID}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        }
         if package_name == MACRO_ID:
             expected = {
                 CONTROL_PERMISSION,
@@ -418,12 +528,14 @@ if aapt2:
                 "android.permission.REORDER_TASKS",
                 "android.permission.WRITE_EXTERNAL_STORAGE",
             }
+        elif package_name == BENCHMARK_APP_ID:
+            expected = benchmark_permissions
         elif package_name != APP_ID:
             raise AssertionError(f"{apk}: unexpected APK package {package_name}")
-        unexpected = apk_permissions - expected
+        unexpected = apk_permissions ^ expected
         if unexpected:
             raise AssertionError(f"{apk}: unexpected packaged permissions: {sorted(unexpected)}")
-        if package_name == APP_ID and apk_permissions & forbidden_permissions:
+        if package_name in {APP_ID, BENCHMARK_APP_ID} and apk_permissions & forbidden_permissions:
             raise AssertionError(f"{apk}: packaged a forbidden permission")
         print(f"Packaged permission ledger passed: {apk}")
 PY

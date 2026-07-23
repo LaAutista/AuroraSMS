@@ -188,6 +188,52 @@ data class IncomingSmsRecord(
     }
 }
 
+data class IncomingSmsNotificationReplayRequest(
+    val limit: Int,
+) {
+    init {
+        require(limit in 1..MAXIMUM_LIMIT) {
+            "Incoming SMS notification replay limit must be in 1..$MAXIMUM_LIMIT"
+        }
+    }
+
+    companion object {
+        const val MAXIMUM_LIMIT: Int = 64
+    }
+}
+
+/**
+ * Provider-backed content for one durable incoming-notification retry.
+ *
+ * The delivery fingerprint and provider identifiers are sufficient to pass
+ * this item back to [SmsProviderDataSource.markIncomingHandled] only after the
+ * notification has been posted successfully.
+ */
+data class IncomingSmsNotificationReplay(
+    val deliveryFingerprint: MessageDeliveryFingerprint,
+    val providerId: ProviderMessageId,
+    val conversationId: ConversationId,
+    val sender: ParticipantAddress,
+    val body: String,
+    val receivedTimestampMillis: Long,
+    val sentTimestampMillis: Long,
+    val subscriptionId: AuroraSubscriptionId?,
+) {
+    init {
+        require(providerId.kind == org.aurorasms.core.model.ProviderKind.SMS) {
+            "Incoming SMS notification replays need an SMS provider ID"
+        }
+        require(body.length <= IncomingSmsRecord.MAX_SMS_BODY_CHARACTERS) {
+            "Incoming SMS notification replay body exceeds the bounded provider projection"
+        }
+        require(receivedTimestampMillis >= 0L && sentTimestampMillis >= 0L) {
+            "Incoming SMS notification replay timestamps cannot be negative"
+        }
+    }
+
+    override fun toString(): String = "IncomingSmsNotificationReplay(REDACTED)"
+}
+
 data class OutgoingSmsRecord(
     val recipient: ParticipantAddress,
     val body: String,
@@ -205,8 +251,42 @@ data class OutgoingSmsRecord(
 
 enum class SmsProviderStatus {
     COMPLETE,
+    DELIVERY_FAILED,
     FAILED,
     PENDING,
+}
+
+/** Exact disposition of an app-owned pre-submission outgoing SMS row. */
+enum class OutgoingSmsRollbackOutcome {
+    /** The exact staged, armed, or already-terminal app-owned row is terminal. */
+    TERMINALIZED,
+
+    /** No provider row currently exists at the exact provider URI. */
+    ROW_ABSENT,
+
+    /** A row exists, but its ownership, conversation, or submission state differs. */
+    OWNERSHIP_CONFLICT,
+}
+
+/** Exact disposition of a terminal status update for one app-owned outgoing row. */
+enum class OutgoingSmsStatusUpdateOutcome {
+    /** The requested status was written or an equal/stronger status was already present. */
+    APPLIED,
+
+    /** No provider row currently exists at the exact provider URI. */
+    ROW_ABSENT,
+
+    /** The row is foreign, belongs to another conversation, or is not an owned SMS state. */
+    OWNERSHIP_CONFLICT,
+}
+
+/** Result of a generation-fenced incoming-SMS read transition. */
+enum class ConversationReadThroughOutcome {
+    /** Every matching incoming row through the source generation is read and seen. */
+    APPLIED_OR_ALREADY_READ,
+
+    /** The exact source row is absent, no longer incoming, or belongs to another thread. */
+    SOURCE_ABSENT_OR_MISMATCH,
 }
 
 interface SmsProviderDataSource {
@@ -214,7 +294,18 @@ interface SmsProviderDataSource {
 
     suspend fun readPage(request: ProviderPageRequest): ProviderAccessResult<ProviderPage<SmsProviderMessage>>
 
+    /** Reads one exact provider identity for guarded local mutations. */
+    suspend fun readExact(
+        id: ProviderMessageId,
+    ): ProviderAccessResult<SmsProviderMessage?> =
+        ProviderAccessResult.Unsupported("read exact SMS")
+
     suspend fun insertIncoming(message: IncomingSmsRecord): ProviderAccessResult<ProviderStoredMessage>
+
+    suspend fun readPendingIncomingNotifications(
+        request: IncomingSmsNotificationReplayRequest,
+    ): ProviderAccessResult<List<IncomingSmsNotificationReplay>> =
+        ProviderAccessResult.Unsupported("recover pending incoming SMS notifications")
 
     suspend fun markIncomingHandled(
         deliveryFingerprint: MessageDeliveryFingerprint,
@@ -222,8 +313,54 @@ interface SmsProviderDataSource {
         conversationId: ConversationId,
     ): ProviderAccessResult<Unit>
 
+    /**
+     * Marks only incoming SMS rows in [conversationId] no newer than [throughMessageId].
+     * Implementations must validate the exact source row before mutation.
+     */
+    suspend fun markConversationReadThrough(
+        conversationId: ConversationId,
+        throughMessageId: ProviderMessageId,
+    ): ProviderAccessResult<ConversationReadThroughOutcome> =
+        ProviderAccessResult.Unsupported("mark SMS conversation read")
+
+    /**
+     * Inserts an outgoing row in a canonical known-unsent failed state.
+     *
+     * The exact returned row must be durably checkpointed by the caller before
+     * [armOutgoing] can make it eligible for an irreversible platform send.
+     */
     suspend fun insertOutgoing(message: OutgoingSmsRecord): ProviderAccessResult<ProviderStoredMessage>
 
+    /**
+     * Conditionally moves one exact app-owned outgoing row from known-unsent
+     * failed state to pending. This is deliberately one-shot: an already-pending
+     * or otherwise changed row is not accepted as success.
+     */
+    suspend fun armOutgoing(id: ProviderMessageId): ProviderAccessResult<Unit> =
+        ProviderAccessResult.Unsupported("arm outgoing SMS")
+
+    /**
+     * Conditionally terminalizes one exact app-created staged or armed row.
+     * Foreign, recycled, or otherwise changed rows must fail closed.
+     */
+    suspend fun rollbackOutgoing(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+    ): ProviderAccessResult<OutgoingSmsRollbackOutcome> =
+        ProviderAccessResult.Unsupported("rollback outgoing SMS")
+
+    /**
+     * Monotonically updates one exact app-created outgoing row only while both
+     * its provider identity and provider conversation still match.
+     */
+    suspend fun updateOutgoingStatus(
+        id: ProviderMessageId,
+        conversationId: ConversationId,
+        status: SmsProviderStatus,
+    ): ProviderAccessResult<OutgoingSmsStatusUpdateOutcome> =
+        ProviderAccessResult.Unsupported("update exact outgoing SMS status")
+
+    /** Legacy unfenced update retained for non-owner compatibility. */
     suspend fun updateStatus(
         id: ProviderMessageId,
         status: SmsProviderStatus,

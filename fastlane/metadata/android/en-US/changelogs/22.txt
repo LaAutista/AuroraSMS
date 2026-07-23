@@ -1,0 +1,3 @@
+Phase 7 N1 adds Inbox New chat and a shared review-only external-compose surface. Bounded recipients and edited body text save as one local participant-set draft. Opening an external request alone never saves its supplied text, and an unedited external prefill cannot replace a saved draft.
+
+Send remains disabled. This slice has no contact picker, provider-thread creation or write, or first-contact SMS/MMS transport. AuroraSMS remains pre-release.

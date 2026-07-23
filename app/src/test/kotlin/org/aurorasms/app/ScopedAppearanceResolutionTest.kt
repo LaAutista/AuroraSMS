@@ -6,6 +6,7 @@ import org.aurorasms.app.appearance.AppAppearanceOverride
 import org.aurorasms.app.appearance.AppAppearanceProfile
 import org.aurorasms.app.appearance.AppAppearanceState
 import org.aurorasms.app.appearance.profileFor
+import org.aurorasms.app.message.MessageSignatureConversationKey
 import org.aurorasms.core.designsystem.AuroraMaterialProfile
 import org.aurorasms.core.designsystem.AuroraPalette
 import org.aurorasms.core.index.IndexCoverage
@@ -158,6 +159,42 @@ class ScopedAppearanceResolutionTest {
     }
 
     @Test
+    fun signatureKeyRequiresCompleteIdentityAndCanonicalizesParticipantOrder() {
+        val providerThreadId = ProviderThreadId(41L)
+        val firstParticipant = ParticipantAddress("+15550000001")
+        val secondParticipant = ParticipantAddress("+15550000002")
+        val ready = readyState(
+            summary(providerThreadId, listOf(firstParticipant, secondParticipant)),
+            identityFor(providerThreadId, listOf(firstParticipant, secondParticipant)),
+        )
+
+        val trusted = trustedMessageSignatureConversationKey(providerThreadId, ready)
+        assertNotNull(trusted)
+        assertEquals(
+            trusted,
+            MessageSignatureConversationKey.fromParticipants(
+                listOf(secondParticipant, firstParticipant),
+            ),
+        )
+        assertFalse(checkNotNull(trusted).toString().contains(firstParticipant.value))
+        assertNull(
+            trustedMessageSignatureConversationKey(
+                providerThreadId,
+                ready.copy(coverage = ready.coverage.copy(pendingChanges = true)),
+            ),
+        )
+        assertNull(
+            trustedMessageSignatureConversationKey(
+                providerThreadId,
+                ready.copy(
+                    verifiedConversationIdentity = null,
+                    verifiedConversationIdentityResolved = false,
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun openConversationEditorClearsOnlyAfterCompletedTargetChangeOrLoss() {
         val original = "conversation:original"
         val providerThreadId = ProviderThreadId(41L)
@@ -299,6 +336,8 @@ class ScopedAppearanceResolutionTest {
             smsExhausted = true,
             mmsExhausted = true,
             pendingChanges = false,
+            generationCommittedCount = 1L,
+            smsCheckpointCommittedCount = 1L,
         )
     }
 }

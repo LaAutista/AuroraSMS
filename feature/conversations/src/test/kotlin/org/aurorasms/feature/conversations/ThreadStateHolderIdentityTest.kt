@@ -300,6 +300,8 @@ private val TEST_COVERAGE = IndexCoverage(
     smsExhausted = true,
     mmsExhausted = true,
     pendingChanges = false,
+    generationCommittedCount = 1L,
+    smsCheckpointCommittedCount = 1L,
 )
 private val THREAD_ID = ProviderThreadId(7L)
 private val MESSAGE_ID = ProviderMessageId(ProviderKind.SMS, 1L)

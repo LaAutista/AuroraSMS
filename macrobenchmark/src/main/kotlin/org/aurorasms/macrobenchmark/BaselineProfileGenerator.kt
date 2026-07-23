@@ -17,8 +17,8 @@ class BaselineProfileGenerator {
     val baselineProfileRule = BaselineProfileRule()
 
     @Before
-    fun verifyOwnerGrantedEligibility() {
-        FixtureController.requireMessagingEligibility()
+    fun verifySyntheticIsolation() {
+        FixtureController.requireSyntheticIsolation()
     }
 
     @Test

@@ -123,3 +123,25 @@ MMS encoding or decoding. It must not be converted into SMS sends.
 
 Consequently, the Phase 1 foundation cannot claim end-to-end MMS support until
 both the codec gate and the required physical-device/carrier evidence pass.
+
+## Phase 6F narrow amendment
+
+ADR 0021 partially satisfies the follow-up source/provenance and synthetic
+composition gates for exactly one outgoing one-person voice-memo `SendReq`.
+That later decision pins and notices the selected official-AOSP source, fixes
+the SMIL/text/audio shape and bounds, and adds golden/corpus, provider,
+journal, callback, UI, permission, and API 26/API 36 recording evidence.
+
+This does not amend the incoming-decoder, group/general-composer, arbitrary
+attachment, or physical carrier/OEM requirements above. `CODEC_UNAVAILABLE`
+remains correct for every high-level payload outside ADR 0021, and AuroraSMS
+still cannot claim general end-to-end MMS until those remaining gates pass.
+
+## Phase 7D incoming-codec amendment
+
+ADR 0024 satisfies the exact source/provenance, bounded notification/retrieved-
+message decode, and initial malformed/mutation-corpus gates. It does not yet
+open provider persistence, download ownership, acknowledgement, incoming
+notification, outgoing general/group composition, or carrier acceptance.
+`CODEC_UNAVAILABLE` remains correct at those integration boundaries until their
+durable state machines and API 26/API 36 evidence are complete.

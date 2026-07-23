@@ -4,6 +4,7 @@ package org.aurorasms.core.notifications
 
 import org.aurorasms.core.model.ConversationId
 import org.aurorasms.core.model.MessageId
+import org.aurorasms.core.model.ProviderKind
 
 /**
  * One bounded notification update. [senderPersonKey] must be an opaque,
@@ -60,13 +61,72 @@ interface MessageNotifier {
         config: NotificationConfig,
     ): NotificationPostResult
 
-    fun notifyInlineReplyFailure(conversationId: ConversationId): NotificationPostResult
+    /**
+     * Re-alerts the exact still-current incoming generation without exposing
+     * sender, address, message text, or attachment metadata.
+     */
+    fun notifyUnreadReminder(
+        conversationId: ConversationId,
+        expectedMessageId: MessageId,
+    ): NotificationPostResult = NotificationPostResult.NotificationsDisabled
 
-    fun cancelConversation(conversationId: ConversationId)
+    fun notifyInlineReplyFailure(key: InlineReplyFailureKey): NotificationPostResult
+
+    fun cancelIncomingConversation(
+        conversationId: ConversationId,
+        expectedMessageId: MessageId,
+    ): NotificationCancelResult
+
+    /** Cancels every active incoming slot only after validating its exact source generation. */
+    fun cancelAllIncoming(): NotificationCancelResult
+
+    /** Removes only pre-operation-key reply alerts left by an older app build. */
+    fun cancelLegacyInlineReplyFailures(): NotificationCancelResult
+
+    /** Cancels only the alert owned by this exact reply operation. */
+    fun cancelInlineReplyFailure(key: InlineReplyFailureKey): NotificationCancelResult
+}
+
+/**
+ * Exact identity for a generic, body-free inline-reply failure alert.
+ *
+ * The conversation remains the cold-route destination while the operation ID
+ * prevents a late positive callback from cancelling another reply's alert.
+ */
+data class InlineReplyFailureKey(
+    val conversationId: ConversationId,
+    val operationId: MessageId,
+) {
+    init {
+        // Pre-boundary durable reply operations used the same namespace with a
+        // lower numeric value, so kind is the migration-safe ownership check.
+        require(operationId.kind == ProviderKind.PENDING_OPERATION) {
+            "Inline-reply failure operations must use the pending-operation namespace"
+        }
+    }
+}
+
+/**
+ * Result of an exact, idempotent notification cancellation.
+ *
+ * A missing notification or one already replaced by another identity is a
+ * safe, terminal no-op. A retryable failure means the notification manager
+ * could not establish or apply that result, so the caller must retain durable
+ * ownership.
+ */
+sealed interface NotificationCancelResult {
+    data object Cancelled : NotificationCancelResult
+
+    data object AlreadyAbsentOrReplaced : NotificationCancelResult
+
+    data object RetryableFailure : NotificationCancelResult
 }
 
 sealed interface NotificationPostResult {
     data class Posted(val notificationId: Int) : NotificationPostResult
+
+    /** A newer notification already owns this conversation's visible slot. */
+    data object SupersededByNewer : NotificationPostResult
 
     data object NotificationsDisabled : NotificationPostResult
 
@@ -76,6 +136,7 @@ sealed interface NotificationPostResult {
         CONTENT_INTENT_NOT_EXPLICIT,
         CONTENT_INTENT_OUTSIDE_APPLICATION,
         PERMISSION_DENIED,
+        GENERATION_STATE_UNAVAILABLE,
     }
 }
 

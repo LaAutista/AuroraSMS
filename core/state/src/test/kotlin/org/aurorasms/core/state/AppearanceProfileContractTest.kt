@@ -16,7 +16,8 @@ class AppearanceProfileContractTest {
 
         assertEquals(CURRENT_APPEARANCE_PROFILE_SCHEMA, values.schemaVersion)
         assertEquals(AppearancePalette.AURORA_DARK, values.palette)
-        assertEquals(174, values.hueDegrees)
+        assertEquals(CANONICAL_APPEARANCE_HUE_DEGREES, values.hueDegrees)
+        assertEquals(273, values.hueDegrees)
         assertEquals(AppearanceRowDensity.COMFORTABLE, values.rowDensity)
         assertEquals(AppearanceAvatarMask.CIRCLE, values.avatarMask)
         assertEquals(AppearanceNavigationStyle.CLASSIC, values.navigationStyle)

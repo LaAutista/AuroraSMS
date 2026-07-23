@@ -14,6 +14,7 @@ import org.aurorasms.core.model.ProviderKind
 import org.aurorasms.core.model.ProviderMessageId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.notifications.IncomingMessageNotification
+import org.aurorasms.core.telephony.DecodedIncomingMmsPart
 import org.aurorasms.core.telephony.DecodedIncomingMmsRecord
 import org.aurorasms.core.telephony.IncomingSmsRecord
 import org.aurorasms.core.telephony.MmsProviderMessage
@@ -76,12 +77,31 @@ object SyntheticMessages {
     )
 
     fun decodedIncomingMmsRecord(): DecodedIncomingMmsRecord = DecodedIncomingMmsRecord(
+        operationId = pendingOperationId,
+        sender = SyntheticPeople.NOVA.address,
         participants = listOf(SyntheticPeople.NOVA.address, SyntheticPeople.MILO.address),
+        to = listOf(SyntheticPeople.MILO.address),
+        cc = emptyList(),
         subject = "Observatory checklist",
         text = SECOND_BODY,
         sentTimestampMillis = FIXED_TIMESTAMP_MILLIS - 1_000,
         receivedTimestampMillis = FIXED_TIMESTAMP_MILLIS,
         subscriptionId = subscriptionId,
+        notificationTransactionId = "synthetic-mms-transaction",
+        messageId = "synthetic-mms-message",
+        parts = listOf(
+            DecodedIncomingMmsPart(
+                contentType = "text/plain",
+                charsetMibEnum = 106,
+                name = "text.txt",
+                filename = "text.txt",
+                contentLocation = "text.txt",
+                contentId = "<text>",
+                contentDisposition = "inline",
+                decodedText = SECOND_BODY,
+                bytes = SECOND_BODY.encodeToByteArray(),
+            ),
+        ),
     )
 
     fun mmsProviderMessage(): MmsProviderMessage = MmsProviderMessage(

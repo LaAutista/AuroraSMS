@@ -26,8 +26,9 @@ The following inputs may inform original AuroraSMS work:
 1. The AuroraSMS engineering blueprint, reference manifest, private handling
    notice, interactive AuroraMaterial concept, and supplied artwork in the
    local handoff pack.
-2. The nineteen private screenshot files as black-box evidence of visible
-   structure and user expectations only.
+2. The eighteen currently present private screenshot files, plus the retained
+   fingerprint of one manifest-recorded screenshot that is no longer present,
+   as black-box evidence of visible structure and user expectations only.
 3. Product decisions and black-box behavior observations supplied by the
    owner.
 4. Official Android, AndroidX, Kotlin, Gradle, SQLite, and Material
@@ -40,6 +41,13 @@ The following inputs may inform original AuroraSMS work:
    in AOSP or has a compatible license.
 6. Original code, schemas, strings, icons, test data, and documentation written
    specifically for AuroraSMS.
+
+The owner-selected public launcher derivative is an allowed first-party asset
+only when its provenance is recorded in `docs/ARTWORK_CATALOG.md` and it is
+offered under GPL-3.0-or-later. Its canonical visual direction retains the SMS
+bubble and exactly two simple purple hairpins and permits no `A`, monogram,
+letter, or distribution-logo marks. This exception does not admit the private
+source artwork or high-resolution working masters into Git or APKs.
 
 ## Prohibited inputs and actions
 
@@ -121,9 +129,10 @@ reviewable checks:
 3. Fail if private reference paths, private screenshot filenames, or the
    illustrated private PDF are tracked by Git.
 4. Hash repository files and APK/archive entries, then fail on any exact known
-   private screenshot/PDF fingerprint even if it was renamed. Store only the
-   SHA-256 denylist in clean-room configuration, never the private bytes or
-   extracted personal metadata.
+   private screenshot, PDF, source-artwork, or high-resolution working-master
+   fingerprint even if it was renamed. Store only the SHA-256 denylist in
+   clean-room configuration, never the private bytes or extracted personal
+   metadata.
 5. Fail if an `org.fossify` dependency appears in Gradle resolution output.
 6. Fail if an unapproved repository, dynamic version, changing artifact, or
    undeclared dependency appears.

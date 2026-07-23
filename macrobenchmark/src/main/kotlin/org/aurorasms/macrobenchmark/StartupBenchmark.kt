@@ -28,7 +28,11 @@ class StartupBenchmark {
     private fun measure(compilationMode: CompilationMode) {
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
-            metrics = listOf(StartupTimingMetric()),
+            metrics = if (fullPerformanceEvidence()) {
+                listOf(StartupTimingMetric())
+            } else {
+                rendererIndependentReachabilityMetrics()
+            },
             compilationMode = compilationMode,
             startupMode = StartupMode.WARM,
             iterations = measurementIterations(),
@@ -44,7 +48,7 @@ class StartupBenchmark {
         @JvmStatic
         @BeforeClass
         fun seedInboxOnce() {
-            FixtureController.requireMessagingEligibility()
+            FixtureController.requireSyntheticIsolation()
             FixtureController.seed(FixtureShape.INBOX_20K)
         }
     }

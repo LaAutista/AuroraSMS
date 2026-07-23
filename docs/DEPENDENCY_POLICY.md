@@ -6,7 +6,8 @@ active-profile/Theme Studio slice reuse the admitted graph; the scoped
 profile-reference foundation reused the same graph and passed its resolved,
 license/SBOM, manifest, and packaged-output checks; ADR 0007 accepts a
 platform-only managed static Thread-wallpaper implementation without a new
-coordinate, 2026-07-14
+coordinate; ADR 0021 admits a pinned official-AOSP outgoing MMS composer source
+subset without an external coordinate, 2026-07-19
 
 AuroraSMS prefers small original implementations and Android platform APIs.
 Dependencies are admitted only when they provide a necessary, maintained,
@@ -323,11 +324,41 @@ Navigation Compose, DataStore, icon packs, fonts, and remote theme/media SDKs
 remain unapproved. Artwork remains outside dependency policy and behind the
 separate rights gate in `docs/ARTWORK_CATALOG.md`.
 
+## Phase 6F and Phase 7D official-AOSP MMS source admission
+
+ADR 0021 admits no Maven coordinate, repository, transitive artifact, native
+binary, initializer, component, service, or network client. It vendors twelve
+Apache-2.0 Java files from the official AOSP
+`platform/frameworks/opt/mms` repository at immutable revision
+`4bfcd8501f09763c10255442c2b48fad0c796baa`. The exact upstream/local paths,
+retained notices, modifications, and full license are recorded in
+`third_party/aosp-mms/` and `THIRD_PARTY_NOTICES.md`.
+
+ADR 0024 adds twelve parser-closure files from that same immutable revision, for
+twenty-four noticed source files total. Only the `SendReq` composer and the PDU
+model/parser closure needed to validate notification and retrieved messages are
+compiled. APN/network code, transaction services, upstream persistence, UI,
+and end-user messaging-app source remain excluded. ADR 0026 reuses the same
+compiled `SendReq`/`PduComposer` closure for an original bounded direct/group
+wrapper; it adds no source file, Maven coordinate, network client, or upstream
+provider implementation. `RECORD_AUDIO` is an app permission owned by the
+voice-memo feature and ledger, not a contribution from the vendored code.
+Carrier MMS uses Android's existing `SmsManager` path and does not add general
+application Internet access.
+
+This source admission must be updated or removed as one unit. Any upstream
+revision change, added AOSP file, admitted PDU type, MIME policy, recipient
+shape, limit, or general composer reopens provenance, license, malformed-input,
+size, provider, and carrier review. Removal means disabling the high-level
+voice-memo payload and incoming decode boundary and returning to
+`CODEC_UNAVAILABLE`; existing SMS and stored-MMS metadata handling remains
+intact.
+
 ## Deferred and decision-gated dependencies
 
 | Capability | Earliest phase | Decision gate |
 |---|---:|---|
-| MMS PDU compose/parse | 1 | Write an ADR comparing an original implementation, official Android platform/framework PDU material that is not sourced from an end-user messaging app, and a maintained permissive library; audit provenance, license, network/APN assumptions, and transitive graph |
+| Additional MMS PDU types or composer media | Later MMS slice | ADRs 0021, 0024, and 0026 admit only their exact voice-memo, incoming notification/retrieve, and general direct/group shapes; every other PDU or user-facing media type requires a new audit |
 | Phone-number normalization | 1 | Prefer platform APIs; approve libphonenumber only if measured correctness needs justify its size |
 | Room | 2 | Approved only as recorded above for separate index/state databases, FTS4, schema export, and explicit migrations |
 | Paging 3 | 2-3 | Confirm bounded keyset/anchor behavior and no deep OFFSET fallback |
@@ -337,8 +368,9 @@ separate rights gate in `docs/ARTWORK_CATALOG.md`.
 | Biometric | Later privacy phase | App-lock semantics and fallback wording |
 | SQLCipher | Post-V1 experiment | Startup/FTS/migration/size benchmarks on low- and mid-range devices |
 
-No MMS PDU, image, GIF, Room, Paging, WorkManager, biometric, or SQLCipher
-dependency is approved at the Phase 0 gate.
+No general MMS PDU dependency, image/GIF library, Paging, WorkManager,
+biometric, or SQLCipher dependency is approved. Room/KSP and the narrow
+official-AOSP source subset are approved only by their exact later records.
 
 ## License policy
 

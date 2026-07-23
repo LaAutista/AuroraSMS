@@ -18,10 +18,109 @@ implementation now includes crash-safe managed-store and quota hardening at
 source commit `f0f1ff9`. Focused host, API 26/API 36 emulator, physical Pixel 8
 filesystem, complete API 36 connected, release/governance, license/SBOM, and
 exact Pixel APK handoff gates passed. The physical managed-store test was
-non-UI filesystem coverage only. The manual Photo Picker/static-wallpaper UI
-journey, broader process-death UX, accessibility/form-factor/performance,
-carrier, and compound implementation-complete rows remain outstanding; the app
-is not complete or gold.
+non-UI filesystem coverage only. A later owner-gated Pixel 8/API 36 smoke now
+partially covers the real global-thread Appearance editor and platform Photo
+Picker with synthetic media through editor Cancel, wallpaper Back, Apply, and
+Reset. Synthetic API 36 acceptance at
+`b9350be354991e36039e8136095bc25ebd520d60` now covers verified-conversation
+root pixels, focal/dim Apply, Activity recreation, reset and identity fallback,
+stale-pixel clearing, and independent Room close/reopen/reset durability. An
+exact gated API 36 AOSP Photo Picker cancellation journey using the
+accessibility global Back action at
+`826a20dbc3e965da8f269dde1351cf4d76d28f6c` also passes twice. A separately
+gated API 26 AOSP DocumentsUI no-selection accessibility-Back journey at
+`37fd044df3b9b8933839b0f89f7018ec72b8ab1b` independently confirms the
+identical AndroidX SAF contract shape and the production editor's DocumentsUI
+focus, and passes twice with preservation checks. Source commit `dd33737` adds a
+separate API 26 AOSP DocumentsUI selection-lifecycle journey through the real
+`MainActivity` global-thread editor: its exact local document provides
+provider-open and preview evidence while the journey validates the expected
+canonical bounded `content:` URI shape; Cancel, wallpaper Back, and Activity recreation discard
+the transient preview; unavailable-source Apply reopens and rejects without
+mutation; retry creates exactly one managed final and consumes exactly one
+revision; managed load survives later source unavailability; and UI Reset
+restores the empty assignment/file/persisted-grant baseline while that consumed
+revision remains. Source commit
+`65fc6552a877403523e499b457fdf015aaf6f753` adds a third narrow API 26 journey:
+direct pre-Apply conversation-route replacement disposes the transient global
+selection, and a later global stale-Apply conflict preserves the newer managed
+winner while deleting the unreferenced candidate. Source commit
+`12939eea321e8eb6a9a173a82cab2dfd245b64e5` adds a fourth API 26 journey: the
+production notifier posts a fixed synthetic message after a real SAF selection,
+and a real touchscreen expands the AOSP shade and taps its exact SystemUI row so
+the production content `PendingIntent` disposes the editor route in the same
+warm `MainActivity` without durable wallpaper, channel, or notification residue.
+That warm journey left real carrier/provider/receiver/orchestrator message
+origin; provider-backed and
+verified identity; cold/absent-task, background, lockscreen, and process-death
+delivery; raw `PendingIntent` action/extras/flags; API 27+, permission-denial,
+OEM, and physical-shade behavior; reply/group/privacy/alert/new-channel variants;
+raw picker results, temporary URI-grant revocation, readable source-byte/content
+mutation, provider revocation/removal/replacement, cloud/blocking, in-flight
+Apply, nonempty baselines, and any explicit Photo Picker Cancel control remain
+open. A narrow API
+36 emulator host-`am force-stop`
+verified-conversation cold-target-process journey at
+`73b5ffa2827ad2cd96b922ccf4a529b5b052529d` passes twice; `global_thread` cold
+restart, production-launcher/real-provider, broader process-death UX,
+accessibility/form-factor/performance, carrier, and compound
+implementation-complete rows remain outstanding; the app is not complete or
+gold.
+
+Source commit `f41dfd4f0552ed249b2fbda65ec2e3b164842c23` now adds one
+separate production incoming-SMS cold-notification journey on the dedicated
+non-Play API 26 GSM AVD `AuroraSMS_SMSRX_API26`. One emulator-modem PDU reaches
+the protected production `SMS_DELIVER` receiver, Telephony provider,
+`COMPLETE` replay journal, verified conversation, production notifier, exact
+receiver-process death, surviving notification, real AOSP shade tap, and a
+distinct cold `MainActivity` process displaying the provider-backed Thread.
+This closes only that synthetic emulator path; carrier-network, physical/OEM
+shade and lockscreen, API 27+, permission-denial, group/multiple-message,
+inline-reply execution, MMS, nonempty-provider, broader acceptance, and gold
+coverage remain open.
+
+Source commit `ec3e10299953253b1330d9440a07df981ed9a1af` adds a persistent, messaging-eligible
+Inbox/Thread explanation and bounded recovery action for denied API 33+
+notification permission. Its new owned API 36 AOSP journey passed twice: real
+Settings established `USER_SET`, the recovery dialog established final
+`USER_FIXED`, the next action opened exact app-notification Settings, one
+documented emulator-modem SMS was independently captured as a raw PDU by the
+test APK, and production provider/journal/timestamp identity completed with zero
+Aurora SBNs and a cold readable Inbox and Thread. Exact cleanup completed on
+both passes. The unchanged API 26 fixed raw-PDU journey also passed. API 33-35,
+physical/OEM/carrier/lockscreen, group/multiple-message, inline-reply, MMS,
+broader acceptance, and gold coverage remain open.
+
+Source commit `57ec7cf093e24f4792a242f53d6cf13f2d0e1ff0` closes one
+narrow part of the multiple-message gap: two sequential same-sender,
+single-part SMS deliveries update one private conversation notification, which
+survives process death and opens a distinct cold Thread containing the two
+messages in order. Multipart SMS, other-conversation grouping/summary behavior,
+alert counts, API 27+, physical/OEM/carrier/lockscreen, inline reply, MMS,
+broader acceptance, and gold coverage remain open.
+
+Implementation commit `7c9d848` hardens the durable incoming-SMS and
+notification-reply boundaries and closes one narrow denied-reply gap. Its owned
+API 26 AOSP `inline-reply-permission-denied` journey passed twice independently
+from fresh disposable overlays: one real notification-shade RemoteInput reply
+entered a cold, taskless receiver after only `SEND_SMS` was revoked, synchronous
+preflight denied transport before submission, one durable claim and one generic
+body-free failure notification remained, and no outgoing provider row appeared.
+The original conversation notification and reply `PendingIntent` identity
+remained stable; bounded shade/log scans and exact state cleanup passed. This is
+not successful carrier-send, broader API/OEM, physical-device, or complete
+lifecycle evidence. AuroraSMS remains incomplete and not gold.
+
+A follow-on durability slice replaces two implementation residuals with
+fail-safe provider staging and operation-scoped reply-failure notification
+identity under an explicit single-owner model. Focused notification identity
+and cancellation passed 29/29 on each of API 26 and API 36. The final-source
+owner-gated provider contract passed 1/1 on each API, and a fresh disposable API
+26 SystemUI denied-reply journey passed with exact cleanup. The final API 26 and
+API 36 full connected matrices and the complete host/release/privacy/license
+aggregate are also green. Broader carrier, physical/OEM, API 27 through 35,
+MMS, process-death, and release acceptance remain open, so no checklist or
+release gate closes from this slice alone.
 
 ## Evidence rules
 
@@ -54,10 +153,13 @@ is not complete or gold.
 | Low-memory device/emulator | Allocation/decode pressure | Phase 3/4/release |
 | Tablet/foldable/large screen | Adaptive navigation and state parity | Phase 4/release |
 
-The current environment has SDK platforms 36 and 37.0, a physical Google Pixel
-8 (`shiba`) running LineageOS Android 16/API 36, and the synthetic-only
-`AuroraSMS_API36` API 36 AVD. Earlier physical evidence below covers only the
-Pixel/API combination. Phase 3 connected functional/profile-generation
+The historical environment used for the physical evidence in this section had
+SDK platforms 36 and 37.0, a Google Pixel 8 (`shiba`) running LineageOS Android
+16/API 36, and the synthetic-only `AuroraSMS_API26` API 26 and
+`AuroraSMS_API36` API 36 AVDs. That statement is not a claim that the Pixel was
+attached for later phases. Earlier physical evidence below covers only that
+Pixel/API combination. Phase 3 connected
+functional/profile-generation
 evidence used the AVD; its timings are not representative performance
 evidence. In a later owner-approved window, the exact Phase 3 debug APK was
 installed in place and exercised against the real provider using only redacted
@@ -69,9 +171,11 @@ required API and OEM rows stay pending.
 
 - [x] Independent `main` repository initialized with zero inherited commits.
 - [x] Private handoff ignored and absent from tracked paths.
-- [x] All 34 supplied SHA-256 entries verified.
-- [x] Full blueprint, HTML concept, 66-page PDF, nineteen screenshot files, and
-  nine artwork files reviewed under the private-reference policy.
+- [x] All 34 originally supplied SHA-256 entries verified at the Phase 0 gate.
+- [x] Full blueprint, HTML concept, 66-page PDF, nineteen originally supplied
+  screenshot files, and nine original artwork files reviewed under the
+  private-reference policy. One screenshot is no longer locally present; its
+  historical fingerprint remains protected by the clean-room denylist.
 - [x] Clean-room allowed/prohibited input charter created.
 - [x] Product identity, scope, architecture, and non-negotiable behavior
   documented.
@@ -184,8 +288,8 @@ For API 26-28 and API 29+ paths as applicable:
 
 ### Manifest component contracts
 
-- [ ] `SENDTO` activity resolves `sms`, `smsto`, `mms`, and `mmsto`.
-- [ ] External compose input never auto-sends.
+- [x] `SENDTO` activity resolves `sms`, `smsto`, `mms`, and `mmsto`.
+- [x] External compose input never auto-sends.
 - [ ] Respond-via-message service has all four schemes and the official guard.
 - [ ] SMS delivery receiver has the official action and `BROADCAST_SMS` guard.
 - [ ] MMS delivery receiver has the official action, MIME type, and
@@ -214,6 +318,25 @@ Run on a telephony-capable device after explicit test-recipient approval.
 - [ ] External provider modification schedules bounded reconciliation.
 - [ ] Provider failure/storage-full produces an actionable state and no false
   success notification.
+
+The current-candidate physical read gate uses
+`docs/PHYSICAL_PROVIDER_COMPLETION_PROTOCOL.md` and
+`scripts/run-physical-provider-completion-smoke.sh`. The runner cannot assign
+the SMS role, grant a permission, install an APK, read provider rows through
+ADB, capture a screen/log, write the provider, or submit carrier traffic. It
+requires an owner-selected AuroraSMS role, a continuously alive/foreground app,
+and fixed aggregate-only database queries, then accepts only a nonempty verified
+generation whose SMS/MMS checkpoints, index, conversation summaries, unread
+totals, and FTS count reconcile for three identical polls after a proven cold-
+start refresh. Its parser has an offline governed self-test; physical execution
+and private owner UI confirmation remain open.
+
+Host coverage separately proves that clean process recovery resumes the exact
+durable cursor of a paused first-history generation, while `ROLE_CHANGED`
+starts a new full scan from either paused or complete history. Completion also
+requires exact equality between each source's eligible provider count and its
+committed projections; clean startup without a role transition retains the
+bounded head/count reconciliation path.
 
 ### One-to-one SMS
 
@@ -276,12 +399,44 @@ Run on a telephony-capable device after explicit test-recipient approval.
 - [ ] Lock-screen visibility respects the selected level.
 - [ ] API 33+ notification denial leaves in-app messaging usable and explains
   missed system alerts.
+  The focused API 36 partial evidence below covers one AOSP denial/recovery and
+  incoming-SMS journey; this row remains unchecked for API 33-35 and the wider
+  device and lifecycle matrix.
 - [ ] Tap opens the exact conversation and restores state.
+  The focused API 26 partial evidence below proves one updated same-conversation
+  SBN survives process death and a real AOSP shade tap opens a distinct cold
+  provider-backed Thread containing exactly two ordered messages. This row
+  remains unchecked for multipart, other-conversation grouping, API 27+, and
+  physical/OEM/carrier/lockscreen coverage.
 - [ ] Inline reply validates role, permission, recipient, SIM, and current
   conversation before sending.
+  The focused API 26 partial evidence below proves the exact durable target,
+  recipient, subscription, current conversation, and synchronous permission-
+  denial path before platform submission. Successful submission, live target/
+  subscription mutation, API 27+, and physical/OEM coverage remain open.
+  The follow-on `FAILED` staging-sentinel -> durable `PREPARED` -> one-shot
+  `PENDING` arm -> durable `SUBMITTING` contract passed its final-source owner-
+  gated real-provider test 1/1 on each of API 26 and API 36 without invoking
+  `SmsManager`, including exact conditional rollback/conflict/idempotence and
+  cleanup. Successful carrier submission and the wider matrix remain open.
 - [ ] Duplicate/expired reply intents do not duplicate sends.
+  The focused journey proves that one verified SystemUI submission creates one
+  durable consumed claim and no outgoing row when permission is denied. It does
+  not exercise a second live tap or an expired live `PendingIntent`, so this row
+  remains unchecked.
 - [ ] Failed reply posts a safe actionable notification without body leakage.
-- [ ] Android Auto metadata/reply verification is completed in Phase 6.
+  The focused API 26 journey proves one generic body-free failure notification,
+  a cold exact-Thread route, and bounded shade/log privacy scans. Broader API,
+  OEM, lockscreen, Android Auto, and carrier-failure coverage remain pending.
+  Operation-scoped failure tags, exact late-success cancellation, legacy-tag
+  cleanup, sibling preservation, platform-manager identity, and crash-
+  idempotent replay passed the focused notification module 29/29 on API 26 and
+  29/29 on API 36. Broader surface and release evidence remain pending.
+- [x] Android Auto metadata, `MessagingStyle`, background Reply/Mark as read
+  semantics, privacy reset, bounded history, and generation fencing pass host
+  plus API 26/API 36 notification contracts.
+- [ ] Android Auto Desktop Head Unit or a physical car surface renders the
+  conversation and completes a voice reply and Mark as read journey.
 
 ## Cross-phase lifecycle and storage pressure
 
@@ -296,6 +451,12 @@ Run on a telephony-capable device after explicit test-recipient approval.
   last committed state without duplicate message, send, delete, or notification.
 - [ ] Process death at each durable operation boundary has a deterministic
   expected state; no feature relies on an Activity-owned singleton.
+  The focused denied-reply journey kills the completed incoming receiver and
+  then starts a distinct cold, taskless reply receiver, but it does not kill the
+  process at every accepted reply-operation checkpoint. Focused tests cover
+  exact success-side cancellation followed by pre-acknowledgement replay, and
+  the final-source disposable API 26 SystemUI rerun passed. The full process-
+  death matrix remains open.
 
 ## Phase 2 index/search matrix
 
@@ -1116,6 +1277,63 @@ journey has not run; this section does not claim complete ADR 0007 acceptance.
   preferences, `SavedState`, logs, or analytics; Aurora takes no persistable
   grant. Pick, preview, Cancel, Back, lost target/source, recreation loss, and
   failed/stale Apply create no durable assignment or managed file.
+- [x] A separately gated API 26 AOSP DocumentsUI no-selection journey proves
+  the identical AndroidX `PickVisualMedia(ImageOnly)` contract resolves as
+  `ACTION_OPEN_DOCUMENT` with `image/*`, independently proves the production
+  editor's Pick action focuses DocumentsUI, and returns through the
+  accessibility global Back action with its exact pre-launch assignment,
+  managed-file-name, and persisted-grant-identity baselines intact. It does not
+  intercept the production outgoing intent, select a document, or close the
+  compound Photo Picker/SAF row above.
+- [x] A second, separately gated API 26 AOSP DocumentsUI journey drives the real
+  `MainActivity` global-thread editor and production contract through one exact
+  local-only test root and read-only PNG. It obtains provider-open and preview
+  evidence and validates the expected canonical `content:` URI shape with
+  non-empty authority and at most 4,096 UTF-8 bytes; discards transient
+  preview while keeping exact assignment/revision/persisted-grant identity and
+  no-follow managed-file ledger unchanged across editor Cancel, wallpaper Back,
+  and Activity recreation;
+  reopens and rejects an unavailable source on Apply without allocating a
+  revision; then retries to exactly one managed final and exactly one revision,
+  loads its 40x20 managed raster while the source is unavailable, and UI-Resets
+  the empty assignment/file/grant baseline. Reset does not reclaim the consumed
+  revision. This one synthetic emulator journey does not close the compound
+  Photo Picker/SAF row above.
+- [x] A third, separately gated API 26 AOSP DocumentsUI journey selects the exact
+  synthetic document, then directly delivers the production open-conversation
+  intent to the real `MainActivity` before Apply. The route replacement
+  dismisses both editors; returning to Inbox and reopening the empty-baseline
+  editor leaves Apply disabled, does not reopen the source, and preserves the
+  exact assignment, revision, persisted-grant identity, and no-follow managed
+  file ledger. After a fresh real selection, a controlled production-controller
+  write commits one newer global winner. The stale UI Apply reopens the selected
+  source, surfaces the exact stale-assignment error, preserves that winner and
+  its managed load/revision/file/persisted-grant state, and deletes its own
+  candidate. UI Reset removes only the controlled winner and restores the empty
+  assignment/file/persisted-grant baseline while the one consumed revision
+  remains. A host controller test separately proves the late repository
+  `StaleWrite` call order, second authoritative reference read, and created
+  candidate deletion. This is direct pre-Apply `onNewIntent` route-disposal and
+  one global assignment-CAS conflict only: it does not prove an end-to-end
+  notification/PendingIntent launch, in-flight Apply cancellation, verified-
+  conversation identity loss, or temporary URI-grant cleanup, and it does not
+  close the compound Photo Picker/SAF row above.
+- [x] A fourth, separately gated API 26 AOSP journey stages the exact synthetic
+  local PNG through the real `MainActivity`/DocumentsUI/AndroidX SAF path without
+  Apply, posts one fixed synthetic `IncomingMessageNotification` through the
+  production notifier, fingerprints its exact active system notification and
+  Aurora activity content `PendingIntent`, opens the real notification shade by
+  touchscreen swipe, and taps the exact controlled SystemUI row/body. The same
+  warm `MainActivity` consumes the exact synthetic Thread ID/action and dismisses
+  both editors without reopening the source. Assignment, revision, no-follow
+  managed-file ledger, persisted-grant, active-notification, and complete post-
+  bootstrap channel baselines, including each channel's DND-bypass setting,
+  remain exact; reopening shows disabled Apply, no load/error, and no staged
+  selection. This does not originate from a real
+  incoming carrier/provider/receiver/orchestrator message, prove a provider-
+  backed or verified conversation, cover cold/background/lockscreen/process-
+  death or API 27+/OEM/physical behavior, or close the compound Photo Picker/SAF
+  row above or any real incoming-SMS row.
 - [x] Import authoritatively accepts only 8-bit Huffman baseline sequential-DCT
   (`SOF0`) JPEG with at most four components and complete scan coverage, or
   CRC-valid non-APNG PNG with at most 4,096 chunks, no
@@ -1153,11 +1371,22 @@ journey has not run; this section does not claim complete ADR 0007 acceptance.
   bitmap. Wallpaper work is one-at-a-time, the full cache retains only the
   current <=16-MiB allocation, and the shared MMS/wallpaper full-decode gate
   never exceeds two.
+- [x] An explicitly gated API 36 ranchu/goldfish emulator runner proves one
+  synthetic verified-conversation assignment survives host `am force-stop`
+  after commit and reopens in a fresh target process through the production
+  Room/controller/managed-store path. It observes pending-file removal,
+  revalidates the referenced final, renders expected dimmed pixels through the
+  real root Thread surface in a debug-only synthetic-services host, and restores
+  the post-reconciliation managed-file-name and grant-count baselines. This row
+  does not cover `global_thread`, production-launcher/real-provider rendering,
+  UI Apply/Reset, picker/SAF/source loss, physical/OEM/performance, or in-flight
+  process death.
 - [ ] Focal/dim live preview, revision-checked Apply/reset, configuration/reopen
   persistence, 200% font/scroll, TalkBack labels/state, RTL, short/tall,
   landscape, and split-screen tests pass without route/state-holder/provider/
   index/composer/draft reconstruction caused by wallpaper actions.
-- [x] Merged manifests and APKs add no storage/media/network permission,
+- [x] Production merged manifests and APKs add no storage/media/network
+  permission,
   persistent-grant component, exported component, initializer, native binary,
   private artwork, or new dependency coordinate. Backup/data-extraction rules
   and `noBackupFilesDir` exclude all state, managed derivatives, previews, and
@@ -1496,6 +1725,882 @@ overall row, manual wallpaper journey, carrier behavior,
 accessibility/form-factor/performance, broader Phase 4 work, and completed/gold
 application all remain unclaimed.
 
+#### ADR 0007 physical global-thread Photo Picker partial evidence — 2026-07-15
+
+Source commit `111381dff31c46380eab969dea20234cba16fe08` passed the explicitly
+gated physical command:
+
+```text
+./scripts/run-physical-wallpaper-picker-smoke.sh --device 192.168.68.55:43069
+```
+
+`MainActivityStaticWallpaperPhysicalSmokeTest`, with
+`auroraPhysicalWallpaperPickerSmoke=true`, passed exactly 1/1 in 7.107s on a
+Pixel 8 running Android 16/API 36. The test opened the real `MainActivity`
+global-thread Appearance editor and platform Photo Picker, created one uniquely
+named synthetic Downloads PNG with a randomized future EXIF timestamp, and
+selected that exact item. Editor Cancel and wallpaper Back independently left
+the verified empty assignment/file baseline unchanged. A third selection still
+left that baseline unchanged before Apply; Apply created exactly one
+`global_thread` assignment and one conforming managed file, and Reset restored
+the empty baseline. The exact synthetic fixture was deleted afterward.
+
+Post-run state contained zero screen-wallpaper rows, zero conversation-wallpaper
+rows, and zero managed files. The instrumentation package was absent, the target
+package and APK were preserved, `org.aurorasms.app` remained the sole SMS-role
+holder, and `READ_SMS`, `SEND_SMS`, `RECEIVE_SMS`, `RECEIVE_MMS`,
+`RECEIVE_WAP_PUSH`, `READ_PHONE_STATE`, and `POST_NOTIFICATIONS` all remained
+granted. The local, installed, and `/sdcard/Download/AuroraSMS-debug.apk` target
+APKs were each 13,993,426 bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+
+This is one synthetic, global-thread, platform-Photo-Picker happy-path smoke. It
+does not prove system-picker cancellation, SAF fallback, conversation rendering,
+restart persistence, focal/dim interaction, accessibility, form-factor or
+performance behavior, carrier behavior, complete picker lifecycle, or a
+complete/gold application. Every existing unchecked ADR 0007 and broader Phase
+4 row therefore remains unchecked.
+
+#### ADR 0007 verified-conversation rendering/recreation partial evidence — 2026-07-15
+
+Source commit `b9350be354991e36039e8136095bc25ebd520d60` adds synthetic API 36
+verified-conversation coverage. `AuroraSmsRootAcceptanceTest` passed 5/5; its
+real-root timeline pixel captures prove conversation-over-global precedence,
+the applied dim amount, equivalent pixels after Activity recreation,
+reset-to-global pixels, and identity-loss fallback without cross-target
+mutation. Editor and repository assertions prove focal/dim values survive Apply
+plus recreation. Wallpaper Apply/reset add no presentation-data loads; Activity
+recreation performs the one expected anchor reload.
+The new `ManagedWallpaperSurfaceTest` case passed 1/1 and proves unavailable
+conversation media falls back to global, target changes recycle/clear prior
+media, and unavailable conversation plus global assignments clear to solid
+without stale pixels. The new real-Room instrumented test passed 1/1 across two
+database close/reopen cycles, proving exact global and conversation assignments
+survive database close and reopen and conversation reset leaves global
+untouched.
+
+The complete API 36 connected matrix passed in 1m15s with 456 Gradle tasks: app
+75 tests with two intentional physical-only skips, benchmark 3 with one
+scale-opt-in skip, index 31, notifications 3, state 43, telephony 15, and
+feature-conversations 4. The complete 886-task offline
+host/release/governance/license gate passed in 15s, and CycloneDX passed in 7s.
+The unchanged debug APK is 13,993,426 bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+
+Activity recreation and real-Room reopen are separate evidence. This does not
+exercise a cold-process root renderer plus managed-file restart, a physical
+verified-conversation journey, SAF/system-picker cancellation, accessibility,
+form-factor or performance behavior, carrier behavior, the complete picker
+lifecycle, or a complete/gold application. No broad compound checkbox changes
+on this evidence alone.
+
+#### ADR 0007 API 36 verified-conversation host-force-stop partial evidence — 2026-07-15
+
+Source commit `73b5ffa2827ad2cd96b922ccf4a529b5b052529d` adds the explicitly
+gated
+`verifiedConversationWallpaperSurvivesHostForceStopAndColdTargetProcessRelaunch`
+method and its preservation-safe runner:
+
+```shell
+./scripts/run-emulator-wallpaper-cold-restart-smoke.sh --device emulator-5554
+```
+
+The runner refuses a physical device and requires API 36 ranchu/goldfish, an
+already-installed target APK exactly matching the local build, and no
+preinstalled test package. It records the target APK identity, SMS-role-holder
+string, and seven permission states, then installs only the instrumentation
+APK. Preflight cleanup runs before the evidence baseline because initializing
+the production container may reconcile pre-existing managed state.
+
+Prepare waits for production state storage, requires the reserved synthetic
+conversation target to be empty, derives the exact expected media identity in
+an isolated cache-backed `ManagedWallpaperStore`, and durably records a
+fail-closed PREPARING recovery journal before production Apply. It then applies
+the deterministic fixture through the production `AppContainer`, Room
+repository, controller, and app-private store; validates the exact assignment,
+managed final, persisted-grant count, and decoded pixels; creates the canonical
+pending fixture; and upgrades the checkpoint with exact media/revision,
+focal/dim, baseline, and process evidence.
+
+The host starts normal `MainActivity` only to create a live prepared target
+process. It first requires that ordinary startup removed the initial pending
+fixture, recreates that same canonical path while the PID remains unchanged,
+then requires `am force-stop` to remove that exact PID. Verification in a fresh
+target process requires a different PID and later process start, the exact Room
+assignment and focal/dim metadata, observable removal of the recreated pending
+file, the exact baseline-plus-referenced-final file-name set, unchanged grant
+count, and a valid production load. The real `AuroraSmsRoot` Thread wallpaper
+surface is hosted by the debug-only test activity with synthetic
+conversation/index/timeline services; its timeline pixels match the persisted
+dimmed color, and the in-memory synthetic wallpaper repository remains empty.
+A further fresh process performs revision-qualified reset, authoritative
+reconciliation, filename/grant-count baseline restoration, checkpoint removal,
+and test-APK uninstall.
+
+The exact committed runner passed independently twice. The host force-stopped
+prepared target PIDs 16995 and 17370; their instrumentation
+prepare/verify/cleanup times were 0.114s/2.773s/0.038s and
+0.122s/2.716s/0.037s, respectively. Every phase reported exactly `OK (1 test)`,
+one zero status, final instrumentation code -1, and no skip/failure/crash. Both
+runs preserved the target APK, SMS-role-holder string, and all seven recorded
+permission states.
+
+The authoritative follow-on connected XML totals are 176 tests, zero failures,
+and five intentional opt-in skips: app 77 with four skipped, benchmark 3 with
+one skipped, index 31, notifications 3, state 43, telephony 15, and
+feature-conversations 4. `connectedDebugAndroidTest` passed 456 Gradle tasks in
+1m17s. The complete 886-task offline host/release/governance/license gate passed
+in 16s, and the 15-task CycloneDX gate passed in 7s. The production debug APK is
+unchanged at 13,993,426 bytes with SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+After the final run, that APK remained installed on `emulator-5554` and was
+copied to `/sdcard/Download/AuroraSMS-debug.apk`; local, installed, and Download
+SHA-256 values matched, and the temporary instrumentation package was absent.
+
+This is only API 36 emulator host-force-stop evidence for one synthetic
+verified-conversation assignment. It is not a production `MainActivity`
+launcher-renderer journey, a real provider-backed SMS conversation, UI
+Apply/Reset, Photo Picker or SAF, source-unavailable/revoked behavior,
+`global_thread`, physical/OEM/performance, or low-memory/background/in-flight
+process-death recovery. Force-stop occurs after import, Room assignment,
+managed-file publication, and checkpoint commit. The renderer runs once after
+one cold restart; cleanup uses another fresh process but does not render again.
+The uniform fixture proves dimmed pixels while focal position is metadata-only;
+managed baselines compare file names rather than baseline bytes, and persisted
+grants compare counts rather than identities. The test provider remains
+installed during verification. No compound picker/SAF, broader process-death,
+physical, or gold-readiness row closes from this evidence.
+
+#### ADR 0007 API 36 Photo Picker accessibility-Back cancellation partial evidence — 2026-07-15
+
+Source commit `826a20dbc3e965da8f269dde1351cf4d76d28f6c` adds the separately gated
+`realGlobalThreadSystemPickerCancellationRestoresEditorAndBaseline` method. The
+API 36 AOSP emulator was prepared with AuroraSMS installed under its normal
+SMS-role precondition; the test does not grant itself a role or permission. Each
+run targeted the exact method and set
+`auroraEmulatorWallpaperPickerCancellation=true`:
+
+```shell
+ANDROID_SERIAL=emulator-5554 ./gradlew :app:connectedDebugAndroidTest \
+  '-Pandroid.testInstrumentationRunnerArguments.class=org.aurorasms.app.appearance.wallpaper.MainActivityStaticWallpaperPhysicalSmokeTest#realGlobalThreadSystemPickerCancellationRestoresEditorAndBaseline' \
+  -Pandroid.testInstrumentationRunnerArguments.auroraEmulatorWallpaperPickerCancellation=true \
+  --offline --no-daemon --no-parallel --console=plain
+```
+
+A valid focused result must report exactly one test with zero failures, errors,
+and skips; `BUILD SUCCESSFUL` alone is not evidence because an unmet API,
+hardware, or explicit-gate assumption can skip the method. Both recorded runs
+met the exact `1/0/0/0` result.
+
+After `StateStorageStatus` reached `Ready`, following the startup reconciliation
+attempt, the journey opened the real `MainActivity` global-thread editor,
+launched the exact MediaProvider Photo Picker, and invoked the accessibility
+global Back action. It created no synthetic picker fixture, inspected no picker
+text or thumbnail, opened no conversation, created no provider message, and
+invoked no carrier action. The wallpaper dialog
+returned with Pick enabled, Apply disabled, and no loading/error state; the exact
+assignment object, app-private managed-file name set, and persisted URI-grant
+count matched the pre-launch baseline. Failure cleanup attempts to dismiss a
+picker still in focus. The hardened exact-method journey passed independently
+twice in 12s and 11s. The physical runner now pins its original physical method,
+keeping both gate outcomes independent.
+
+The follow-on complete API 36 connected matrix passed in 1m19s with 456 Gradle
+tasks: app 76 tests with three intentional gated skips, benchmark 3 with one
+scale-opt-in skip, index 31, notifications 3, state 43, telephony 15, and
+feature-conversations 4. The complete 886-task offline
+host/release/governance/license gate passed in 17s, CycloneDX passed in 7s, and
+the unchanged 13,993,426-byte debug APK retained SHA-256
+`5c4c7255396f6a5676eaf7da3e617a045ecfc9b6e5e3ded7551990eb5f5267d1`.
+
+This is API 36 AOSP Photo Picker accessibility global-Back evidence only. It
+does not prove SAF fallback/cancellation, OEM picker behavior, an explicit Photo
+Picker Cancel control, selected/staged-candidate cancellation, URI
+non-persistence or managed-file byte identity after selection, other assignment
+tables, grant identity, cold-process behavior, or the complete picker lifecycle.
+The compound Photo Picker/SAF row remains unchecked.
+
+#### ADR 0007 API 26 AOSP DocumentsUI SAF accessibility-Back cancellation partial evidence — 2026-07-15
+
+Source commit `37fd044df3b9b8933839b0f89f7018ec72b8ab1b` adds the separately
+gated
+`MainActivityStaticWallpaperSafFallbackSmokeTest` and its exact-method runner:
+
+```shell
+./scripts/run-emulator-wallpaper-saf-cancellation-smoke.sh --device emulator-5556
+```
+
+The runner refuses physical devices and requires the exact API 26
+ranchu/goldfish emulator, an already-installed target APK matching the local
+artifact, and AuroraSMS already holding the default-SMS role. It requires all
+seven listed `READ_SMS`, `SEND_SMS`, `RECEIVE_SMS`, `RECEIVE_MMS`,
+`RECEIVE_WAP_PUSH`, `READ_PHONE_STATE`, and `READ_CONTACTS` permission states
+to be readable and owner-granted `READ_SMS` to be true. A per-device `flock`
+serializes participating runner invocations; point-in-time active/preinstalled
+test-package checks reject an existing test process/package but do not exclude
+unrelated external device use. The runner installs and later removes only the
+test APK; it does not grant a role or permission.
+
+The test separately constructs the same AndroidX
+`PickVisualMedia(ImageOnly)` contract and proves that its API 26 intent is
+`ACTION_OPEN_DOCUMENT`, has MIME type `image/*`, and resolves to AOSP
+DocumentsUI. It then independently opens the real `MainActivity` global-thread
+wallpaper editor and proves that the production Pick click focuses DocumentsUI.
+It does not intercept or inspect the production outgoing intent. The journey
+uses the accessibility global Back action without selecting a document or
+traversing DocumentsUI content. The editor returns with Pick enabled, Apply
+disabled, and no loading or error state. The exact global assignment, immediate
+managed-file-name set, and persisted URI-grant identity/read/write/persisted-time
+set all match their pre-launch baselines.
+
+The exact runner passed independently twice in 2.751s and 2.754s. Each run
+reported exactly one test, one zero status, final instrumentation code -1, and
+`OK (1 test)`, with no skip, failure, or crash. Cleanup preserved the target
+APK hash, default-SMS role, and all seven recorded permission states; the test
+package was absent afterward.
+
+The same source commit contains test-only compact API 26 portability hardening
+for root anchor/recreation visibility, notification-route teardown, and Theme
+Studio Cancel reachability. The final `:app:connectedDebugAndroidTest` XML on
+`AuroraSMS_API26` records 76 tests, zero failures/errors, three intentional
+gated skips, and 35.498s. This is app-module evidence on one AOSP API 26 AVD,
+not project-wide API 26 coverage and not coverage for API 27 through 32.
+
+This narrow result does not prove interception of the production outgoing
+intent; document selection or a returned URI; preview, Apply, Reset, import,
+rendering, or staged-candidate behavior; source loss or revocation;
+configuration, Activity, or process loss; managed-file bytes, inode,
+timestamps, or metadata preservation; a verified-conversation journey; API
+27–32 or OEM behavior; an explicit DocumentsUI/Photo Picker Cancel control; or
+broader accessibility, form-factor, performance, carrier, full-lifecycle, or
+gold readiness. The compound Photo Picker/SAF row remains unchecked.
+
+#### ADR 0007 API 26 AOSP DocumentsUI SAF selection-lifecycle partial evidence — 2026-07-16
+
+Source commit `dd33737` adds the separately gated
+`MainActivityStaticWallpaperSafFallbackSmokeTest#realGlobalThreadSafFallbackSelectionLifecycleRestoresBaseline`
+journey and its exact-method runner:
+
+```shell
+./scripts/run-emulator-wallpaper-saf-selection-smoke.sh --device emulator-5556
+```
+
+The runner refuses physical devices and requires an API 26 ranchu/goldfish AOSP
+emulator, an already-installed target APK matching the local build, AuroraSMS as
+the legacy default SMS app, and readable snapshots of the seven listed SMS,
+phone, and contacts permission states with owner-granted `READ_SMS`. It shares a
+per-device nonblocking lock with the no-selection SAF cancellation runner,
+refuses a preinstalled or active instrumentation package/process, and installs
+and removes only the test APK. Its strict parser accepts exactly one status 0,
+one custom status 42 with `auroraSafSelectionResult=pass`, final instrumentation
+code -1, and `OK (1 test)`; a bounded 180-second timeout fails closed. These
+guards reduce participating-runner races but do not exclude unrelated external
+emulator use.
+
+The androidTest-only exported `DocumentsProvider` exposes exactly one local-only
+root, `AuroraSMS SAF Fixture 7E3B2C91`, and one read-only 40x20 PNG,
+`aurora-saf-fixture-7e3b2c91.png`, under authority
+`org.aurorasms.app.wallpaper.testdocuments`. The production APK and merged
+production manifests add no provider or `MANAGE_DOCUMENTS` permission. The test
+opens the real `MainActivity` global-thread wallpaper editor and the production
+AndroidX contract's API 26 `ACTION_OPEN_DOCUMENT` fallback, acts only on the exact
+synthetic root/document, obtains provider-open and preview evidence, and
+validates the expected canonical `content:` URI shape with non-empty authority
+and an at-most-4,096-byte UTF-8 form. It records the exact empty
+global assignment, read-only revision sequence, persisted URI-grant identity/
+read/write/persisted-time set, and no-follow managed-file name/device/inode/link-
+count/size/mtime/SHA-256 ledger.
+
+Selection followed by editor Cancel preserves every durable baseline. A second
+selection followed by wallpaper Back does the same. A third selection followed
+by `ActivityScenario.recreate()` loses the selected source and preview, leaves
+Apply disabled, and preserves the baselines. A fourth selection makes only the
+test document unavailable while leaving the provider installed: Apply reopens
+the source, rejects it, and changes no assignment, managed file, persisted grant,
+or revision. After the same document becomes available, retry Apply reopens it,
+creates exactly one conforming managed final, and advances the revision exactly
+once. Making the source unavailable again does not prevent the production
+controller from loading the expected 40x20 managed raster. UI Reset restores
+the empty assignment, managed-file, and persisted-grant baselines. Reset does not
+allocate or roll back a revision, so the sequence deliberately remains baseline
+plus one.
+
+The focused selection runner passed cleanly in 13.054s and 13.087s; its final
+post-review run passed in 12.952s. The separately gated no-selection cancellation
+runner passed in 2.65s under the shared lock. A later module-by-module XML/
+source-delta audit corrected the API 26 connected aggregate bookkeeping to 176
+tests with five intentional gated skips, rather than the previously recorded
+181/four; it had zero failures across 456 Gradle tasks in 1m53s. The complete
+current API 36 aggregate
+completed 176 tests with five intentional skips and zero failures across 456
+tasks in 1m23s. The 886-task offline host/release/privacy gate passed in 19s,
+and the separate 15-task CycloneDX gate passed in 8s. The production debug APK
+for this source is 13,993,426 bytes with SHA-256
+`5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This closes only one synthetic empty-`global_thread`, API 26 AOSP DocumentsUI
+selection lifecycle. It does not capture the raw outgoing production intent or
+raw Activity result; prove temporary URI-grant revocation; uninstall/remove the
+provider; exercise readable source-byte/content mutation, cloud fetch, or
+blocking; cover target
+loss, stale CAS, configuration variants beyond Activity recreation, background/
+low-memory/in-flight process death, or a cold process restart; render the actual
+Thread surface or use a verified real-provider conversation; cover API 27-32,
+physical SAF-fallback/selection behavior, broader OEM behavior beyond the
+recorded Pixel 8 Photo Picker journey, performance, or an explicit
+DocumentsUI/Photo Picker Cancel control; or prove the complete picker/static-wallpaper lifecycle
+or gold readiness. The provider remains installed throughout Apply and Reset;
+only its exact document availability is toggled. The compound Photo Picker/SAF
+row and every unrelated implementation-complete, artwork, accessibility,
+form-factor, performance, carrier, physical, and gold gate remain unchecked.
+
+#### ADR 0007 API 26 AOSP DocumentsUI pre-Apply route-disposal and global stale-Apply partial evidence — 2026-07-16
+
+Source commit `65fc6552a877403523e499b457fdf015aaf6f753` extends the
+selection runner with a backward-compatible, separately gated journey:
+
+```shell
+./scripts/run-emulator-wallpaper-saf-selection-smoke.sh \
+  --device emulator-5556 --journey stale-apply
+```
+
+Omitting `--journey` still selects the prior selection-lifecycle method. The new
+mode requires the same exact API 26 ranchu/goldfish emulator, matching installed
+target APK, legacy default-SMS state, captured seven-permission baseline with
+owner-granted `READ_SMS`, shared per-device lock, absent test package/process,
+and bounded 180-second execution. It installs and removes only the test APK. Its
+strict parser accepts exactly one status 0, one custom status 43 with
+`auroraSafStaleApplyResult=pass`, final instrumentation code -1, and
+`OK (1 test)`; cleanup rechecks the target APK, default-SMS setting, and all
+seven permission states.
+
+The journey starts from an exact empty `global_thread` assignment and selects
+the one synthetic DocumentsUI document through the real `MainActivity` editor
+and production AndroidX SAF fallback. It then directly calls the Activity's
+new-intent path with the production open-conversation action and a fixed
+synthetic conversation ID before Apply. Thread becomes visible from the Inbox
+editor and dismisses both editors. Returning to Inbox and reopening the global
+editor shows disabled Apply; provider counters prove the dismissed source was not
+reopened. The assignment, revision sequence, persisted URI-grant identity/read/
+write/time set, and no-follow managed-file ledger stay exact throughout.
+
+After a fresh real DocumentsUI selection, the production controller commits a
+controlled newer global winner from the ordinary test provider at exactly one
+new revision. The still-open editor owns the captured empty revision. Its stale
+UI Apply reopens the selected SAF source, surfaces the exact stale-assignment
+error, and leaves the winner assignment, revision, managed-file
+ledger, persisted-grant set, and production managed load unchanged. The stale
+candidate is absent from the exact ledger. Reopening against the winner's
+revision and using UI Reset removes only that controlled assignment/file and
+restores the empty assignment/file/persisted-grant baseline; the consumed
+revision correctly remains baseline plus one. Failure cleanup can recover and
+reset only a commit matching the fixed scope, revision, dim/focal values, and
+single conforming managed final.
+
+`WallpaperControllerTest#lateRepositoryStaleWriteDeletesCreatedUnreferencedCandidate`
+separately drives a late repository `StaleWrite`. It proves the exact
+`references -> reconcile -> quota -> import -> projection -> quota -> set ->
+references -> delete` order, one set attempt, the second authoritative reference
+snapshot, and deletion of the created unreferenced candidate.
+
+The corrected focused journey passed in 8.597s and 8.513s; the final
+post-review revision-hardened pass took 8.667s. The prior selection lifecycle
+and no-selection cancellation regressions passed in 13.012s and 2.692s. The
+definitive API 26 aggregate was `BUILD SUCCESSFUL` in 1m49s across 456 tasks;
+JUnit XML reports 177 tests, six intentional gated skips, and zero failures or
+errors. The definitive API 36 aggregate was `BUILD SUCCESSFUL` in 1m23s across
+456 tasks; XML reports 176 tests, five intentional skips, and zero failures or
+errors. The API 26-only class is excluded from API 36 discovery by class-level
+`@SdkSuppress`, so the new method does not change the API 36 count. The complete
+886-task offline host/lint/release/privacy/license gate was
+`BUILD SUCCESSFUL` in 21s with 36 executed and 850 up-to-date tasks. The separate
+15-task CycloneDX 1.6 gate passed in 8s with 441 components and 442 dependency
+nodes. The unchanged production debug APK is 13,993,426 bytes with SHA-256
+`5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This closes only direct pre-Apply editor route disposal and one synthetic empty-
+baseline global assignment-CAS conflict. It does not launch through the system
+notification/PendingIntent path, cancel an in-flight Apply, or prove verified-
+conversation target identity loss. Persisted-grant snapshots do not establish
+temporary read-grant lifetime or revocation. Raw outgoing intent/result capture,
+readable source-byte/content mutation, provider revocation/removal/replacement,
+cloud/blocking behavior, API 27-32, physical/OEM SAF, explicit picker Cancel,
+background/low-
+memory/process-death variants, production-launcher/real-provider Thread
+rendering, accessibility, form factor, performance, artwork, carrier, compound
+picker/static-wallpaper
+lifecycle, and gold readiness remain open. Only synthetic emulator fixtures
+were used; no real message/address content, shared user document, carrier send,
+or physical device participated. The compound Photo Picker/SAF and every
+unrelated broad acceptance row remain unchecked; AuroraSMS is not complete or
+gold.
+
+#### ADR 0007 API 26 AOSP system-notification content-PendingIntent pre-Apply route-disposal partial evidence — 2026-07-16
+
+Source commit `12939eea321e8eb6a9a173a82cab2dfd245b64e5` extends the
+selection runner with a backward-compatible, separately gated journey:
+
+```shell
+./scripts/run-emulator-wallpaper-saf-selection-smoke.sh \
+  --device emulator-5556 --journey notification-pending-intent
+```
+
+The mode requires an awake, unlocked, exact API 26 ranchu/goldfish AOSP
+emulator, matching installed target APK, legacy default-SMS state, captured
+seven-permission baseline with owner-granted `READ_SMS`, shared per-device lock,
+absent test package/process, and bounded execution. It installs and removes only
+the test APK. Its strict parser accepts exactly one status 0, one custom status
+44 with `auroraSafNotificationPendingIntentResult=pass`, final instrumentation
+code -1, and `OK (1 test)`; cleanup rechecks the target APK, default-SMS setting,
+and all seven permission states.
+
+The test initializes the production notification channels before its complete
+owned-channel snapshot. From an exact empty `global_thread` assignment and a
+captured active-notification baseline with the reserved identity absent, the
+real `MainActivity` global editor and production AndroidX SAF
+fallback select the exact synthetic local PNG in DocumentsUI. No Apply occurs.
+The production `messageNotifier` then posts one fixed synthetic
+`IncomingMessageNotification`. The exact active system notification is
+fingerprinted by package, UID, tag, ID, message channel, category, private
+visibility, timestamp, clearable/auto-cancel flags, absence of actions, Aurora
+activity content `PendingIntent`, public version, fixed sender, and fixed body.
+
+A real touchscreen swipe expands the AOSP shade. The journey locates and taps
+the exact controlled AOSP SystemUI notification row/body, delivering its
+production content `PendingIntent` to the same warm `MainActivity`. The exact
+synthetic Thread ID and production open-conversation action are consumed;
+Thread is visible, both wallpaper editors are dismissed, and source counters
+prove the staged document was not reopened. Exact assignment, revision,
+no-follow managed-file ledger, persisted-grant identity/read/write/time, and
+source-open baselines remain unchanged. Auto-cancel restores the active-
+notification baseline, and the full post-bootstrap notification-channel
+snapshot, including each channel's DND-bypass setting, is unchanged. Back at
+Inbox, reopening the editor shows disabled Apply, no loading/error, and no staged
+selection.
+
+The runner remains backward-compatible, bounded, fail-closed, and collision-
+safe. Before canceling abnormal residue it fingerprints the exact package/tag/
+ID. Its custom status 45 and `auroraSafNotificationCleanupResult=pass` belong
+only to bounded cleanup-only instrumentation for abnormal recovery; that path
+did not run during the passing journey.
+
+The final focused journey passed in 6.927s after review confirmations in
+7.170s, 6.961s, and 6.797s. Selection, stale-Apply, and cancellation regressions
+passed in 12.879s, 8.595s, and 2.745s. The definitive API 26 root connected gate
+was `BUILD SUCCESSFUL` in 1m51s across 456 tasks. JUnit XML reports 80 app tests/
+seven intentional skips and 179 project tests/eight skips, with zero failures
+or errors. The definitive API 36 root connected gate was `BUILD SUCCESSFUL` in
+1m26s across 456 tasks; project XML reports 176 tests/five intentional skips and
+zero failures/errors. The complete 886-task offline host/lint/release/privacy/
+license gate was `BUILD SUCCESSFUL` in 12s with 26 executed and 860 up-to-date
+tasks. The separate CycloneDX 1.6 gate passed 15 tasks in 8s with 441 components
+and 442 dependency nodes. The unchanged production debug APK is 13,993,426
+bytes with SHA-256
+`5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This closes only one synthetic, warm-task, pre-Apply API 26 AOSP system-
+notification content-`PendingIntent` route-disposal path. It does not trigger a
+real carrier/provider/receiver/orchestrator incoming message; prove its fixed
+Thread ID provider-backed or a verified conversation; cover cold/absent-task,
+background, lockscreen, or process-death delivery; capture raw `PendingIntent`
+action/extras/flags; cover API 27+, notification-permission denial, OEM or
+physical notification shades, reply/group/privacy/alerts/new-channel behavior,
+raw picker result or temporary URI-grant lifetime, in-flight Apply, source
+mutation/provider removal/cloud behavior, or nonempty baselines; or close a
+compound picker/static-wallpaper, real incoming-SMS, broader acceptance, or
+gold gate. Only synthetic emulator fixtures participated. AuroraSMS remains
+incomplete and not gold.
+
+#### Production API 26 emulator-modem incoming-SMS cold-notification partial evidence — 2026-07-17
+
+Source commit `f41dfd4f0552ed249b2fbda65ec2e3b164842c23` adds the isolated,
+owner-gated runner:
+
+```shell
+./scripts/run-emulator-incoming-sms-cold-notification-smoke.sh
+```
+
+The runner exclusively owns a disposable overlay of the dedicated non-Play API
+26 GSM AVD `AuroraSMS_SMSRX_API26`; it refuses an existing device on its owned
+port and discards the overlay after success or recovery. Its prepare phase
+establishes an exact empty controlled baseline. The host then injects exactly
+one emulator-modem PDU, which traverses the protected production `SMS_DELIVER`
+receiver, writes one Telephony provider row, reaches a `COMPLETE` replay-journal
+entry, resolves a verified conversation and subscription-dependent optional
+reply target, and posts through the production notifier.
+
+The exact live SystemUI `StatusBarNotification` (SBN) record is required to be
+`PRIVATE`, retain generic privacy text and a generic `publicVersion`, contain
+neither controlled sender nor body, expose the Aurora activity content
+`PendingIntent`, and match the expected subscription-dependent action contract.
+The runner kills the exact receiver-process PID from the same application UID
+and revalidates that
+the notification survives unchanged. A real touchscreen swipe opens the AOSP
+shade and taps the exact controlled row. A distinct cold app PID starts the real
+`MainActivity`; the provider-backed verified Thread and controlled message are
+visible, and auto-cancel removes the notification.
+
+The verify phase checks the cold route and then restores the exact empty owned
+delivery and notification state. The disposable emulator overlay is discarded.
+Two consecutive final focused runs passed in 47.610s (prepare 1.083s, verify
+0.554s) and 42.839s (prepare 0.987s, verify 0.549s).
+
+At that exact source hash, the final API 26 root connected gate on
+`emulator-5556` was `BUILD SUCCESSFUL` in 1m45s; project module XML totals were
+180 tests/nine intentional skips with zero failures/errors. The API 36 root
+connected gate on `emulator-5554` was `BUILD SUCCESSFUL` in 1m19s; project
+module XML totals were 177 tests/six intentional skips with zero failures/
+errors. The owner-gated incoming-SMS test was discovered and intentionally
+skipped in both ordinary aggregate matrices. The 886-task host/release/privacy/
+license gate was `BUILD SUCCESSFUL` in 18s with 32 executed and 854 up-to-date.
+CycloneDX passed in 7s with 441 components and 442 dependency nodes. The
+production debug APK remains 13,993,426 bytes with SHA-256
+`5081f67f55d16bb78a0c22bc6e735919184c2279252213c60c314a506104b0c3`.
+
+This is one synthetic API 26 emulator-modem path, not a carrier-network test and
+not completion of the unchecked physical/provider transport checklist. It does
+not cover a physical or OEM notification shade, lockscreen delivery, API 27+,
+notification-permission denial, grouped or multiple messages, inline reply
+execution, MMS, a nonempty provider baseline, OEM/carrier matrices, or the
+broader artwork, accessibility, form-factor, performance, complete-lifecycle,
+and gold gates. AuroraSMS remains incomplete and not gold.
+
+#### Production API 36 notification-denied incoming-SMS recovery partial evidence — 2026-07-17
+
+Source commit `ec3e10299953253b1330d9440a07df981ed9a1af` adds the production recovery surface
+in `app/src/main/kotlin/org/aurorasms/app/MainActivity.kt`. When AuroraSMS is
+messaging-eligible on API 33+ but `POST_NOTIFICATIONS` is denied, an explanation
+remains visible above both Inbox and Thread. The action requests permission
+while a request remains available; after a recorded final denial it launches
+`Settings.ACTION_APP_NOTIFICATION_SETTINGS` with AuroraSMS's exact package.
+The decision policy and rendered notice/intent are covered by
+`app/src/test/kotlin/org/aurorasms/app/NotificationPermissionRecoveryActionTest.kt`
+and
+`app/src/androidTest/kotlin/org/aurorasms/app/NotificationPermissionNoticeTest.kt`.
+In addition,
+`app/src/test/kotlin/org/aurorasms/app/message/IncomingMessageOrchestratorTest.kt`
+proves `NotificationPostResult.NotificationsDisabled` still calls the handled-
+delivery handoff once: replay returns the existing provider/conversation IDs,
+with no duplicate provider insert or notification attempt.
+
+The owner-gated end-to-end command was:
+
+```shell
+./scripts/run-emulator-incoming-sms-cold-notification-smoke.sh \
+    --journey notification-denied
+```
+
+`scripts/run-emulator-incoming-sms-cold-notification-smoke.sh` exclusively owns
+a disposable overlay of the non-Play API 36 GSM AVD
+`AuroraSMS_SMSRX_API36`. It installed the exact app and test APKs, assigned the
+SMS role, proved the protected exported `DefaultSmsRoleChangedReceiver` started
+and cleared package stopped state, and used the real AuroraSMS app-notification
+Settings master switch to produce a denied `POST_NOTIFICATIONS` state carrying
+`USER_SET`. Back in the
+real Inbox, the recovery action opened the platform permission dialog. Selecting
+its final denial produced `USER_FIXED`; the next recovery action opened the
+exact disabled AuroraSMS app-notification Settings page. The denied state and
+Inbox notice survived the Settings round trip and an exact cold, taskless app
+boundary.
+
+The host then issued one documented synthetic `emu sms send` through the owned
+modem. The separately permissioned test APK armed
+`app/src/androidTest/java/org/aurorasms/app/message/IncomingSmsPduCaptureReceiver.java`
+and independently retained the single raw delivered PDU. Production received
+the same delivery through its protected `SMS_DELIVER` receiver. Verification in
+`app/src/androidTest/kotlin/org/aurorasms/app/message/IncomingSmsColdNotificationSmokeTest.kt`
+required one provider row and one `COMPLETE` journal entry; the PDU-derived
+journal key and sent timestamp had to be exact, and journal provider/thread IDs,
+received/sent timestamps, and subscription identity had to match the provider
+row. The delivery remained background and taskless, produced zero Aurora
+`StatusBarNotification` records, and converged to a cold boundary. A cold
+`MainActivity` launch then displayed the sole controlled conversation and the
+missed-alert notice in Inbox; opening it displayed the provider-backed Thread,
+message, and persistent notice, still with zero SBNs.
+
+The verify phase removed only the exact provider, replay-journal, reply-target,
+index, test-PDU-capture, and notification mutations and restored the empty
+controlled baseline. This full journey, including exact cleanup, passed twice.
+The unchanged default API 26 runner path, which injects the reviewed fixed raw
+PDU, also passed after the recovery changes.
+
+Focused API 36 notice and merged-manifest instrumentation passed 10 tests. The
+definitive API 36 and API 26 root connected matrices each completed 456 Gradle
+tasks with zero failures, in 1m21s and 1m49s respectively. The complete offline
+host/lint/release/privacy gate was `BUILD SUCCESSFUL` in 1m19s across 883 tasks
+(127 executed, 3 from cache, 753 up-to-date). The combined license-report and
+CycloneDX gate passed 18 tasks in 8s. The exact debug APK is 13,993,426 bytes
+with SHA-256
+`876dfb17eabb95f28454998c2cd26c7d463c7212219cdd32ba4484adb37a60fc`.
+
+This is one owned API 36 AOSP emulator journey. It does not complete the still-
+unchecked API 33-35 rows or prove a physical device, OEM/carrier behavior,
+lockscreen delivery, grouped or multiple messages, inline-reply execution, MMS,
+or the broader accessibility, form-factor, performance, complete-lifecycle,
+and release gates. AuroraSMS remains incomplete and not gold.
+
+#### Production API 26 same-sender two-message incoming-SMS cold-notification continuity partial evidence — 2026-07-17
+
+Source commit `57ec7cf093e24f4792a242f53d6cf13f2d0e1ff0` adds the
+host test
+`twoDistinctSameSenderDeliveriesPersistAndNotifyOnceEachAcrossReplay` and the
+owner-gated journey:
+
+```shell
+./scripts/run-emulator-incoming-sms-cold-notification-smoke.sh \
+    --journey multiple-message
+```
+
+The host test independently proves that two distinct delivery fingerprints
+from one sender insert two provider messages, resolve one conversation, invoke
+the notifier once per delivery, and replay as duplicates without another
+provider insert or notification attempt.
+
+The runner exclusively owns and finally discards a disposable overlay of the
+dedicated non-Play API 26 GSM AVD `AuroraSMS_SMSRX_API26`. From an exact empty
+controlled baseline it injects the reviewed fixed single-part GSM PDUs for
+`AuroraSMS modem delivery 900017` at `1784328000000` and
+`AuroraSMS modem delivery 900018` at `1784328060000`, exactly once and in
+sequence. Their PDU-derived delivery fingerprints and replay-journal keys are
+distinct. An uncertain injection outcome is never retried.
+
+The first provider row, `COMPLETE` journal, exact private conversation SBN, and
+its reply action must stabilize before the second injection.
+After the second delivery, two `COMPLETE` journals have distinct positive
+provider IDs but one positive thread ID and subscription. The same unambiguous
+background process remains alive, exactly one notification tag/ID remains
+active, and that SBN's `mUpdateTimeMs` must strictly advance and stabilize.
+Generic notification text and `publicVersion` remain private; scans of the
+active notification dump and real AOSP shade reject both controlled bodies and
+the sender.
+
+The runner then kills the exact receiver-process PID and proves the updated SBN
+survives. A real shade-row tap starts a distinct cold `MainActivity` process on
+the provider-backed verified Thread. Its UI contains exactly two total
+`aurora-message-bubble` nodes, each expected body exactly once and in delivery
+order; auto-cancel removes the notification. Instrumentation verifies the exact
+two provider rows, two `COMPLETE` journals, two reply targets, two-message index
+and timeline state with unread count two, then deletes only those controlled
+mutations and restores the empty provider, journal, target, index, notification,
+and channel baselines. Zero-, one-, or two-delivery abnormal recovery remains
+bounded and fail-closed.
+
+The complete journey and exact cleanup passed twice independently. The
+unchanged API 26 single-message and API 36 notification-denied owner journeys
+also passed after the generalized instrumentation and runner changes. At
+`57ec7cf093e24f4792a242f53d6cf13f2d0e1ff0`, the definitive API 26
+connected matrix finished 97 tests with zero failures in 47s, and the API 36
+matrix finished 91 tests with zero failures in 51s. The full 886-task host/
+lint/release/benchmark/privacy/dependency/permission/
+APK-content/license gate passed in 19s (35 executed, two from cache, 849 up-to-
+date). CycloneDX passed 15 tasks in 7s. The unchanged production debug APK is
+13,993,426 bytes with SHA-256
+`876dfb17eabb95f28454998c2cd26c7d463c7212219cdd32ba4484adb37a60fc`.
+
+This closes only sequential same-sender, single-part SMS notification-update
+continuity on one API 26 AOSP emulator. Multipart SMS, other-conversation
+notification grouping/summary behavior, alert/sound/vibration counts, API 27+,
+physical/OEM shade, carrier-network and lockscreen behavior, inline-reply
+execution, MMS, nonempty-provider baselines, broader acceptance, and gold
+remain open. AuroraSMS is incomplete and not gold.
+
+#### Durable receive/reply recovery and API 26 denied-inline-reply partial evidence — 2026-07-18
+
+Implementation commit `7c9d848` adds canonical, domain-separated SHA-256
+checksums to the private incoming replay journal, reply target, consumed-claim,
+reply-operation, and incoming-notification generation stores. The version 4
+incoming journal also binds recovery to a redacted provider-content digest.
+Malformed, missing, invalid, or content-mismatched owned rows fail closed into
+durable key-bound `Q1` quarantine entries: the tombstone retains fingerprint
+ownership and capacity while unrelated healthy entries remain recoverable.
+
+Notification replies now have a durable operation state machine around provider
+insertion, platform submission, sent/delivered callbacks, generic failure
+notification acknowledgement, and provider-status reconciliation. Callback
+origin, failure stage, unit identity, provider identity, and operation identity
+are explicit. Same-kind provider message IDs order ahead of wall-clock time, so
+equal or regressing callback clocks cannot invert provider-backed timeline
+order. Recovery defers unresolved `PENDING` evidence instead of treating it as
+success or resubmitting an operation with an uncertain platform boundary.
+
+Default-role lifecycle work is serialized against authoritative platform state.
+On confirmed role loss it cancels and joins pending messaging recovery, clears
+reply targets, and retries cancellation only for tracker-owned incoming
+notification generations. The bounded `goAsync` lease and accepted receiver
+work now have separate jobs: lease timeout calls `finish()` without cancelling
+the sibling work. That work can continue only while the process remains alive;
+its accepted durable boundary owns later startup/foreground recovery after
+process loss.
+
+The owner-gated journey is:
+
+```shell
+./scripts/run-emulator-incoming-sms-cold-notification-smoke.sh \
+    --journey inline-reply-permission-denied
+```
+
+Each run exclusively owns and finally discards a fresh overlay of the dedicated
+non-Play API 26 GSM AVD `AuroraSMS_SMSRX_API26`. From an exact empty controlled
+baseline, one fixed synthetic modem PDU reaches the protected production
+`SMS_DELIVER` receiver, Telephony provider, `COMPLETE` replay journal, durable
+reply target, verified conversation, and private production notification. The
+runner kills the completed receiver process without force-stopping the package,
+revokes only `android.permission.SEND_SMS`, and proves the task, process,
+provider row, journal, target, notification, channel, and permission boundary
+before interaction.
+
+The runner expands the real AOSP shade, exposes exactly one Reply action, opens
+exactly one empty RemoteInput editor, enters and reads back the fixed synthetic
+reply, and permits exactly one submit tap. An uncertain outcome is never
+retried. A distinct cold, taskless `InlineReplyReceiver` process starts once.
+Synchronous permission preflight rejects the operation before platform
+submission: exactly one consumed replay claim and one checksummed notified
+operation exist, no outgoing provider row appears, the incoming row is
+unchanged, the original conversation SBN and reply `PendingIntent` identity
+remain stable, and exactly one generic body-free reply-failure SBN appears.
+Bounded SystemUI and log windows contain none of the controlled reply, sender,
+or incoming-message body.
+
+Cleanup restores `SEND_SMS`, taps the exact generic failure row through the real
+shade, and proves a fresh cold `MainActivity` process routes to the exact
+provider-backed Thread while preserving the conversation notification. It then
+removes only the controlled provider, incoming-journal, reply-target,
+consumed-claim, reply-operation, index, notification, and channel mutations and
+restores the empty baseline. The complete journey and exact cleanup passed
+twice independently on two fresh overlays.
+
+The verification commands included:
+
+```shell
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease \
+    :app:lintBenchmark :app:assembleBenchmark \
+    :macrobenchmark:check :macrobenchmark:assembleBenchmark \
+    verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions \
+    verifyApkContents checkLicense generateLicenseReport \
+    --offline --no-daemon --no-parallel --console=plain
+./gradlew cyclonedxBom --offline --no-daemon --no-parallel --console=plain
+ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest \
+    --offline --no-daemon --no-parallel --console=plain
+ANDROID_SERIAL=emulator-5554 ./gradlew connectedDebugAndroidTest \
+    --offline --no-daemon --no-parallel --console=plain
+```
+
+The full offline aggregate completed all 886 Gradle tasks successfully, and the
+separate CycloneDX gate passed. The API 36 connected runner reported zero
+failures/errors with module totals of app 135, notifications 22, telephony 24,
+state 43, index 31, conversations 5, and benchmark 4. API 26 reported zero
+failures/errors with app 141, notifications 22, telephony 24, state 43, index
+31, conversations 5, and benchmark 4. Retained API 26 XML reconciles 258
+zero-failure test results plus 12 intentional assumption skips, matching 270
+runner-discovered cases. Focused durable-store instrumentation passed 43/43 on
+both APIs, notification-generation cancellation passed 18/18 on both, and the
+incoming replay journal passed 9/9 on both. The exact debug APK is 13,993,426
+bytes with SHA-256
+`a8fdc6d227fa801c529bc5340fa538c9dec33715f74e12666ff606ad9b82c073`.
+
+The two former implementation residuals now have explicit fail-safe contracts
+and one durable pre-submission owner per path:
+
+- An outgoing SMS provider row is inserted atomically as known-unsent `FAILED`
+  with Aurora's staging sentinel and exact creator/row ownership. Notification
+  inline reply owns its boundary in the caller's private durable reply-
+  operation store and reserved high operation-ID namespace. Android
+  `RESPOND_VIA_MESSAGE` uses ordinary low operation IDs and delegates ownership
+  to the transport's separate private, content-free journal. After the one
+  owner records an exact row as `PREPARED`, one conditional arm may consume the
+  sentinel and transition it to `PENDING`; a second or wrong-state arm fails.
+  Durable `SUBMITTING` is recorded before the irreversible platform call.
+- A synchronous pre-boundary refusal or cancellation conditionally terminalizes
+  only the exact Aurora-created row in an allowed staging, armed, or already-
+  terminal state. An absent row is safely retired. An identity, creator,
+  conversation, or state conflict creates a known-unsent quarantine tombstone
+  and does not mutate a foreign or reused row. Inherited `PREPARED` retries that
+  exact cleanup. Inherited `SUBMITTING` becomes `SUBMISSION_UNKNOWN` and is
+  never rearmed or resubmitted; it does not falsely converge to `FAILED`.
+- The transport-owned journal stores at most 128 content-free identities, part
+  counts, states, and lifecycle times. It never evicts active `PREPARED` or
+  `SUBMITTING` records. Only `SUBMISSION_UNKNOWN` and known-unsent quarantine
+  tombstones expire after seven days; otherwise capacity rejects a new send.
+  Corrupt, noncanonical, or uncommittable journal state globally fails
+  transport-owned submission closed. A transient provider cleanup failure
+  defers only that record, continues independent recovery, and does not by
+  itself block an unrelated send.
+- `PENDING` provider rows left by pre-journal alpha builds have no exact durable
+  record. Upgrade recovery intentionally neither sweeps nor mutates those rows
+  and makes no claim to repair them.
+- A generic reply-failure notification is tagged by conversation plus durable
+  reply-operation ID. A later positive result cancels only that operation's
+  alert and the exact source generation, preserving unrelated failures in the
+  same conversation. Posting or cancelling before a crash but acknowledging
+  afterward replays the same exact keys idempotently.
+
+On first role-enabled recovery after upgrading from the pre-operation-key
+alpha, AuroraSMS dismisses any still-active conversation-only generic
+reply-failure alerts because they cannot be mapped safely to one durable reply
+operation. Previously user-dismissed alerts are not recreated. Message/provider
+state and durable late-callback ownership are unchanged; users should verify
+those replies in the conversation. If legacy-alert enumeration or cancellation
+fails, pending replay is deferred and recovery retries. A migrated success
+record without its historical source-message identity cannot cancel one exact
+incoming generation; AuroraSMS cancels its operation-scoped failure alert but
+leaves durable success acknowledgement pending rather than guessing.
+
+Final-source focused verification passed the frozen 320-task host gate:
+telephony 75/75, core testing 22/22, and app 191/191, together with green lint
+and app/telephony `androidTest` compilation. Transport-owned submission-journal
+instrumentation passed 7/7 on API 26 and 7/7 on API 36. The owner-gated real
+Telephony-provider staging contract passed 1/1 on each API without invoking
+`SmsManager`; it proved the exact failed/sentinel insert, one-shot arm and
+sentinel consumption, wrong-thread conflict preservation, idempotent terminal
+rollback, absent exact URI handling, and exact synthetic-row cleanup.
+
+Notification verification passed 29/29 on API 26 and 29/29 on API 36. It
+includes independent same-conversation operation identities, exact late-
+success cancellation, sibling preservation, legacy cleanup/retry, crash replay,
+and a real `NotificationManager` test proving that exact cancellation preserves
+the sibling operation. A fresh disposable API 26 AOSP SystemUI
+`inline-reply-permission-denied` journey passed on the final source with exact
+cleanup; its overlay was then discarded.
+
+The final API 26 root connected matrix was `BUILD SUCCESSFUL` in 1m51s across
+456 Gradle tasks. Preserved console module roots record app 132 with 12 skips, benchmark 3
+with one skip, notifications 29, telephony 31, state 43, index 31, and
+conversations 5. That reconciles to 274 total tests, 13 intentional skips, and
+zero failures/errors. The final API 36 root connected matrix was `BUILD
+SUCCESSFUL` in 1m24s across 456 tasks. Its retained XML records app 129 with nine
+skips, benchmark 3 with one skip, notifications 29, telephony 31, state 43,
+index 31, and conversations 5: 271 total tests, 10 intentional skips, and zero
+failures/errors.
+
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m19s across all 886 Gradle tasks (130 executed, seven from cache,
+749 up-to-date). The separate CycloneDX 1.6 gate passed 15 tasks in 8s and
+reports 441 components and 442 dependencies. The final debug APK is 13,993,426
+bytes with SHA-256
+`16037c616d6d696b4974f3e3a14238c18937c6f677f2f60e677ca10f0ea0ef98`.
+
+The first API 26 aggregate attempt remains diagnostic only. It exposed test-
+order contamination because a channel test disabled the real production reply-
+failure channel and API 26 preserves disabled importance across channel delete/
+recreate. The corrected test injects a dedicated test-only disabled channel.
+Only the later clean API 26 matrix above is pass evidence. The implementation
+and tests for this final source are frozen in commit `3d7182c`.
+
+One bounded implementation limitation remains explicit: the incoming replay
+journal retains at most 512 owned entries and evicts the oldest `COMPLETE`
+ownership records when full. An extremely old exact carrier redelivery after
+eviction can therefore be inserted again.
+
+This evidence is limited to fresh AOSP API 26 emulator runs with synthetic
+modem SMS and deliberately denied `SEND_SMS`. It does not prove successful
+carrier submission, sent/delivered callbacks, delivery reports, multipart
+transport, carrier charging, physical/OEM devices, API 27+, API 29+ role flows,
+API 31+ mutable RemoteInput behavior, lockscreen or Android Auto use, a live
+role-loss race, process death at every accepted-operation boundary, reboot or
+low-storage recovery, duplicate/expired live reply taps, subscription/current-
+conversation mutation, dual-SIM behavior, or MMS reply. The broader release
+matrix remains open; AuroraSMS is incomplete and not gold.
+
 ### Remaining complete Phase 4 wallpaper/artwork/accessibility matrix
 
 - [ ] Before ingestion, written artwork permission is recorded for the exact
@@ -1573,34 +2678,1872 @@ application all remain unclaimed.
   bar, static wallpaper, and GIF wallpaper using the same controlled journeys;
   adaptive rail is added on a large-screen target.
 
-## Phase 5 lifecycle/action matrix
+## Phase 5A bounded existing-Thread composer evidence — 2026-07-18
 
-- [ ] Scheduled send survives process death, reboot, and time/timezone change.
-- [ ] Exact-alarm denial/revocation is honest and has documented fallback.
-- [ ] Send-delay Undo survives process death without duplicate sends.
-- [ ] Pending deletion has deterministic process-death behavior.
-- [ ] Remembered subscription is durable and scoped per conversation.
-- [ ] A removed/disabled remembered SIM prompts a safe fallback; scheduled and
+This section records local verification for implementation commit `17fc421`,
+`0.5.0-phase5` (`versionCode` 4). It does not claim a pushed CI run,
+physical-device handoff, release, or carrier submission. The exact debug APK did
+complete the emulator handoff recorded below.
+
+### Host, governance, and dependency gates
+
+The complete offline aggregate was `BUILD SUCCESSFUL` in 1m27s across all 886
+Gradle tasks (90 executed, two from cache, 794 up-to-date):
+
+```shell
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease \
+    :app:lintBenchmark :app:assembleBenchmark \
+    :macrobenchmark:check :macrobenchmark:assembleBenchmark \
+    verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions \
+    verifyApkContents checkLicense generateLicenseReport \
+    --offline --no-daemon --no-parallel --console=plain \
+    -Pkotlin.incremental=false
+```
+
+All 508 retained host JUnit results passed with zero failures, errors, or skips:
+
+| Module | Tests |
+|---|---:|
+| app | 236 |
+| design | 9 |
+| index | 69 |
+| model | 19 |
+| notifications | 21 |
+| state | 38 |
+| telephony | 79 |
+| testing | 24 |
+| conversations | 13 |
+| **Total** | **508** |
+
+`bundleRelease` separately passed 269 tasks in 7s. `cyclonedxBom` passed 15
+up-to-date tasks in 7s; the generated CycloneDX 1.6 graph contains 441
+components and 442 dependencies.
+
+### Complete connected matrices
+
+Only AOSP emulators were attached for this Phase 5A gate: API 26 on
+`emulator-5556` and API 36 on `emulator-5554`. No physical device participated.
+The full API 26 matrix was `BUILD SUCCESSFUL` in 1m54s across 456 tasks; the
+full API 36 matrix was `BUILD SUCCESSFUL` in 1m31s across 456 tasks. The first
+API 36 invocation is diagnostic only: the AVD had disconnected and Gradle
+stopped before executing a test. After the existing AVD restarted and reported
+boot complete, the definitive matrix below passed.
+
+| Module | API 26 tests | API 26 skips | API 36 tests | API 36 skips |
+|---|---:|---:|---:|---:|
+| app | 134 | 12 | 131 | 9 |
+| benchmark | 3 | 1 | 3 | 1 |
+| index | 31 | 0 | 31 | 0 |
+| notifications | 29 | 0 | 29 | 0 |
+| state | 49 | 0 | 49 | 0 |
+| telephony | 35 | 0 | 35 | 0 |
+| conversations | 10 | 0 | 10 | 0 |
+| **Total** | **291** | **13** | **288** | **10** |
+
+Both matrices executed 278 non-skipped tests with zero failures or errors. The
+API 36 root composer acceptance and external-compose isolation were also rerun
+as focused gates and each passed 1/1. Those tests prove the bounded existing-
+Thread UI/coordinator route and that external compose cannot bypass it; they do
+not invoke a real destination or carrier network.
+
+### Artifact and privacy inventory
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 13,831,154 | `d8e1dbd75fc4d4ea76c4ebe8d2abb4b6c70828707d9c2eb94cc4697d485d7d31` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 1,960,013 | `22fd58161ee3a99b7d849d0389a4b605bd4e7a84aa0d653c02b69d6ff18f21e9` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 1,886,352 | `a9664f9baf4b943fa1df6a2828cfa4e1db5320cae11f25a0670879fbbfe35197` |
+| `macrobenchmark/build/outputs/apk/benchmark/macrobenchmark-benchmark.apk` | 41,212,868 | `d8a00f0c054fab8aa352583c8e3117661f91c80f426b9def64534bae9f1319fb` |
+| `app/build/outputs/bundle/release/app-release.aab` | 4,750,239 | `ac5900eb1372934584d8740be248eff7ed10bb65427be25df1042875f2043fc4` |
+| `build/reports/bom.json` | 1,014,122 | `c4504bdd75de9812810f2ee2911f00adafafa663efe2206cba7db52f58c56194` |
+| `build/reports/bom.xml` | 922,055 | `6e40e26911f021d7fc9b7c3df11987b7c2a8143fc7d4c83d739648f60db79525` |
+
+Pinned build-tools 36.0.0 `aapt2` inspection found the expected AuroraSMS
+package, `versionCode` 4, `versionName` `0.5.0-phase5`, minimum API 26, and
+target API 36 in all app variants. Only the debug app is `debuggable`. No app
+variant requests `INTERNET` or `ACCESS_NETWORK_STATE`. The separate
+macrobenchmark test APK is intentionally debuggable and carries its tooling
+`INTERNET` permission; it is not an app variant. The release APK is unsigned
+and therefore is not a distributable or installable release artifact.
+
+The exact debug APK above installed successfully on the API 36 AOSP emulator
+(`emulator-5554`) and was copied to
+`/sdcard/Download/AuroraSMS-debug.apk`. The copied file was 13,831,154 bytes and
+its device-side SHA-256 exactly matched
+`d8e1dbd75fc4d4ea76c4ebe8d2abb4b6c70828707d9c2eb94cc4697d485d7d31`.
+An explicit cold `MainActivity` launch returned status `ok`, launch state
+`COLD`, and `TotalTime` 455 ms. The synthetic smoke screen rendered the expected
+default-SMS approval route because the clean emulator retained
+`com.android.messaging` as role holder; the smoke did not grant the role or SMS
+permissions and did not submit a message. No screenshot or device data is
+tracked in the repository.
+
+### Closed local rows and remaining acceptance
+
+- [x] Complete host unit, lint, release assembly, benchmark, clean-room,
+  private-asset, dependency, permission, APK-content, and license gates pass.
+- [x] Schema-5 composer operation, schema migration, content-free persistence,
+  exact draft restoration/freeze, cancellation envelope, bounded non-sending
+  recovery, exact callback retry, provider ownership, and terminal settlement
+  suites pass.
+- [x] Schema-6 acknowledged-unknown receipts atomically release the active
+  operation, preserve the draft, checkpoint exact late success/failure, and retry
+  only exact provider reconciliation across Room reopen. Focused host tests and
+  nine API 36 Room/migration/reopen tests passed on 2026-07-19.
+- [x] Complete API 26 and API 36 connected matrices pass with identical 278
+  executed-test coverage and only documented assumption skips.
+- [x] Production composer preflight is exercised only under unavailable role or
+  permission, with zero provider mutation and zero platform/carrier submission.
+- [x] Root existing-Thread composer and external-compose isolation each pass a
+  focused API 36 acceptance run.
+- [x] The exact final debug APK installs, copies to emulator Download with an
+  identical SHA-256, and cold-launches to the expected role-approval route on
+  API 36 without changing role or SMS permissions.
+- [ ] A physical SMS-capable device and active SIM pass the exact one-person,
+  one-unit existing-Thread journey.
+- [ ] Real carrier acceptance/rejection, billing, roaming, airplane/no-service,
+  sent callback, delivery callback, and exact provider reconciliation pass.
+- [ ] Reboot and process death at each real-send lifecycle boundary pass without
+  draft loss, duplicate submission, or foreign provider mutation.
+- [ ] OEM/device coverage and API 27 through 35 release rows pass.
+
+No real carrier SMS was sent. SIM, physical-device, OEM, carrier, billing,
+roaming, sent/delivery, reboot, and live-send process-death gates remain open.
+The Phase 5B manual-unknown late-provider residual is locally closed by the
+schema-6 receipt protocol in ADR 0009; that synthetic/emulator proof does not
+close any physical or carrier row. AuroraSMS is incomplete and not gold.
+
+### Phase 5B acknowledged-unknown local acceptance — 2026-07-19
+
+This source identifies as `0.5.1-phase5` (`versionCode` 5); the schema-6
+migration and callback-receipt change therefore do not reuse the frozen Phase 5A
+package version.
+
+The exact final Phase 5B source passed the complete offline host/release/privacy/
+license aggregate in 1m35s across 886 tasks (199 executed, 687 up-to-date). All
+515 host JUnit results passed: app 239, design system 11, index
+69, model 19, notifications 21, state 40, telephony 79, testing 24, and
+conversations 13. Debug, R8 release, and benchmark assembly; debug/release/
+benchmark lint; clean-room/private-art scans; dependency locks; permission and
+APK-content ledgers; and license gates all passed. CycloneDX 1.6 separately
+passed 15 up-to-date tasks in 7s.
+
+The complete final-version API 36 connected matrix passed in 1m29s across 456
+tasks. Its
+authoritative XML reports 291 tests, 10 intentional assumption skips, 281
+executed tests, and zero failures/errors: app 131/9 skips, benchmark 3/1, index
+31/0, notifications 29/0, state 52/0, telephony 35/0, and conversations 10/0.
+After the final receipt-domain invariant was tightened, all 52 state tests and
+the focused host coordinator/state suites passed again. No test invoked a real
+carrier destination.
+
+### Phase 5C durable conversation-SIM local acceptance — 2026-07-19
+
+This source identifies as `0.5.2-phase5` (`versionCode` 6) and Room schema 7.
+The new conversation-subscription table is content-free and keyed by a
+purpose-separated verified participant-set digest; its insert/update triggers
+enforce key shape, positive subscription/revision/timestamps, and monotonic
+revision/time transitions. The repository uses optimistic revisions and the
+Thread/send paths re-read the preference before operation reservation.
+
+The initial complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m50s across 886 tasks (372 executed, 174 from cache, 340
+up-to-date). After the current-schema instrumentation assertion was corrected,
+the exact final source passed the same 886-task aggregate again in 39s (57
+executed, 22 from cache, 807 up-to-date). All 521 host JUnit results passed: app 241, design system 11, index
+69, model 19, notifications 21, state 44, telephony 79, testing 24, and
+conversations 13. Debug, R8 release, and benchmark assembly; debug/release/
+benchmark lint; clean-room/private-art scans; dependency locks; permission and
+APK-content ledgers; and license gates all passed. `bundleRelease` separately
+passed 269 tasks in 21s. CycloneDX 1.6 passed all 15 tasks in 35s and reports
+441 components and 442 dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m27s
+across 456 tasks. Its module totals are 294 tests, 10 intentional assumption
+skips, 284 executed, and zero failures/errors: app 131/9 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 54/0, telephony 35/0, and conversations
+11/0. The first aggregate attempt exposed an old current-schema assertion that
+still expected version 6; it is diagnostic only. After the test was updated to
+validate the schema-7 table and reinstallable triggers, its focused 5/5 run and
+the later complete matrix above passed.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 1m55s
+across 456 tasks. Authoritative XML reports 297 tests, 13 intentional
+assumption skips, 284 executed, and zero failures/errors: app 134/12 skips,
+benchmark 3/1, index 31/0, notifications 29/0, state 54/0, telephony 35/0, and
+conversations 11/0.
+
+The debug APK is 14,740,845 bytes with SHA-256
+`e0d614e4a472d7416d299ba384824c756cc94486ee30ba9fc050e8f04180ece1`.
+The unsigned release APK is 2,730,477 bytes with SHA-256
+`2496afe507692c803e725906b5b2cea456ffb0479b9b84383f6380527013bfeb`;
+the release AAB is 5,575,056 bytes with SHA-256
+`30cb96a0fb38b1d85d6665bec99f93583bd6e9559cba30004cb574af28044104`.
+
+All subscription-choice acceptance used synthetic emulator subscriptions and
+no real carrier SMS. Physical dual-SIM/eSIM selection, actual removal or
+disablement, carrier routing, billing, roaming, groups, MMS, schedules, and OEM
+lifecycle behavior remain open. This closes only the local durable-choice and
+one-part composer no-silent-fallback contracts; AuroraSMS remains incomplete
+and not gold.
+
+### Phase 5D durable scheduled-SMS local acceptance — 2026-07-19
+
+This source identifies as `0.5.3-phase5` (`versionCode` 7) and Room schema 8.
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m28s across 886 tasks (126 executed, 2 from cache, 758
+up-to-date). All 529 host JUnit results passed with zero failures, errors, or
+skips: app 247, design system 11, index 69, model 19, notifications 21, state
+46, telephony 79, testing 24, and conversations 13. Debug, R8 release, and
+benchmark assembly; debug/release/benchmark lint; clean-room/private-art scans;
+dependency locks; permission and APK-content ledgers; and license gates passed.
+`bundleRelease` separately passed 269 tasks in 5s. CycloneDX 1.6 passed 15
+up-to-date tasks in 7s and reports 441 components and 442 dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m28s
+across 456 tasks. Its authoritative XML reports 298 tests, 10 intentional
+assumption skips, 288 executed, and zero failures/errors: app 131/9 skips,
+benchmark 3/1, index 31/0, notifications 29/0, state 56/0, telephony 35/0, and
+conversations 13/0. An initial diagnostic invocation exposed a stale current-
+schema test that expected version 7; after it was updated to verify schema 8's
+content-free table, unique indexes, and reinstallable physical triggers, the
+focused test passed 5/5 and the complete matrix above passed.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 1m56s
+across 456 tasks. Authoritative XML reports 301 tests, 13 intentional assumption
+skips, 288 executed, and zero failures/errors: app 134/12 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 56/0, telephony 35/0, and conversations
+13/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,838,926 | `53f6f96a896763c4a17c3c56c9038c582a30f001645f93be01a1135c667a0c28` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,769,225 | `d76525882ec1ac332dbad4a40082c805278cd8ca893aef9f28740f00decb7bd5` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,662,825 | `8c27c29972772aac0ef7ce13e9e9ca935bdf1b6197124fc70ba85c3d4df35b67` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,650,271 | `354527d3b1ca49daa41400f442e33743e3d8869bce21048a42d79c07e7930008` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The packaged app variants contain the declared default-SMS permissions plus
+`RECEIVE_BOOT_COMPLETED` and `SCHEDULE_EXACT_ALARM`; no app variant requests
+`INTERNET` or `ACCESS_NETWORK_STATE`. Exact-alarm access remains optional and an
+inexact fallback is visibly labeled. All schedule dispatch acceptance used
+fakes, synthetic data, or unavailable production preconditions. No physical
+reboot, Doze, live exact-access revocation, real SIM removal, carrier SMS,
+billing, or OEM alarm timing was exercised. AuroraSMS remains incomplete and
+not gold.
+
+The exact debug APK above installed successfully on the API 36 emulator and was
+copied to `/sdcard/Download/AuroraSMS-debug.apk`. The copied file was 14,838,926
+bytes and its device-side SHA-256 exactly matched
+`53f6f96a896763c4a17c3c56c9038c582a30f001645f93be01a1135c667a0c28`.
+An explicit cold launch returned status `ok`, launch state `COLD`, and total
+time 413 ms; `MainActivity` was top-resumed. The sole app-PID error-level line
+was Android's platform `ashmem` deprecation notice, with no crash or AuroraSMS
+functional error.
+The emulator intentionally retained `com.android.messaging` as SMS role holder,
+and AuroraSMS's SMS/notification runtime permissions remained denied, so the
+smoke exercised the expected role-approval route without sending a message.
+
+### Phase 5E durable short-delay Undo local and safe-device acceptance — 2026-07-19
+
+This source identifies as `0.5.4-phase5` (`versionCode` 8), Room schema 9, and
+ADR 0012. Immediate send remains the default; 1, 3, 5, and 10 second options
+create a content-free durable owner for the exact frozen draft. The complete
+offline host/release/privacy/license aggregate was `BUILD SUCCESSFUL` in 1m53s
+across 886 tasks (159 executed, 7 from cache, 720 up-to-date). All 538 host
+JUnit results passed with zero failures, errors, or skips: app 254, design
+system 11, index 69, model 19, notifications 21, state 48, telephony 79,
+testing 24, and conversations 13. Debug, R8 release, and benchmark assembly;
+debug/release/benchmark lint; clean-room/private-art scans; dependency locks;
+permission and APK-content ledgers; and license gates passed. `bundleRelease`
+separately passed 269 tasks in 8s. CycloneDX 1.6 separately passed 15 tasks in
+7s and reports 441 components and 442 dependencies.
+
+The first API 36 run found three stale acceptance assertions that expected the
+entire Thread overflow action to disappear when conversation-specific
+appearance became unavailable. Phase 5E intentionally keeps that action for
+the independent Send Delay preference while hiding only Appearance. After
+updating those assertions, the focused root acceptance class passed and the
+complete API 36 matrix passed 302 tests with 10 intentional assumption skips,
+292 executed, and zero failures/errors: app 131/9 skips, benchmark 3/1, index
+31/0, notifications 29/0, state 58/0, telephony 35/0, and conversations 15/0.
+The run was `BUILD SUCCESSFUL` in 1m33s across 456 tasks.
+
+The complete API 26 matrix was `BUILD SUCCESSFUL` in 1m59s across 456 tasks.
+Authoritative XML reports 305 tests, 13 intentional assumption skips, 292
+executed, and zero failures/errors: app 134/12 skips, benchmark 3/1, index 31/0,
+notifications 29/0, state 58/0, telephony 35/0, and conversations 15/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,642,934 | `e177575c93b66be4cbf26a74646bbe91197ecbe03d030ab01493f7401c3b10e1` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,788,813 | `2d9a54462fa9ed0886886190ffe251e2befb457f9f450e3f1843c2eb6c231e51` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,666,025 | `8e9a67ea4d0d279911e6ba649c759146a1a0c6487e44b01c3b58bf89cd6f07e0` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,704,533 | `2114f16c0d70b972383fd82844b05fc8a858c4b887238aed1f5ca6bb2ff59b31` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed with `-r` on the connected Pixel 8
+`192.168.68.50:42337`, preserving app data. The same 14,642,934-byte APK was
+copied to `/sdcard/Download/AuroraSMS-debug.apk`; device-side SHA-256 exactly
+matched `e177575c93b66be4cbf26a74646bbe91197ecbe03d030ab01493f7401c3b10e1`.
+The installed package reports version code 8/name `0.5.4-phase5`, min API 26,
+target API 36. A metadata-only private query verified schema version 9 and the
+`send_delay_operations` table. Cold launch returned status `ok`, state `COLD`,
+and total time 1,583 ms. The sole app-PID error-level line was Android's
+platform `ashmem` deprecation notice.
+
+The Pixel remained securely locked, so the keyguard was not bypassed and no
+screenshot or UI input was attempted. `org.fossify.messages.debug` remained the
+SMS role holder and Aurora's SMS/notification runtime permissions remained
+denied. No message content was read and no carrier SMS was sent. This safe
+install/schema/launch evidence does not close real process-kill timing, reboot,
+SIM removal, carrier, radio, billing, or OEM lifecycle gates. AuroraSMS remains
+incomplete and not gold.
+
+### Phase 5F guarded permanent-deletion local and safe-device acceptance — 2026-07-19
+
+This source identifies as `0.5.5-phase5` (`versionCode` 9), Room schema 10, and
+ADR 0013. One exact SMS/MMS row has one confirmation; a whole Thread has a
+two-step confirmation. Both enter a fixed five-second Undo window before an
+exact-target provider commit. Durable recovery stores no address or message
+content and never blindly repeats an interrupted delete.
+
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 2m04s across 886 tasks (255 executed, 11 from cache, 620
+up-to-date). All 546 host JUnit results passed with zero failures, errors, or
+skips: app 259, design system 11, index 69, model 19, notifications 21, state
+51, telephony 79, testing 24, and conversations 13. Debug, R8 release, and
+benchmark assembly; debug/release/benchmark lint; clean-room/private-art scans;
+dependency locks; permission and APK-content ledgers; and license gates passed.
+`bundleRelease` separately passed 269 tasks in 8s. CycloneDX 1.6 separately
+passed 15 up-to-date tasks in 7s and reports 441 components and 442
+dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m36s
+across 456 tasks. It passed 308 tests with 10 intentional assumption skips, 298
+executed, and zero failures/errors: app 131/9 skips, benchmark 3/1, index 31/0,
+notifications 29/0, state 61/0, telephony 35/0, and conversations 18/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m00s
+across 456 tasks. Authoritative XML reports 311 tests, 13 intentional assumption
+skips, 298 executed, and zero failures/errors: app 134/12 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations
+18/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,749,634 | `b72761cef9e98147c1639613081e5f9fb4c0a6d8ec56344d4e126a819c44d99c` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,846,357 | `ff37c6cc419517edb533bb3859ec4a657bbc9c24679e51fef966b66b620efd25` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,690,809 | `06ae33148ace3fe3897abb50ec90f53f3632c235f8dc5b622160b927f329908c` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,797,617 | `4352cc8f4fd577660efc4cd65f062b0902e39c5718e91bb98e9ba7dd92030d73` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The Pixel 8 was not enumerated by ADB at Phase 5F handoff; its prior wireless
+endpoint was unreachable, so physical install/migration/launch acceptance
+remains pending. No automated or manual Phase 5F test read or deleted a live
+message, changed the default SMS app, or submitted a carrier message.
+
+### Phase 5G shared no-group-SMS acceptance — 2026-07-19
+
+This source identifies as `0.5.6-phase5` (`versionCode` 10), Room schema 10,
+and ADR 0014. `SmsSendRequest` structurally requires exactly one canonical
+recipient. Thread, delayed, and scheduled paths each recheck a verified one-
+person identity. Respond-via maps two or three recipients to one MMS request;
+an MMS failure returns without any SMS call. The group Thread UI keeps draft
+editing available, labels MMS unavailable, and disables Send.
+
+The complete offline host/release/privacy/license aggregate passed. All 552
+host JUnit results passed with zero failures, errors, or skips: app 262, design
+system 11, index 69, model 19, notifications 21, state 51, telephony 82,
+testing 24, and conversations 13. Debug, R8 release, and benchmark assembly;
+debug/release/benchmark lint; clean-room/private-art scans; dependency locks;
+permission and APK-content ledgers; and license gates passed. `bundleRelease`
+separately passed 269 tasks in 25s. CycloneDX 1.6 separately passed 15
+up-to-date tasks in 8s and reports 441 components and 442 dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m35s
+across 456 tasks. It passed 309 tests with 10 intentional assumption skips, 299
+executed, and zero failures/errors: app 132/9 skips, benchmark 3/1, index 31/0,
+notifications 29/0, state 61/0, telephony 35/0, and conversations 18/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m01s
+across 456 tasks. Authoritative XML reports 312 tests, 13 intentional assumption
+skips, 299 executed, and zero failures/errors: app 135/12 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations
+18/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,749,634 | `3bc8322e3ea920df07c52f9cd19082794d7be3bfc73f822f711237245d997a19` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,846,357 | `06cf5c7a208a888c333468bb0b59aa07efb7dae65c052516feb48a08ed403a95` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,690,813 | `6bbe43e335ca30fb6312f0ef3ab9d9c640fac66764b8c5eecd418730d9037eb1` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,797,124 | `1fb2e9f0b64ea335a86ac35b51aa57f1d756f52c675d2415bde8afb9c22f22b8` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The Pixel 8 was still absent from `adb devices` at Phase 5G handoff, so its
+safe install/copy/metadata-only launch remains pending. Emulator and host tests
+used only synthetic recipients and unavailable/fake transport boundaries; no
+carrier SMS/MMS was submitted. The broader group-MMS codec, provider addressing,
+reply identity, failure UI, carrier, and physical release rows remain open.
+
+### Phase 6A conservative reaction-fallback acceptance — 2026-07-19
+
+This source identifies as `0.6.0-phase6` (`versionCode` 11), Room schema 10,
+and ADR 0015. Only exact, complete, bounded whole-message fallback forms render
+as a structured reaction card. Truncated, malformed, differently cased,
+multiline, unknown, trailing, blank, or oversized input remains the original
+raw SMS. The presentation path does not rewrite, hide, or associate a provider
+row and does not change index, search, timeline, or durable state.
+
+The complete offline host/release/privacy/license aggregate passed. All 555
+host JUnit results passed with zero failures, errors, or skips: app 262, design
+system 11, index 69, model 19, notifications 21, state 51, telephony 82,
+testing 24, and conversations 16. Debug, R8 release, and benchmark assembly;
+debug/release/benchmark lint; clean-room/private-art scans; dependency locks;
+permission and APK-content ledgers; and license gates passed. `bundleRelease`
+and CycloneDX 1.6 also passed separately; the SBOM reports 441 components and
+442 dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m36s
+across 456 tasks. It passed 311 tests with 10 intentional assumption skips,
+301 executed, and zero failures/errors: app 132/9 skips, benchmark 3/1, index
+31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations 20/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m00s
+across 456 tasks. Authoritative XML reports 314 tests, 13 intentional assumption
+skips, 301 executed, and zero failures/errors: app 135/12 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations
+20/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,754,958 | `eaf39a3454b5ba283dc2bdadcf035b33ed95cf02d14014ed0f46e4bea3ed0314` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,851,681 | `f0bcc5a9d153abb0f7e982c13c882a009424ec644b0f5ba627285e2b24256014` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,696,137 | `4145b0d5ba2accd65e39582dc2c1e0a9b3bf54f769023d3823be0d6212589297` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,804,008 | `d02f762878bb80abd190e7e863135853d88ee927bb8315532ba36563f5235b03` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+Only the API 36 and API 26 emulators were enumerated by ADB at Phase 6A
+handoff. The Pixel 8 install/copy/metadata-only launch therefore remains
+pending. All reaction fixtures were synthetic strings; no message content was
+read, no default-SMS role changed, and no carrier SMS/MMS was submitted.
+
+### Phase 6B selected-text copy and bounded-details acceptance — 2026-07-19
+
+This source identifies as `0.6.1-phase6` (`versionCode` 12), Room schema 10,
+and ADR 0016. Long press opens an explicit Message actions dialog. The
+read-only selector copies exactly one non-collapsed valid range from only the
+body displayed in that bubble and labels a truncated preview. Details contains
+only bounded type, direction, localized time, status, subscription, and
+attachment-count metadata. It excludes body, subject, address, provider/thread
+IDs, and attachment paths. Deletion remains a separate choice with the Phase
+5F confirmation and Undo protocol.
+
+The complete offline host/release/privacy/license aggregate passed. All 558
+host JUnit results passed with zero failures, errors, or skips: app 262, design
+system 11, index 69, model 19, notifications 21, state 51, telephony 82,
+testing 24, and conversations 19. Debug, R8 release, and benchmark assembly;
+debug/release/benchmark lint; clean-room/private-art scans; dependency locks;
+permission and APK-content ledgers; and license gates passed. `bundleRelease`
+and CycloneDX 1.6 also passed separately; the SBOM reports 441 components and
+442 dependencies.
+
+The focused API 26 run initially exposed two compatibility-test assumptions:
+the truncated bubble's center was occupied by its Show full message control,
+and Android 8 creates its clipboard service on a Looper thread. The test now
+targets the body area and accesses the clipboard on the main thread. The
+corrected 22-test feature class passed on both APIs.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m37s
+across 456 tasks. It passed 313 tests with 10 intentional assumption skips,
+303 executed, and zero failures/errors: app 132/9 skips, benchmark 3/1, index
+31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations 22/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m03s
+across 456 tasks. Authoritative XML reports 316 tests, 13 intentional assumption
+skips, 303 executed, and zero failures/errors: app 135/12 skips, benchmark 3/1,
+index 31/0, notifications 29/0, state 61/0, telephony 35/0, and conversations
+22/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,780,470 | `11652e008ce466f259e56ab642b17b73a5c65e3e1b698a3650b39676e9d27af2` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,860,821 | `7a4673e81fc0837e1fc869a78ea627ab783e8244762149685ad42bbc48504921` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,721,657 | `68c505bab6f01e7f77914a5c8ba91dfa4c33e0fe977f8c79a5d28e4dafd1702c` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,826,971 | `3d56a196a7232c6d5dc230c65a8d30071d85db241702eaf2fb0504ea39827ba8` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+Only the API 36 and API 26 emulators were enumerated by ADB at Phase 6B
+handoff. The Pixel 8 install/copy/metadata-only launch therefore remains
+pending. Clipboard checks used only `Synthetic message` and reset the emulator
+clipboard afterward. No live message content was read or copied, no default-SMS
+role changed, and no carrier SMS/MMS was submitted.
+
+### Phase 6C local content-free notification-reminder acceptance — 2026-07-19
+
+This source identifies as `0.6.2-phase6` (`versionCode` 13), Room schema 10,
+and ADR 0017. Reminders are off by default and offer explicit 15-minute,
+one-hour, and three-hour choices. One checksummed content-free owner per
+conversation is bounded to 64 total entries and drives a private ID-only,
+one-shot inexact alarm. Fire-time handling requires role ownership and an exact
+successful unread-SMS provider recheck before posting generic text. Read,
+missing, and mismatched rows cancel the exact incoming generation; provider
+failure consumes only the reminder and cannot fabricate read state or cancel
+the original alert. Opening the conversation, setting changes, role loss,
+reboot, wall-clock change, and timezone change fail closed.
+
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m31s across 886 tasks. All 565 host JUnit results passed with
+zero failures, errors, or skips: app 269, design system 11, index 69, model 19,
+notifications 21, state 51, telephony 82, testing 24, and conversations 19.
+Debug, R8 release, and benchmark assembly; debug/release/benchmark lint;
+clean-room/private-art scans; dependency locks; permission and APK-content
+ledgers; and license gates passed. `bundleRelease` passed 269 tasks in 8s, and
+CycloneDX 1.6 passed 15 tasks in 8s with 441 components and 442 dependencies.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m40s
+across 456 tasks. It passed 320 tests with 10 intentional assumption skips,
+310 executed, and zero failures/errors: app 136/9 skips, benchmark 3/1, index
+31/0, notifications 31/0, state 61/0, telephony 35/0, and conversations 23/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m03s
+across 456 tasks. Authoritative XML reports 323 tests with 13 intentional
+assumption skips, 310 executed, and zero failures/errors: app 139/12 skips,
+benchmark 3/1, index 31/0, notifications 31/0, state 61/0, telephony 35/0, and
+conversations 23/0.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,817,930 | `b197f321d66d8d17ebf20de95258f146b1f9865e3d43c9d6a0d15f0cb04734c3` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,881,893 | `89a79b47af3b5937d91e4cde83b6f7ff62d1b529e00958c20719ca7242132789` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,742,725 | `9b769bb2c6d1ce0479493e8a4a31ece22767041e85fc34bbfbf52cb3e952e54d` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,851,179 | `d153bb13fc21af671780d05930fd3ee33b85e98a6fd0e7725a7a0ff8ce3f5d97` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed on the Pixel 8 and API 36 emulator, was copied
+to each device's Download directory, and hash-matched the host artifact. The
+Pixel's non-Aurora default-SMS role holder and denied Aurora SMS-read permission
+were preserved. Content-free inspection confirmed its retained index was
+paused rather than verified complete, which explains a partial-history view
+without exposing message, address, participant, or screenshot data. No role or
+permission was changed, no live content was read, and no carrier SMS/MMS was
+submitted.
+
+### Phase 6 history-completeness hardening acceptance — 2026-07-19
+
+This source identifies as `0.6.3-phase6` (`versionCode` 14), retains Room schema
+10, and adds no permission. Content-free Pixel inspection found a non-Aurora
+default-SMS role, denied Aurora SMS-read access, and a retained index generation
+paused before verified completion. That explains the observed partial-history
+view without implying provider row loss. The app now states the role boundary in
+onboarding and boundedly continues Pending foreground reconciliation while role
+and foreground-read eligibility remain true. Each initiating signal permits at
+most four 500 ms retries; close, role loss, background loss, completion, and
+failure stop continuation.
+
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m20s across 886 tasks. All 568 host JUnit results passed with
+zero failures, errors, or skips: app 272, design system 11, index 69, model 19,
+notifications 21, state 51, telephony 82, testing 24, and conversations 19.
+Debug, R8 release, and benchmark assembly; debug/release/benchmark lint;
+clean-room/private-art scans; dependency locks; permission and APK-content
+ledgers; and license gates passed.
+
+The first combined `bundleRelease cyclonedxBom` invocation stopped during
+configuration because CycloneDX attempted to mutate an already-resolved release
+configuration. The gates passed when invoked separately immediately afterward:
+`bundleRelease` passed 269 tasks in 7s, and CycloneDX 1.6 passed 15 tasks in 7s
+with 441 components and 442 dependencies. This was an invocation-order tooling
+failure, not a source or test failure.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m36s
+across 456 tasks. Authoritative XML reports 321 tests with 10 intentional
+assumption skips, 311 executed, and zero failures/errors: app 136/9 skips,
+benchmark 3/1, index 32/0, notifications 31/0, state 61/0, telephony 35/0, and
+conversations 23/0.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m02s
+across 456 tasks. Authoritative XML reports 324 tests with 13 intentional
+assumption skips, 311 executed, and zero failures/errors: app 139/12 skips,
+benchmark 3/1, index 32/0, notifications 31/0, state 61/0, telephony 35/0, and
+conversations 23/0. Before these green matrices, the focused large-history test
+fixture failed during construction because two synthetic fingerprint seeds were
+not hexadecimal. Correcting those non-production fixture values produced 3/3
+focused passes on both APIs and the green full matrices above.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,818,018 | `f0a4e8ac419b61e1f2af841f00523f089d4482edc1d87861a0d826c18b39353e` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,881,981 | `0451ac52f4c0d302a19979dae75aa47bbcda9904983fb4ade63e393662d4ee25` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,742,809 | `6298472a377a84d672db21c4b5c7b239349b9c10d480c773adff521b8e493d8b` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,854,960 | `620c261a61acaeb3ae2e6490cb8526eff7b1a83a1e629c8d005cb8215d5d05d0` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed successfully on the Pixel 8 and API 36 emulator,
+was copied to each Download directory, and hash-matched the host artifact. Both
+devices report version code 14/name `0.6.3-phase6`; neither role holder changed.
+The Pixel still denies Aurora SMS permissions because another app remains
+default, so no claim is made that its personal index has completed. No app was
+launched, no live message/address/content was read, and no carrier SMS/MMS was
+submitted.
+
+### Phase 6D bounded message-signature acceptance — 2026-07-19
+
+This source identifies as `0.6.4-phase6` (`versionCode` 15), uses Room schema
+11, and adds no permission. It provides global and verified-conversation
+signature choices, exact unsigned/signed SMS-part disclosure, an unchanged
+one-person/one-part SMS transport gate, and immutable frozen signature state
+for immediate, delayed, and scheduled recovery. Corrupt preference state pauses
+new sends rather than silently omitting content.
+
+The complete offline host/release/privacy/license aggregate was `BUILD
+SUCCESSFUL` in 1m32s across 886 tasks (92 executed, two from cache, 792
+up-to-date). All 578 host JUnit results passed with zero failures, errors, or
+skips: app 277, design system 11, index 69, model 19, notifications 21, state
+56, telephony 82, testing 24, and conversations 19. Debug, R8 release, and
+benchmark assembly; debug/release/benchmark lint; clean-room/private-art scans;
+dependency locks; permission and APK-content ledgers; and license gates passed.
+
+The complete API 36 matrix on `emulator-5554` was `BUILD SUCCESSFUL` in 1m56s
+across 456 tasks. Authoritative XML reports 332 tests with 10 intentional
+assumption skips, 322 executed, and zero failures/errors: app 142/9 skips,
+benchmark 3/1, index 32/0, notifications 31/0, state 62/0, telephony 35/0, and
+conversations 27/0. Two earlier diagnostic attempts lost the emulator process;
+its quick-boot log showed invalid Vulkan color-buffer restoration. A cold boot
+with snapshot loading disabled and software graphics produced the definitive
+green matrix above; neither interrupted attempt is acceptance evidence.
+
+The complete API 26 matrix on `emulator-5556` was `BUILD SUCCESSFUL` in 2m09s
+across 456 tasks. Authoritative XML reports 335 tests with 13 intentional
+assumption skips, 322 executed, and zero failures/errors: app 145/12 skips,
+benchmark 3/1, index 32/0, notifications 31/0, state 62/0, telephony 35/0, and
+conversations 27/0.
+
+The focused schema suite passed all 62 tests after separating historical
+version-5, version-8, and version-9 SQLite triggers from schema 11's
+signature-aware triggers. `bundleRelease` passed 269 tasks in 7s. CycloneDX 1.6
+passed 15 tasks in 7s with 441 components, 442 dependency nodes, and no random
+serial number.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 15,826,882 | `42d6210e4d89b7e777e8fbd1fa96320173a78ffe05bbaa3b4e1fd00ab9a5acad` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,889,069 | `400226f8e1e0d017533bab3bbc5e745c65006f7dbdd6ea693010b6c8540682e9` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,749,901 | `cf996b07af95aae5f6c960fb433768481e97fd8bcf8fbcdee712fabb824be8c6` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,886,034 | `7ef95ff255e8bffafc408d0f4b868d9eaf6ceb545ebc31a2160034babb1c2d60` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed with data preserved on the Pixel 8 and API 36
+emulator and was copied to each Download directory. Both copies hash-match the
+host artifact and both packages report version code 15/name `0.6.4-phase6`.
+The Pixel retained `org.fossify.messages.debug` as its SMS role holder; API 36
+retained `com.android.messaging`. Aurora's SMS and notification permissions
+remain denied on both. AuroraSMS was not launched, no live message/address/body
+was read, and no carrier SMS/MMS was submitted.
+
+### Phase 6 large-history role-resume follow-up — 2026-07-19
+
+This source identifies as `0.6.5-phase6` (`versionCode` 16), retains index
+schema 3 and durable-state schema 11, and adds no permission. A content-free
+Pixel inspection of the preceding build found Fossify still held the SMS role
+and all Aurora messaging permissions were denied. The private rebuildable index
+contained four paused generations. The latest had committed 2,100 rows with
+`pending_changes=1`; its SMS checkpoint had committed 1,507 rows and its MMS
+checkpoint 593, and neither source was exhausted. The cache retained 5,226
+physical message projections and 73 conversation projections, while only 46
+conversation projections belonged to the newest incomplete generation. No
+address, participant, timestamp, body, or screenshot was read.
+
+The regression was that `ROLE_CHANGED` used the same durable dirty path as a
+real provider mutation. Switching temporarily to another SMS app therefore
+made a paused first-history checkpoint ineligible to resume, and the next role
+grant restarted from the newest messages. Role transitions are now clean
+authority signals: role loss still pauses immediately, but later explicit role
+recovery resumes the same durable cursor. Content-observer and external-provider
+signals still mark ambiguous changes dirty, and completion still requires both
+sources exhausted plus provider-count and bounded head/fingerprint verification.
+The incomplete Inbox and Thread notice is now a prominent progress surface that
+shows only the content-free committed count and explicitly says some
+conversations and older messages are missing.
+
+This 2026-07-19 behavior is retained as historical evidence only. The
+2026-07-21 completeness hardening supersedes clean role-resume: an authority
+gap can hide deep or backdated provider changes, so current role recovery
+starts a fresh generation while ordinary clean process recovery remains
+resumable.
+
+The first complete aggregate stopped only because lint correctly found the old
+generic incomplete-history string unused after both screens moved to the new
+pluralized progress copy. Removing that dead resource produced a definitive
+`BUILD SUCCESSFUL` in 1m41s across 886 tasks (110 executed, five from cache,
+771 up-to-date). All 579 host JUnit results passed with zero failures, errors,
+or skips: app 278, design system 11, index 69, model 19, notifications 21,
+state 56, telephony 82, testing 24, and conversations 19. Debug, R8 release,
+benchmark, all lint variants, clean-room/private-art scans, dependency locks,
+permission and APK-content ledgers, and license gates passed.
+
+The complete API 36 matrix was `BUILD SUCCESSFUL` in 2m01s across 456 tasks.
+It reported 333 tests with 10 intentional environment skips, 323 executed, and
+zero failures/errors: app 142/9 skips, benchmark 3/1, index 32/0,
+notifications 31/0, state 62/0, telephony 35/0, and conversations 28/0. The
+complete API 26 matrix was `BUILD SUCCESSFUL` in 2m11s across 456 tasks. Its
+authoritative XML reports 336 tests with 13 intentional skips, 323 executed,
+and zero failures/errors: app 145/12 skips, benchmark 3/1, index 32/0,
+notifications 31/0, state 62/0, telephony 35/0, and conversations 28/0. The
+focused updated conversation UI suite separately passed 28/28 on API 36.
+
+`bundleRelease` passed 269 tasks in 9s. CycloneDX 1.6 passed 15 tasks in 8s
+with its deterministic BOM unchanged.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 15,515,212 | `532d9e5a985db2b756f8c30593cbf7866b02740c5df7d838e624699619b4b4c1` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,888,993 | `e405e490abf546b3f30252da3ede967b2f5da384ef1b65ae9279751a28e2de7d` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,749,821 | `4d3732f984b3ea5a66811bddd8576bcb2af3fc5c7ea0e85089f914b514eeba57` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,888,098 | `b2b4e9f0986da28730a0555e381a5bdd3321f5c08c63895386b3a2956eecee43` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed with data preserved on the Pixel 8 and API 36
+emulator and was copied to each Download directory. Both copies hash-match the
+host artifact and both packages report version code 16/name `0.6.5-phase6`.
+The Pixel retained `org.fossify.messages.debug`; API 36 retained
+`com.android.messaging`. Aurora's SMS and notification permissions remain
+denied on both. AuroraSMS was not launched, no live message/address/body was
+read, and no carrier SMS/MMS was submitted. Physical completion remains open
+until the owner explicitly grants AuroraSMS the SMS role and leaves it
+foreground-readable through verified completion.
+
+### Phase 6E local spam and provider-preserving blocking — 2026-07-19
+
+This source identifies as `0.6.6-phase6` (`versionCode` 17), retains index
+schema 3, advances durable state from schema 11 to 12, and implements ADR 0019.
+The migration adds one bounded `spam_safety_decisions` table with physical
+SQLite constraints for at most 256 rows, purpose-separated lowercase SHA-256
+keys, verified one-person blocks, meaningful states, and monotonic optimistic
+transitions. It stores no raw sender, participant, contact, body, snippet,
+keyword, or score.
+
+Automatic rules warn only for an unknown conventional phone sender whose newest
+incoming snippet contains a link, a reviewed urgency term, and a reviewed
+sensitive-request term. Contacts, short codes, alphanumeric senders, groups,
+outgoing messages, and incomplete identities are not automatically warned.
+Automatic rules pause when contact access is unavailable rather than treating
+an unresolved sender as unknown.
+User spam/not-spam and block/unblock choices are independent. Inbox and Thread
+show the exact reason, while Spam & blocked revalidates every stored row against
+the complete current index identity and exposes separate Not spam and Unblock
+recovery. Nothing is automatically hidden or deleted.
+
+The incoming blocking test proves the provider row is written and acknowledged
+while Aurora notification posting, contact resolution, reply-target ownership,
+and reminder scheduling are skipped. A lookup exception proves fail-open normal
+notification behavior. Migration/repository tests cover persistence, physical
+constraints, optimistic revisions, classification/block independence, clearing,
+and refusal to block a group. Compose acceptance covers Inbox warnings and
+route entry, Thread actions and explicit block confirmation, dedicated-route
+reasons, and independent recovery actions.
+
+The final complete offline host aggregate was `BUILD SUCCESSFUL` in 1m33s
+across all 886 Gradle tasks (50 executed, 836 up-to-date). All 587 host tests
+passed with zero failures, errors, or skips: app 284, design system 11,
+index 69, model 19, notifications 21, state 58, telephony 82, testing 24, and
+conversations 19. Debug, R8 release, benchmark, all lint variants, clean-room/
+private-art scans, dependency locks, permission and APK-content ledgers, and
+license gates passed.
+
+The complete API 36 matrix was `BUILD SUCCESSFUL` in 2m05s across 456 tasks.
+Authoritative XML reports 339 tests with 10 intentional environment-gated
+skips, 329 executed, and zero failures/errors: app 142/9 skips, benchmark 3/1,
+index 32/0, notifications 31/0, state 65/0, telephony 35/0, and conversations
+31/0. The complete API 26 matrix was `BUILD SUCCESSFUL` in 2m13s across 456
+tasks. It reports 342 tests with 13 intentional skips, 329 executed, and zero
+failures/errors: app 145/12 skips, benchmark 3/1, index 32/0, notifications
+31/0, state 65/0, telephony 35/0, and conversations 31/0. The focused full
+conversation UI class separately passed 31/31 on API 36.
+
+`bundleRelease` passed 269 tasks in 8s. CycloneDX 1.6 passed 15 tasks in 8s
+with 441 components, 442 dependency nodes, and no random serial number. The
+attempt to request bundle and SBOM in one Gradle invocation failed during task
+configuration before either task executed; each independent clean invocation
+then passed and is the acceptance evidence.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 15,216,441 | `a7d388c18af8582622fc8e1d446fd04b7cbc97dc1212f84ed3b7081af29ddb00` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,928,769 | `7eba04af5a1c020e4809094abb4de2523e49b7e662facef7d7df06c2c6127e0d` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,773,213 | `1a864861656911e21523c37b058ab76e07610482f594e482c6a46b704b29b782` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,966,424 | `f529efa8c9418d6dd5be4e3c1ba407b85cb8cd401c3d3b8cf1d21a03dacead91` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed with data preserved on the Pixel 8 and API 36
+emulator and was copied to `/sdcard/Download/AuroraSMS-debug.apk` on both. Both
+copies are 15,216,441 bytes and hash-match the host artifact. Both packages
+report version code 17/name `0.6.6-phase6`. The Pixel retained
+`org.fossify.messages.debug`; API 36 retained `com.android.messaging`.
+Aurora's SMS and notification permissions remain denied on both. No Activity
+launch was issued; both packages were left force-stopped and the final PID
+checks were empty. No live message/address/body was read and no
+carrier SMS/MMS was submitted.
+
+### Phase 6 interrupted-history cache presentation repair — 2026-07-19
+
+This source identifies as `0.6.7-phase6` (`versionCode` 18), retains index
+schema 3 and durable-state schema 12, and implements ADR 0020 without a
+migration. Content-free Pixel inspection confirmed the user-visible failure:
+the newest paused generation had committed 2,100 rows, while the rebuildable
+index physically retained 5,226 messages and 73 conversation projections across
+four partial generations. Fossify held the SMS role and Android denied Aurora's
+SMS permissions, so Aurora could neither continue the provider scan nor claim
+that cached state was current.
+
+While coverage is incomplete, Inbox pagination, exact conversation lookup,
+Thread pagination, bounded content expansion, and participant previews now
+query the best-known union of retained rows rather than only the newest partial
+generation. Provider-qualified row keys still deduplicate content. The current
+generation remains the cursor/invalidation epoch, the UI labels the result as
+best-known cached history that may not reflect recent changes, and incomplete
+coverage still produces no verified participant identity. Every send, delete,
+spam/block, signature, subscription, and other exact-identity action therefore
+remains disabled or fails closed. Verified completion returns presentation to
+strict generation-qualified queries and the existing completion transaction
+removes stale rows.
+
+The new database regression constructs a verified generation, starts an
+interrupted replacement generation, and proves Inbox pages both generations,
+an older conversation remains openable, and Thread pages plus bounded content
+expansion retain both old and new rows. It passed 4/4 as part of the complete
+33-test index suite on both API 26 and API 36. The updated full conversation UI
+class passed 31/31 on API 36 and verifies the explicit best-known-cache notice.
+
+The complete offline host aggregate was `BUILD SUCCESSFUL` in 2m08s across all
+886 Gradle tasks (160 executed, 5 from cache, 721 up-to-date). All 587 host
+tests passed with zero failures, errors, or skips: app 284, design system 11,
+index 69, model 19, notifications 21, state 58, telephony 82, testing 24, and
+conversations 19. Debug, R8 release, benchmark, all lint variants, clean-room/
+private-art scans, dependency locks, permission and APK-content ledgers, and
+license gates passed.
+
+The complete API 36 matrix was `BUILD SUCCESSFUL` in 2m06s across 456 tasks and
+reports 340 tests with 10 intentional environment-gated skips, 330 executed,
+and zero failures/errors: app 142/9 skips, benchmark 3/1, index 33/0,
+notifications 31/0, state 65/0, telephony 35/0, and conversations 31/0. The
+complete API 26 matrix was `BUILD SUCCESSFUL` in 2m14s across 456 tasks and
+reports 343 tests with 13 intentional skips, 330 executed, and zero
+failures/errors: app 145/12 skips, benchmark 3/1, index 33/0, notifications
+31/0, state 65/0, telephony 35/0, and conversations 31/0.
+
+`bundleRelease` passed 269 tasks in 9s. CycloneDX 1.6 passed 15 tasks in 8s
+with 441 components, 442 dependency nodes, and no random serial number.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app/build/outputs/apk/debug/app-debug.apk` | 14,979,598 | `9280c10acca23ac84dc69ab8301e137821b785de4c055097aae68dd16938c6e2` |
+| `app/build/outputs/apk/release/app-release-unsigned.apk` | 2,928,857 | `c1adc3e4eedc6c0a985e93341a6eefb09a1b7347067e826f1fe2d8a31fa78c7a` |
+| `app/build/outputs/apk/benchmark/app-benchmark.apk` | 2,789,685 | `b4b31a11312704b9f75f30f3fca681290dbc6df896b8b95b9489a2c0cdf66cb7` |
+| `app/build/outputs/bundle/release/app-release.aab` | 5,974,316 | `c940f4aba9cc589ac8c48451bf85e55cc60abb2002eaf395cf11cfed16b024f7` |
+| `build/reports/bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK installed with data preserved on the Pixel 8 and API 36
+emulator and was copied to `/sdcard/Download/AuroraSMS-debug.apk` on both. Both
+copies are 14,979,598 bytes and hash-match the host artifact. Both packages
+report version code 18/name `0.6.7-phase6`. The Pixel retained Fossify and API
+36 retained AOSP Messaging as their default SMS apps. The acceptance procedure
+did not request a role change, launch AuroraSMS, inspect a live message/address/
+body, or submit carrier traffic. Authoritative complete-history acceptance
+still requires the owner to explicitly make AuroraSMS default and keep it open
+through verified completion; the repair makes the existing private cache useful
+without misrepresenting it as current.
+
+### Phase 6F bounded voice-memo MMS implementation evidence — 2026-07-19
+
+This source identifies as `0.6.8-phase6` (`versionCode` 19), retains index
+schema 3 and durable-state schema 12, and implements ADR 0021. Microphone access
+is absent from messaging onboarding and originates only from the explicit
+Thread Record action. Capture is one visible foreground MPEG-4/AAC-LC session,
+limited to 60 seconds and 524,288 bytes in `noBackupFilesDir`; Stop enters a
+separate review state and cancellation, Thread exit, or backgrounding deletes
+the private file.
+
+The exact official-AOSP composer subset is pinned and noticed under
+`third_party/aosp-mms/`. It emits only one-person SMIL/optional signature-text/
+audio PDUs and has no incoming parser, APN/network client, transaction service,
+database, UI, group, or arbitrary-attachment surface. The deterministic golden
+PDU is 539 bytes with SHA-256
+`e8abd80ab558cc9ba2179519cb928b131889f78d35b7258ba419cc6a0bd87867`;
+the corpus reaches the full 524,288-byte audio limit.
+
+Provider persistence writes parts first, verifies one exact
+creator/Thread/transaction-bound FAILED row, and requires an exactly applied
+OUTBOX transition before the platform call. A checksummed content-free journal
+owns preparation/submission/callback recovery; SUBMITTING process death becomes
+non-retryable submission-unknown, and exact private callback identity is
+authenticated before provider mutation.
+
+Focused evidence is green: the real virtual-microphone controller executes 3/3
+tests on API 26 and 3/3 on API 36; exact MMS callback-intent tests execute 3/3
+on each; authenticated callback reconciliation executes 3/3 on each; the
+encoder/journal/role group executes 10/10 on each; the complete Thread UI class
+executes 33/33 on each; and the API 36 in-process provider fixture executes 3/3
+byte-persistence/status/cleanup/rollback tests. API-independent host tests cover
+bounded values, operation namespaces, onboarding permission exclusion, every
+journal crash state, and the exact carrier-boundary transition. All fixtures use
+synthetic recipients/content and fake transport/provider boundaries. No live
+provider content was read and no carrier MMS was submitted.
+
+The complete offline aggregate passed in 1m47s across all 888 Gradle tasks
+(145 executed, six from cache, 737 up-to-date):
+
+```shell
+./gradlew test lintDebug lintRelease assembleDebug assembleRelease \
+    :app:lintBenchmark :app:assembleBenchmark \
+    :macrobenchmark:check :macrobenchmark:assembleBenchmark \
+    verifyCleanRoom verifyPrivateAssets verifyDependencies verifyPermissions \
+    verifyApkContents checkLicense generateLicenseReport \
+    --offline --no-daemon --no-parallel --console=plain \
+    -Pkotlin.incremental=false
+```
+
+All 601 retained host JUnit results passed with zero failures, errors, or
+skips:
+
+| Module | Tests |
+|---|---:|
+| app | 287 |
+| design system | 11 |
+| index | 69 |
+| model | 19 |
+| notifications | 21 |
+| state | 58 |
+| telephony | 93 |
+| testing | 24 |
+| conversations | 19 |
+| **Total** | **601** |
+
+`bundleRelease` separately passed 270 tasks in 25s. `cyclonedxBom` separately
+passed all 15 tasks in 7s; the generated CycloneDX 1.6 graph contains 441
+components and 442 dependency nodes.
+
+The complete API 36 connected matrix passed 457 tasks in 2m03s. The complete
+API 26 matrix passed 457 tasks in 2m16s. Authoritative XML counts are:
+
+| Module | API 26 tests | API 26 skips | API 36 tests | API 36 skips |
+|---|---:|---:|---:|---:|
+| app | 148 | 12 | 145 | 9 |
+| benchmark guards | 3 | 1 | 3 | 1 |
+| index | 33 | 0 | 33 | 0 |
+| notifications | 31 | 0 | 31 | 0 |
+| state | 65 | 0 | 65 | 0 |
+| telephony | 49 | 0 | 52 | 0 |
+| conversations | 33 | 0 | 33 | 0 |
+| **Total** | **362** | **13** | **362** | **10** |
+
+All executed connected tests passed with zero failures or errors. Skips remain
+explicit opt-in physical/carrier/system-picker journeys; the API 26 provider
+fixture is also SDK-suppressed because its in-process `ContentResolver` harness
+is platform API 29+, while API 26 still executes the encoder, callback, journal,
+UI, and real virtual-microphone contracts.
+
+The accepted artifacts are:
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `app-debug.apk` | 15,196,362 | `35b373975865055cead5979d20e8ef6bb0c6225030b3d70be8bae52712b45a47` |
+| `app-release-unsigned.apk` | 2,985,817 | `42f2e0691d8ecd81e0a4a5aba667db4e62cc7608ad3555ff919fa0e4a2003b29` |
+| `app-benchmark.apk` | 2,830,261 | `0d4e475fb3d150127acd861858a45254ef02f462ac70a0e44288e959efd85a8b` |
+| `app-release.aab` | 6,075,309 | `dff0c83488bf35fbddc1c6463eb897e411f1c769100b767b4e0af61426a1ad90` |
+| `bom.json` | 1,014,122 | `4b88fc0a90b95b6d90607bc8717d8f7359dfa08ae0ee7ae9e75671b462a0e765` |
+
+The exact debug APK was installed and copied to
+`/sdcard/Download/AuroraSMS-debug.apk` on the API 26 and API 36 emulators. Both
+15,196,362-byte copies hash-match the host artifact, report version code 19/name
+`0.6.8-phase6`, remain force-stopped, and retained `com.android.messaging` as
+the default SMS app. The Pixel's prior wireless endpoint was unreachable after
+the editor crash (`No route to host`), so no Phase 6F physical handoff is
+claimed. The acceptance did not request role or permission changes, launch the
+app, inspect live message content, or submit carrier traffic. Carrier/OEM and
+physical-device voice-MMS acceptance remain open and require a separate owner-
+approved protocol.
+
+## Phase 6G authenticated backup and synthetic provider-restore checkpoint
+
+The version-one envelope, exact SMS/MMS/part schemas, bounded provider export,
+full authenticated visitor, content-free recovery journal, duplicate analysis,
+non-sendable staging, and Android `ContentResolver` restore adapter are now
+implemented. Restore writes every new parent as an exact app-owned `FAILED`
+placeholder, journals reserve/insert/expect/prepare ordering with `fsync`,
+streams binary parts while hashing, re-reads every scalar/address/part, derives a
+new local provider thread from restored participants, and exposes only Inbox,
+Sent, or inert Failed history. Archived Draft/Outbox/Queued rows remain Failed.
+
+Exact duplicate decisions are capped at 200 SMS or eight MMS parent candidates
+and 1,000 parts, use the safe restored box, and re-read the matching row before
+skip. A stateful test-only `ContentProvider` proves role/permission fencing before
+provider access, exact SMS/MMS/text/binary persistence, local thread assignment,
+idempotent full replay including historical Outbox, provider-normalization
+cleanup, pre-ID and expected-digest rollback, changed-row quarantine, and
+rollback of an already committed MMS after a later SMS commit conflict. The
+fixture is private to the test APK and never proxies Telephony content.
+
+Focused checkpoint evidence on 2026-07-20:
+
+- 26/26 `feature:backup` host tests passed;
+- strict module lint, Android-test packaging, clean-room/private-asset scans,
+  and dependency verification passed;
+- 9/9 connected tests passed on API 26 with zero failures/errors/skips; and
+- 9/9 connected tests passed on API 36 with zero failures/errors/skips.
+
+The following private staging slice also passed strict module lint and six of
+six focused connected tests on each API. It proved owner-only regular files in
+`noBackupFilesDir`, bounded source-copy failure cleanup, one combined wrong-
+passphrase/tamper result, rejection of an authenticated but invalid message
+schema, `.pending` to `.validated` promotion only after full validation, startup
+cleanup, cancellation cleanup, and symlink/path-replacement rejection without
+following or deleting the foreign target.
+Together with the provider checkpoint, the complete module suite now passes
+15/15 connected tests on API 26 and 15/15 on API 36 with zero failures, errors,
+or skips.
+
+The single-owner document controller adds six focused connected journeys on
+each API. Fake content documents prove encrypted export, validation of the
+produced archive, incomplete-destination deletion/reporting, rejection of
+non-content URIs, immediate source-copy ownership, wrong-passphrase retry,
+cancel invalidation, restore unreachable before authenticated-summary
+confirmation, one-shot confirmed restore, and provider recovery before startup
+staging cleanup. No test resolves a live document or Telephony URI.
+
+The tests used only canonical synthetic addresses, bodies, metadata, and a
+196,608-byte generated binary part. They did not acquire the SMS role, inspect
+live provider rows, mutate a real Telephony provider, launch a carrier boundary,
+or cross a carrier boundary.
+
+The `0.6.9-phase6` app-integration slice at exact commit
+`2c3cfb0bfef5092b734464e80f38792c8b012091` adds a searchable Settings screen and
+the production `CreateDocument`/`OpenDocument` route. Passphrases are neither
+saveable nor durable, startup recovery and private staging reconciliation gate
+all file actions, only an authenticated summary exposes confirmation, and
+background/navigation invalidates pre-mutation restore work. Export failure
+reports when a provider refuses incomplete-destination deletion. Restore UI
+states explicitly disclose duplicate skipping, non-sendable historical boxes,
+and incomplete rollback.
+
+Focused app evidence passed on both API 26 and API 36: five Backup & restore
+state tests, one searchable-Settings test, and one real Inbox-to-Settings route
+journey. The state suite proves that pending or failed startup recovery exposes
+no file action, wrong-passphrase state exposes no confirmation, only
+authenticated review exposes the explicit restore action, and incomplete-file
+and rollback warnings remain visible. The complete backup module passed 21/21
+connected tests on each API with no failures, errors, or skips.
+
+The exact source then passed all 628 host tests and the complete offline
+host/lint/R8-release/benchmark/privacy/dependency/permission/APK-content/license
+aggregate: `BUILD SUCCESSFUL` in 1m54s across 977 tasks (175 executed, 24 from
+cache, 778 up-to-date). Release-bundle generation passed 306 tasks, and the
+CycloneDX 1.6 aggregate passed 16 tasks with 444 components and 445 dependency
+relationships. The complete connected matrix passed 390 tests on API 26 (13
+intentional opt-in skips) and 390 on API 36 (10 intentional opt-in skips), with
+zero failures or errors on either device.
+
+| Exact commit `2c3cfb0` artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `app-debug.apk` | 15,384,521 | `8652064112772bbdaaf62b3c641bddf9001081d8c81a2105c6f12b819bb2edab` |
+| `app-release-unsigned.apk` | 3,104,353 | `bcbf1b9a66829c57551ba1e11243a829683175d6eb0602ffbc91364093c3124b` |
+| `app-benchmark.apk` | 2,948,797 | `7d54b1fc9e5493d181b40c3e8b947f79be518d16db514545ed2be293a56ebe7e` |
+| `app-release.aab` | 6,303,529 | `163a6705a25d6ddae82836e0d55ec2468819c81a79839e59b29a791f393d9de4` |
+
+The exact debug APK installed and hash-matched at
+`/sdcard/Download/AuroraSMS-0.6.9-phase6-debug.apk` on both emulators. Installed
+versionCode 20/versionName `0.6.9-phase6` was confirmed, and both retained
+`com.android.messaging` as the default SMS app. No live message inspection,
+role transition, provider mutation, screenshot, or carrier submission occurred.
+The Pixel was not attached. Phase 6G's code and release gates are closed, but the
+phase remains open for real physical/OEM document-picker selection and
+cancellation acceptance.
+
+## Phase 6H generation-fenced Android Auto notification acceptance
+
+Version `0.6.10-phase6` (`versionCode=21`) at exact implementation commit
+`70552cff386895b9497e95d14992bf5284806e12` implements ADR 0023. The app manifest
+references `automotive_app_desc.xml`, whose exact capabilities are
+`notification` and `sms`. The merged notification module registers one enabled,
+non-exported background action service while retaining the legacy receiver only
+for already-issued reply intents.
+
+Each incoming conversation publishes one private `MessagingStyle` generation
+with a generic public version. At most 25 chronological same-conversation
+messages are retained, and only when privacy mode, group flag, and conversation
+title still match. A privacy or group-identity transition starts fresh. New
+notifications expose semantic Reply with exactly one `RemoteInput` and semantic
+invisible Mark as read without a `RemoteInput`; neither opens UI. Reply enters
+the existing durable inline-reply owner. Mark as read validates the exact SMS
+source row and expected thread, changes only incoming SMS rows through that ID,
+then cancels only that generation and reminder owner before requesting index
+reconciliation.
+
+The first complete API 26 pass exposed a real platform timing defect: a second
+notification posted before Android 8 surfaced the first in
+`activeNotifications` could lose the first message from the car-visible style.
+The corrected gateway keeps at most 64 just-posted snapshots for two seconds and
+drops each as soon as the platform reports it. It is process-local presentation
+state, not durable or provider authority. A subsequent run exposed that the
+platform assertion itself could briefly observe the older shared slot; the test
+now waits for the exact expected source generation. The focused seven-test
+Android Auto class and final full notification module both pass on API 26 and
+API 36.
+
+Acceptance evidence on 2026-07-20:
+
+- 636/636 retained host tests pass with zero skips, failures, or errors;
+- the complete offline host/lint/R8/benchmark/privacy/dependency/permission/
+  APK-content/license aggregate passes in 1m39s across 977 tasks (109 executed,
+  two from cache, 866 up-to-date);
+- retained connected XML records 399 tests on API 26 with 13 intentional opt-in
+  skips and 399 tests on API 36 with 10, with zero failures or errors;
+- release bundle generation passes 306 tasks, and CycloneDX 1.6 generation
+  passes 16 tasks with 444 components and 445 dependency relationships; and
+- permission and packaged-APK checks confirm no `INTERNET` or
+  `ACCESS_NETWORK_STATE` addition.
+
+| Exact commit `70552cf` artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `app-debug.apk` | 15,504,195 | `9aed671c7b1ed495264a48748ccbdacd74ba720ee78626d815b6b924aca835ed` |
+| `app-release-unsigned.apk` | 3,150,197 | `cfcd1b334916d666ea387984c5b4cd9841f525c1b3728a4689fedf705928b94d` |
+| `app-benchmark.apk` | 2,994,641 | `ff6a914fd746c23289dd76bbd955fa34a2c99ec6340c505d91a15d41d7f67944` |
+| `app-release.aab` | 6,358,836 | `5a615999d38547d4403ddaf4b4b75a09400749d220f2bc03866f220933accf34` |
+
+The exact debug APK installed and hash-matched at
+`/sdcard/Download/AuroraSMS-0.6.10-phase6-debug.apk` on both emulators. Installed
+versionCode 21/versionName `0.6.10-phase6` was confirmed, both retained
+`com.android.messaging` as the default SMS application, and AuroraSMS was left
+force-stopped. No live message/address/body was inspected, no role or permission
+was changed, and no carrier action occurred. The Pixel was not attached.
+
+Actual Android Auto/DHU rendering and voice interaction, physical/OEM shade and
+lockscreen behavior, carrier-success reply, real-provider Mark as read mutation,
+and incoming/group MMS remain open. These are not inferred from host or emulator
+notification metadata. Phase 6H's implementation and synthetic API-floor/latest
+contracts are closed; its physical/carrier acceptance is not.
+
+## Remaining Phase 5 lifecycle/action matrix
+
+- [x] Scheduled send has content-free durable state, duplicate-alarm idempotence,
+  process-start recovery, and fail-closed reboot/time/timezone handling. Physical
+  reboot/Doze/carrier timing remains open.
+- [x] Exact-alarm denial/revocation has ADR 0011's labeled inexact fallback,
+  distinct safety alarm, and explicit special-access route. Physical revocation
+  acceptance remains open.
+- [x] Send-delay Undo has content-free process-death recovery, duplicate-alarm
+  idempotence, clock/lateness fail-closed handling, and no Undo after dispatch
+  ownership. Real carrier and unlocked physical lifecycle timing remain open.
+- [x] Pending deletion has deterministic process-death behavior. Pending work is
+  recoverable; an interrupted provider commit is inspected and never blindly
+  replayed.
+- [x] Remembered subscription is durable and scoped per conversation for the
+  verified one-person Thread composer path.
+- [x] A removed/disabled remembered SIM prompts a safe fallback; scheduled and
   group sends never silently switch subscriptions.
-- [ ] Whole-thread deletion uses stronger confirmation.
-- [ ] After provider deletion commits, UI never claims recoverability.
-- [ ] No recycle-bin UI/schema/preference/worker exists.
-- [ ] Every group path still proves no individual fan-out.
+  The existing one-part composer now disables Send and requires an explicit
+  replacement in synthetic API 26/API 36 tests; scheduled dispatch also pauses
+  for review without fallback. Physical removal plus group paths remain open.
+- [x] Whole-thread deletion uses stronger two-step confirmation.
+- [x] After provider deletion commits, UI never claims recoverability.
+- [x] No recycle-bin UI/schema/preference/worker exists.
+- [x] Every currently reachable group path proves no individual fan-out.
+  `SmsSendRequest` cannot represent a group; Thread/delay/schedule refuse group
+  identities; respond-via performs one MMS call and never falls back to SMS.
+  Full group-MMS feature and carrier acceptance remain open below.
 
 ## Phase 6 feature/privacy matrix
 
-- [ ] Notification reminder scheduling is local and battery-conscious.
-- [ ] Reaction fallback parsing never mutates stored SMS and handles ambiguity.
-- [ ] Voice memo requests microphone only from explicit Record action, indicates
-  recording, limits output, and cleans temporary files.
-- [ ] Selected-text copy exposes only the selected content.
-- [ ] Global/per-thread signatures show segment/MMS impact before send.
-- [ ] Spam rules are bounded, explainable, contacts-trusting by default, and
+- [x] Notification reminder scheduling is local and battery-conscious. It is
+  off by default, bounded to one one-shot inexact alarm per conversation and 64
+  content-free owners total, revalidates exact unread provider state, and fails
+  closed across role, setting, reboot, and clock boundaries.
+- [x] Reaction fallback parsing never mutates stored SMS and handles ambiguity.
+  Exact bounded whole-message forms render locally; all ambiguous or incomplete
+  forms fail open to the original raw text.
+- [x] Voice memo requests microphone only from explicit Record action, indicates
+  recording, limits output, requires separate review/Send, and cleans temporary
+  files. Exact provider/journal/callback gates are automated; real carrier/OEM
+  acceptance remains open.
+- [x] Selected-text copy exposes only the selected content. Invalid/collapsed
+  selections fail closed, truncated previews are labeled, and details excludes
+  bodies, addresses, provider IDs, and attachment paths.
+- [x] Global/per-thread signatures show segment/MMS impact before send. Exact
+  signed text is frozen across immediate, delayed, and scheduled recovery;
+  multipart and group transport continue to fail closed.
+- [x] Spam rules are bounded, explainable, contacts-trusting by default, and
   support unspam/unblock; suspected spam is never silently deleted.
-- [ ] Versioned streaming backup validates limits, paths, checksums,
+- [x] Versioned streaming backup validates limits, paths, checksums,
   authentication/encryption, schema, and media before atomic import.
-- [ ] Android Auto notification and reply behavior passes device/host checks.
-- [ ] No feature adds an undeclared network path.
+- [x] Android Auto notification metadata, bounded conversation history,
+  privacy/group reset, reply/mark-read action semantics, and exact stale-action
+  fencing pass host and API 26/API 36 checks.
+- [ ] Android Auto/DHU or a physical car completes reply and Mark as read.
+- [x] Phase 6 adds no undeclared network path; merged manifests and packaged
+  APKs pass the permission ledger.
+
+### Phase 7A release governance and reproducibility — 2026-07-20
+
+Implementation commit `d163811653e69ec8e1ad505a454b51770180ef73`
+centralizes the app and aggregate-project version at `0.6.10-phase6`, adds the
+source release process, security policy, checksum/reproducibility helpers,
+localized store copy, and valid disabled F-Droid metadata. The F-Droid record
+cannot advertise a build until a gold commit exists, so it truthfully retains
+`Disabled`, no `Builds` entry, and explicit incoming/group-MMS and physical-
+carrier limitations. Store copy also says AuroraSMS does not provide RCS.
+
+The complete offline host/lint/R8/benchmark/privacy/dependency/license/metadata
+aggregate was `BUILD SUCCESSFUL` in 1m04s across 978 tasks (158 executed, 820
+up-to-date). All 636 host tests passed with zero failures, errors, or skips.
+Release APK/AAB assembly, the Baseline Profile and R8/resource-shrink boundary,
+merged/package permission ledgers, APK-content/debug-leak checks, 41-hash
+private-asset denylist, dependency locks, and license inventory passed. The
+separate CycloneDX 1.6 gate passed 16 tasks and now identifies the aggregate as
+`org.aurorasms:AuroraSMS:0.6.10-phase6`, with 444 components and 445 dependency
+nodes.
+
+`scripts/verify-reproducible-release.sh --offline` cloned the exact source
+commit into two independent temporary Git repositories and built each release
+through R8. Both pairs were byte-identical:
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| unsigned release APK | 3,150,197 | `acd1517b5c01a7c14be6d2fce06cb9dbe44276f6db51693bf2f31253e8d78ee6` |
+| release AAB | 6,358,836 | `349ea4f6a1be6f348cbd54c64bdf06e3fe56f7bc13f1eaef2aa4d807d7a86b1b` |
+
+The release APK grew from 2,928,769 bytes at Phase 6E commit `370baf9` to
+3,150,197 bytes here: 221,428 bytes, or 7.56%. An isolated same-toolchain
+baseline build attributes 140,818 compressed bytes to `classes.dex`, 71,500
+bytes to the stored resource table, 111 compressed bytes to the manifest, and
+the remaining 8,999 bytes to other packaged metadata/resources. That range adds
+the admitted bounded AOSP voice-memo composer/provider/recovery surface,
+authenticated streaming backup/restore and Settings UI, and Android Auto
+notification actions. It adds no new runtime dependency, native library,
+Internet/network permission, or private artwork. The measured functional range
+therefore explains the over-budget growth; later releases return to the normal
+five-percent regression threshold.
+
+The checksum helper staged the exact tested APK, AAB, SBOM, notices, and license
+and its generated `SHA256SUMS` verified all five files. It deliberately does
+not sign them: a production signing identity and signed final checksum manifest
+remain owner-controlled release gates. General/incoming/group MMS, complete
+physical history, physical/OEM/carrier/accessibility/performance/Android Auto
+acceptance, F-Droid source-build verification, release tagging, and publication
+also remain open. AuroraSMS is not gold.
+
+### Phase 7D bounded incoming MMS codec foundation — 2026-07-20
+
+ADR 0024 adds twelve noticed Java files from the same immutable official-AOSP
+MMS revision as ADR 0021, bringing the isolated Apache-2.0 codec subset to 24
+files without adding a dependency coordinate, native library, manifest
+component, initializer, or application network permission. The parser now
+defensively copies at most 1,048,576 input bytes; caps parts at 25, part headers
+at 8,192 bytes, WAP strings at 2,048 bytes, and multipart nesting at eight;
+checks uintvar width, declared lengths, allocations, skips, and end-of-input;
+uses instance-local content-type parameters; generates deterministic anonymous-
+part identifiers; and emits no message-derived runtime logs.
+
+The original GPL wrapper accepts only bounded `M-Notification.ind` and
+`M-Retrieve.conf` values. It validates HTTP/HTTPS download locations, advertised
+size, addresses, group recipient sets, IDs, subject, timestamp, concrete MIME,
+charset text, aggregate bytes, and excludes OMA DRM. Parts are defensively
+copied and all diagnostic strings redact URL, address, ID, subject, text, and
+binary content.
+
+Focused compile plus API 26 and API 36 emulator acceptance passed 5/5 tests on
+each runtime. The synthetic
+fixtures cover one complete notification and one group retrieved message with
+two TO recipients, UTF-8 text, and an opaque PNG part. Every truncation of both
+fixtures, 1,024 deterministic hostile byte inputs, a 26-part message, an unsafe
+transport scheme, and an over-limit advertisement returned without an uncaught
+exception and failed closed where required. No live provider or message data
+was read, no role or permission changed, and no carrier operation was issued.
+
+This is codec-boundary evidence only; ADR 0025 records the later durable
+download/provider/notification integration. General/group outgoing composition
+and carrier acceptance remain open. AuroraSMS is not gold.
+
+### Phase 7D crash-safe incoming MMS handoff — 2026-07-20
+
+Implementation commit `260fd18522a31b7bce4c4e6dbfbac99c9c83fecd`
+completes ADR 0025's synthetic incoming receive path. One dedicated pending-
+operation namespace owns a maximum-128-entry checksummed metadata journal; the
+raw carrier URL, addresses, subject, body, and attachment bytes never enter it.
+`SUBMITTING` commits before `SmsManager.downloadMultimediaMessage`, duplicate
+notifications return the existing owner, and startup never reissues an unknown
+platform submission.
+
+The exact private callback and staged filename gate bounded RetrieveConf decode.
+Projection preserves TO/CC provider rows, removes the active line from group
+Thread identity when available, and caps aggregate plain text. Parts, Inbox
+message, FROM/TO/CC addresses, and final validation form one idempotent provider
+transaction with exact app-owned cleanup. Provider success is journaled before
+the app requests indexing and a group-aware notification; group MMS exposes no
+SMS reply action. Exact notification acknowledgement owns journal and staging-
+file removal, while startup can replay only retained provider/notification work.
+
+Acceptance evidence:
+
+- the complete host `testDebugUnitTest` aggregate passed;
+- eight focused synthetic submission/recovery cases passed on both API 26 and
+  API 36, including WAP replay suppression, platform uncertainty, provider
+  exception deferral, group projection, post-persistence restart, two-pass
+  no-resubmission recovery, and pre-platform staged-file cleanup;
+- the previously admitted decoder corpus, journal/staging, and API 36 atomic
+  fake-provider suites remain green;
+- `:core:telephony:lintDebug`, `:app:lintDebug`, `verifyCleanRoom`,
+  `verifyPrivateAssets`, and `verifyDependencies` passed; and
+- no Pixel/live provider read, role or permission change, carrier operation,
+  address/body capture, or broad log was used.
+
+Physical carrier/OEM receive, group self-line behavior where the SIM does not
+publish its number, media presentation, and process-death acceptance remain
+open. AuroraSMS is not gold.
+
+### Phase 7D bounded general outgoing MMS — 2026-07-20
+
+Implementation commits `7a45033`, `a71c623`, `0b27160`, `1e2344b`, and
+`0d93626`
+complete ADR 0026's synthetic outgoing path. One direct/group payload owns
+bounded text, optional subject, and at most 10 defensively copied attachments;
+the aggregate is capped before PDU overhead. The AOSP-derived encoder closure
+was already noticed and pinned by ADRs 0021/0024. No new source dependency,
+network client, or application Internet permission was added.
+
+The composer routes exact groups, multi-unit text, subjects, images, and
+image-only drafts to one MMS operation. It cannot fan out SMS or silently
+downgrade. Selected images are copied under source/dimension/pixel limits and
+re-encoded as bounded JPEG/PNG; the source URI, filename, grant, and metadata do
+not survive admission. State schema 13 and caller-owned transport observation
+bind the exact draft, provider preparation, platform submission, and private
+callback to SMS or MMS explicitly. Schema 14 retains only the sanitized,
+bounded attachment bytes under the exact draft until it is deleted.
+
+Acceptance evidence:
+
+- focused general encoder, fake-provider, platform ownership, durable
+  coordinator, callback, and state contract host tests pass;
+- the six-case composer-operation repository suite, including attachment-only
+  reservation, passes on API 26 and API 36;
+- three sanitizer tests pass on API 26 and API 36;
+- schema 13-to-14 migration, bounded repository close/reopen, stale-revision,
+  cascade-cleanup, current-schema, and trigger-reinstallation checks pass on API
+  26 and API 36;
+- the 36-case API 36 Compose suite passes, including generic image metadata,
+  add/remove callbacks, MMS status, disabled scheduling, and image-only Send;
+- root acceptance restores an exact persisted image across Activity recreation,
+  routes one MMS with the identical bytes, and proves unavailable attachment
+  storage disables Send without a transport attempt;
+- implementation commit `b29b5ba` adds a preservation-safe API 36 host-force-
+  stop journey that passes independently twice; it restores the exact
+  production-Room draft and image bytes in a fresh process, renders the
+  attachment in the real root, routes one exact synthetic MMS operation, and
+  proves fresh-process parent/cascade cleanup;
+- at source commit `0d93626`, the complete `connectedDebugAndroidTest` matrix
+  passed on `AuroraSMS_API36` in 2m40s with 448 enumerated tests, 10 intentional
+  protocol-gated skips, and zero failures/errors; the complete
+  `AuroraSMS_API26` matrix passed in 2m49s with 442 tests, 13 intentional skips,
+  and zero failures/errors. The first API 36 aggregate exposed one obsolete
+  schema-13 current-version assertion after the expected migration; its
+  corrected schema-14 table/trigger audit and focused migration rerun pass;
+- relevant app/state/telephony/conversations lint gates pass;
+- all 652 host tests and the complete 978-task governed host/lint/R8/benchmark/
+  privacy/dependency/license aggregate pass in the initial 1m59s run and the
+  exact-source cached revalidation in 18s; standalone release AAB and CycloneDX
+  1.6 generation pass; and
+- no live provider read, SMS-role change, carrier send, message-content
+  capture, attachment export, or broad log was used.
+
+Physical carrier/OEM interoperability, carrier size/APN behavior,
+billing/roaming, dual-SIM, and process death at the remaining and in-flight
+checkpoints remain open. AuroraSMS is not gold.
+
+#### ADR 0026 API 36 draft-attachment host-force-stop evidence — 2026-07-20
+
+Implementation commit `b29b5ba` adds the explicitly gated
+`durableImageAttachmentSurvivesHostForceStopAndColdProcessMmsRoute` method and
+the preservation-safe runner:
+
+```shell
+./scripts/run-emulator-draft-attachment-cold-restart-smoke.sh --device emulator-5554
+```
+
+The runner refuses physical devices and requires API 36 ranchu/goldfish, an
+already-installed target APK exactly matching the local build, and no
+preinstalled instrumentation package. It records the SMS-role holder and seven
+permission states, installs only the test APK, and first invokes an idempotent
+fresh-process cleanup phase. A private, versioned, content-free checkpoint is
+committed before any mutation so an interrupted run can delete only its exact
+synthetic draft.
+
+Prepare opens the production `AppContainer` and schema-14 Room authority,
+requires the reserved synthetic provider-thread draft identity to be absent,
+then creates one synthetic caption/subject draft and one bounded PNG-marked byte
+fixture. It rereads the exact parent, revision, content type, and defensively
+copied bytes before committing the prepared process identity. The host starts
+normal `MainActivity` only to expose the exact live target process and then
+requires `am force-stop` to remove that PID.
+
+Verification requires a different PID with a later process-start uptime, then
+rereads the identical production-Room parent and attachment. The real
+`AuroraSmsRoot` is hosted with synthetic conversation/index/subscription and
+transport services while retaining the production draft/attachment
+repositories. It restores the caption and attachment row, reports MMS,
+disables scheduling, and routes one command with the exact draft ID, verified
+identity, subscription, MMS transport, and identical bytes. The synthetic
+controller returns submission-unknown; no Android carrier API is called. After
+another exact force-stop, a third process deletes the parent, proves the foreign
+key cascade returns the attachment lookup to `NotFound`, clears the checkpoint,
+and leaves the target force-stopped.
+
+Two independent runs passed prepare/verify/cleanup exactly once each. The host
+removed prepared PIDs 27688 and 28052; verification took 2.721s and 2.771s,
+respectively. Both runs removed the instrumentation package and preserved the
+exact target APK, `com.android.messaging` SMS role, and all seven captured
+permission states. The complete follow-on API 36 connected matrix passed 449
+enumerated tests with 11 intentional protocol skips in 2m38s; API 26 passed 443
+tests with 14 intentional skips in 2m48s. Both had zero failures or errors.
+The combined 985-task governed host/lint/R8/benchmark/privacy/dependency/
+license/APK-content/bundle gate passed in 1m17s with all 652 host tests green.
+Standalone CycloneDX generation is retained as a separate invocation because
+combining that plugin with consumed Android artifact variants is unsupported.
+
+This closes only persisted pre-send attachment restoration across one host
+force-stop on an API 36 emulator and its fresh-process cleanup. The fixture,
+recipient, conversation, provider authority, and transport result are
+synthetic. It does not prove a platform MMS PDU, carrier submission/callback,
+picker admission in the same lifecycle, force-stop during an in-flight send,
+physical/OEM behavior, low-memory eviction, billing/roaming, dual-SIM, or gold
+readiness. No live provider content, role/permission change, carrier operation,
+attachment export, or broad log participated.
+
+#### ADR 0025 API 26/API 36 incoming-MMS notification cold-process evidence — 2026-07-20
+
+Implementation commit `f2f4f5c` adds the gated
+`completedIncomingMmsSurvivesHostForceStopUntilFreshProcessNotificationAcknowledgement`
+method and an isolated preservation-safe runner:
+
+```shell
+./scripts/run-emulator-incoming-mms-cold-restart-smoke.sh --device emulator-5554
+./scripts/run-emulator-incoming-mms-cold-restart-smoke.sh --device emulator-5556
+```
+
+The runner refuses physical devices and any API except 26 or 36, requires its
+standalone telephony instrumentation package to be absent before the run,
+records the SMS-role holder, and installs only that isolated package. A gated
+preflight cleanup runs before mutation. Every phase must report exactly one
+passing test; cleanup is retried from the exit trap after interruption, the test
+package is uninstalled, and the SMS role must match its baseline.
+
+Prepare writes a versioned content-free checkpoint before creating one bounded
+synthetic group RetrieveConf. The production journal and staging store commit
+the exact operation/file through `PERSISTED`, while a fake provider returns one
+fixed synthetic MMS row and no Android carrier API is called. The host launches
+only the test package's empty activity to expose its exact PID, then requires
+`am force-stop` to remove it.
+
+Verification requires a different PID with a later process-start uptime. A
+fresh `AndroidMmsTransport` recovers the same PDU, replays the idempotent fake-
+provider write, and returns exactly one pending notification handoff with zero
+platform submissions, zero deferred work, and zero unknown submissions. The
+journal and file remain owned until notification acknowledgement. After a
+second exact host force-stop, a third process repeats that same handoff,
+acknowledges it, and proves both the journal and staged PDU are absent.
+
+Two independent executions passed all prepare/verify/cleanup phases on each API
+level. API 36 host force-stops removed PIDs 30268/30344 and 30542/30617; API 26
+removed PIDs 27265/27337 and 27561/27630. The complete follow-on API 36 matrix
+passed 450 enumerated tests with 12 intentional protocol skips in 2m39s; API 26
+passed 444 tests with 15 intentional skips in 2m49s. Both matrices had zero
+failures or errors.
+
+This closes the synthetic Phase 7D malformed/mutation, provider, callback,
+notification, and process-death test row across the supported API floor/latest
+pair. It does not prove a carrier download/callback, physical/OEM delivery,
+group self-line discovery, media rendering, low-memory eviction, or death while
+an actual platform operation is in flight. No live provider content, SMS-role
+change, carrier operation, message-content capture, attachment export, or broad
+log participated.
+
+#### Physical provider-completion protocol and role-recovery acceptance — 2026-07-20
+
+Implementation commit `d052db0` adds the fail-closed
+`scripts/run-physical-provider-completion-smoke.sh` runner and the role-
+recovery behavior that the reviewed
+`docs/PHYSICAL_PROVIDER_COMPLETION_PROTOCOL.md` depends on. The governed offline
+parser self-test accepts a valid complete snapshot and rejects scanning,
+duplicate-checkpoint,
+and aggregate-count inconsistency fixtures. A safe invocation against
+`emulator-5554` refused the emulator before build, launch, role, permission, or
+provider access.
+
+Focused host coverage proves the role-recovery split: a paused first-history
+generation resumes the same generation and durable cursor, a role transition
+after a complete generation starts a fresh full scan, and an ordinary clean
+startup retains bounded steady-state reconciliation. This prevents deep
+provider changes made while another app held the SMS role from hiding beyond a
+bounded head/count check.
+
+This commit-specific result is historical and was superseded on 2026-07-21.
+Current code restarts both paused and complete generations after
+`ROLE_CHANGED`, and exact eligible provider/projection count equality rejects
+an inserted or skipped row before completion.
+
+Acceptance evidence:
+
+- the focused index synchronizer suite plus protocol/governance checks passed;
+- all 653 host tests passed across 114 suites with zero failures, errors, or
+  skips;
+- the complete 986-task governed host/lint/R8/benchmark/privacy/dependency/
+  license/APK-content/bundle aggregate passed in 1m56s;
+- the API 36 connected matrix passed 450 enumerated tests with 12 intentional
+  protocol skips in 2m41s; and
+- the API 26 connected matrix passed 444 enumerated tests with 15 intentional
+  protocol skips in 2m49s.
+
+No live provider content, message address/body/subject, search phrase, role or
+permission mutation, screenshot, broad log, provider write, or carrier action
+participated. The Pixel protocol and the owner's private Inbox, old Thread,
+known local-search, and exact-result-jump confirmation remain required and
+unexecuted. This local acceptance is not a complete-history or gold claim.
+
+#### Phase 7E isolated performance-target boundary — 2026-07-20
+
+The release-equivalent target now has application ID
+`org.aurorasms.app.benchmark`, while production remains `org.aurorasms.app`.
+The target's fixture authority and signature-only control permission are owned
+by that isolated package. Debug and release keep the production role plus
+`READ_SMS` eligibility gate; only benchmark may render its deterministic
+private fixture without messaging authority. Runtime boundary coverage rejects
+a target that owns the SMS role, holds any messaging permission, or resolves a
+default-SMS/carrier entry intent. The benchmark APK declares only `VIBRATE` and
+its AndroidX-generated dynamic-receiver permission; every role, carrier,
+transport callback, scheduling, deletion, and notification-action component is
+disabled. The test controller removes transitive Aurora telephony components.
+
+Fresh benchmark target/test assembly, Kotlin compilation, manifest permission
+ledgers, APK package identities, fixture-marker boundaries, and ordinary
+macrobenchmark JVM checks pass. The packaged target declares
+`org.aurorasms.app.benchmark`. The controller declares
+`org.aurorasms.macrobenchmark`, the isolated signature permission, and the exact
+AndroidX test/benchmark permission ledger (`QUERY_ALL_PACKAGES`, trace-processor
+`INTERNET`, legacy artifact storage, task reordering, and its
+generated dynamic receiver permission); it declares no SMS/MMS permission. The
+transient test APK's unrestricted manifest permission is required by AndroidX's
+local trace processor; the Aurora harness itself makes no network request.
+All 653 host tests pass across 114 suites, and the complete 986-task governed
+host/lint/R8-release/benchmark/privacy/dependency/permission/APK-content/
+license/bundle aggregate passed in 1m33s. The separately required CycloneDX 1.6
+aggregate passed 16 tasks in 8s.
+`scripts/run-isolated-performance-suite.sh` adds the fail-closed device path:
+it records commit, APK, and private device provenance, installs a fresh
+isolated target/test pair without `-g`, requires three stable denied-authority
+samples, runs five control tests, ten Macrobenchmark journeys, an explicit
+baseline-profile preparation, and one PSS journey. AndroidX JSON/Perfetto,
+instrumentation output, metadata, validation output, and hashes are retained
+outside Git. Those raw files contain no message content but do contain device,
+build, and run identifiers; they are private local evidence and must not be
+published. A full run requires 8 GiB free on both host and device, the 5/30
+timing warmup/measurement counts, 10 frame iterations, 10 raw PSS samples, the
+exact expected JSON/Perfetto set, and every documented budget to pass. Smoke
+requires 1 GiB free and substitutes a renderer-independent RSS metric for
+startup/frame reachability. It then force-stops and removes only those packages
+and verifies both package paths and device-side temporary output are absent
+before reporting success.
+
+#### Phase 7E API 36 isolated performance smoke — 2026-07-21
+
+The final-candidate API 36 AOSP emulator run completed with:
+
+```text
+./scripts/run-isolated-performance-suite.sh --device emulator-5554 --smoke
+```
+
+The private ignored evidence directory is
+`build/isolated-performance/20260721T190450Z-1389018-emulator-5554-smoke`.
+Its metadata records smoke mode, API 36, emulator status, the source HEAD and
+dirty-candidate state, both APK digests, and the explicit
+`not-applicable-emulator-smoke` budget disposition. Five boundary tests, all ten
+Macrobenchmark journeys, the separate one-test baseline preparation, and the
+one-test/two-sample PSS reachability run passed. Artifact accounting found
+exactly 26 macro Perfetto traces plus one AndroidX JSON document and exactly
+three preparation traces plus one JSON document. Every entry in `SHA256SUMS`
+verified independently.
+
+An earlier diagnostic smoke exposed an intermittent missing presentation-finish
+marker during the exact-old-message jump. Normal ready-to-ready thread updates
+could cancel a trace-closing effect that was keyed to the entire thread state.
+The final candidate keys that lifecycle to the route instance and the stable
+ready/not-ready boundary, with an additional UI-idle rendezvous in the journey.
+The exact-jump benchmark then passed two independent focused 3/3 reruns and all
+three iterations in the complete ten-journey smoke above.
+
+Post-run ADB verification found neither transient package, confirmed the SMS
+role remained `com.android.messaging`, and confirmed the device-side temporary
+output was absent. The production package, live provider, role/permission
+state, carrier transport, screenshots, and message content were not used or
+mutated. This emulator evidence proves isolated journey reachability only and
+closes no physical performance budget.
+
+The API 26 emulator `--smoke` and Pixel `--full` measurement remain pending in
+this evidence record. Raw JSON, metadata, and Perfetto traces remain private
+local evidence and must not be published. AuroraSMS is not gold.
+
+#### Phase 7 N1 New chat review-surface acceptance — 2026-07-21
+
+The `0.7.0-phase7` (`versionCode` 22) N1 candidate passed the complete host
+unit, lint, R8 release/benchmark, APK-content, permission, dependency,
+clean-room, performance-protocol, physical-provider-protocol, and release-
+metadata gate. The aggregate Gradle invocation completed 783 tasks without a
+failure. Focused host verification passed 25 serialized-draft tests, 10 New
+message route-state tests, and 16 external-request parser tests. They cover
+atomic acknowledged-base capture, writer pooling and recreation handoff,
+fail-closed create/update/delete conflicts, restoration after read or storage
+failure, truthful ready/saved state, and bounded, redacted external parsing.
+
+The same source then passed six controlled New message UI tests and ten N1 app-
+route acceptance tests plus the four-scheme manifest contract on each supported
+boundary emulator: API 26 (Android 8.0) and API 36. The route cases cover
+external review text remaining out of Room until an Aurora edit; whole-request
+replacement through `onNewIntent`; durable close/reopen; recreation around
+first and intermediate acknowledgements; recipient locking until an empty edit
+is durable; conflict text remaining display-only across recreation; exact
+recovery after transient storage failure; bounded recipient validation and
+canonicalization; and an existing participant draft winning over external MMS
+prefill. The UI cases cover Inbox entry, every send path disabled, exact-draft
+and unresolved-prefill locks, truthful unsaved ready status, recipient-before-
+body ordering, and recipient-identity locking while text exists. The manifest
+case resolves `sms`, `smsto`, `mms`, and `mmsto` on both platform boundaries.
+
+External prefill is a non-durable review overlay, not restoration authority. It
+is revalidated against settled Room state before editing is admitted, and
+merely opening an external request does not persist caller text. A durable
+participant draft wins every concurrent create or stale-revision race; losing
+local text remains visible in a fail-closed display-only state instead of
+overwriting Room. A reused compose callback drops the prior composition while
+parsing its replacement off the main thread. No test in this record creates or
+mutates a provider thread or invokes SMS/MMS transport.
+
+This closes the review-only N1 acceptance boundary. Contact discovery,
+first-contact provider ownership and transport, physical carrier/OEM cases,
+the wider Phase 7 product surface, signing, and publication remain open.
+AuroraSMS is not gold.
+
+#### Phase 7 complete-history integrity hardening — 2026-07-21
+
+The source committed with this record closes four correctness gaps found while
+reviewing N1 against complete-history and authority-loss requirements. SMS and
+MMS provider `count()` and page reads now share one exact projectable-row
+eligibility definition. Completion requires the eligible provider total, the
+sum of committed checkpoints, the generation metadata total, and the unique
+physical current-generation row count to agree before checkpoint verification
+or stale-row deletion. A regression fixture with 501 eligible provider rows,
+501 metadata/checkpoint rows, and only the newest 500 physical index rows proves
+that a legacy false-complete generation is rejected and rebuilt to a verified
+501-row generation even when its bounded head sample is unchanged.
+
+Inbox refresh now adopts an older cursor discovered while refreshing the
+bounded head. Inbox and Thread state holders also replay a conflated provider
+invalidation that arrives during an active page load, with job fencing that
+prevents an obsolete load from publishing. These host regressions close the
+known presentation paths where older history or an invalidation could otherwise
+be stranded until another user action.
+
+Messaging-eligibility observation no longer manufactures `ROLE_CHANGED` on
+every process start. Role ingress first persists and queues its durable
+authority-gap sequence, and that exact sequence is carried through the outer
+queue and coalescer epoch. Every serialized reconciliation claims the maximum
+unresolved sequence and retains it after a non-complete result or exception;
+only a verified complete reconciliation consumes it. Deterministic tests cover
+pre-start ingress, sequence 41/42 snapshot ordering, epoch isolation, pending
+continuation, prohibited background reads, and a throwing reconciler.
+
+The benchmark-only notification-permission lint finding has a narrowly scoped
+baseline. The permission verifier independently enforces exact symmetric
+permission equality for every production and benchmark merged manifest and
+packaged APK, including `POST_NOTIFICATIONS`, so the lint baseline cannot hide
+either an added or a lost permission.
+
+Acceptance evidence for the final candidate was:
+
+- focused history/authority regressions: 150 Gradle tasks executed successfully;
+- complete governed host gate (`test`, debug/release/benchmark lint and
+  assembly, R8, macrobenchmark checks, governance, clean-room/private-asset,
+  dependency, license, performance-protocol, physical-provider-protocol,
+  permission, APK-content, and release-metadata verification): 980 tasks passed
+  in 2m09s;
+- release bundle: 306 tasks passed in 9s;
+- CycloneDX aggregate: 16 tasks passed in 9s;
+- API 36 complete connected matrix: 477 enumerated tests passed with zero
+  failures and 12 intentional protocol skips in 3m02s; and
+- API 26 complete connected matrix: 474 enumerated tests passed with zero
+  failures and 15 intentional protocol skips in 3m09s.
+
+No live provider content, message address/body/subject, search phrase, SMS-role
+or permission mutation, screenshot, broad log, provider write, or carrier send
+participated. Physical Pixel/OEM provider-completion, carrier transport, and
+private exact-result acceptance remain open. Contact discovery, first-contact
+provider ownership/transport, complete MMS product acceptance, signing,
+F-Droid/publication metadata, artwork notices, and signed checksums also remain
+open. This integrity hardening does not make AuroraSMS gold.
+
+#### Phase 7 N2A bounded contact-discovery acceptance — 2026-07-21
+
+N2A adds an explicit **Find contacts** selector to the internal and external New
+chat review surfaces. Contact access is optional: `READ_CONTACTS` is requested
+only after the user opens that panel and explicitly chooses **Manage contact
+access**.
+The pre-existing Inbox-overflow **Use contacts** action remains the other
+explicit, user-triggered permission entry point. Contact access is not part of
+app/default-SMS onboarding, and absent, denied, cancelled,
+permanently denied, revoked, or provider-unavailable access leaves manual
+recipient entry and the existing participant-draft flow usable.
+
+The implementation trims each query, then accepts only a control-free
+1-to-100-character value. Its public result cap is 50; the N2A surface requests
+20 and reads at most
+one extra provider row to report truncation. The phone-row filter query runs off
+the main thread, closes its cursor, propagates coroutine cancellation through
+Android's `CancellationSignal`, and discards stale work when the query or UI
+owner changes. Returned addresses and bounded names/photo references are
+validated and deduplicated. Query text and unselected result metadata remain
+memory-only and are cleared on panel close. A selected bounded display label may
+remain only in memory for its recipient chip until removal, Activity stop, or
+permission loss. Selecting a result contributes only its validated address to
+the same bounded recipient/draft authority used by manual entry.
+
+N2A requests no `WRITE_CONTACTS`, network, media, storage, or background-access
+permission. The production manifest contract requires optional
+`READ_CONTACTS` and rejects `WRITE_CONTACTS`. The isolated benchmark continues
+to remove `READ_CONTACTS`, and the unchanged exact permission verifier must
+still prove complete permission-set equality in every production/benchmark
+merged manifest and packaged APK. Discovery and selection perform no Contacts
+or Telephony provider write, provider-thread resolution, subscription choice,
+SMS/MMS submission, or carrier send. New chat Send remains disabled.
+
+Final synthetic acceptance evidence:
+
+- focused N2A host contracts —
+  `./gradlew :app:testDebugUnitTest
+  -Pandroid.testInstrumentationRunnerArguments.class=org.aurorasms.app.compose.NewMessageRouteStateTest
+  :app:compileDebugAndroidTestKotlin :core:telephony:testDebugUnitTest
+  :core:telephony:compileDebugAndroidTestKotlin
+  :feature:conversations:testDebugUnitTest
+  :feature:conversations:compileDebugAndroidTestKotlin --offline --no-daemon
+  --no-parallel --console=plain` — **PASS**, 172 tasks in 7s;
+- complete governed host/lint/R8/benchmark/privacy/dependency/license gate —
+  `./gradlew test lintDebug lintRelease assembleDebug assembleRelease
+  bundleRelease :app:lintBenchmark :app:assembleBenchmark
+  :macrobenchmark:check :macrobenchmark:assembleBenchmark verifyGovernance
+  checkLicense generateLicenseReport verifyCleanRoom verifyPrivateAssets
+  verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon
+  --no-parallel --console=plain` — **PASS**, 987 tasks in 24s. The required
+  standalone `./gradlew cyclonedxBom --offline --no-daemon --no-parallel
+  --console=plain` also passed, 16 tasks in 8s;
+- API 36 complete connected matrix — `AuroraSMS_API36(AVD) - 16`, 1080x2400,
+  `ANDROID_SERIAL=emulator-5554 ./gradlew connectedDebugAndroidTest --offline
+  --no-daemon --no-parallel --console=plain` — **PASS**, 481 test cases (469
+  passed plus 12 intentional opt-in protocol skips), zero failures, 506 tasks in
+  3m13s; and
+- API 26 complete connected matrix — `AuroraSMS_API26(AVD) - 8.0.0`, 320x640,
+  `ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline
+  --no-daemon --no-parallel --console=plain` — **PASS**, 475 test cases (460
+  passed plus 15 intentional opt-in protocol skips), zero failures, 506 tasks in
+  3m21s. The compact matrix specifically proved the scroll-safe New Message
+  notices, all bounded contact-discovery states, and selection of the last row
+  from the maximum 20-result surface.
+
+The N2A-specific cases in those runs must use synthetic names, numbers, and
+provider rows only and record zero SMS-role change, automated `READ_CONTACTS`
+grant/revoke, Contacts/Telephony provider write, or carrier send.
+Owner-controlled validation against a real physical/OEM Contacts provider,
+including grant, denial, permanent denial, revocation, cancellation, selection,
+Activity stop, and manual fallback, remains open. Provider-thread ownership and
+first-contact SMS/MMS transport are separate N2B gates and remain open.
+AuroraSMS is not gold.
+
+#### Phase 7 N2B durable first-contact ownership acceptance — 2026-07-22
+
+N2B adds the synthetic, durable ownership path that must exist before New chat
+may enter provider authority. Shared recipient equivalence keeps supported phone
+presentation punctuation from creating sibling owners, compares email domains
+case-insensitively while retaining exact local parts, and keeps opaque address
+kinds exact. State schema 15 adds one bounded first-contact operation for the
+exact participant draft, revision, attachment-set evidence, selected active
+SMS-capable subscription, transport kind, and optional frozen signature. It
+stores no raw recipient, body, subject, attachment bytes, query, contact label,
+or photo reference.
+
+`RESERVED` is committed before provider resolution. `RESOLUTION_STARTED` is a
+one-way crash fence: once it exists, no caller can convert the operation to
+retryable `KNOWN_UNSENT`; every non-verified result, cancellation, exception,
+or recovery becomes terminal `RESOLUTION_UNKNOWN`. A positive provider thread
+is write-once and must have an exact bounded participant readback. SQL triggers
+enforce physical integer types, monotonic revisions, exact transitions, the
+128-owner cap, unique participant and provider-thread ownership, and deletion
+only from a genuinely pre-resolution `KNOWN_UNSENT` state.
+
+The `THREAD_BOUND` bridge rekeys the same draft to its exact provider thread in
+one Room transaction, strictly advances its draft revision, preserves body,
+subject, creation time, and attachments, and rejects existing thread drafts or
+other active workflow owners. Reopen tests prove the exact
+`HANDOFF_RESERVED` operation, provider-draft identity/revision/content, and
+attachments survive process loss. N2B intentionally creates no composer
+operation and submits no message.
+
+The Android resolver is present only behind injected allocator/readback seams.
+It checks role and `READ_SMS`, uses a cancellable bounded canonical-recipient
+readback, and classifies allocator/readback ambiguity or post-readback role or
+permission loss as unknown. Static and runtime acceptance proves internal New
+chat, external `SENDTO`, and Activity recreation keep Send disabled and invoke
+first-contact ownership zero times. Neither the resolver nor the headless
+coordinator is wired into the production New chat graph, and the coordinator
+has no transport, provider-message staging, callback, or existing-thread send
+dependency.
+
+Final synthetic acceptance evidence:
+
+- integrated model/telephony/state/app contracts and Android-test compilation —
+  `./gradlew :core:model:test :core:telephony:testDebugUnitTest
+  :core:state:testDebugUnitTest :app:testDebugUnitTest
+  :core:telephony:compileDebugAndroidTestKotlin
+  :core:state:compileDebugAndroidTestKotlin
+  :app:compileDebugAndroidTestKotlin --offline --no-daemon --no-parallel
+  --console=plain` — **PASS**, 176 tasks in 14s;
+- complete governed host/lint/R8/benchmark/privacy/dependency/license gate —
+  `./gradlew test lintDebug lintRelease assembleDebug assembleRelease
+  bundleRelease :app:lintBenchmark :app:assembleBenchmark
+  :macrobenchmark:check :macrobenchmark:assembleBenchmark verifyGovernance
+  checkLicense generateLicenseReport verifyCleanRoom verifyPrivateAssets
+  verifyDependencies verifyPermissions verifyApkContents --offline --no-daemon
+  --no-parallel --console=plain` — **PASS**, 987 tasks in 2m35s. The required
+  standalone `./gradlew cyclonedxBom --offline --no-daemon --no-parallel
+  --console=plain` also passed, 16 tasks in 9s;
+- API 36 complete connected matrix — `AuroraSMS_API36(AVD) - 16`,
+  `ANDROID_SERIAL=emulator-5554 ./gradlew connectedDebugAndroidTest --offline
+  --no-daemon --no-parallel --console=plain` — **PASS**, 519 enumerated cases
+  (507 passed plus 12 intentional opt-in protocol skips), zero failures, 506
+  tasks in 3m23s; and
+- API 26 complete connected matrix — `AuroraSMS_API26(AVD) - 8.0.0`,
+  `ANDROID_SERIAL=emulator-5556 ./gradlew connectedDebugAndroidTest --offline
+  --no-daemon --no-parallel --console=plain` — **PASS**, 516 enumerated cases
+  (501 passed plus 15 intentional opt-in protocol skips), zero failures, 506
+  tasks in 3m26s.
+
+Every N2B case used synthetic participants, drafts, attachments, provider IDs,
+role/permission states, subscriptions, cursors, and controller seams. No live
+message address/body/subject, contact record, provider thread, provider write,
+role mutation, permission grant/revoke, SMS/MMS submission, callback, carrier
+send, screenshot, or broad log participated.
+
+N2C now transactionally revalidates exact `HANDOFF_RESERVED` authority and the
+current draft/attachments while acquiring the mature composer journal. The
+synthetic Room matrix also covers every immutable mismatch, capacity
+preservation, and fault-injected post-insert rollback without a production
+fault hook. Still open: an explicit safe `KNOWN_UNSENT` release/retry path,
+production resolution only behind the user's exact send action, exact
+multi-SIM choice, and real-provider/carrier SMS/MMS acceptance. AuroraSMS is
+not gold.
 
 ## Release gate
 
@@ -1609,14 +4552,14 @@ application all remain unclaimed.
 - [ ] Release build installs, acquires role, sends/receives SMS and MMS, sends a
   group MMS without fan-out, and handles notifications/direct reply.
 - [ ] Complete indexed search and exact old-result jump meet measured budgets.
-- [ ] Every shipped database version has a migration test.
-- [ ] R8/resource shrinking, Baseline Profile, APK size, and permission
+- [x] Every shipped database version has a migration test.
+- [x] R8/resource shrinking, Baseline Profile, APK size, and permission
   regression checks pass.
-- [ ] Clean-room source/dependency/private-asset scans pass.
+- [x] Clean-room source/dependency/private-asset scans pass.
 - [ ] Notices/SBOM, source license, artwork license/attribution, reproducible
   build instructions, security policy, and signed checksums are complete.
 - [ ] F-Droid metadata builds from source without proprietary services.
-- [ ] Release language accurately distinguishes SMS/MMS from RCS.
+- [x] Release language accurately distinguishes SMS/MMS from RCS.
 
 ## Evidence record template
 

@@ -11,10 +11,12 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Telephony
+import org.xmlpull.v1.XmlPullParser
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -39,6 +41,20 @@ class DefaultSmsManifestContractTest {
     }
 
     @Test
+    fun optionalContactDiscoveryIsReadOnlyAtTheProductionManifestBoundary() {
+        val requested = packageInfo.requestedPermissions.orEmpty().toSet()
+
+        assertTrue(
+            "READ_CONTACTS must remain declared for optional just-in-time contact discovery",
+            Manifest.permission.READ_CONTACTS in requested,
+        )
+        assertFalse(
+            "AuroraSMS must never request authority to modify the user's contacts",
+            Manifest.permission.WRITE_CONTACTS in requested,
+        )
+    }
+
+    @Test
     fun corePermissionsAndTelephonyFeatureAreDeclared() {
         val requested = packageInfo.requestedPermissions.orEmpty().toSet()
         val required = setOf(
@@ -48,6 +64,9 @@ class DefaultSmsManifestContractTest {
             Manifest.permission.RECEIVE_MMS,
             Manifest.permission.RECEIVE_WAP_PUSH,
             Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.RECEIVE_BOOT_COMPLETED,
+            Manifest.permission.SCHEDULE_EXACT_ALARM,
+            Manifest.permission.RECORD_AUDIO,
         )
 
         assertTrue(requested.containsAll(required))
@@ -106,6 +125,24 @@ class DefaultSmsManifestContractTest {
     }
 
     @Test
+    fun roleChangeReceiverIsExportedForProtectedPlatformBroadcast() {
+        val roleChangeReceiver = requireNotNull(
+            packageInfo.receivers.orEmpty().singleOrNull {
+                it.name.endsWith(".receiver.DefaultSmsRoleChangedReceiver")
+            },
+        )
+
+        assertTrue(roleChangeReceiver.exported)
+        assertNull(roleChangeReceiver.permission)
+        assertTrue(
+            queryReceivers(
+                Intent(Telephony.Sms.Intents.ACTION_DEFAULT_SMS_PACKAGE_CHANGED)
+                    .setPackage(packageName),
+            ).any { it.activityInfo.name == roleChangeReceiver.name },
+        )
+    }
+
+    @Test
     fun respondViaMessageServiceHasOfficialGuardAndSchemes() {
         val service = requireNotNull(
             packageInfo.services.orEmpty().singleOrNull {
@@ -126,6 +163,29 @@ class DefaultSmsManifestContractTest {
     }
 
     @Test
+    fun androidAutoDeclaresNotificationAndDefaultSmsCapabilities() {
+        val applicationInfo = packageManager.getApplicationInfo(
+            packageName,
+            PackageManager.GET_META_DATA,
+        )
+        val descriptorId = requireNotNull(applicationInfo.metaData)
+            .getInt("com.google.android.gms.car.application")
+        assertTrue(descriptorId != 0)
+
+        val declaredUses = linkedSetOf<String>()
+        context.resources.getXml(descriptorId).use { parser ->
+            while (parser.eventType != XmlPullParser.END_DOCUMENT) {
+                if (parser.eventType == XmlPullParser.START_TAG && parser.name == "uses") {
+                    parser.getAttributeValue(null, "name")?.let(declaredUses::add)
+                }
+                parser.next()
+            }
+        }
+
+        assertEquals(setOf("notification", "sms"), declaredUses)
+    }
+
+    @Test
     fun privateCallbacksAndMmsProviderAreNotExported() {
         val privateReceiverSuffixes = setOf(
             ".receiver.SmsSentReceiver",
@@ -133,6 +193,11 @@ class DefaultSmsManifestContractTest {
             ".receiver.MmsSendResultReceiver",
             ".receiver.MmsDownloadResultReceiver",
             ".InlineReplyReceiver",
+            ".receiver.ScheduledSmsAlarmReceiver",
+            ".receiver.ScheduledSmsRecoveryReceiver",
+            ".receiver.SendDelayAlarmReceiver",
+            ".receiver.PermanentDeletionAlarmReceiver",
+            ".receiver.NotificationReminderAlarmReceiver",
         )
         privateReceiverSuffixes.forEach { suffix ->
             val receiver = requireNotNull(
@@ -140,6 +205,13 @@ class DefaultSmsManifestContractTest {
             )
             assertFalse("$suffix must not be exported", receiver.exported)
         }
+
+        val notificationActionService = requireNotNull(
+            packageInfo.services.orEmpty().singleOrNull {
+                it.name.endsWith(".MessagingNotificationActionService")
+            },
+        )
+        assertFalse(notificationActionService.exported)
 
         val provider = requireNotNull(
             packageInfo.providers.orEmpty().singleOrNull {

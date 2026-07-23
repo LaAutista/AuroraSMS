@@ -87,6 +87,27 @@ class MmsPduStagingStore(
         ready(operationId, file, MmsPduDirection.DOWNLOAD_TARGET)
     }
 
+    /** Reconstructs only one exact, confined download target named by a durable journal record. */
+    suspend fun recoverDownloadTarget(operationId: MessageId, fileName: String): StagedMmsPdu? =
+        withContext(ioDispatcher) {
+            if (operationId.kind != ProviderKind.PENDING_OPERATION || !FILE_NAME.matches(fileName)) {
+                return@withContext null
+            }
+            val file = resolveFile(File(downloadRoot, fileName), MmsPduDirection.DOWNLOAD_TARGET)
+                ?.takeIf { it.isFile }
+                ?: return@withContext null
+            try {
+                StagedMmsPdu(
+                    operationId = operationId,
+                    uri = uriFor(file),
+                    direction = MmsPduDirection.DOWNLOAD_TARGET,
+                    fileName = fileName,
+                )
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+        }
+
     suspend fun readCompletedDownload(staged: StagedMmsPdu): EncodedMmsPdu.CreationResult =
         withContext(ioDispatcher) {
             require(staged.direction == MmsPduDirection.DOWNLOAD_TARGET) {

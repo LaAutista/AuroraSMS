@@ -38,3 +38,36 @@ interface SubscriptionRepository {
             ?.subscriptions
             ?.firstOrNull { it.id == id }
 }
+
+/** Typed, fail-closed validation of one explicitly selected SMS subscription. */
+sealed interface ActiveSmsSubscriptionValidation {
+    data class Valid(val subscription: ActiveSubscription) : ActiveSmsSubscriptionValidation
+    data object Inactive : ActiveSmsSubscriptionValidation
+    data object Ambiguous : ActiveSmsSubscriptionValidation
+    data object NotSmsCapable : ActiveSmsSubscriptionValidation
+    data object PermissionDenied : ActiveSmsSubscriptionValidation
+    data object FeatureUnavailable : ActiveSmsSubscriptionValidation
+    data object PlatformUnavailable : ActiveSmsSubscriptionValidation
+}
+
+/**
+ * Re-enumerates subscriptions and validates the exact selected ID without default-SIM fallback.
+ * Enumeration failures retain their original typed meaning.
+ */
+suspend fun SubscriptionRepository.validateActiveSmsSubscription(
+    id: AuroraSubscriptionId,
+): ActiveSmsSubscriptionValidation = when (val snapshot = activeSubscriptions()) {
+    is SubscriptionSnapshot.Available -> {
+        val matches = snapshot.subscriptions.filter { it.id == id }
+        val subscription = matches.singleOrNull()
+        when {
+            matches.isEmpty() -> ActiveSmsSubscriptionValidation.Inactive
+            subscription == null -> ActiveSmsSubscriptionValidation.Ambiguous
+            !subscription.smsCapable -> ActiveSmsSubscriptionValidation.NotSmsCapable
+            else -> ActiveSmsSubscriptionValidation.Valid(subscription)
+        }
+    }
+    SubscriptionSnapshot.PermissionDenied -> ActiveSmsSubscriptionValidation.PermissionDenied
+    SubscriptionSnapshot.FeatureUnavailable -> ActiveSmsSubscriptionValidation.FeatureUnavailable
+    SubscriptionSnapshot.PlatformUnavailable -> ActiveSmsSubscriptionValidation.PlatformUnavailable
+}

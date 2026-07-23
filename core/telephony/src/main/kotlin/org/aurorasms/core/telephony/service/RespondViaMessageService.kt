@@ -13,11 +13,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.aurorasms.core.model.AuroraSubscriptionId
+import org.aurorasms.core.model.INCOMING_MMS_OPERATION_ID_BOUNDARY
 import org.aurorasms.core.model.MessageId
-import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.ProviderKind
-import org.aurorasms.core.telephony.MmsSendRequest
-import org.aurorasms.core.telephony.OutgoingMmsPayload
 import org.aurorasms.core.telephony.RecipientSet
 import org.aurorasms.core.telephony.SmsSendRequest
 import org.aurorasms.core.telephony.TelephonyEntryPoint
@@ -35,28 +33,13 @@ class RespondViaMessageService : Service() {
         serviceScope.launch {
             try {
                 val operationId = MessageId(ProviderKind.PENDING_OPERATION, nextOperationId())
-                val result = when (request.recipients.requiredTransport()) {
-                    MessageTransportKind.SMS -> entryPoint.messageTransport.sendSms(
-                        SmsSendRequest(
-                            operationId = operationId,
-                            recipients = request.recipients,
-                            body = request.body,
-                            subscriptionId = request.subscriptionId,
-                        ),
-                    )
-                    MessageTransportKind.MMS -> entryPoint.messageTransport.sendMms(
-                        MmsSendRequest(
-                            operationId = operationId,
-                            recipients = request.recipients,
-                            payload = OutgoingMmsPayload.RequiresEncoding(
-                                text = request.body,
-                                subject = null,
-                                attachmentCount = 0,
-                            ),
-                            subscriptionId = request.subscriptionId,
-                        ),
-                    )
-                }
+                val submission = respondViaMessageSubmission(
+                    operationId = operationId,
+                    recipients = request.recipients,
+                    body = request.body,
+                    subscriptionId = request.subscriptionId,
+                )
+                val result = entryPoint.messageTransport.submitRespondViaMessage(submission)
                 entryPoint.onTransportResult(result)
             } finally {
                 stopSelfResult(startId)
@@ -113,12 +96,14 @@ class RespondViaMessageService : Service() {
         private val APPROVED_SCHEMES = setOf("sms", "smsto", "mms", "mmsto")
         private val random = SecureRandom()
 
-        private fun nextOperationId(): Long {
-            var candidate: Long
-            do {
-                candidate = random.nextLong() and Long.MAX_VALUE
-            } while (candidate == 0L)
-            return candidate
-        }
+        private fun nextOperationId(): Long = nextOrdinaryOperationId(random::nextLong)
     }
+}
+
+internal fun nextOrdinaryOperationId(nextLong: () -> Long): Long {
+    var candidate: Long
+    do {
+        candidate = nextLong() and (INCOMING_MMS_OPERATION_ID_BOUNDARY - 1L)
+    } while (candidate == 0L)
+    return candidate
 }

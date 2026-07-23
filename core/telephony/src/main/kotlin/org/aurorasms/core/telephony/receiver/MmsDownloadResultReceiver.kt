@@ -12,6 +12,7 @@ import org.aurorasms.core.model.MessageId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.telephony.EncodedMmsPdu
+import org.aurorasms.core.telephony.MmsStagedPduDisposition
 import org.aurorasms.core.telephony.internal.MmsPduDirection
 import org.aurorasms.core.telephony.internal.MmsPduStagingStore
 
@@ -23,6 +24,7 @@ class MmsDownloadResultReceiver : BroadcastReceiver() {
         val code = resultCode
         dispatchAsync(context) { entryPoint ->
             val store = MmsPduStagingStore(context)
+            var disposition = MmsStagedPduDisposition.RETAIN
             try {
                 if (code == Activity.RESULT_OK) {
                     when (val downloaded = store.readCompletedDownload(
@@ -34,45 +36,38 @@ class MmsDownloadResultReceiver : BroadcastReceiver() {
                         ),
                     )) {
                         is EncodedMmsPdu.CreationResult.Valid -> {
-                            entryPoint.onDownloadedMms(operationId, downloaded.pdu)
-                            entryPoint.onTransportResult(
-                                TransportResult.Downloaded(
-                                    operationId = operationId,
-                                    transport = MessageTransportKind.MMS,
-                                    platformResultCode = code,
-                                    byteCount = downloaded.pdu.size,
-                                ),
+                            disposition = entryPoint.onDownloadedMms(
+                                operationId = operationId,
+                                stagedUri = uri,
+                                pdu = downloaded.pdu,
                             )
                         }
                         is EncodedMmsPdu.CreationResult.Rejected -> {
-                            entryPoint.onTransportResult(
-                                TransportResult.Failed(
-                                    operationId = operationId,
-                                    transport = MessageTransportKind.MMS,
-                                    reason = if (downloaded.reason == EncodedMmsPdu.CreationResult.Reason.TOO_LARGE) {
-                                        TransportResult.FailureReason.PAYLOAD_TOO_LARGE
-                                    } else {
-                                        TransportResult.FailureReason.PLATFORM_REJECTED
-                                    },
-                                    retryable = false,
-                                    platformResultCode = code,
-                                ),
+                            val failure = mmsDownloadFailureResult(
+                                operationId = operationId,
+                                reason = downloaded.toFailureReason(),
+                                retryable = false,
+                                platformResultCode = code,
                             )
+                            disposition = entryPoint.onFailedMmsDownload(operationId, uri, failure)
+                            entryPoint.onTransportResult(failure)
                         }
                     }
                 } else {
-                    entryPoint.onTransportResult(
-                        TransportResult.Failed(
-                            operationId = operationId,
-                            transport = MessageTransportKind.MMS,
-                            reason = TransportResult.FailureReason.PLATFORM_REJECTED,
-                            retryable = code == SmsManager.MMS_ERROR_RETRY || code == SmsManager.MMS_ERROR_NO_DATA_NETWORK,
-                            platformResultCode = code,
-                        ),
+                    val failure = mmsDownloadFailureResult(
+                        operationId = operationId,
+                        reason = TransportResult.FailureReason.PLATFORM_REJECTED,
+                        retryable = code == SmsManager.MMS_ERROR_RETRY ||
+                            code == SmsManager.MMS_ERROR_NO_DATA_NETWORK,
+                        platformResultCode = code,
                     )
+                    disposition = entryPoint.onFailedMmsDownload(operationId, uri, failure)
+                    entryPoint.onTransportResult(failure)
                 }
             } finally {
-                store.cleanup(uri, MmsPduDirection.DOWNLOAD_TARGET)
+                if (disposition == MmsStagedPduDisposition.CLEANUP) {
+                    store.cleanup(uri, MmsPduDirection.DOWNLOAD_TARGET)
+                }
             }
         }
     }
@@ -87,3 +82,24 @@ class MmsDownloadResultReceiver : BroadcastReceiver() {
                 .putExtra(MmsSendResultReceiver.EXTRA_STAGED_URI, stagedUri)
     }
 }
+
+private fun EncodedMmsPdu.CreationResult.Rejected.toFailureReason(): TransportResult.FailureReason =
+    if (reason == EncodedMmsPdu.CreationResult.Reason.TOO_LARGE) {
+        TransportResult.FailureReason.PAYLOAD_TOO_LARGE
+    } else {
+        TransportResult.FailureReason.PLATFORM_REJECTED
+    }
+
+internal fun mmsDownloadFailureResult(
+    operationId: MessageId,
+    reason: TransportResult.FailureReason,
+    retryable: Boolean,
+    platformResultCode: Int,
+): TransportResult.Failed = TransportResult.Failed(
+    operationId = operationId,
+    transport = MessageTransportKind.MMS,
+    reason = reason,
+    retryable = retryable,
+    platformResultCode = platformResultCode,
+    stage = TransportResult.FailureStage.DOWNLOAD_CALLBACK,
+)

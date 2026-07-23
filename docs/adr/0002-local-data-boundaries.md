@@ -153,9 +153,10 @@ For a complete generation:
 
 An interrupted or failed verification never turns a partial generation into
 complete coverage. Startup reads persisted generation/checkpoint state and
-resumes from the last committed cursor. SQLite full/I/O errors, role loss,
-permission loss, provider failure, or cancellation do not advance an
-uncommitted checkpoint.
+resumes a clean process interruption from the last committed cursor. Role or
+read-permission loss marks the interrupted generation for a fresh scan after
+authority returns; SQLite full/I/O errors, provider failure, or cancellation
+do not advance an uncommitted checkpoint.
 
 Aurora-owned provider inserts, the official external-provider receiver, a
 Telephony `ContentObserver`, role reacquisition, process start, and a bounded

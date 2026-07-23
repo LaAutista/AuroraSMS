@@ -53,7 +53,9 @@ class ThemeStudioScreenTest {
             assertEquals(AuroraPalette.LIGHT, compose.activity.latestApplyRequest?.profile?.palette)
         }
 
+        scrollTo(THEME_STUDIO_CANCEL_TEST_TAG)
         compose.onNodeWithTag(THEME_STUDIO_CANCEL_TEST_TAG)
+            .assertIsDisplayed()
             .performClick()
         compose.runOnIdle {
             assertEquals(1, compose.activity.cancelRequestCount)

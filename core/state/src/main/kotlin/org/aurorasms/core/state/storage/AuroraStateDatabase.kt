@@ -8,6 +8,7 @@ import androidx.room.RoomDatabase
 @Database(
     entities = [
         DraftEntity::class,
+        DraftAttachmentEntity::class,
         AppearanceProfileEntity::class,
         AppearanceSelectionEntity::class,
         AppearanceScreenOverrideEntity::class,
@@ -15,6 +16,14 @@ import androidx.room.RoomDatabase
         AppearanceScreenWallpaperEntity::class,
         AppearanceConversationWallpaperEntity::class,
         AppearanceOverrideSequenceEntity::class,
+        ComposerSmsOperationEntity::class,
+        AcknowledgedComposerSmsEntity::class,
+        ConversationSubscriptionPreferenceEntity::class,
+        ScheduledSmsEntity::class,
+        SendDelayEntity::class,
+        PermanentDeletionEntity::class,
+        SpamSafetyDecisionEntity::class,
+        FirstContactOperationEntity::class,
     ],
     version = AuroraStateDatabase.VERSION,
     exportSchema = true,
@@ -22,11 +31,28 @@ import androidx.room.RoomDatabase
 abstract class AuroraStateDatabase : RoomDatabase() {
     internal abstract fun draftDao(): DraftDao
 
+    internal abstract fun draftAttachmentDao(): DraftAttachmentDao
+
     internal abstract fun appearanceProfileDao(): AppearanceProfileDao
 
     internal abstract fun appearanceOverrideDao(): AppearanceOverrideDao
 
+    internal abstract fun composerSmsOperationDao(): ComposerSmsOperationDao
+
+    internal abstract fun conversationSubscriptionPreferenceDao():
+        ConversationSubscriptionPreferenceDao
+
+    internal abstract fun scheduledSmsDao(): ScheduledSmsDao
+
+    internal abstract fun sendDelayDao(): SendDelayDao
+
+    internal abstract fun permanentDeletionDao(): PermanentDeletionDao
+
+    internal abstract fun spamSafetyDecisionDao(): SpamSafetyDecisionDao
+
+    internal abstract fun firstContactOperationDao(): FirstContactOperationDao
+
     companion object {
-        const val VERSION: Int = 4
+        const val VERSION: Int = 16
     }
 }

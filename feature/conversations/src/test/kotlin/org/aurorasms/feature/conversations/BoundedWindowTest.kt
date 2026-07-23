@@ -81,6 +81,24 @@ class BoundedWindowTest {
     }
 
     @Test
+    fun `newest inbox refresh adopts an older cursor discovered after first paint`() {
+        val firstPaint = (20L downTo 1L).map(::conversation)
+        val window = BoundedInboxWindow(firstPaint, olderCursor = null)
+        val discoveredCursor = conversationCursor(1L)
+        val refreshedPage = conversationPage(
+            items = (40L downTo 1L).map(::conversation),
+            direction = ConversationPageDirection.OLDER,
+            next = discoveredCursor,
+        )
+
+        val refreshed = window.refreshNewest(refreshedPage)
+
+        assertEquals(discoveredCursor, refreshed.olderCursor)
+        assertEquals(40L, refreshed.items.first().providerThreadId.value)
+        assertEquals(1L, refreshed.items.last().providerThreadId.value)
+    }
+
+    @Test
     fun `older thread pages evict newest messages and retain the visible anchor`() {
         val initial = (101L..300L).map(::message)
         val window = BoundedThreadWindow(initial, olderCursor = timelineCursor(101L), newerCursor = null)
@@ -184,6 +202,8 @@ private val TEST_COVERAGE = IndexCoverage(
     smsExhausted = true,
     mmsExhausted = true,
     pendingChanges = false,
+    generationCommittedCount = 1_000L,
+    smsCheckpointCommittedCount = 1_000L,
 )
 
 private fun conversation(
@@ -220,9 +240,10 @@ private fun conversationPage(
 private fun conversationPage(
     items: List<ConversationSummary>,
     direction: ConversationPageDirection,
+    next: ConversationCursor? = null,
 ): ConversationPage = ConversationPage(
     items = items,
-    next = null,
+    next = next,
     direction = direction,
     coverage = TEST_COVERAGE,
 )

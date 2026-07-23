@@ -1,16 +1,12 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#78D6C6"
-        android:pathData="M54,20 L82,82 L70,82 L63,66 L45,66 L38,82 L26,82 Z" />
-    <path
-        android:fillColor="#101419"
-        android:pathData="M54,40 L48.5,55 L59.5,55 Z" />
-    <path
-        android:fillColor="#9CB8FF"
-        android:pathData="M31,88 C43,82 65,82 77,88 C65,94 43,94 31,88 Z" />
-</vector>
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="21dp"
+    android:insetTop="21dp"
+    android:insetRight="21dp"
+    android:insetBottom="21dp">
+    <bitmap
+        android:src="@drawable/ic_launcher_aurora"
+        android:antialias="true"
+        android:filter="true"
+        android:gravity="fill" />
+</inset>

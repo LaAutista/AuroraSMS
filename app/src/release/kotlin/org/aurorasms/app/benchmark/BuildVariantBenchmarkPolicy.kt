@@ -5,4 +5,6 @@ package org.aurorasms.app.benchmark
 internal object BuildVariantBenchmarkPolicy {
     const val deferContainerInitialization: Boolean = false
     const val syntheticIndexOnly: Boolean = false
+    const val syntheticMessagingEligible: Boolean = false
+    const val syntheticNotificationPermissionSatisfied: Boolean = false
 }

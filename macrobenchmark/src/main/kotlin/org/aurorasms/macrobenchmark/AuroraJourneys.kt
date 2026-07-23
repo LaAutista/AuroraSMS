@@ -10,6 +10,9 @@ import android.provider.Telephony
 import android.os.SystemClock
 import androidx.benchmark.macro.BaselineProfileMode
 import androidx.benchmark.macro.CompilationMode
+import androidx.benchmark.macro.ExperimentalMetricApi
+import androidx.benchmark.macro.MemoryUsageMetric
+import androidx.benchmark.macro.Metric
 import androidx.benchmark.macro.MacrobenchmarkScope
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -22,13 +25,15 @@ import org.aurorasms.core.testing.SyntheticIndexFixtures
 import org.aurorasms.core.testing.SyntheticIndexRecord
 import org.aurorasms.core.testing.SyntheticIndexShape
 
-internal const val TARGET_PACKAGE: String = "org.aurorasms.app"
+internal const val PRODUCTION_PACKAGE: String = "org.aurorasms.app"
+internal const val TARGET_PACKAGE: String = "$PRODUCTION_PACKAGE.benchmark"
 internal const val THREAD_OPEN_TRACE: String = "AuroraThreadOpen"
 internal const val SEARCH_TRACE: String = "AuroraSearchResults"
 internal const val EXACT_JUMP_TRACE: String = "AuroraExactJump"
 
 internal val BASELINE_COMPILATION: CompilationMode = CompilationMode.Partial(
     baselineProfileMode = BaselineProfileMode.Require,
+    warmupIterations = PERFORMANCE_WARMUP_ITERATIONS,
 )
 
 internal enum class FixtureShape(val wireValue: String) {
@@ -39,7 +44,8 @@ internal enum class FixtureShape(val wireValue: String) {
 
 internal object FixtureController {
     private const val AUTHORITY = "org.aurorasms.app.benchmark.fixture"
-    private const val CONTROL_PERMISSION = "org.aurorasms.app.permission.BENCHMARK_CONTROL"
+    private const val CONTROL_PERMISSION =
+        "org.aurorasms.app.benchmark.permission.BENCHMARK_CONTROL"
     private const val METHOD_SEED = "seed"
     private const val KEY_SHAPE = "shape"
     private const val KEY_SEED = "seed"
@@ -49,13 +55,26 @@ internal object FixtureController {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.context
 
-    fun requireMessagingEligibility() {
-        check(context.packageManager.checkPermission(Manifest.permission.READ_SMS, TARGET_PACKAGE) ==
-            PackageManager.PERMISSION_GRANTED) {
-            "Benchmark target requires owner-granted READ_SMS through normal app UI"
+    fun requireSyntheticIsolation() {
+        check(TARGET_PACKAGE != PRODUCTION_PACKAGE) {
+            "Benchmark target must not share the production application ID"
         }
-        check(Telephony.Sms.getDefaultSmsPackage(context) == TARGET_PACKAGE) {
-            "Benchmark target requires owner-granted default SMS role through normal app UI"
+        val forbiddenMessagingPermissions = listOf(
+            Manifest.permission.READ_SMS,
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.RECEIVE_SMS,
+            Manifest.permission.RECEIVE_MMS,
+            Manifest.permission.RECEIVE_WAP_PUSH,
+            Manifest.permission.READ_PHONE_STATE,
+        )
+        check(forbiddenMessagingPermissions.all { permission ->
+            context.packageManager.checkPermission(permission, TARGET_PACKAGE) ==
+                PackageManager.PERMISSION_DENIED
+        }) {
+            "Benchmark target must not hold messaging authority"
+        }
+        check(Telephony.Sms.getDefaultSmsPackage(context) != TARGET_PACKAGE) {
+            "Benchmark target must not hold the default SMS role"
         }
         check(context.checkSelfPermission(CONTROL_PERMISSION) == PackageManager.PERMISSION_GRANTED) {
             "Benchmark control permission was not granted to the same-signed test APK"
@@ -109,7 +128,7 @@ internal fun MacrobenchmarkScope.startInbox() {
 
 internal fun MacrobenchmarkScope.openFirstConversation() {
     clickVisibleClickableTag(INBOX_ROW_TAG)
-    waitForTag(THREAD_LIST_TAG)
+    waitForThreadPresentationTrace()
 }
 
 internal fun MacrobenchmarkScope.openSearch() {
@@ -125,7 +144,16 @@ internal fun MacrobenchmarkScope.enterSearchQuery(query: String): UiObject2 {
 
 internal fun MacrobenchmarkScope.openSearchHit(hit: UiObject2) {
     hit.click()
+    waitForThreadPresentationTrace()
+}
+
+private fun MacrobenchmarkScope.waitForThreadPresentationTrace() {
     waitForTag(THREAD_LIST_TAG)
+    // The list semantics can become observable one frame before ThreadRoute's
+    // post-placement effect closes the async presentation trace. Keep the
+    // measurement open long enough for that exact trace boundary to close.
+    SystemClock.sleep(PRESENTATION_TRACE_COMPLETION_GRACE_MILLIS)
+    device.waitForIdle()
 }
 
 internal fun MacrobenchmarkScope.scrollInboxOnce() {
@@ -220,18 +248,31 @@ private fun MacrobenchmarkScope.clickVisibleClickableTag(
 }
 
 internal fun measurementIterations(): Int =
-    if (InstrumentationRegistry.getArguments().getString(ARGUMENT_FULL) == "true") 30 else 3
+    if (fullPerformanceEvidence()) 30 else 3
 
 internal fun frameIterations(): Int =
-    if (InstrumentationRegistry.getArguments().getString(ARGUMENT_FULL) == "true") 10 else 1
+    if (fullPerformanceEvidence()) 10 else 1
 
 internal fun memoryIterations(): Int =
-    if (InstrumentationRegistry.getArguments().getString(ARGUMENT_FULL) == "true") 10 else 2
+    if (fullPerformanceEvidence()) 10 else 2
+
+internal fun fullPerformanceEvidence(): Boolean =
+    InstrumentationRegistry.getArguments().getString(ARGUMENT_FULL) == "true"
+
+@OptIn(ExperimentalMetricApi::class)
+internal fun rendererIndependentReachabilityMetrics(): List<Metric> = listOf(
+    MemoryUsageMetric(
+        mode = MemoryUsageMetric.Mode.Last,
+        subMetrics = listOf(MemoryUsageMetric.SubMetric.RssAnon),
+    ),
+)
 
 private const val ARGUMENT_FULL = "auroraBenchmarkFull"
+private const val PERFORMANCE_WARMUP_ITERATIONS = 5
 private const val UI_TIMEOUT_MILLIS = 30_000L
 private const val UI_POLL_INTERVAL_MILLIS = 100L
 private const val SCROLL_SETTLE_MILLIS = 500L
+private const val PRESENTATION_TRACE_COMPLETION_GRACE_MILLIS = 100L
 private const val INDEX_READY_TIMEOUT_MILLIS = 120_000L
 private const val FIVE_SECONDS_MILLIS = 5_000L
 private const val BACK_STEP_TIMEOUT_MILLIS = 2_000L

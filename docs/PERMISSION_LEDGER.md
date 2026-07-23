@@ -2,7 +2,13 @@
 
 Status: Phase 1 source, merged manifests, and APKs locally verified against
 official Android documentation on 2026-07-12; ADR 0007 records a managed-
-wallpaper decision with no new permission on 2026-07-14
+wallpaper decision with no new permission on 2026-07-14; commit `7c9d848`
+adds the ledgered debug snapshot boundary and durable-message hardening on
+2026-07-18; ADR 0011 activates the conditional boot and exact-alarm entries for
+bounded scheduled SMS with a visible inexact fallback; ADR 0021 activates
+just-in-time foreground microphone access for bounded voice memos on 2026-07-19;
+ADR 0027 activates optional, read-only, just-in-time contact discovery for the
+New chat recipient selector on 2026-07-21
 
 This ledger is the allowlist enforced against the Phase 1 source manifest,
 merged debug/release manifests, and packaged APKs. A permission not listed
@@ -143,23 +149,66 @@ AuroraSMS's actual default-SMS core purpose.
 ## Approved conditional permissions
 
 Conditional permissions are absent until the named feature is implemented and
-tested.
+tested. `RECEIVE_BOOT_COMPLETED` and `SCHEDULE_EXACT_ALARM` are active under ADR
+0011, `RECORD_AUDIO` is active under ADR 0021, and `READ_CONTACTS` is active
+under ADR 0027; entries without an accepted activation remain conditional.
 
 | Permission | Phase/feature | Rule |
 |---|---|---|
-| `READ_CONTACTS` | Phase 1 contact labels/photos | Optional; numbers/initials remain usable when denied |
+| `READ_CONTACTS` | Phase 7 N2A contact discovery/selection — active under ADR 0027 | Request only after the user explicitly chooses Inbox-overflow Use contacts or Find contacts > Manage contact access; manual number entry and drafts remain usable when absent, denied, or revoked |
 | `POST_NOTIFICATIONS` | API 33+ messaging notifications | Request after role with privacy choice; foreground app remains usable when denied |
 | `READ_PHONE_NUMBERS` | Own-number display only | Not approved for core transport; add only with a user-visible need |
 | `VIBRATE` | Notification behavior | Normal permission; honor user/channel settings |
-| `RECEIVE_BOOT_COMPLETED` | Phase 5 schedule/reminder recovery | Reschedule only Aurora-owned durable operations; no message content in logs |
-| `SCHEDULE_EXACT_ALARM` | Phase 5 scheduled sending, if policy and precision require it | Separate ADR and user-facing special-access handling; retain honest inexact fallback |
-| `RECORD_AUDIO` | Phase 6 voice memo | Request only after tapping Record; no background recording |
+| `RECEIVE_BOOT_COMPLETED` | Phase 5 durable alarm recovery — active under ADR 0011 | Re-arm only Aurora-owned schedules, send delays, and pending deletion operations; past-due reboot state pauses for review; no message content in alarms or logs. ADR 0013 deletion recovery never blindly replays an ambiguous provider mutation. |
+| `SCHEDULE_EXACT_ALARM` | Phase 5 user-timed operations — active under ADR 0011 | User-facing special-access route; check capability before every exact arm; retain and label the honest inexact scheduled-send fallback. ADR 0012 short-send Undo and ADR 0013 permanent-delete Undo reuse this already-declared capability only when available and remain safe with private ID-only inexact recovery alarms. |
+| `RECORD_AUDIO` | Phase 6F voice memo — active under ADR 0021 | Request only after tapping Record; never include it in messaging onboarding; no background recording |
 | `USE_BIOMETRIC` | Optional app lock | App lock is not database encryption |
 | Foreground-service permission/type | A measured long-running user-visible operation only | Add exact subtype and notification design before use |
+
+N2A does not request contacts access during SMS-role onboarding, app startup,
+Inbox entry, or merely by opening New chat. Permission recovery requires the
+explicit Inbox-overflow **Use contacts** action or **Find contacts** followed by
+its in-panel **Manage contact access** action.
+The query and unselected result metadata are memory-only and are cleared when
+the panel closes. A selected bounded display label may remain only in memory for
+its recipient chip until that recipient is removed, the Activity stops, or
+permission is lost. No query or returned metadata is written to Room,
+preferences, logs, diagnostics, exports, or backup. Selecting one result admits
+only its validated address into the existing recipient/draft authority. Denial
+or revocation leaves bounded manual recipient entry intact.
+
+The provider operation is a cancellable, read-only phone-row filter query. The
+public contract accepts a 1-to-100-character query and at most 50 results; the
+N2A UI requests 20 and inspects at most one extra row to report truncation.
+Cancellation closes the cursor and propagates to Android's
+`CancellationSignal`. `WRITE_CONTACTS` is forbidden. The isolated benchmark
+manifest continues to remove `READ_CONTACTS`, while the exact permission
+verifier compares complete merged-manifest and packaged-APK permission sets.
+The production manifest contract separately requires `READ_CONTACTS` and
+rejects `WRITE_CONTACTS`; none of those benchmark or verifier boundaries are
+relaxed by N2A.
+
+N2B adds no permission. Its dormant provider-thread resolver reuses the
+default-SMS app's existing `READ_SMS` authority and must reject role or
+permission loss before allocator entry. Once provider entry begins, cancellation
+or an exception is not proof that no provider row changed and is recorded as an
+unknown resolution outcome. The resolver is not installed in the production
+application graph, New chat Send remains disabled, and no role or permission is
+requested merely by opening, editing, restoring, or selecting a contact in New
+chat. Activating the resolver, subscription selector, composer-journal handoff,
+or transport requires the separately reviewed N2C boundary.
 
 Photo Picker and the Storage Access Framework are the default attachment,
 wallpaper, import, and export paths. They do not justify broad media or storage
 permissions.
+
+Phase 6F does not request microphone permission at startup, during role/SMS
+onboarding, or merely by opening a Thread. The enabled Record control is the
+only request origin. Denial leaves ordinary messaging usable and shows a local
+explanation. Capture is visibly indicated and is cancelled with private-file
+cleanup when the Thread leaves the foreground. No microphone foreground service,
+background permission, audio-library dependency, external file, or backup path
+is added.
 
 ADR 0007's first static Thread-wallpaper slice uses the system picker only for
 one user-selected temporary `content:` read. It does not request
@@ -186,6 +235,7 @@ implementation.
 | Broad `READ_MEDIA_*` | Rejected for ordinary attachments/wallpapers |
 | `READ_MEDIA_VISUAL_USER_SELECTED` | Rejected for ADR 0007; direct system-picker use needs no media permission |
 | `READ_CALL_LOG` / `WRITE_CALL_LOG` | Outside product scope |
+| `WRITE_CONTACTS` | Forbidden; contact discovery is read-only and a selected address is stored only through Aurora's existing recipient/draft authority |
 | `CALL_PHONE` | Rejected; use a user-confirmed system dial intent |
 | `QUERY_ALL_PACKAGES` | Forbidden |
 | `REQUEST_INSTALL_PACKAGES` | Outside product scope |
@@ -252,6 +302,17 @@ components. Release keeps exactly one non-exported
 permission. These components install the checked-in Baseline Profile for local
 and older-device delivery; they add no app permission or network path.
 
+The debug variant additionally exports exactly one Aurora-owned provider at
+`org.aurorasms.app.debug.sms_snapshot`. The provider is guarded by the platform
+`android.permission.DUMP` permission and independently requires
+`Binder.getCallingUid() == Process.SHELL_UID`; AuroraSMS does not request
+`DUMP` as a `<uses-permission>`. It is a disposable-emulator, read-only probe
+that returns only SMS `_id`, `thread_id`, and `type`, rejects selection,
+selection arguments, sorting, inserts, updates, deletes, calls, and file opens,
+and exposes no body, address, date, or attachment field. The merged-manifest
+verifier requires exactly this boundary in debug and rejects its provider class
+or authority in release, benchmark, and every other non-debug app variant.
+
 The Phase 3 app benchmark target is a separate, local, non-debuggable,
 profileable build identity. It alone declares the signature permission
 `org.aurorasms.app.permission.BENCHMARK_CONTROL`, exposes
@@ -278,12 +339,23 @@ operation; grants go only to the platform telephony operation, are revoked and
 cleaned after result or timeout, and never expose a broad directory or the
 opposite access mode.
 
-Incoming-delivery replay fingerprints and inline-reply target/claim journals
-use bounded app-private shared preferences. They are excluded from OS backup
-and device transfer, contain no message body or raw PDU, and are cleared or
-expired according to role/operation state. Reply routing retains the exact
-conversation, recipient, subscription, provider token, and expiry because a
-notification may legitimately start a fresh app process.
+Incoming-delivery replay fingerprints and inline-reply target, claim,
+operation, and incoming-notification-generation stores use bounded app-private
+shared preferences. They are excluded from OS backup and device transfer and
+use versioned canonical encodings, synchronous security-boundary commits, and
+checksums. The reply target retains the exact validated recipient required for
+cold-process routing but no body; the claim retains a recipient digest; the
+operation and generation stores retain only bounded provider-qualified IDs,
+lifecycle/progress/status, and notification ordering evidence. The incoming
+journal v4 additionally binds its delivery key to the canonical payload and a
+redacted provider-content digest; checksummed, key-bound `Q1` quarantine
+tombstones retain ownership of malformed entries without displacing unrelated
+valid recovery state. Role loss serializes authoritative role reconciliation,
+cancels and joins pending recovery work, performs exact-generation notification
+cleanup, and clears reply targets. A `goAsync()` lease timeout does not cancel
+already accepted process-local sibling work, but no component claims that work
+survives Android process death. Reply-failure notifications are generic and do
+not include reply text, recipient, address, carrier error, or message body.
 
 ## Verification gate
 
@@ -309,7 +381,13 @@ Phase 1 CI/device checks must:
 10. test that the MMS provider is non-exported, confines canonical cache paths,
     grants read-only for send and write-only for download, rejects traversal,
     and revokes both modes on every terminal result;
-11. record the exact device/API and merged permission list as gate evidence.
+11. require the exact `DUMP`-guarded, shell-UID-checked snapshot provider only
+    in debug, exercise its read-only/column boundary, and reject its class or
+    authority from every non-debug merged manifest;
+12. record the exact device/API and merged permission list as gate evidence.
+13. prove `RECORD_AUDIO` is excluded from onboarding, requested only by the
+    explicit Record action, and that cancel/background/Thread exit stops capture
+    and removes the app-private temporary file.
 
 ## Official references
 

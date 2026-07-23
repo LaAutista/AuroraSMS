@@ -48,10 +48,9 @@ internal class IndexReconciler(
             is ProviderCall.Success -> result.value
             is ProviderCall.Failure -> return IndexReconcileResult.Failure(result.reason)
         }
-        // A lower provider count proves deletion occurred during the scan. A
-        // higher count may include bounded rows rejected by projection, so the
-        // head/fingerprint pass below decides whether it is actionable.
-        if (smsCount < smsCheckpoint.committedCount || mmsCount < mmsCheckpoint.committedCount) {
+        // count() and readPage() share the exact projectable provider universe.
+        // Any mismatch proves that rows changed or were skipped during the scan.
+        if (smsCount != smsCheckpoint.committedCount || mmsCount != mmsCheckpoint.committedCount) {
             return IndexReconcileResult.Dirty
         }
 

@@ -26,7 +26,27 @@ class ProviderContractTest {
         }
 
         assertTrue(AndroidSmsProviderDataSource(denied, heldRole).count() is ProviderAccessResult.PermissionDenied)
+        assertTrue(
+            AndroidSmsProviderDataSource(denied, heldRole)
+                .readPendingIncomingNotifications(IncomingSmsNotificationReplayRequest(1)) is
+                ProviderAccessResult.PermissionDenied,
+        )
         assertTrue(AndroidMmsProviderDataSource(denied, heldRole).count() is ProviderAccessResult.PermissionDenied)
+    }
+
+    @Test
+    fun incomingNotificationRecoveryStopsBeforeJournalOrProviderReadWhenRoleIsLost() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val lostRole = object : DefaultSmsRoleState {
+            override fun isRoleAvailable() = true
+            override fun isRoleHeld() = false
+        }
+
+        assertTrue(
+            AndroidSmsProviderDataSource(context, lostRole)
+                .readPendingIncomingNotifications(IncomingSmsNotificationReplayRequest(1)) is
+                ProviderAccessResult.RoleRequired,
+        )
     }
 
     @Test
