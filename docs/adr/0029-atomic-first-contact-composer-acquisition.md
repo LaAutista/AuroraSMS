@@ -2,7 +2,7 @@
 
 # ADR 0029: atomic first-contact composer acquisition
 
-- Status: Accepted for the synthetic N2C state checkpoint
+- Status: Accepted for the synthetic N2C sender-admission checkpoint
 - Date: 2026-07-22
 
 ## Context
@@ -60,15 +60,29 @@ composer recovery owns the committed `RESERVED` row and classifies it as
 `KNOWN_UNSENT` without transport. If the transaction did not commit,
 `HANDOFF_RESERVED` remains the sole owner.
 
-This checkpoint does not expose New chat Send, install the Android thread
-resolver in the production route graph, or bypass the existing conversation
-sender. A later N2C slice may add one first-contact authority branch before
-composer reservation; all post-reservation staging, callbacks, transport, and
-recovery remain the mature composer path.
+The synthetic sender-admission checkpoint adds one alternate authority source
+to `ThreadSmsSendCommand`. It accepts the exact provider thread, validated
+`RecipientSet`, and `ComposerSmsFirstContactAuthority` without fabricating a
+`VerifiedConversationIdentity` for a new empty thread. Before reservation, the
+existing coordinator requires one SMS recipient, empty attachment evidence,
+the exact semantic participant fingerprint, the selected active SMS-capable
+subscription, and the SMS role. It does not query the conversation index or a
+conversation subscription preference for this exact first-contact branch.
+
+The coordinator passes the authority into the same composer reservation above,
+then uses the existing provider staging, callbacks, transport, classification,
+and recovery unchanged. MMS remains refused until its authority evidence comes
+from the exact outgoing attachment bytes.
+
+This checkpoint still does not expose New chat Send or install the Android
+thread resolver in the production route graph. The current
+`FirstContactOwnershipResult.HandoffReserved` also lacks the full composer
+authority, so later UI activation must expose that exact durable authority
+without resolving the provider thread again.
 
 ## Verification
 
-This state checkpoint tests exact transfer, process reopen, missing or stale
+The state checkpoint tests exact transfer, process reopen, missing or stale
 authority, participant and attachment-evidence mismatch, attachment-only drift,
 a conflicting thread owner, and rollback. Migration coverage proves schema-15
 `HANDOFF_RESERVED` data survives while the upgraded trigger rejects a naked or
@@ -77,10 +91,16 @@ activation, the synthetic N2C matrix must also exercise every remaining
 immutable-field mismatch, the composer cap, and fault-injected post-insert
 rollback.
 
+Sender tests prove exact SMS authority skips the conversation index and enters
+the existing sender once, participant/MMS mismatch stops before reservation,
+ambiguous subscription and stale durable authority produce zero transport,
+duplicate admission cannot submit twice, and an ambiguous committed
+reservation uses existing non-sending recovery.
+
 ## Consequences
 
 First-contact ownership can cross into the existing composer journal without a
 second send implementation or an ambiguous crash window. Explicit
-`KNOWN_UNSENT` first-contact retry/release, first-contact sender admission,
-multi-SIM review, UI activation, and physical provider/carrier acceptance remain
-separate work. AuroraSMS is not gold.
+`KNOWN_UNSENT` first-contact retry/release, multi-SIM review, UI activation, and
+physical provider/carrier acceptance remain separate work. AuroraSMS is not
+gold.

@@ -13,28 +13,45 @@ import org.aurorasms.core.model.AuroraSubscriptionId
 import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.MessageTransportKind
 import org.aurorasms.core.model.TransportResult
+import org.aurorasms.core.state.ComposerSmsFirstContactAuthority
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
 import org.aurorasms.core.state.MessageSignature
 import org.aurorasms.core.telephony.OutgoingMmsAttachment
 import org.aurorasms.core.telephony.OutgoingMmsPayload
+import org.aurorasms.core.telephony.RecipientSet
+
+internal data class FirstContactSmsAdmission(
+    val providerThreadId: ProviderThreadId,
+    val recipients: RecipientSet,
+    val authority: ComposerSmsFirstContactAuthority,
+) {
+    override fun toString(): String = "FirstContactSmsAdmission(REDACTED)"
+}
 
 internal data class ThreadSmsSendCommand(
-    val identity: VerifiedConversationIdentity,
+    val identity: VerifiedConversationIdentity?,
     val subscriptionId: AuroraSubscriptionId,
     val draftId: DraftId,
     val draftRevision: DraftRevision,
     val frozenSignature: MessageSignature? = null,
     val transport: MessageTransportKind = MessageTransportKind.SMS,
     val attachments: List<OutgoingMmsAttachment> = emptyList(),
+    val firstContactAdmission: FirstContactSmsAdmission? = null,
 ) {
     init {
+        require((identity == null) != (firstContactAdmission == null)) {
+            "A send command requires exactly one conversation authority"
+        }
         require(attachments.size <= OutgoingMmsPayload.Message.MAX_ATTACHMENTS)
         require(
             attachments.sumOf { it.size.toLong() } <=
                 OutgoingMmsPayload.Message.MAX_ATTACHMENT_BYTES_TOTAL,
         )
     }
+
+    val providerThreadId: ProviderThreadId
+        get() = identity?.providerThreadId ?: checkNotNull(firstContactAdmission).providerThreadId
 
     override fun toString(): String = "ThreadSmsSendCommand(REDACTED)"
 }

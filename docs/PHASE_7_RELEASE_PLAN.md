@@ -66,6 +66,9 @@ separate open gate, not an indexing delay.
 - [x] Add schema-16 atomic transfer from an exact `HANDOFF_RESERVED` owner to
   the existing composer `RESERVED` journal under ADR 0029, without activating
   the New chat route or transport.
+- [x] Admit exact first-contact SMS authority into the existing composer sender
+  under ADR 0029 without an index row, duplicate transport, New chat UI wiring,
+  or Android provider-resolution activation.
 - [ ] Resolve or create the provider conversation only after an explicit send
   action using the reviewed durable ownership path on a real provider.
 - [ ] Enable and physically verify first-contact SMS/MMS transport.

@@ -34,12 +34,15 @@ import org.aurorasms.core.state.ComposerSmsOperationRepository
 import org.aurorasms.core.state.ComposerSmsOperationResult
 import org.aurorasms.core.state.ComposerSmsProviderBinding
 import org.aurorasms.core.state.ComposerSmsReservationRequest
+import org.aurorasms.core.state.FirstContactAttachmentSetEvidence
+import org.aurorasms.core.state.FirstContactParticipantSetKey
 import org.aurorasms.core.state.resolveOutgoingBody
 import org.aurorasms.core.state.ConversationSubscriptionParticipantSetKey
 import org.aurorasms.core.state.ConversationSubscriptionPreference
 import org.aurorasms.core.state.ConversationSubscriptionPreferenceRepository
 import org.aurorasms.core.state.ConversationSubscriptionRepositoryResult
 import org.aurorasms.core.state.ConversationSubscriptionScope
+import org.aurorasms.core.telephony.ActiveSmsSubscriptionValidation
 import org.aurorasms.core.telephony.DefaultSmsRoleState
 import org.aurorasms.core.telephony.MessageTransport
 import org.aurorasms.core.telephony.MmsProviderDataSource
@@ -58,6 +61,7 @@ import org.aurorasms.core.telephony.SmsProviderStatus
 import org.aurorasms.core.telephony.SmsSendRequest
 import org.aurorasms.core.telephony.SmsSubmissionOwnership
 import org.aurorasms.core.telephony.SubscriptionRepository
+import org.aurorasms.core.telephony.validateActiveSmsSubscription
 
 internal class ThreadSmsSendCoordinator(
     private val applicationScope: CoroutineScope,
@@ -106,6 +110,7 @@ internal class ThreadSmsSendCoordinator(
         }
 
     override suspend fun send(command: ThreadSmsSendCommand): ThreadSmsSendAttempt {
+        val providerThreadId = command.providerThreadId
         var reservationAccepted = false
         return try {
             operationMutex.withLock {
@@ -116,14 +121,18 @@ internal class ThreadSmsSendCoordinator(
                 ) {
                     return@withLock ThreadSmsSendAttempt.REFUSED
                 }
-                if (!prepareExistingTerminal(command.identity.providerThreadId)) {
-                    return@withLock ThreadSmsSendAttempt.REFUSED
-                }
-                val recipients = revalidateCommand(command) ?: return@withLock ThreadSmsSendAttempt.REFUSED
+                val recipients = if (command.firstContactAdmission == null) {
+                    if (!prepareExistingTerminal(providerThreadId)) {
+                        return@withLock ThreadSmsSendAttempt.REFUSED
+                    }
+                    revalidateCommand(command)
+                } else {
+                    revalidateCommand(command)
+                } ?: return@withLock ThreadSmsSendAttempt.REFUSED
                 val reservation = when (
                     val result = operations.reserve(
                         ComposerSmsReservationRequest(
-                            providerThreadId = command.identity.providerThreadId,
+                            providerThreadId = providerThreadId,
                             draftId = command.draftId,
                             expectedDraftRevision = command.draftRevision,
                             subscriptionId = command.subscriptionId,
@@ -131,6 +140,7 @@ internal class ThreadSmsSendCoordinator(
                             frozenSignature = command.frozenSignature,
                             transport = command.transport,
                             hasAttachments = command.attachments.isNotEmpty(),
+                            firstContactAuthority = command.firstContactAdmission?.authority,
                         ),
                     )
                 ) {
@@ -138,7 +148,7 @@ internal class ThreadSmsSendCoordinator(
                     is ComposerSmsOperationResult.StorageFailure,
                     ComposerSmsOperationResult.CorruptData,
                     -> return@withLock classifyExceptionalPreReservationExit(
-                        command.identity.providerThreadId,
+                        providerThreadId,
                     )
                     else -> return@withLock ThreadSmsSendAttempt.REFUSED
                 }
@@ -164,7 +174,7 @@ internal class ThreadSmsSendCoordinator(
                         if (markKnownUnsent(ownedOperation) == null) requestClassificationRecovery()
                         return@withLock ThreadSmsSendAttempt.STARTED
                     }
-                    val expectedConversationId = command.identity.providerThreadId.asConversationId()
+                    val expectedConversationId = providerThreadId.asConversationId()
                     val observer = object : MmsSubmissionObserver {
                         override suspend fun onPrepared(
                             providerId: ProviderMessageId,
@@ -254,7 +264,7 @@ internal class ThreadSmsSendCoordinator(
                                     attachments = command.attachments.toList(),
                                 ),
                                 subscriptionId = command.subscriptionId,
-                                providerThreadId = command.identity.providerThreadId,
+                                providerThreadId = providerThreadId,
                                 operationOrigin = TransportResult.OperationOrigin.COMPOSER,
                             ),
                             ownership = MmsSubmissionOwnership.CallerOwned(observer),
@@ -284,13 +294,13 @@ internal class ThreadSmsSendCoordinator(
             }
         } catch (cancelled: CancellationException) {
             if (reservationAccepted) throw cancelled
-            classifyExceptionalPreReservationExit(command.identity.providerThreadId)
+            classifyExceptionalPreReservationExit(providerThreadId)
         } catch (_: RuntimeException) {
             if (reservationAccepted) {
                 requestClassificationRecovery()
                 ThreadSmsSendAttempt.STARTED
             } else {
-                classifyExceptionalPreReservationExit(command.identity.providerThreadId)
+                classifyExceptionalPreReservationExit(providerThreadId)
             }
         }
     }
@@ -472,11 +482,38 @@ internal class ThreadSmsSendCoordinator(
     private suspend fun revalidateCommand(
         command: ThreadSmsSendCommand,
     ): RecipientSet? {
-        val found = conversations.loadConversation(command.identity.providerThreadId)
+        command.firstContactAdmission?.let { admission ->
+            if (
+                command.transport != MessageTransportKind.SMS ||
+                command.attachments.isNotEmpty() ||
+                admission.recipients.singleSmsRecipientOrNull() == null
+            ) {
+                return null
+            }
+            val participantSetKey = runCatching {
+                FirstContactParticipantSetKey.fromParticipants(admission.recipients.addresses)
+            }.getOrNull() ?: return null
+            if (
+                participantSetKey != admission.authority.participantSetKey ||
+                admission.authority.attachmentSetEvidence !=
+                FirstContactAttachmentSetEvidence.fromAttachments(emptyList())
+            ) {
+                return null
+            }
+            if (
+                subscriptions.validateActiveSmsSubscription(command.subscriptionId) !is
+                ActiveSmsSubscriptionValidation.Valid
+            ) {
+                return null
+            }
+            return admission.recipients.takeIf { roleState.isRoleHeld() }
+        }
+        val identity = command.identity ?: return null
+        val found = conversations.loadConversation(identity.providerThreadId)
             as? ConversationLookupResult.Found
             ?: return null
         val verifiedIdentity = found.verifiedIdentity ?: return null
-        if (verifiedIdentity != command.identity) return null
+        if (verifiedIdentity != identity) return null
         val recipients = when (val parsed = RecipientSet.from(verifiedIdentity.participants)) {
             is RecipientSet.CreationResult.Valid -> parsed.recipients
             is RecipientSet.CreationResult.Rejected -> return null

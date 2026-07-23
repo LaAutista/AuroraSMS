@@ -40,6 +40,7 @@ import org.aurorasms.core.model.ProviderThreadId
 import org.aurorasms.core.model.TransportResult
 import org.aurorasms.core.state.AcknowledgedComposerSmsCallbackProof
 import org.aurorasms.core.state.AcknowledgedComposerSmsReceipt
+import org.aurorasms.core.state.ComposerSmsFirstContactAuthority
 import org.aurorasms.core.state.ComposerSmsDraftClearance
 import org.aurorasms.core.state.ComposerSmsOperation
 import org.aurorasms.core.state.ComposerSmsOperationPhase
@@ -52,6 +53,10 @@ import org.aurorasms.core.state.ComposerSmsReservationRequest
 import org.aurorasms.core.state.ComposerSmsSentCompletion
 import org.aurorasms.core.state.DraftId
 import org.aurorasms.core.state.DraftRevision
+import org.aurorasms.core.state.FirstContactAttachmentSetEvidence
+import org.aurorasms.core.state.FirstContactOperationId
+import org.aurorasms.core.state.FirstContactOperationRevision
+import org.aurorasms.core.state.FirstContactParticipantSetKey
 import org.aurorasms.core.state.MessageSignature
 import org.aurorasms.core.state.ConversationSubscriptionParticipantSetKey
 import org.aurorasms.core.state.ConversationSubscriptionPreference
@@ -71,10 +76,12 @@ import org.aurorasms.core.telephony.ProviderAccessResult
 import org.aurorasms.core.telephony.ProviderPage
 import org.aurorasms.core.telephony.ProviderPageRequest
 import org.aurorasms.core.telephony.ProviderStoredMessage
+import org.aurorasms.core.telephony.RecipientSet
 import org.aurorasms.core.telephony.SmsProviderDataSource
 import org.aurorasms.core.telephony.SmsProviderMessage
 import org.aurorasms.core.telephony.SmsProviderStatus
 import org.aurorasms.core.telephony.SmsSendRequest
+import org.aurorasms.core.telephony.SmsSubmissionOwnership
 import org.aurorasms.core.telephony.SubscriptionSnapshot
 import org.aurorasms.core.testing.FakeMessageTransport
 import org.aurorasms.core.testing.FakeMmsProviderDataSource
@@ -111,6 +118,169 @@ class ThreadSmsSendCoordinatorTest {
         assertEquals(0, fixture.operations.reserveCount)
         assertTrue(fixture.transport.smsRequests.isEmpty())
         assertTrue(fixture.operations.draftPreserved)
+    }
+
+    @Test
+    fun exactFirstContactAuthoritySkipsIndexAndUsesExistingSenderOnce() = runTest {
+        val fixture = fixture()
+        fixture.operations.requiredFirstContactAuthority = FIRST_CONTACT_AUTHORITY
+        fixture.transport.smsResponderWithObserver = { request, observer ->
+            assertTrue(observer.onPrepared(PROVIDER_ID, CONVERSATION_ID, unitCount = 1))
+            assertTrue(observer.onSubmitting(PROVIDER_ID, CONVERSATION_ID, unitCount = 1))
+            TransportResult.Submitted(
+                operationId = request.operationId,
+                transport = MessageTransportKind.SMS,
+                unitCount = 1,
+                providerMessageId = PROVIDER_ID,
+                providerConversationId = CONVERSATION_ID,
+                operationOrigin = request.operationOrigin,
+            )
+        }
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+        assertEquals(
+            ThreadSmsSendAttempt.STARTED,
+            fixture.coordinator.send(FIRST_CONTACT_COMMAND),
+        )
+
+        assertEquals(0, fixture.conversations.loadCount)
+        assertEquals(1, fixture.operations.reserveCount)
+        assertEquals(
+            FIRST_CONTACT_AUTHORITY,
+            fixture.operations.lastReservationRequest?.firstContactAuthority,
+        )
+        assertEquals(1, fixture.transport.smsRequests.size)
+        assertEquals(1, fixture.transport.smsSubmissionOwnership.size)
+        assertTrue(
+            fixture.transport.smsSubmissionOwnership.single() is
+                SmsSubmissionOwnership.CallerOwned,
+        )
+        assertEquals(
+            ComposerSmsOperationPhase.PLATFORM_ACCEPTED,
+            fixture.operations.operation?.phase,
+        )
+
+        assertEquals(
+            ThreadSmsSendAttempt.REFUSED,
+            fixture.coordinator.send(FIRST_CONTACT_COMMAND),
+        )
+        assertEquals(1, fixture.transport.smsRequests.size)
+        assertEquals(1, fixture.transport.smsSubmissionOwnership.size)
+        assertEquals(
+            ComposerSmsOperationPhase.PLATFORM_ACCEPTED,
+            fixture.operations.operation?.phase,
+        )
+    }
+
+    @Test
+    fun firstContactAdmissionRejectsMismatchedRecipientsAndMmsBeforeReservation() = runTest {
+        val differentRecipients = validRecipients("+12025550142")
+        val commands = listOf(
+            FIRST_CONTACT_COMMAND.copy(
+                firstContactAdmission = FIRST_CONTACT_ADMISSION.copy(
+                    recipients = differentRecipients,
+                ),
+            ),
+            FIRST_CONTACT_COMMAND.copy(transport = MessageTransportKind.MMS),
+        )
+
+        commands.forEach { command ->
+            val fixture = fixture()
+            assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+            assertEquals(ThreadSmsSendAttempt.REFUSED, fixture.coordinator.send(command))
+
+            assertEquals(0, fixture.conversations.loadCount)
+            assertEquals(0, fixture.operations.reserveCount)
+            assertTrue(fixture.transport.smsRequests.isEmpty())
+            assertTrue(fixture.transport.mmsRequests.isEmpty())
+        }
+    }
+
+    @Test
+    fun staleFirstContactAuthorityRefusesWithoutTransport() = runTest {
+        val fixture = fixture()
+        fixture.operations.requiredFirstContactAuthority = FIRST_CONTACT_AUTHORITY
+        val staleAuthority = FIRST_CONTACT_AUTHORITY.copy(
+            expectedRevision = FirstContactOperationRevision(
+                FIRST_CONTACT_AUTHORITY.expectedRevision.updatedTimestampMillis + 1L,
+            ),
+        )
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+        assertEquals(
+            ThreadSmsSendAttempt.REFUSED,
+            fixture.coordinator.send(
+                FIRST_CONTACT_COMMAND.copy(
+                    firstContactAdmission = FIRST_CONTACT_ADMISSION.copy(
+                        authority = staleAuthority,
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(0, fixture.conversations.loadCount)
+        assertEquals(1, fixture.operations.reserveCount)
+        assertNull(fixture.operations.operation)
+        assertTrue(fixture.transport.smsRequests.isEmpty())
+        assertTrue(fixture.transport.mmsRequests.isEmpty())
+        assertTrue(fixture.provider.statusCalls.isEmpty())
+        assertTrue(fixture.provider.rollbackCalls.isEmpty())
+    }
+
+    @Test
+    fun ambiguousFirstContactSubscriptionRefusesBeforeReservation() = runTest {
+        val duplicate = ActiveSubscription(
+            id = SUBSCRIPTION_ID,
+            slotIndex = 1,
+            displayLabel = "Synthetic duplicate SIM",
+            smsCapable = true,
+        )
+        val fixture = fixture(
+            subscriptionSnapshot = SubscriptionSnapshot.Available(
+                listOf(
+                    ActiveSubscription(
+                        id = SUBSCRIPTION_ID,
+                        slotIndex = 0,
+                        displayLabel = "Synthetic SIM",
+                        smsCapable = true,
+                    ),
+                    duplicate,
+                ),
+            ),
+        )
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+        assertEquals(
+            ThreadSmsSendAttempt.REFUSED,
+            fixture.coordinator.send(FIRST_CONTACT_COMMAND),
+        )
+
+        assertEquals(0, fixture.operations.reserveCount)
+        assertTrue(fixture.transport.smsRequests.isEmpty())
+    }
+
+    @Test
+    fun ambiguousFirstContactCommitUsesExistingNonSendingRecovery() = runTest {
+        val fixture = fixture()
+        fixture.operations.requiredFirstContactAuthority = FIRST_CONTACT_AUTHORITY
+        fixture.operations.reserveResultAfterCommit = ComposerSmsOperationResult.StorageFailure(
+            org.aurorasms.core.state.ComposerSmsStorageOperation.RESERVE,
+        )
+        assertEquals(ThreadSmsRecoveryResult.READY, fixture.coordinator.recover())
+
+        assertEquals(
+            ThreadSmsSendAttempt.STARTED,
+            fixture.coordinator.send(FIRST_CONTACT_COMMAND),
+        )
+        assertEquals(ComposerSmsOperationPhase.RESERVED, fixture.operations.operation?.phase)
+        assertTrue(fixture.transport.smsRequests.isEmpty())
+
+        advanceTimeBy(250L)
+        runCurrent()
+
+        assertEquals(ComposerSmsOperationPhase.KNOWN_UNSENT, fixture.operations.operation?.phase)
+        assertTrue(fixture.transport.smsRequests.isEmpty())
     }
 
     @Test
@@ -1188,6 +1358,16 @@ class ThreadSmsSendCoordinatorTest {
         conversationSubscriptionId: AuroraSubscriptionId? = SUBSCRIPTION_ID,
         verifiedIdentity: VerifiedConversationIdentity = IDENTITY,
         segmentCounter: SmsSegmentCounter = SmsSegmentCounter { 1 },
+        subscriptionSnapshot: SubscriptionSnapshot = SubscriptionSnapshot.Available(
+            listOf(
+                ActiveSubscription(
+                    id = SUBSCRIPTION_ID,
+                    slotIndex = 0,
+                    displayLabel = "Synthetic SIM",
+                    smsCapable = true,
+                ),
+            ),
+        ),
         subscriptionPreference:
             ConversationSubscriptionRepositoryResult<ConversationSubscriptionPreference> =
             ConversationSubscriptionRepositoryResult.NotFound,
@@ -1202,18 +1382,7 @@ class ThreadSmsSendCoordinatorTest {
             applicationScope = backgroundScope,
             roleState = role,
             conversations = conversations,
-            subscriptions = FakeSubscriptionRepository(
-                SubscriptionSnapshot.Available(
-                    listOf(
-                        ActiveSubscription(
-                            id = SUBSCRIPTION_ID,
-                            slotIndex = 0,
-                            displayLabel = "Synthetic SIM",
-                            smsCapable = true,
-                        ),
-                    ),
-                ),
-            ),
+            subscriptions = FakeSubscriptionRepository(subscriptionSnapshot),
             operations = operations,
             transport = transport,
             smsProvider = provider,
@@ -1274,6 +1443,25 @@ class ThreadSmsSendCoordinatorTest {
             draftId = DRAFT_ID,
             draftRevision = DRAFT_REVISION,
         )
+        val FIRST_CONTACT_AUTHORITY = ComposerSmsFirstContactAuthority(
+            operationId = FirstContactOperationId(12L),
+            expectedRevision = FirstContactOperationRevision(21L),
+            participantSetKey =
+                FirstContactParticipantSetKey.fromParticipants(IDENTITY.participants),
+            attachmentSetEvidence = FirstContactAttachmentSetEvidence.fromAttachments(emptyList()),
+        )
+        val FIRST_CONTACT_ADMISSION = FirstContactSmsAdmission(
+            providerThreadId = THREAD_ID,
+            recipients = validRecipients(RECIPIENT.value),
+            authority = FIRST_CONTACT_AUTHORITY,
+        )
+        val FIRST_CONTACT_COMMAND = COMMAND.copy(
+            identity = null,
+            firstContactAdmission = FIRST_CONTACT_ADMISSION,
+        )
+
+        private fun validRecipients(vararg values: String): RecipientSet =
+            (RecipientSet.parse(values.asList()) as RecipientSet.CreationResult.Valid).recipients
 
         fun preferenceResult(
             subscriptionId: AuroraSubscriptionId,
@@ -1416,6 +1604,9 @@ private class RecordingComposerRepository(
         private set
     var reserveCount: Int = 0
         private set
+    var lastReservationRequest: ComposerSmsReservationRequest? = null
+        private set
+    var requiredFirstContactAuthority: ComposerSmsFirstContactAuthority? = null
     var completeCount: Int = 0
         private set
     var acknowledgeCount: Int = 0
@@ -1445,6 +1636,12 @@ private class RecordingComposerRepository(
     ): ComposerSmsOperationResult<ComposerSmsReservation> {
         beforeReserve()
         reserveCount += 1
+        lastReservationRequest = request
+        requiredFirstContactAuthority?.let { required ->
+            if (request.firstContactAuthority != required) {
+                return ComposerSmsOperationResult.StaleWrite
+            }
+        }
         if (operation?.providerThreadId == request.providerThreadId) {
             return ComposerSmsOperationResult.Conflict
         }
