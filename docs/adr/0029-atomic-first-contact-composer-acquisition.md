@@ -86,14 +86,13 @@ production route graph.
 
 ## Verification
 
-The state checkpoint tests exact transfer, process reopen, missing or stale
-authority, participant and attachment-evidence mismatch, attachment-only drift,
-a conflicting thread owner, and rollback. Migration coverage proves schema-15
-`HANDOFF_RESERVED` data survives while the upgraded trigger rejects a naked or
-mismatched delete and permits the exact paired composer transfer. Before UI
-activation, the synthetic N2C matrix must also exercise every remaining
-immutable-field mismatch, the composer cap, and fault-injected post-insert
-rollback.
+The state checkpoint tests exact transfer, process reopen, every immutable
+authority/request mismatch, attachment-only drift, a conflicting thread owner,
+composer-cap ownership preservation, and fault-injected post-insert rollback.
+Migration coverage proves schema-15 `HANDOFF_RESERVED` data survives while the
+upgraded trigger rejects a naked or mismatched delete and permits the exact
+paired composer transfer. The rollback test uses a test-only SQLite
+`RAISE(IGNORE)` delete trigger; production has no fault hook.
 
 Sender tests prove exact SMS authority skips the conversation index and enters
 the existing sender once, participant/MMS mismatch stops before reservation,

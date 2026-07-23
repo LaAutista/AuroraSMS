@@ -71,6 +71,9 @@ separate open gate, not an indexing delay.
   or Android provider-resolution activation.
 - [x] Return exact persisted composer handoff authority across coordinator
   recreation without rerunning provider resolution or activating New chat.
+- [x] Close the synthetic N2C Room matrix for immutable handoff mismatches,
+  composer-cap ownership preservation, and post-insert rollback without a
+  production fault hook.
 - [ ] Resolve or create the provider conversation only after an explicit send
   action using the reviewed durable ownership path on a real provider.
 - [ ] Enable and physically verify first-contact SMS/MMS transport.

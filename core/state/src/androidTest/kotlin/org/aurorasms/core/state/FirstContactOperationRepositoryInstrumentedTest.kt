@@ -469,6 +469,108 @@ class FirstContactOperationRepositoryInstrumentedTest {
     }
 
     @Test
+    fun composerReservationRejectsRemainingImmutableHandoffMismatches() = runBlocking {
+        val database = openDatabase()
+        try {
+            val participants = listOf(ParticipantAddress("+15550000504"))
+            val signature = checkNotNull(MessageSignature.fromUserInput("Synthetic signature"))
+            val handoff = createHandoff(
+                database = database,
+                participants = participants,
+                body = "Synthetic mismatch matrix",
+                providerThreadId = ProviderThreadId(504L),
+                transport = MessageTransportKind.MMS,
+                attachments = listOf(attachment(5, 0, 4)),
+                frozenSignature = signature,
+            )
+            val base = handoff.composerRequest()
+            val authority = checkNotNull(base.firstContactAuthority)
+            val cases = listOf(
+                Triple(
+                    "operation ID",
+                    ComposerSmsOperationResult.StaleWrite,
+                    base.copy(
+                        firstContactAuthority = authority.copy(
+                            operationId = FirstContactOperationId(
+                                handoff.operation.id.value + 1_000L,
+                            ),
+                        ),
+                    ),
+                ),
+                Triple(
+                    "provider thread",
+                    ComposerSmsOperationResult.Conflict,
+                    base.copy(providerThreadId = ProviderThreadId(1_504L)),
+                ),
+                Triple(
+                    "draft ID",
+                    ComposerSmsOperationResult.Conflict,
+                    base.copy(draftId = DraftId(handoff.providerDraft.id.value + 1_000L)),
+                ),
+                Triple(
+                    "handoff draft revision",
+                    ComposerSmsOperationResult.StaleWrite,
+                    base.copy(
+                        expectedDraftRevision = DraftRevision(
+                            handoff.providerDraft.revision.updatedTimestampMillis + 1L,
+                        ),
+                    ),
+                ),
+                Triple(
+                    "subscription",
+                    ComposerSmsOperationResult.Conflict,
+                    base.copy(subscriptionId = AuroraSubscriptionId(1)),
+                ),
+                Triple(
+                    "transport",
+                    ComposerSmsOperationResult.Conflict,
+                    base.copy(
+                        transport = MessageTransportKind.SMS,
+                        hasAttachments = false,
+                    ),
+                ),
+                Triple(
+                    "missing signature",
+                    ComposerSmsOperationResult.Conflict,
+                    base.copy(frozenSignature = null),
+                ),
+                Triple(
+                    "different signature",
+                    ComposerSmsOperationResult.Conflict,
+                    base.copy(
+                        frozenSignature = checkNotNull(
+                            MessageSignature.fromUserInput("Different signature"),
+                        ),
+                    ),
+                ),
+                Triple(
+                    "attachment presence",
+                    ComposerSmsOperationResult.StaleWrite,
+                    base.copy(hasAttachments = false),
+                ),
+            )
+            val firstContacts = RoomFirstContactOperationRepository(database)
+            val composer = RoomComposerSmsOperationRepository(database)
+
+            cases.forEach { (name, expected, candidate) ->
+                assertEquals(name, expected, composer.reserve(candidate))
+                assertEquals(
+                    name,
+                    handoff.operation,
+                    firstContacts.read(handoff.operation.id).requireSuccess(),
+                )
+                assertEquals(
+                    name,
+                    emptyList<ComposerSmsOperation>(),
+                    composer.recoverySnapshot().requireComposerSuccess(),
+                )
+            }
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun composerReservationRollsBackWhenThreadWorkAppearsAfterHandoff() = runBlocking {
         val database = openDatabase()
         try {
@@ -533,6 +635,127 @@ class FirstContactOperationRepositoryInstrumentedTest {
             assertEquals(
                 emptyList<ComposerSmsOperation>(),
                 composer.recoverySnapshot().requireComposerSuccess(),
+            )
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun composerCapPreservesFirstContactHandoffOwner() = runBlocking {
+        val database = openDatabase()
+        try {
+            val participants = listOf(ParticipantAddress("+15550000505"))
+            val handoff = createHandoff(
+                database = database,
+                participants = participants,
+                body = "Synthetic cap",
+                providerThreadId = ProviderThreadId(505L),
+            )
+            val sqlite = database.openHelper.writableDatabase
+            repeat(MAXIMUM_COMPOSER_SMS_OPERATIONS) { index ->
+                val ordinal = index.toLong() + 1L
+                val timestamp = 30_000L + ordinal
+                sqlite.execSQL(
+                    "INSERT INTO composer_sms_operations(provider_thread_id,draft_id," +
+                        "draft_revision_ms,subscription_id,transport_code,phase_code," +
+                        "provider_message_id,provider_conversation_id,unit_count," +
+                        "created_timestamp_ms,updated_timestamp_ms,signature_text) " +
+                        "VALUES(?,?,1,0,'sms_v1','reserved_v1',NULL,NULL,NULL,?,?,NULL)",
+                    arrayOf<Any?>(
+                        10_000L + ordinal,
+                        20_000L + ordinal,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+            }
+
+            assertEquals(
+                ComposerSmsOperationResult.LimitExceeded,
+                RoomComposerSmsOperationRepository(database).reserve(handoff.composerRequest()),
+            )
+            assertEquals(
+                handoff.operation,
+                RoomFirstContactOperationRepository(database)
+                    .read(handoff.operation.id)
+                    .requireSuccess(),
+            )
+            assertEquals(
+                handoff.providerDraft,
+                RoomDraftRepository(database)
+                    .read(handoff.providerDraft.id)
+                    .requireSuccess(),
+            )
+            sqlite.query("SELECT COUNT(*) FROM composer_sms_operations").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(MAXIMUM_COMPOSER_SMS_OPERATIONS, cursor.getInt(0))
+            }
+            sqlite.query(
+                "SELECT COUNT(*) FROM composer_sms_operations WHERE provider_thread_id=?",
+                arrayOf(checkNotNull(handoff.operation.providerThreadId).value),
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun composerReservationRollsBackWhenPostInsertHandoffDeleteIsIgnored() = runBlocking {
+        val database = openDatabase()
+        try {
+            val participants = listOf(ParticipantAddress("+15550000506"))
+            val handoff = createHandoff(
+                database = database,
+                participants = participants,
+                body = "Synthetic rollback",
+                providerThreadId = ProviderThreadId(506L),
+            )
+            val sqlite = database.openHelper.writableDatabase
+            val triggerName = "test_ignore_exact_first_contact_handoff_delete"
+            sqlite.execSQL(
+                "CREATE TRIGGER $triggerName BEFORE DELETE ON first_contact_operations " +
+                    "WHEN OLD.first_contact_id=${handoff.operation.id.value} " +
+                    "AND OLD.phase_code='handoff_reserved_v1' " +
+                    "AND EXISTS(SELECT 1 FROM composer_sms_operations " +
+                    "WHERE provider_thread_id=OLD.provider_thread_id " +
+                    "AND draft_id=OLD.draft_id " +
+                    "AND draft_revision_ms=OLD.handoff_draft_revision_ms " +
+                    "AND subscription_id=OLD.subscription_id " +
+                    "AND transport_code=OLD.transport_code " +
+                    "AND phase_code='reserved_v1' " +
+                    "AND provider_message_id IS NULL " +
+                    "AND provider_conversation_id IS NULL " +
+                    "AND signature_text IS OLD.signature_text) " +
+                    "BEGIN SELECT RAISE(IGNORE); END",
+            )
+            val result = try {
+                RoomComposerSmsOperationRepository(database).reserve(handoff.composerRequest())
+            } finally {
+                sqlite.execSQL("DROP TRIGGER IF EXISTS $triggerName")
+            }
+
+            assertEquals(ComposerSmsOperationResult.StaleWrite, result)
+            assertEquals(
+                handoff.operation,
+                RoomFirstContactOperationRepository(database)
+                    .read(handoff.operation.id)
+                    .requireSuccess(),
+            )
+            assertEquals(
+                emptyList<ComposerSmsOperation>(),
+                RoomComposerSmsOperationRepository(database)
+                    .recoverySnapshot()
+                    .requireComposerSuccess(),
+            )
+            assertEquals(
+                handoff.providerDraft,
+                RoomDraftRepository(database)
+                    .read(handoff.providerDraft.id)
+                    .requireSuccess(),
             )
         } finally {
             database.close()
@@ -806,6 +1029,61 @@ class FirstContactOperationRepositoryInstrumentedTest {
         transport = transport,
         createdTimestampMillis = created,
     )
+
+    private suspend fun createHandoff(
+        database: org.aurorasms.core.state.storage.AuroraStateDatabase,
+        participants: List<ParticipantAddress>,
+        body: String,
+        providerThreadId: ProviderThreadId,
+        transport: MessageTransportKind = MessageTransportKind.SMS,
+        attachments: List<DraftAttachment> = emptyList(),
+        frozenSignature: MessageSignature? = null,
+    ): FirstContactBridgeSnapshot {
+        val draft = createDraft(
+            database = database,
+            participants = participants,
+            body = body,
+            attachments = attachments,
+        )
+        val repository = RoomFirstContactOperationRepository(database)
+        val reserved = repository.reserve(
+            request(draft, participants, transport).copy(frozenSignature = frozenSignature),
+        ).requireSuccess()
+        val started = repository.markResolutionStarted(
+            reserved.id,
+            reserved.revision,
+            2_001L,
+        ).requireSuccess().operation
+        val bound = repository.bindThread(
+            started.id,
+            started.revision,
+            providerThreadId,
+            2_002L,
+        ).requireSuccess()
+        return repository.bridgeToProviderThread(
+            bound.id,
+            bound.revision,
+            2_003L,
+        ).requireSuccess()
+    }
+
+    private fun FirstContactBridgeSnapshot.composerRequest() =
+        ComposerSmsReservationRequest(
+            providerThreadId = checkNotNull(operation.providerThreadId),
+            draftId = providerDraft.id,
+            expectedDraftRevision = providerDraft.revision,
+            subscriptionId = operation.subscriptionId,
+            createdTimestampMillis = 3_000L,
+            frozenSignature = operation.frozenSignature,
+            transport = operation.transport,
+            hasAttachments = attachments.isNotEmpty(),
+            firstContactAuthority = ComposerSmsFirstContactAuthority(
+                operationId = operation.id,
+                expectedRevision = operation.revision,
+                participantSetKey = operation.participantSetKey,
+                attachmentSetEvidence = operation.attachmentSetEvidence,
+            ),
+        )
 
     private fun attachment(vararg bytes: Int): DraftAttachment =
         (DraftAttachment.create("image/jpeg", bytes.map(Int::toByte).toByteArray()) as
